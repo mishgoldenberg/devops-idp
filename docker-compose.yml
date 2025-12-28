@@ -1,0 +1,315 @@
+version: '3.9'
+
+services:
+  # ============================================
+  # DATABASES
+  # ============================================
+  
+  postgres:
+    image: postgres:16-alpine
+    container_name: devops-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-devops_control_center}
+      POSTGRES_USER: ${POSTGRES_USER:-devops_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devops_secure_password}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./backend/database/init:/docker-entrypoint-initdb.d
+    networks:
+      - devops-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-devops_user}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: devops-redis
+    command: redis-server --requirepass ${REDIS_PASSWORD:-redis_secure_password}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - devops-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================
+  # BACKEND SERVICES
+  # ============================================
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.backend
+      args:
+        SERVICE_PATH: backend/services/api-gateway
+    container_name: devops-api-gateway
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: ${API_GATEWAY_PORT:-8000}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-devops_user}:${POSTGRES_PASSWORD:-devops_secure_password}@postgres:5432/${POSTGRES_DB:-devops_control_center}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_secure_password}
+      JWT_SECRET: ${JWT_SECRET}
+      SESSION_SECRET: ${SESSION_SECRET}
+      AUTH_SERVICE_URL: http://auth-service:8001
+      AZURE_DEVOPS_SERVICE_URL: http://azure-devops-service:8002
+      SONARQUBE_SERVICE_URL: http://sonarqube-service:8003
+      ARTIFACTORY_SERVICE_URL: http://artifactory-service:8004
+      SERVICENOW_SERVICE_URL: http://servicenow-service:8005
+      AI_CHATBOT_SERVICE_URL: http://ai-chatbot-service:8006
+      APPROVAL_SERVICE_URL: http://approval-service:8007
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - devops-network
+    volumes:
+      - ./backend/services/api-gateway/src:/app/src
+    restart: unless-stopped
+
+  auth-service:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.backend
+      args:
+        SERVICE_PATH: backend/services/auth-service
+    container_name: devops-auth-service
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: ${AUTH_SERVICE_PORT:-8001}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-devops_user}:${POSTGRES_PASSWORD:-devops_secure_password}@postgres:5432/${POSTGRES_DB:-devops_control_center}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_secure_password}
+      JWT_SECRET: ${JWT_SECRET}
+      SSO_ISSUER: ${SSO_ISSUER}
+      SSO_CLIENT_ID: ${SSO_CLIENT_ID}
+      SSO_CLIENT_SECRET: ${SSO_CLIENT_SECRET}
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - devops-network
+    volumes:
+      - ./backend/services/auth-service/src:/app/src
+    restart: unless-stopped
+
+  azure-devops-service:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.backend
+      args:
+        SERVICE_PATH: backend/services/azure-devops-service
+    container_name: devops-azure-devops-service
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: ${AZURE_DEVOPS_SERVICE_PORT:-8002}
+      USE_MOCK_DATA: ${USE_MOCK_AZURE_DEVOPS:-true}
+      AZURE_DEVOPS_ORG: ${AZURE_DEVOPS_ORG}
+      AZURE_DEVOPS_PAT: ${AZURE_DEVOPS_PAT}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_secure_password}
+    ports:
+      - "8002:8002"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - devops-network
+    volumes:
+      - ./backend/services/azure-devops-service/src:/app/src
+    restart: unless-stopped
+
+  sonarqube-service:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.backend
+      args:
+        SERVICE_PATH: backend/services/sonarqube-service
+    container_name: devops-sonarqube-service
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: ${SONARQUBE_SERVICE_PORT:-8003}
+      USE_MOCK_DATA: ${USE_MOCK_SONARQUBE:-true}
+      SONARQUBE_URL: ${SONARQUBE_URL}
+      SONARQUBE_TOKEN: ${SONARQUBE_TOKEN}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_secure_password}
+    ports:
+      - "8003:8003"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - devops-network
+    volumes:
+      - ./backend/services/sonarqube-service/src:/app/src
+    restart: unless-stopped
+
+  artifactory-service:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.backend
+      args:
+        SERVICE_PATH: backend/services/artifactory-service
+    container_name: devops-artifactory-service
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: ${ARTIFACTORY_SERVICE_PORT:-8004}
+      USE_MOCK_DATA: ${USE_MOCK_ARTIFACTORY:-true}
+      ARTIFACTORY_URL: ${ARTIFACTORY_URL}
+      ARTIFACTORY_API_KEY: ${ARTIFACTORY_API_KEY}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_secure_password}
+    ports:
+      - "8004:8004"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - devops-network
+    volumes:
+      - ./backend/services/artifactory-service/src:/app/src
+    restart: unless-stopped
+
+  servicenow-service:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.backend
+      args:
+        SERVICE_PATH: backend/services/servicenow-service
+    container_name: devops-servicenow-service
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: ${SERVICENOW_SERVICE_PORT:-8005}
+      USE_MOCK_DATA: ${USE_MOCK_SERVICENOW:-true}
+      SERVICENOW_URL: ${SERVICENOW_URL}
+      SERVICENOW_CLIENT_ID: ${SERVICENOW_CLIENT_ID}
+      SERVICENOW_CLIENT_SECRET: ${SERVICENOW_CLIENT_SECRET}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_secure_password}
+    ports:
+      - "8005:8005"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - devops-network
+    volumes:
+      - ./backend/services/servicenow-service/src:/app/src
+    restart: unless-stopped
+
+  ai-chatbot-service:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.backend
+      args:
+        SERVICE_PATH: backend/services/ai-chatbot-service
+    container_name: devops-ai-chatbot-service
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: ${AI_CHATBOT_SERVICE_PORT:-8006}
+      USE_MOCK_DATA: ${USE_MOCK_AI_CHATBOT:-true}
+      AI_CHATBOT_API_URL: ${AI_CHATBOT_API_URL}
+      AI_CHATBOT_TOKEN: ${AI_CHATBOT_TOKEN}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_secure_password}
+    ports:
+      - "8006:8006"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - devops-network
+    volumes:
+      - ./backend/services/ai-chatbot-service/src:/app/src
+    restart: unless-stopped
+
+  approval-service:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.backend
+      args:
+        SERVICE_PATH: backend/services/approval-service
+    container_name: devops-approval-service
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: ${APPROVAL_SERVICE_PORT:-8007}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-devops_user}:${POSTGRES_PASSWORD:-devops_secure_password}@postgres:5432/${POSTGRES_DB:-devops_control_center}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_secure_password}
+    ports:
+      - "8007:8007"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - devops-network
+    volumes:
+      - ./backend/services/approval-service/src:/app/src
+    restart: unless-stopped
+
+  # ============================================
+  # FRONTEND
+  # ============================================
+
+  frontend:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.frontend
+      args:
+        NEXT_PUBLIC_API_GATEWAY_URL: ${NEXT_PUBLIC_API_GATEWAY_URL:-http://localhost:8000}
+    container_name: devops-frontend
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      NEXT_PUBLIC_API_GATEWAY_URL: ${NEXT_PUBLIC_API_GATEWAY_URL:-http://localhost:8000}
+      NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-DevOps Control Center}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api-gateway
+    networks:
+      - devops-network
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+    restart: unless-stopped
+
+networks:
+  devops-network:
+    driver: bridge
+    name: devops-network
+
+volumes:
+  postgres-data:
+    name: devops-postgres-data
+  redis-data:
+    name: devops-redis-data
+

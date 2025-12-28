@@ -1,0 +1,50 @@
+{
+  "name": "devops-control-center",
+  "version": "1.0.0",
+  "description": "Production-grade internal DevOps platform for ~500 users",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "backend/services/*",
+    "backend/shared"
+  ],
+  "scripts": {
+    "install:all": "npm install && npm run install:frontend && npm run install:backend",
+    "install:frontend": "cd frontend && npm install",
+    "install:backend": "cd backend/services/api-gateway && npm install && cd ../auth-service && npm install && cd ../azure-devops-service && npm install && cd ../sonarqube-service && npm install && cd ../artifactory-service && npm install && cd ../servicenow-service && npm install && cd ../ai-chatbot-service && npm install && cd ../approval-service && npm install",
+    "dev": "docker-compose up",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:gateway": "cd backend/services/api-gateway && npm run dev",
+    "build": "npm run build:frontend && npm run build:backend",
+    "build:frontend": "cd frontend && npm run build",
+    "build:backend": "npm run build:services",
+    "build:services": "cd backend/services/api-gateway && npm run build",
+    "migrate": "cd backend/database && node migrations/run.js",
+    "seed": "cd backend/database && node seeds/run.js",
+    "db:reset": "docker-compose down -v && docker-compose up -d postgres redis && sleep 5 && npm run migrate && npm run seed",
+    "docker:build": "docker-compose build",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down",
+    "docker:logs": "docker-compose logs -f",
+    "test": "npm run test:backend && npm run test:frontend",
+    "test:backend": "echo 'Backend tests TBD'",
+    "test:frontend": "cd frontend && npm run test",
+    "lint": "npm run lint:frontend && npm run lint:backend",
+    "lint:frontend": "cd frontend && npm run lint",
+    "lint:backend": "cd backend/services/api-gateway && npm run lint"
+  },
+  "keywords": [
+    "devops",
+    "platform",
+    "internal",
+    "dashboard",
+    "microservices"
+  ],
+  "author": "DevOps Platform Team",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  }
+}
+

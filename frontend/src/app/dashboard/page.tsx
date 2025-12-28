@@ -1,0 +1,151 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { isAuthenticated, getUser } from '@/lib/auth';
+import { Button } from '@/components/common/Button';
+import { 
+  PlayCircle, FileText, Upload, BookOpen, Settings, Plus
+} from 'lucide-react';
+import { WidgetManager } from '@/components/dashboard/WidgetManager';
+import { getWidgetById } from '@/lib/widget-library';
+
+const DEFAULT_WIDGETS = ['devops-tickets', 'artifactory', 'sonarqube-scan', 'latest-pr', 'pipeline'];
+
+export default function DashboardPage() {
+  const router = useRouter();
+  const user = getUser();
+  const [activeWidgets, setActiveWidgets] = useState<string[]>([]);
+  const [showWidgetManager, setShowWidgetManager] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    if (!isAuthenticated()) {
+      router.push('/login');
+    } else {
+      // Load user's widget preferences from localStorage
+      const saved = localStorage.getItem(`dashboard_widgets_${user?.id}`);
+      if (saved) {
+        setActiveWidgets(JSON.parse(saved));
+      } else {
+        setActiveWidgets(DEFAULT_WIDGETS);
+      }
+      setIsLoading(false);
+    }
+  }, [router, user?.id]);
+
+  const saveWidgets = (widgets: string[]) => {
+    setActiveWidgets(widgets);
+    if (user?.id) {
+      localStorage.setItem(`dashboard_widgets_${user.id}`, JSON.stringify(widgets));
+    }
+  };
+
+  const handleAddWidget = (widgetId: string) => {
+    if (!activeWidgets.includes(widgetId)) {
+      saveWidgets([...activeWidgets, widgetId]);
+    }
+  };
+
+  const handleRemoveWidget = (widgetId: string) => {
+    saveWidgets(activeWidgets.filter(id => id !== widgetId));
+  };
+
+  if (!isAuthenticated() || isLoading) {
+    return null;
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Welcome Header */}
+        <div className="mb-8 flex items-start justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900 mb-1">
+              Welcome back, {user?.username?.split('@')[0]}!
+            </h1>
+            <p className="text-gray-600 flex items-center gap-2">
+              Here&apos;s what&apos;s happening with your development workflow
+              <span className="text-xs text-gray-500">Last updated: 2 minutes ago</span>
+            </p>
+          </div>
+          <button
+            onClick={() => setShowWidgetManager(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors shadow-lg"
+          >
+            <Settings className="w-4 h-4" />
+            Customize Dashboard
+          </button>
+        </div>
+
+        {/* Empty State */}
+        {activeWidgets.length === 0 && (
+          <div className="text-center py-16">
+            <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Plus className="w-8 h-8 text-gray-400" />
+            </div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">No widgets added yet</h3>
+            <p className="text-gray-600 mb-6">Start customizing your dashboard by adding widgets</p>
+            <button
+              onClick={() => setShowWidgetManager(true)}
+              className="px-6 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors"
+            >
+              <Plus className="w-4 h-4 inline mr-2" />
+              Add Widgets
+            </button>
+          </div>
+        )}
+
+        {/* Widget Grid */}
+        {activeWidgets.length > 0 && (
+          <div className="grid lg:grid-cols-3 gap-6 mb-6">
+            {activeWidgets.map((widgetId) => {
+              const widgetDef = getWidgetById(widgetId);
+              if (!widgetDef) return null;
+              const WidgetComponent = widgetDef.component;
+              return (
+                <div key={widgetId} className="relative">
+                  <WidgetComponent />
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Quick Actions */}
+        {activeWidgets.length > 0 && (
+          <div className="mt-6">
+            <h2 className="text-lg font-bold text-gray-900 mb-4">Quick Actions</h2>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {[
+                { icon: FileText, label: 'New Ticket', color: 'from-blue-500 to-blue-600' },
+                { icon: Upload, label: 'Upload Artifact', color: 'from-purple-500 to-purple-600' },
+                { icon: PlayCircle, label: 'Run Pipeline', color: 'from-green-500 to-green-600' },
+                { icon: BookOpen, label: 'View Docs', color: 'from-orange-500 to-orange-600' },
+              ].map((action, index) => (
+                <button
+                  key={index}
+                  className={`p-6 bg-gradient-to-br ${action.color} text-white rounded-xl hover:shadow-lg transition-all group`}
+                >
+                  <action.icon className="w-8 h-8 mb-2 group-hover:scale-110 transition-transform" />
+                  <div className="font-semibold">{action.label}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Widget Manager Modal */}
+      {showWidgetManager && (
+        <WidgetManager
+          activeWidgets={activeWidgets}
+          onAddWidget={handleAddWidget}
+          onRemoveWidget={handleRemoveWidget}
+          onClose={() => setShowWidgetManager(false)}
+        />
+      )}
+    </div>
+  );
+}
+
