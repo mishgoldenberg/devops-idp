@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { isAuthenticated, getUser } from '@/lib/auth';
 import { Button } from '@/components/common/Button';
 import { 
-  PlayCircle, FileText, Upload, BookOpen, Settings, Plus
+  PlayCircle, FileText, Upload, BookOpen, Settings, Plus, Search, BarChart3
 } from 'lucide-react';
 import { WidgetManager } from '@/components/dashboard/WidgetManager';
 import { getWidgetById } from '@/lib/widget-library';
@@ -78,17 +78,42 @@ export default function DashboardPage() {
           </button>
         </div>
 
+        {/* Quick Actions - Always visible */}
+        <div className={`mb-8 ${activeWidgets.length === 0 ? 'mt-8' : ''}`}>
+          <h2 className="text-xl font-bold text-gray-900 mb-4">Quick Actions</h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+            {[
+              { icon: FileText, label: 'New Ticket', color: 'from-blue-500 to-blue-600', description: 'Create ServiceNow ticket' },
+              { icon: Upload, label: 'Upload Artifact', color: 'from-purple-500 to-purple-600', description: 'Upload to Artifactory' },
+              { icon: PlayCircle, label: 'Run Pipeline', color: 'from-green-500 to-green-600', description: 'Trigger build' },
+              { icon: BookOpen, label: 'View Docs', color: 'from-orange-500 to-orange-600', description: 'Documentation' },
+              { icon: BarChart3, label: 'Metrics', color: 'from-indigo-500 to-indigo-600', description: 'View analytics' },
+              { icon: Search, label: 'Search', color: 'from-pink-500 to-pink-600', description: 'Quick search' },
+            ].map((action, index) => (
+              <button
+                key={index}
+                className={`p-6 bg-gradient-to-br ${action.color} text-white rounded-xl hover:shadow-xl hover:scale-105 transition-all group relative overflow-hidden`}
+                title={action.description}
+              >
+                <div className="absolute inset-0 bg-white opacity-0 group-hover:opacity-10 transition-opacity"></div>
+                <action.icon className="w-8 h-8 mb-2 group-hover:scale-110 transition-transform relative z-10" />
+                <div className="font-semibold text-sm relative z-10">{action.label}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* Empty State */}
         {activeWidgets.length === 0 && (
-          <div className="text-center py-16">
+          <div className="text-center py-12 bg-white rounded-xl border-2 border-dashed border-gray-200">
             <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
               <Plus className="w-8 h-8 text-gray-400" />
             </div>
             <h3 className="text-lg font-semibold text-gray-900 mb-2">No widgets added yet</h3>
-            <p className="text-gray-600 mb-6">Start customizing your dashboard by adding widgets</p>
+            <p className="text-gray-600 mb-6">Start customizing your dashboard by adding widgets to track your work</p>
             <button
               onClick={() => setShowWidgetManager(true)}
-              className="px-6 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors"
+              className="px-6 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors shadow-md hover:shadow-lg"
             >
               <Plus className="w-4 h-4 inline mr-2" />
               Add Widgets
@@ -98,7 +123,7 @@ export default function DashboardPage() {
 
         {/* Widget Grid */}
         {activeWidgets.length > 0 && (
-          <div className="grid lg:grid-cols-3 gap-6 mb-6">
+          <div className="grid lg:grid-cols-3 gap-6">
             {activeWidgets.map((widgetId) => {
               const widgetDef = getWidgetById(widgetId);
               if (!widgetDef) return null;
@@ -109,29 +134,6 @@ export default function DashboardPage() {
                 </div>
               );
             })}
-          </div>
-        )}
-
-        {/* Quick Actions */}
-        {activeWidgets.length > 0 && (
-          <div className="mt-6">
-            <h2 className="text-lg font-bold text-gray-900 mb-4">Quick Actions</h2>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {[
-                { icon: FileText, label: 'New Ticket', color: 'from-blue-500 to-blue-600' },
-                { icon: Upload, label: 'Upload Artifact', color: 'from-purple-500 to-purple-600' },
-                { icon: PlayCircle, label: 'Run Pipeline', color: 'from-green-500 to-green-600' },
-                { icon: BookOpen, label: 'View Docs', color: 'from-orange-500 to-orange-600' },
-              ].map((action, index) => (
-                <button
-                  key={index}
-                  className={`p-6 bg-gradient-to-br ${action.color} text-white rounded-xl hover:shadow-lg transition-all group`}
-                >
-                  <action.icon className="w-8 h-8 mb-2 group-hover:scale-110 transition-transform" />
-                  <div className="font-semibold">{action.label}</div>
-                </button>
-              ))}
-            </div>
           </div>
         )}
       </div>

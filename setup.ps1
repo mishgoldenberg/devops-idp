@@ -3,7 +3,7 @@
 
 $ErrorActionPreference = "Stop"
 
-Write-Host "🚀 DevOps Control Center - Local Setup" -ForegroundColor Cyan
+Write-Host "DevOps Control Center - Local Setup" -ForegroundColor Cyan
 Write-Host "=====================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -15,7 +15,7 @@ function Test-Command {
 }
 
 # Check prerequisites
-Write-Host "📋 Checking prerequisites..." -ForegroundColor Yellow
+Write-Host "Checking prerequisites..." -ForegroundColor Yellow
 
 $prerequisites = @{
     "Docker" = "docker"
@@ -26,22 +26,37 @@ $prerequisites = @{
 
 $missing = @()
 foreach ($prereq in $prerequisites.GetEnumerator()) {
-    if (Test-Command $prereq.Value) {
-        $version = if ($prereq.Value -eq "docker compose") {
-            (docker compose version --short) 2>$null
-        } else {
-            (& $prereq.Value.Split(" ")[0] --version 2>$null | Select-Object -First 1)
+    $found = $false
+    $version = ""
+    
+    if ($prereq.Value -eq "docker compose") {
+        # Special handling for docker compose
+        try {
+            $version = (docker compose version --short 2>$null)
+            if ($LASTEXITCODE -eq 0) {
+                $found = $true
+            }
+        } catch {
+            $found = $false
         }
-        Write-Host "  ✅ $($prereq.Key): $version" -ForegroundColor Green
     } else {
-        Write-Host "  ❌ $($prereq.Key): Not found" -ForegroundColor Red
+        if (Test-Command $prereq.Value) {
+            $found = $true
+            $version = (& $prereq.Value --version 2>$null | Select-Object -First 1)
+        }
+    }
+    
+    if ($found) {
+        Write-Host "  [OK] $($prereq.Key): $version" -ForegroundColor Green
+    } else {
+        Write-Host "  [FAIL] $($prereq.Key): Not found" -ForegroundColor Red
         $missing += $prereq.Key
     }
 }
 
 if ($missing.Count -gt 0) {
     Write-Host ""
-    Write-Host "❌ Missing prerequisites: $($missing -join ', ')" -ForegroundColor Red
+    Write-Host "[FAIL] Missing prerequisites: $($missing -join ', ')" -ForegroundColor Red
     Write-Host "Please install the missing tools and run this script again." -ForegroundColor Yellow
     exit 1
 }
@@ -49,12 +64,12 @@ if ($missing.Count -gt 0) {
 Write-Host ""
 
 # Check if Docker daemon is running
-Write-Host "🐳 Checking Docker daemon..." -ForegroundColor Yellow
+Write-Host "Checking Docker daemon..." -ForegroundColor Yellow
 try {
     docker ps | Out-Null
-    Write-Host "  ✅ Docker daemon is running" -ForegroundColor Green
+    Write-Host "  [OK] Docker daemon is running" -ForegroundColor Green
 } catch {
-    Write-Host "  ❌ Docker daemon is not running" -ForegroundColor Red
+    Write-Host "  [FAIL] Docker daemon is not running" -ForegroundColor Red
     Write-Host "Please start Docker Desktop and run this script again." -ForegroundColor Yellow
     exit 1
 }
@@ -62,33 +77,33 @@ try {
 Write-Host ""
 
 # Check if .env file exists
-Write-Host "⚙️  Setting up environment variables..." -ForegroundColor Yellow
+Write-Host "Setting up environment variables..." -ForegroundColor Yellow
 if (-Not (Test-Path ".env")) {
     if (Test-Path "env.example") {
         Copy-Item "env.example" ".env"
-        Write-Host "  ✅ Created .env file from env.example" -ForegroundColor Green
-        Write-Host "  ℹ️  Using default values. Edit .env if you need to customize." -ForegroundColor Cyan
+        Write-Host "  [OK] Created .env file from env.example" -ForegroundColor Green
+        Write-Host "  [INFO] Using default values. Edit .env if you need to customize." -ForegroundColor Cyan
     } else {
-        Write-Host "  ❌ env.example file not found!" -ForegroundColor Red
+        Write-Host "  [FAIL] env.example file not found!" -ForegroundColor Red
         exit 1
     }
 } else {
-    Write-Host "  ✅ .env file already exists (skipping)" -ForegroundColor Green
+    Write-Host "  [OK] .env file already exists (skipping)" -ForegroundColor Green
 }
 
 Write-Host ""
 
 # Build Docker images
-Write-Host "🔨 Building Docker images..." -ForegroundColor Yellow
+Write-Host "Building Docker images..." -ForegroundColor Yellow
 Write-Host "  This may take 5-10 minutes on first run..." -ForegroundColor Cyan
 try {
     docker compose build
     if ($LASTEXITCODE -ne 0) {
         throw "Docker compose build failed"
     }
-    Write-Host "  ✅ Docker images built successfully" -ForegroundColor Green
+    Write-Host "  [OK] Docker images built successfully" -ForegroundColor Green
 } catch {
-    Write-Host "  ❌ Failed to build Docker images" -ForegroundColor Red
+    Write-Host "  [FAIL] Failed to build Docker images" -ForegroundColor Red
     Write-Host "Error: $_" -ForegroundColor Red
     exit 1
 }
@@ -96,15 +111,15 @@ try {
 Write-Host ""
 
 # Start services
-Write-Host "🚀 Starting services..." -ForegroundColor Yellow
+Write-Host "Starting services..." -ForegroundColor Yellow
 try {
     docker compose up -d
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to start services"
     }
-    Write-Host "  ✅ Services started" -ForegroundColor Green
+    Write-Host "  [OK] Services started" -ForegroundColor Green
 } catch {
-    Write-Host "  ❌ Failed to start services" -ForegroundColor Red
+    Write-Host "  [FAIL] Failed to start services" -ForegroundColor Red
     Write-Host "Error: $_" -ForegroundColor Red
     exit 1
 }
@@ -112,7 +127,7 @@ try {
 Write-Host ""
 
 # Wait for database to be healthy
-Write-Host "⏳ Waiting for database to be ready..." -ForegroundColor Yellow
+Write-Host "Waiting for database to be ready..." -ForegroundColor Yellow
 $maxAttempts = 30
 $attempt = 0
 $healthy = $false
@@ -124,14 +139,14 @@ while ($attempt -lt $maxAttempts -and -not $healthy) {
     $status = docker compose ps postgres --format json | ConvertFrom-Json
     if ($status.Health -eq "healthy") {
         $healthy = $true
-        Write-Host "  ✅ Database is healthy" -ForegroundColor Green
+        Write-Host "  [OK] Database is healthy" -ForegroundColor Green
     } else {
-        Write-Host "  ⏳ Waiting for database... ($attempt/$maxAttempts)" -ForegroundColor Cyan
+        Write-Host "  Waiting for database... ($attempt/$maxAttempts)" -ForegroundColor Cyan
     }
 }
 
 if (-not $healthy) {
-    Write-Host "  ❌ Database failed to become healthy within timeout" -ForegroundColor Red
+    Write-Host "  [FAIL] Database failed to become healthy within timeout" -ForegroundColor Red
     Write-Host "Check logs with: docker compose logs postgres" -ForegroundColor Yellow
     exit 1
 }
@@ -160,15 +175,15 @@ if (Test-Path ".env") {
 $env:DATABASE_URL = "postgresql://${dbUser}:${dbPass}@${dbHost}:${dbPort}/${dbName}"
 
 # Run migrations
-Write-Host "📊 Running database migrations..." -ForegroundColor Yellow
+Write-Host "Running database migrations..." -ForegroundColor Yellow
 try {
     npm run migrate
     if ($LASTEXITCODE -ne 0) {
         throw "Migration failed"
     }
-    Write-Host "  ✅ Migrations completed successfully" -ForegroundColor Green
+    Write-Host "  [OK] Migrations completed successfully" -ForegroundColor Green
 } catch {
-    Write-Host "  ❌ Failed to run migrations" -ForegroundColor Red
+    Write-Host "  [FAIL] Failed to run migrations" -ForegroundColor Red
     Write-Host "Error: $_" -ForegroundColor Red
     Write-Host "Check database connection in .env file" -ForegroundColor Yellow
     exit 1
@@ -177,15 +192,15 @@ try {
 Write-Host ""
 
 # Run seeds
-Write-Host "🌱 Seeding database with initial data..." -ForegroundColor Yellow
+Write-Host "Seeding database with initial data..." -ForegroundColor Yellow
 try {
     npm run seed
     if ($LASTEXITCODE -ne 0) {
         throw "Seeding failed"
     }
-    Write-Host "  ✅ Database seeded successfully" -ForegroundColor Green
+    Write-Host "  [OK] Database seeded successfully" -ForegroundColor Green
 } catch {
-    Write-Host "  ❌ Failed to seed database" -ForegroundColor Red
+    Write-Host "  [FAIL] Failed to seed database" -ForegroundColor Red
     Write-Host "Error: $_" -ForegroundColor Red
     exit 1
 }
@@ -193,27 +208,27 @@ try {
 Write-Host ""
 
 # Wait a bit more for all services to be ready
-Write-Host "⏳ Waiting for all services to be ready..." -ForegroundColor Yellow
+Write-Host "Waiting for all services to be ready..." -ForegroundColor Yellow
 Start-Sleep -Seconds 5
 
 # Check service status
 Write-Host ""
-Write-Host "📊 Service Status:" -ForegroundColor Yellow
+Write-Host "Service Status:" -ForegroundColor Yellow
 docker compose ps
 
 Write-Host ""
-Write-Host "✅ Setup completed successfully!" -ForegroundColor Green
+Write-Host "[OK] Setup completed successfully!" -ForegroundColor Green
 Write-Host ""
-Write-Host "🌐 Access the application:" -ForegroundColor Cyan
+Write-Host "Access the application:" -ForegroundColor Cyan
 Write-Host "  Frontend:  http://localhost:3000" -ForegroundColor White
 Write-Host "  API Gateway: http://localhost:8000" -ForegroundColor White
 Write-Host ""
-Write-Host "👤 Test users (login with any @internal username):" -ForegroundColor Cyan
+Write-Host "Test users (login with any @internal username):" -ForegroundColor Cyan
 Write-Host "  - admin@internal (Platform Admin)" -ForegroundColor White
 Write-Host "  - lead@internal (Team Lead)" -ForegroundColor White
 Write-Host "  - user@internal (Regular User)" -ForegroundColor White
 Write-Host ""
-Write-Host "📚 Useful commands:" -ForegroundColor Cyan
+Write-Host "Useful commands:" -ForegroundColor Cyan
 Write-Host "  Quick restart: .\restart.ps1 (after backend code changes)" -ForegroundColor White
 Write-Host "  Frontend rebuild: .\restart.ps1 -RebuildFrontend (after frontend changes)" -ForegroundColor White
 Write-Host "  View logs:    docker compose logs -f" -ForegroundColor White
@@ -224,9 +239,8 @@ Write-Host ""
 $openBrowser = Read-Host "Open application in browser? (Y/n)"
 if ($openBrowser -ne "n" -and $openBrowser -ne "N") {
     Start-Process "http://localhost:3000"
-    Write-Host "  ✅ Opened browser" -ForegroundColor Green
+    Write-Host "  [OK] Opened browser" -ForegroundColor Green
 }
 
 Write-Host ""
-Write-Host "Happy coding! 🎉" -ForegroundColor Cyan
-
+Write-Host "Happy coding!" -ForegroundColor Cyan
