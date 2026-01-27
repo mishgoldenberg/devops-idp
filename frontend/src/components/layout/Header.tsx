@@ -7,6 +7,7 @@ import { getUser, isAuthenticated } from '@/lib/auth';
 import { apiClient } from '@/lib/api-client';
 import { Home, BookOpen, FileText, Zap, FileCheck, Activity, LogOut, Menu, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { ThemeToggle } from '@/components/common/ThemeToggle';
 
 export function Header() {
   const pathname = usePathname();
@@ -37,7 +38,7 @@ export function Header() {
   }
 
   return (
-    <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
+    <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 sticky top-0 z-50 transition-colors duration-200">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16">
           {/* Logo and App Name */}
@@ -46,7 +47,7 @@ export function Header() {
               <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
                 <span className="text-white font-bold text-sm">DC</span>
               </div>
-              <span className="font-semibold text-lg text-gray-900 hidden sm:block">
+              <span className="font-semibold text-lg text-gray-900 dark:text-gray-100 hidden sm:block">
                 DevOps Control Center
               </span>
             </Link>
@@ -63,8 +64,8 @@ export function Header() {
                   className={cn(
                     'flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
                     isActive
-                      ? 'bg-primary-50 text-primary'
-                      : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                      ? 'bg-primary-50 dark:bg-primary-900/30 text-primary dark:text-primary-400'
+                      : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-50 dark:hover:bg-gray-700'
                   )}
                 >
                   {item.name}
@@ -73,7 +74,7 @@ export function Header() {
             })}
             {isAdmin && (
               <>
-                <div className="w-px h-6 bg-gray-200 mx-2" />
+                <div className="w-px h-6 bg-gray-200 dark:bg-gray-700 mx-2" />
                 {adminNavigation.map((item) => {
                   const isActive = pathname.startsWith(item.href);
                   return (
@@ -99,12 +100,13 @@ export function Header() {
           {/* User Menu */}
           <div className="flex items-center gap-4">
             <div className="hidden md:flex flex-col items-end">
-              <span className="text-sm font-medium text-gray-900">{user?.username}</span>
-              <span className="text-xs text-secondary-500">{user?.role}</span>
+              <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{user?.username}</span>
+              <span className="text-xs text-secondary-500 dark:text-secondary-400">{user?.role}</span>
             </div>
+            <ThemeToggle />
             <button
               onClick={handleLogout}
-              className="p-2 text-secondary-600 hover:bg-gray-100 rounded-lg transition-colors"
+              className="p-2 text-secondary-600 dark:text-secondary-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
               title="Logout"
             >
               <LogOut className="w-5 h-5" />
@@ -113,7 +115,7 @@ export function Header() {
             {/* Mobile menu button */}
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="md:hidden p-2 text-secondary-600 hover:bg-gray-100 rounded-lg"
+              className="md:hidden p-2 text-secondary-600 dark:text-secondary-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
             >
               {mobileMenuOpen ? (
                 <X className="w-6 h-6" />
@@ -126,7 +128,7 @@ export function Header() {
 
         {/* Mobile Navigation */}
         {mobileMenuOpen && (
-          <div className="md:hidden py-4 border-t border-gray-200">
+          <div className="md:hidden py-4 border-t border-gray-200 dark:border-gray-700">
             <nav className="flex flex-col gap-2">
               {navigation.map((item) => {
                 const isActive = pathname.startsWith(item.href) || (item.href === '/dashboard' && pathname === '/');
@@ -139,7 +141,7 @@ export function Header() {
                       'flex items-center gap-2 px-4 py-3 rounded-lg text-sm font-medium transition-colors',
                       isActive
                         ? 'bg-primary-50 text-primary'
-                        : 'text-secondary-600 hover:bg-gray-100'
+                        : 'text-secondary-600 dark:text-secondary-400 hover:bg-gray-100 dark:hover:bg-gray-700'
                     )}
                   >
                     <item.icon className="w-4 h-4" />
@@ -149,7 +151,7 @@ export function Header() {
               })}
               {isAdmin && (
                 <>
-                  <div className="my-2 border-t border-gray-200" />
+                  <div className="my-2 border-t border-gray-200 dark:border-gray-700" />
                   {adminNavigation.map((item) => {
                     const isActive = pathname.startsWith(item.href);
                     return (
@@ -161,7 +163,7 @@ export function Header() {
                           'flex items-center gap-2 px-4 py-3 rounded-lg text-sm font-medium transition-colors',
                           isActive
                             ? 'bg-primary-50 text-primary'
-                            : 'text-secondary-600 hover:bg-gray-100'
+                            : 'text-secondary-600 dark:text-secondary-400 hover:bg-gray-100 dark:hover:bg-gray-700'
                         )}
                       >
                         <item.icon className="w-4 h-4" />
@@ -172,9 +174,9 @@ export function Header() {
                 </>
               )}
             </nav>
-            <div className="mt-4 pt-4 border-t border-gray-200 px-4">
-              <p className="text-sm font-medium text-gray-900">{user?.username}</p>
-              <p className="text-xs text-secondary-500">{user?.role}</p>
+            <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 px-4">
+              <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{user?.username}</p>
+              <p className="text-xs text-secondary-500 dark:text-secondary-400">{user?.role}</p>
             </div>
           </div>
         )}

@@ -56,22 +56,22 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Welcome Header */}
         <div className="mb-8 flex items-start justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900 mb-1">
+            <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100 mb-1">
               Welcome back, {user?.username?.split('@')[0]}!
             </h1>
-            <p className="text-gray-600 flex items-center gap-2">
+            <p className="text-gray-600 dark:text-gray-400 flex items-center gap-2">
               Here&apos;s what&apos;s happening with your development workflow
-              <span className="text-xs text-gray-500">Last updated: 2 minutes ago</span>
+              <span className="text-xs text-gray-500 dark:text-gray-500">Last updated: 2 minutes ago</span>
             </p>
           </div>
           <button
             onClick={() => setShowWidgetManager(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors shadow-lg"
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 dark:bg-blue-700 text-white rounded-lg font-medium hover:bg-blue-700 dark:hover:bg-blue-600 transition-colors shadow-lg"
           >
             <Settings className="w-4 h-4" />
             Customize Dashboard
@@ -80,7 +80,7 @@ export default function DashboardPage() {
 
         {/* Quick Actions - Always visible */}
         <div className={`mb-8 ${activeWidgets.length === 0 ? 'mt-8' : ''}`}>
-          <h2 className="text-xl font-bold text-gray-900 mb-4">Quick Actions</h2>
+          <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100 mb-4">Quick Actions</h2>
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
             {[
               { icon: FileText, label: 'New Ticket', color: 'from-blue-500 to-blue-600', description: 'Create ServiceNow ticket' },
@@ -105,15 +105,15 @@ export default function DashboardPage() {
 
         {/* Empty State */}
         {activeWidgets.length === 0 && (
-          <div className="text-center py-12 bg-white rounded-xl border-2 border-dashed border-gray-200">
-            <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <Plus className="w-8 h-8 text-gray-400" />
+          <div className="text-center py-12 bg-white dark:bg-gray-800 rounded-xl border-2 border-dashed border-gray-200 dark:border-gray-700">
+            <div className="w-16 h-16 bg-gray-100 dark:bg-gray-700 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Plus className="w-8 h-8 text-gray-400 dark:text-gray-500" />
             </div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">No widgets added yet</h3>
-            <p className="text-gray-600 mb-6">Start customizing your dashboard by adding widgets to track your work</p>
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">No widgets added yet</h3>
+            <p className="text-gray-600 dark:text-gray-400 mb-6">Start customizing your dashboard by adding widgets to track your work</p>
             <button
               onClick={() => setShowWidgetManager(true)}
-              className="px-6 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors shadow-md hover:shadow-lg"
+              className="px-6 py-3 bg-blue-600 dark:bg-blue-700 text-white rounded-lg font-medium hover:bg-blue-700 dark:hover:bg-blue-600 transition-colors shadow-md hover:shadow-lg"
             >
               <Plus className="w-4 h-4 inline mr-2" />
               Add Widgets

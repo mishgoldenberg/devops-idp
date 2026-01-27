@@ -48,16 +48,16 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-md w-full">
         <div className="text-center mb-8">
           <div className="w-16 h-16 bg-primary rounded-xl flex items-center justify-center mx-auto mb-4">
             <span className="text-white font-bold text-2xl">DC</span>
           </div>
-          <h2 className="text-3xl font-bold text-gray-900 mb-2">
+          <h2 className="text-3xl font-bold text-gray-900 dark:text-gray-100 mb-2">
             DevOps Control Center
           </h2>
-          <p className="text-secondary-500">
+          <p className="text-secondary-500 dark:text-secondary-400">
             Sign in to access your dashboard
           </p>
         </div>
@@ -69,13 +69,13 @@ export default function LoginPage() {
           <CardBody>
             <form onSubmit={handleSubmit} className="space-y-4">
               {error && (
-                <div className="p-3 bg-error-50 border border-error-200 rounded-lg">
-                  <p className="text-sm text-error-700">{error}</p>
+                <div className="p-3 bg-error-50 dark:bg-error-900/30 border border-error-200 dark:border-error-800 rounded-lg">
+                  <p className="text-sm text-error-700 dark:text-error-400">{error}</p>
                 </div>
               )}
 
               <div>
-                <label htmlFor="username" className="block text-sm font-medium text-gray-700 mb-2">
+                <label htmlFor="username" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                   Username
                 </label>
                 <input

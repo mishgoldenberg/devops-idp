@@ -20,11 +20,11 @@ export function Button({
   const baseStyles = 'inline-flex items-center justify-center font-medium rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed';
   
   const variants = {
-    primary: 'bg-primary text-white hover:bg-primary-600 focus:ring-primary-500',
-    secondary: 'bg-secondary-200 text-secondary-700 hover:bg-secondary-300 focus:ring-secondary-500',
-    success: 'bg-success text-white hover:bg-success-600 focus:ring-success-500',
-    danger: 'bg-error text-white hover:bg-error-600 focus:ring-error-500',
-    ghost: 'text-secondary-700 hover:bg-secondary-100 focus:ring-secondary-500',
+    primary: 'bg-primary dark:bg-primary-600 text-white hover:bg-primary-600 dark:hover:bg-primary-700 focus:ring-primary-500',
+    secondary: 'bg-secondary-200 dark:bg-secondary-700 text-secondary-700 dark:text-secondary-200 hover:bg-secondary-300 dark:hover:bg-secondary-600 focus:ring-secondary-500',
+    success: 'bg-success dark:bg-success-600 text-white hover:bg-success-600 dark:hover:bg-success-700 focus:ring-success-500',
+    danger: 'bg-error dark:bg-error-600 text-white hover:bg-error-600 dark:hover:bg-error-700 focus:ring-error-500',
+    ghost: 'text-secondary-700 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-gray-700 focus:ring-secondary-500',
   };
   
   const sizes = {
