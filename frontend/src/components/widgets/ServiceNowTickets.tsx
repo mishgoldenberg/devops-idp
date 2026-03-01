@@ -94,25 +94,25 @@ export function ServiceNowTickets() {
                 href={ticket.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="block p-3 border border-gray-200 rounded-lg hover:border-primary hover:bg-primary-50 transition-colors"
+                className="block p-3 border border-gray-200 dark:border-gray-700 rounded-lg hover:border-primary dark:hover:border-primary-600 hover:bg-primary-50 dark:hover:bg-primary-900/30 transition-colors"
               >
                 <div className="flex items-start justify-between gap-2 mb-2">
-                  <span className="text-sm font-medium text-primary">
+                  <span className="text-sm font-medium text-primary dark:text-primary-400">
                     {ticket.number}
                   </span>
                   <Badge variant={getStatusColor(ticket.state) as any} className="text-xs">
                     {ticket.state}
                   </Badge>
                 </div>
-                <p className="text-sm text-gray-900 line-clamp-2 mb-2">
+                <p className="text-sm text-gray-900 dark:text-gray-100 line-clamp-2 mb-2">
                   {ticket.short_description}
                 </p>
-                <span className="text-xs text-secondary-500">{ticket.priority}</span>
+                <span className="text-xs text-secondary-500 dark:text-secondary-400">{ticket.priority}</span>
               </a>
             ))}
           </div>
         ) : (
-          <div className="text-center py-8 text-secondary-500">
+          <div className="text-center py-8 text-secondary-500 dark:text-secondary-400">
             <Ticket className="w-12 h-12 mx-auto mb-2 opacity-30" />
             <p>No open tickets</p>
           </div>

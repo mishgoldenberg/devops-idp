@@ -101,10 +101,10 @@ export function SonarQubeQualityGate() {
           <div
             className={`inline-flex items-center justify-center w-24 h-24 rounded-full ${
               statusColor === 'success'
-                ? 'bg-success-100'
+                ? 'bg-success-100 dark:bg-success-900/30'
                 : statusColor === 'warning'
-                ? 'bg-warning-100'
-                : 'bg-error-100'
+                ? 'bg-warning-100 dark:bg-warning-900/30'
+                : 'bg-error-100 dark:bg-error-900/30'
             } mb-3`}
           >
             <Shield
@@ -117,36 +117,36 @@ export function SonarQubeQualityGate() {
               }`}
             />
           </div>
-          <h4 className="font-medium text-lg mb-1">{mainProject.name}</h4>
+          <h4 className="font-medium text-lg mb-1 text-gray-900 dark:text-gray-100">{mainProject.name}</h4>
           <Badge variant={statusColor as any} className="text-sm">
             {mainProject.quality_gate.status}
           </Badge>
         </div>
 
         <div className="grid grid-cols-2 gap-4">
-          <div className="text-center p-3 bg-gray-50 rounded-lg">
-            <div className="text-2xl font-bold text-gray-900">
+          <div className="text-center p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
+            <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
               {mainProject.metrics.coverage?.toFixed(1) || '0'}%
             </div>
-            <div className="text-xs text-secondary-500 mt-1">Coverage</div>
+            <div className="text-xs text-secondary-500 dark:text-secondary-400 mt-1">Coverage</div>
           </div>
-          <div className="text-center p-3 bg-gray-50 rounded-lg">
-            <div className="text-2xl font-bold text-gray-900">
+          <div className="text-center p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
+            <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
               {mainProject.metrics.bugs || 0}
             </div>
-            <div className="text-xs text-secondary-500 mt-1">Bugs</div>
+            <div className="text-xs text-secondary-500 dark:text-secondary-400 mt-1">Bugs</div>
           </div>
-          <div className="text-center p-3 bg-gray-50 rounded-lg">
-            <div className="text-2xl font-bold text-gray-900">
+          <div className="text-center p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
+            <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
               {mainProject.metrics.vulnerabilities || 0}
             </div>
-            <div className="text-xs text-secondary-500 mt-1">Vulnerabilities</div>
+            <div className="text-xs text-secondary-500 dark:text-secondary-400 mt-1">Vulnerabilities</div>
           </div>
-          <div className="text-center p-3 bg-gray-50 rounded-lg">
-            <div className="text-2xl font-bold text-gray-900">
+          <div className="text-center p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
+            <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
               {mainProject.metrics.code_smells || 0}
             </div>
-            <div className="text-xs text-secondary-500 mt-1">Code Smells</div>
+            <div className="text-xs text-secondary-500 dark:text-secondary-400 mt-1">Code Smells</div>
           </div>
         </div>
       </CardBody>

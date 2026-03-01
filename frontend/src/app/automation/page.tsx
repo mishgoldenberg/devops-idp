@@ -60,7 +60,7 @@ const recentActivity = [
 
 export default function AutomationPage() {
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       {/* Hero Section */}
       <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 text-center">
@@ -84,7 +84,7 @@ export default function AutomationPage() {
         {/* Metrics Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
           {metrics.map((metric, index) => (
-            <Card key={index} className="bg-white hover:shadow-lg transition-shadow">
+            <Card key={index} className="bg-white dark:bg-gray-800 hover:shadow-lg transition-shadow">
               <div className="p-6">
                 <div className="flex items-center justify-between mb-4">
                   <metric.icon className={`w-8 h-8 ${metric.color}`} />
@@ -92,8 +92,8 @@ export default function AutomationPage() {
                     {metric.trend}
                   </span>
                 </div>
-                <div className="text-3xl font-bold text-gray-900 mb-1">{metric.value}</div>
-                <div className="text-sm text-gray-600">{metric.label}</div>
+                <div className="text-3xl font-bold text-gray-900 dark:text-gray-100 mb-1">{metric.value}</div>
+                <div className="text-sm text-gray-600 dark:text-gray-300">{metric.label}</div>
               </div>
             </Card>
           ))}
@@ -103,15 +103,15 @@ export default function AutomationPage() {
         <div className="mb-12">
           <div className="flex items-center justify-between mb-6">
             <div>
-              <h2 className="text-2xl font-bold text-gray-900">Featured Automations</h2>
-              <p className="text-gray-600">Streamline your workflow with popular automations</p>
+              <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Featured Automations</h2>
+              <p className="text-gray-600 dark:text-gray-400">Streamline your workflow with popular automations</p>
             </div>
-            <a href="#" className="text-blue-600 hover:text-blue-700 font-medium">View All →</a>
+            <a href="#" className="text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 font-medium">View All →</a>
           </div>
 
           <div className="grid md:grid-cols-3 gap-6">
             {automations.map((automation) => (
-              <Card key={automation.id} className="bg-white hover:shadow-xl transition-all">
+              <Card key={automation.id} className="bg-white dark:bg-gray-800 hover:shadow-xl transition-all">
                 <div className="p-6">
                   <div className="flex items-start justify-between mb-4">
                     <div className={`w-12 h-12 ${automation.iconBg} rounded-xl flex items-center justify-center`}>
@@ -121,11 +121,11 @@ export default function AutomationPage() {
                       {automation.status}
                     </Badge>
                   </div>
-                  <h3 className="text-lg font-bold text-gray-900 mb-2">{automation.title}</h3>
-                  <p className="text-sm text-gray-600 mb-4">{automation.description}</p>
-                  <div className="flex items-center justify-between pt-4 border-t border-gray-200">
-                    <span className="text-xs text-gray-600">{automation.users} users</span>
-                    <button className="text-sm font-medium text-blue-600 hover:text-blue-700">
+                  <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100 mb-2">{automation.title}</h3>
+                  <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">{automation.description}</p>
+                  <div className="flex items-center justify-between pt-4 border-t border-gray-200 dark:border-gray-700">
+                    <span className="text-xs text-gray-600 dark:text-gray-400">{automation.users} users</span>
+                    <button className="text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300">
                       {automation.badge}
                     </button>
                   </div>
@@ -137,7 +137,7 @@ export default function AutomationPage() {
 
         {/* Quick Actions */}
         <div className="mb-12">
-          <h2 className="text-2xl font-bold text-gray-900 mb-6">Quick Actions</h2>
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-6">Quick Actions</h2>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {[
               { icon: '🎫', label: 'New Ticket', color: 'from-blue-500 to-blue-600' },
@@ -158,21 +158,21 @@ export default function AutomationPage() {
 
         {/* Recent Activity */}
         <div>
-          <h2 className="text-2xl font-bold text-gray-900 mb-6">Recent Activity</h2>
-          <Card className="bg-white">
-            <div className="divide-y divide-gray-200">
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-6">Recent Activity</h2>
+          <Card className="bg-white dark:bg-gray-800">
+            <div className="divide-y divide-gray-200 dark:divide-gray-700">
               {recentActivity.map((activity, index) => (
-                <div key={index} className="p-4 hover:bg-gray-50 transition-colors">
+                <div key={index} className="p-4 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
                   <div className="flex items-center gap-4">
                     <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-xl">
                       {activity.avatar}
                     </div>
                     <div className="flex-1">
                       <p className="text-sm">
-                        <span className="font-semibold text-gray-900">{activity.user}</span>
-                        <span className="text-gray-600"> {activity.action}</span>
+                        <span className="font-semibold text-gray-900 dark:text-gray-100">{activity.user}</span>
+                        <span className="text-gray-600 dark:text-gray-400"> {activity.action}</span>
                       </p>
-                      <p className="text-xs text-gray-500">{activity.time}</p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">{activity.time}</p>
                     </div>
                   </div>
                 </div>

@@ -5,13 +5,25 @@
  * Populates database with initial data (roles, users, widget types, etc.)
  */
 
+// Load environment variables from .env file (don't override existing env vars)
+require('dotenv').config({ 
+  path: require('path').join(__dirname, '../../../.env'),
+  override: false 
+});
+
 const { Pool } = require('pg');
 const fs = require('fs');
 const path = require('path');
 
 async function runSeeds() {
+  // Build DATABASE_URL from env vars (expand variables if DATABASE_URL contains ${})
+  let databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl || databaseUrl.includes('${')) {
+    databaseUrl = `postgresql://${process.env.POSTGRES_USER || 'devops_user'}:${process.env.POSTGRES_PASSWORD || 'devops_secure_password'}@${process.env.POSTGRES_HOST || 'localhost'}:${process.env.POSTGRES_PORT || 5432}/${process.env.POSTGRES_DB || 'devops_control_center'}`;
+  }
+  
   const pool = new Pool({
-    connectionString: process.env.DATABASE_URL || 'postgresql://devops_user:devops_secure_password@localhost:5432/devops_control_center',
+    connectionString: databaseUrl,
   });
 
   try {
