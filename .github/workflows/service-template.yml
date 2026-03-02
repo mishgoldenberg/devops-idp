@@ -43,8 +43,20 @@ jobs:
 
       - name: Build Docker image
         run: |
-          IMAGE=${{ inputs.gcp_region }}-docker.pkg.dev/${{ inputs.gcp_project }}/devops-idp/${{ inputs.image_name }}:${{ github.sha }}
-          docker build -t $IMAGE ${{ inputs.service_path }}
+          IMAGE=${{ inputs.gcp_region }}-docker.pkg.dev/${{ inputs.gcp_project }}/devops-idp/${{ inputs.image_name }}:latest
+          SERVICE_PATH=${{ inputs.service_path }}
+
+          # If the service is backend, copy the shared template Dockerfile
+          if [[ "$SERVICE_PATH" == backend* ]]; then
+            echo "Copying shared Dockerfile template for backend service..."
+            cp backend/shared/Dockerfile.template $SERVICE_PATH/Dockerfile
+          fi
+
+          # Build the Docker image
+          echo "Building Docker image: $IMAGE"
+          docker build -t $IMAGE $SERVICE_PATH
+
+          # Set IMAGE as GitHub env for downstream steps
           echo "IMAGE=$IMAGE" >> $GITHUB_ENV
 
       - name: Push Docker image
