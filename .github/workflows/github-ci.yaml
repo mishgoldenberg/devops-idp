@@ -19,13 +19,22 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # 2️⃣ Setup GCP authentication
-      - name: Setup GCP
+        # 1️⃣ Authenticate to GCP (FIRST)
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.GCP_SA_KEY }}'
+
+      # 2️⃣ Install gcloud CLI (SECOND)
+      - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ env.PROJECT_ID }}
-          service_account_key: ${{ secrets.GCP_SA_KEY }}
-          export_default_credentials: true
+
+      # 3️⃣ Configure Docker for Artifact Registry
+      - name: Configure Docker
+        run: |
+          gcloud auth configure-docker ${REGION}-docker.pkg.dev
 
       # 3️⃣ Detect changed services
       - name: Detect changed services
@@ -40,10 +49,6 @@ jobs:
           echo "Changed services: $services"
           echo "services=$services" >> $GITHUB_ENV
 
-      - name: Configure Docker
-        run: |
-          gcloud auth configure-docker ${REGION}-docker.pkg.dev
-          
       # 4️⃣ Build, test, and push Docker images for each changed service
       - name: Build & Push Docker Images
         run: |
