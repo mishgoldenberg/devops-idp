@@ -1,14 +1,10 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-namespace: devops-control-center
+namespace: devops-control-center-dev
 
 resources:
-  - ../../base/namespace.yaml
-  - ../../base/deployments/api-gateway.yaml
-  - ../../base/deployments/frontend.yaml
-  - ../../base/configmaps/application-config.yaml
-  - ../../base/ingress.yaml
+  - ../../base
 
 configMapGenerator:
   - name: dev-config
@@ -16,9 +12,6 @@ configMapGenerator:
       - ENVIRONMENT=development
       - USE_MOCK_DATA=true
 
-replicas:
-  - name: api-gateway
-    count: 1
-  - name: frontend
-    count: 1
-
+patchesStrategicMerge:
+  - patches/replicas.yaml
+  - patches/resources.yaml

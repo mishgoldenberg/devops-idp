@@ -2,7 +2,6 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: api-gateway
-  namespace: devops-control-center
   labels:
     app: api-gateway
     tier: backend
@@ -29,6 +28,7 @@ spec:
           value: "production"
         - name: PORT
           value: "8000"
+        # Secrets and other environment variables
         - name: DATABASE_URL
           valueFrom:
             secretKeyRef:
@@ -53,6 +53,7 @@ spec:
             secretKeyRef:
               name: auth-secret
               key: session-secret
+        # Services URLs
         - name: AUTH_SERVICE_URL
           value: "http://auth-service:8001"
         - name: AZURE_DEVOPS_SERVICE_URL
@@ -86,22 +87,3 @@ spec:
             port: 8000
           initialDelaySeconds: 10
           periodSeconds: 5
-
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: api-gateway
-  namespace: devops-control-center
-  labels:
-    app: api-gateway
-spec:
-  type: ClusterIP
-  ports:
-  - port: 8000
-    targetPort: 8000
-    protocol: TCP
-    name: http
-  selector:
-    app: api-gateway
-

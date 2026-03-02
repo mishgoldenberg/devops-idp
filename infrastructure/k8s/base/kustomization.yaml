@@ -1,0 +1,41 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# All shared resources
+resources:
+  - namespace.yaml
+
+  # Deployments
+  - deployments/api-gateway.yaml
+  - deployments/frontend.yaml
+  # - deployments/auth-service.yaml
+  # - deployments/azure-devops-service.yaml
+  # - deployments/sonarqube-service.yaml
+  # - deployments/artifactory-service.yaml
+  # - deployments/servicenow-service.yaml
+  # - deployments/ai-chatbot-service.yaml
+  # - deployments/approval-service.yaml
+
+  # Services
+  - services/api-gateway-service.yaml
+  - services/frontend-service.yaml
+  #- services/auth-service.yaml
+  #- services/azure-devops-service.yaml
+  #- services/sonarqube-service.yaml
+  #- services/artifactory-service.yaml
+  #- services/servicenow-service.yaml
+  #- services/ai-chatbot-service.yaml
+  #- services/approval-service.yaml
+
+  # ConfigMaps
+  - configmaps/application-config.yaml
+
+  # Ingress
+  - ingress.yaml
+
+# Optional: you can add common ConfigMaps here (will be overridden by overlays)
+configMapGenerator:
+  - name: common-config
+    literals:
+      - ENVIRONMENT=base
+      - USE_MOCK_DATA=true
