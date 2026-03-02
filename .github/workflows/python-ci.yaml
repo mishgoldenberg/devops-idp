@@ -36,17 +36,6 @@ jobs:
           echo "SERVICE_NAME=$SERVICE_NAME" >> $GITHUB_ENV
           echo "Detected service: $SERVICE_NAME"
 
-      # Currently don't need don't have tests
-      # - name: Install dependencies
-      #   if: env.SERVICE_PATH != ''
-      #   run: |
-      #     pip install -r $SERVICE_PATH/requirements.txt
-
-      # - name: Run tests
-      #   if: env.SERVICE_PATH != ''
-      #   run: |
-      #     pytest $SERVICE_PATH/tests
-
       - name: Build Docker image
         if: env.SERVICE_PATH != ''
         run: |
@@ -57,6 +46,6 @@ jobs:
         run: |
           echo ${{ secrets.GCP_SA_KEY }} > gcp-key.json
           gcloud auth activate-service-account --key-file=gcp-key.json
-          gcloud auth configure-docker LOCATION-docker.pkg.dev
-          docker tag $SERVICE_NAME:latest LOCATION-docker.pkg.dev/PROJECT/REPO/$SERVICE_NAME:latest
-          docker push LOCATION-docker.pkg.dev/PROJECT/REPO/$SERVICE_NAME:latest
+          gcloud auth configure-docker europe-west1-docker.pkg.dev
+          docker tag $SERVICE_NAME:latest europe-west1-docker.pkg.dev/devops-idp-489012/devops-idp/$SERVICE_NAME:latest
+          docker push europe-west1-docker.pkg.dev/devops-idp-489012/devops-idp/$SERVICE_NAME:latest

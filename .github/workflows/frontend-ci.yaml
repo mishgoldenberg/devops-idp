@@ -1,4 +1,4 @@
-name: CI - frontend
+name: CI - Frotend Service
 
 on:
   push:
@@ -21,13 +21,6 @@ jobs:
         with:
           node-version: 18
 
-      # Currently don't need don't have tests
-      # - name: Install dependencies
-      #   run: npm ci
-
-      # - name: Run tests
-      #   run: npm test
-
       - name: Build Docker image
         run: docker build -t frontend:latest ./frontend
 
@@ -35,6 +28,6 @@ jobs:
         run: |
           echo ${{ secrets.GCP_SA_KEY }} > gcp-key.json
           gcloud auth activate-service-account --key-file=gcp-key.json
-          gcloud auth configure-docker LOCATION-docker.pkg.dev
-          docker tag frontend:latest LOCATION-docker.pkg.dev/PROJECT/REPO/frontend:latest
-          docker push LOCATION-docker.pkg.dev/PROJECT/REPO/frontend:latest
+          gcloud auth configure-docker europe-west1-docker.pkg.dev
+          docker tag frontend:latest europe-west1-docker.pkg.dev/devops-idp-489012/devops-idp/frontend:latest
+          docker push europe-west1-docker.pkg.dev/devops-idp-489012/devops-idp/frontend:latest
