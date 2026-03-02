@@ -40,6 +40,10 @@ jobs:
           echo "Changed services: $services"
           echo "services=$services" >> $GITHUB_ENV
 
+      - name: Configure Docker
+        run: |
+          gcloud auth configure-docker ${REGION}-docker.pkg.dev
+          
       # 4️⃣ Build, test, and push Docker images for each changed service
       - name: Build & Push Docker Images
         run: |
