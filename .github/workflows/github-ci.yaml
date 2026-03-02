@@ -1,4 +1,4 @@
-name: CI - Build & Test Service
+name: CI - Build & Test Services
 
 on:
   push:
@@ -19,21 +19,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # 2️⃣ Setup Node.js / Python depending on service
-      - name: Setup Environment
-        run: |
-          SERVICE_PATH=$(echo "${{ github.event.head_commit.modified }}" | grep -oE '^(frontend|backend/[^/]+/[^/]+)')
-          echo "SERVICE_PATH=$SERVICE_PATH" >> $GITHUB_ENV
-
-          if [[ "$SERVICE_PATH" == frontend* ]]; then
-            echo "Setting up Node.js for frontend"
-            echo "NODE_VERSION=20" >> $GITHUB_ENV
-          elif [[ "$SERVICE_PATH" == backend/** ]]; then
-            echo "Setting up Python"
-            echo "PYTHON_VERSION=3.12" >> $GITHUB_ENV
-          fi
-
-      # 3️⃣ Setup GCP auth
+      # 2️⃣ Setup GCP authentication
       - name: Setup GCP
         uses: google-github-actions/setup-gcloud@v2
         with:
@@ -41,18 +27,64 @@ jobs:
           service_account_key: ${{ secrets.GCP_SA_KEY }}
           export_default_credentials: true
 
-      # 4️⃣ Build Docker image for this service
-      - name: Build & Push Docker Image
+      # 3️⃣ Detect changed services
+      - name: Detect changed services
+        id: detect
         run: |
-          IMAGE_NAME=$(basename $SERVICE_PATH)
-          DOCKERFILE="infrastructure/docker/Dockerfile.${IMAGE_NAME}"
+          changed_files=$(git diff-tree --no-commit-id --name-only -r ${{ github.sha }})
+          echo "Changed files:"
+          echo "$changed_files"
 
-          if [ ! -f "$DOCKERFILE" ]; then
-            echo "Dockerfile not found for $IMAGE_NAME, skipping build"
-            exit 0
-          fi
+          # Match frontend or backend services
+          services=$(echo "$changed_files" | grep -E '^(frontend|backend/services/[^/]+)' | cut -d/ -f1,2 | sort -u)
+          echo "Changed services: $services"
+          echo "services=$services" >> $GITHUB_ENV
 
-          echo "Building Docker image for $IMAGE_NAME"
-          docker build -t $IMAGE_NAME:latest -f $DOCKERFILE $SERVICE_PATH
-          docker tag $IMAGE_NAME:latest ${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}:latest
-          docker push ${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}:latest
+      # 4️⃣ Build, test, and push Docker images for each changed service
+      - name: Build & Push Docker Images
+        run: |
+          for SERVICE_PATH in $services; do
+            IMAGE_NAME=$(basename $SERVICE_PATH)
+            echo "Processing service: $SERVICE_PATH -> IMAGE: $IMAGE_NAME"
+
+            DOCKERFILE="infrastructure/docker/Dockerfile.${IMAGE_NAME}"
+
+            if [ ! -f "$DOCKERFILE" ]; then
+              echo "Dockerfile not found for $IMAGE_NAME, skipping..."
+              continue
+            fi
+
+            # Determine language for environment setup
+            if [[ "$SERVICE_PATH" == "frontend" ]]; then
+              echo "Setting up Node.js"
+              NODE_VERSION=20
+              curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | sudo -E bash -
+              sudo apt-get install -y nodejs
+              # Optional: run tests
+              if [ -f "$SERVICE_PATH/package.json" ]; then
+                cd $SERVICE_PATH
+                npm install
+                npm test || echo "Frontend tests failed"
+                cd -
+              fi
+            else
+              echo "Setting up Python"
+              PYTHON_VERSION=3.12
+              sudo apt-get update
+              sudo apt-get install -y python${PYTHON_VERSION} python3-pip
+              # Optional: run tests
+              if [ -f "$SERVICE_PATH/requirements.txt" ]; then
+                pip install -r $SERVICE_PATH/requirements.txt
+                if [ -f "$SERVICE_PATH/tests" ]; then
+                  pytest $SERVICE_PATH/tests || echo "Python tests failed"
+                fi
+              fi
+            fi
+
+            echo "Building Docker image for $IMAGE_NAME"
+            docker build -t $IMAGE_NAME:latest -f $DOCKERFILE $SERVICE_PATH
+
+            echo "Tagging and pushing Docker image"
+            docker tag $IMAGE_NAME:latest ${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}:latest
+            docker push ${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}:latest
+          done
