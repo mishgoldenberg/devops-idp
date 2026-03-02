@@ -43,7 +43,7 @@ jobs:
 
       - name: Build Docker image
         run: |
-          IMAGE=${{ inputs.gcp_region }}-docker.pkg.dev/${{ inputs.gcp_project }}/${{ inputs.image_name }}:${{ github.sha }}
+          IMAGE=${{ inputs.gcp_region }}-docker.pkg.dev/${{ inputs.gcp_project }}/devops-idp/${{ inputs.image_name }}:${{ github.sha }}
           docker build -t $IMAGE ${{ inputs.service_path }}
           echo "IMAGE=$IMAGE" >> $GITHUB_ENV
 
