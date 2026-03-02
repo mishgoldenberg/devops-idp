@@ -1,0 +1,62 @@
+name: CI - Python Services
+
+on:
+  push:
+    paths:
+      - 'backend/services/**'
+  pull_request:
+    paths:
+      - 'backend/services/**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    name: Build & Test Python Service
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.11
+
+      # Detect service folder dynamically
+      - name: Detect service
+        id: detect
+        run: |
+          # find the first changed service folder in backend/services or shared/database
+          SERVICE_PATH=$(git diff --name-only ${{ github.sha }}^ ${{ github.sha }} | grep -E 'backend/(services|shared|database)/[^/]+/' | head -n 1)
+          if [ -z "$SERVICE_PATH" ]; then
+            echo "No Python service changed, skipping."
+            exit 0
+          fi
+          SERVICE_NAME=$(echo $SERVICE_PATH | cut -d/ -f3)
+          echo "SERVICE_PATH=$SERVICE_PATH" >> $GITHUB_ENV
+          echo "SERVICE_NAME=$SERVICE_NAME" >> $GITHUB_ENV
+          echo "Detected service: $SERVICE_NAME"
+
+      # Currently don't need don't have tests
+      # - name: Install dependencies
+      #   if: env.SERVICE_PATH != ''
+      #   run: |
+      #     pip install -r $SERVICE_PATH/requirements.txt
+
+      # - name: Run tests
+      #   if: env.SERVICE_PATH != ''
+      #   run: |
+      #     pytest $SERVICE_PATH/tests
+
+      - name: Build Docker image
+        if: env.SERVICE_PATH != ''
+        run: |
+          docker build -t $SERVICE_NAME:latest $SERVICE_PATH
+
+      - name: Push Docker image
+        if: env.SERVICE_PATH != ''
+        run: |
+          echo ${{ secrets.GCP_SA_KEY }} > gcp-key.json
+          gcloud auth activate-service-account --key-file=gcp-key.json
+          gcloud auth configure-docker LOCATION-docker.pkg.dev
+          docker tag $SERVICE_NAME:latest LOCATION-docker.pkg.dev/PROJECT/REPO/$SERVICE_NAME:latest
+          docker push LOCATION-docker.pkg.dev/PROJECT/REPO/$SERVICE_NAME:latest
