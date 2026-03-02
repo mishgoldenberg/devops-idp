@@ -1,0 +1,58 @@
+name: CI - Build & Test Service
+
+on:
+  push:
+    paths:
+      - 'frontend/**'
+      - 'backend/services/**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      PROJECT_ID: devops-idp-489012
+      REGION: europe-west1
+      REPOSITORY: devops-idp
+
+    steps:
+      # 1️⃣ Checkout code
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # 2️⃣ Setup Node.js / Python depending on service
+      - name: Setup Environment
+        run: |
+          SERVICE_PATH=$(echo "${{ github.event.head_commit.modified }}" | grep -oE '^(frontend|backend/[^/]+/[^/]+)')
+          echo "SERVICE_PATH=$SERVICE_PATH" >> $GITHUB_ENV
+
+          if [[ "$SERVICE_PATH" == frontend* ]]; then
+            echo "Setting up Node.js for frontend"
+            echo "NODE_VERSION=20" >> $GITHUB_ENV
+          elif [[ "$SERVICE_PATH" == backend/** ]]; then
+            echo "Setting up Python"
+            echo "PYTHON_VERSION=3.12" >> $GITHUB_ENV
+          fi
+
+      # 3️⃣ Setup GCP auth
+      - name: Setup GCP
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          export_default_credentials: true
+
+      # 4️⃣ Build Docker image for this service
+      - name: Build & Push Docker Image
+        run: |
+          IMAGE_NAME=$(basename $SERVICE_PATH)
+          DOCKERFILE="infrastructure/docker/Dockerfile.${IMAGE_NAME}"
+
+          if [ ! -f "$DOCKERFILE" ]; then
+            echo "Dockerfile not found for $IMAGE_NAME, skipping build"
+            exit 0
+          fi
+
+          echo "Building Docker image for $IMAGE_NAME"
+          docker build -t $IMAGE_NAME:latest -f $DOCKERFILE $SERVICE_PATH
+          docker tag $IMAGE_NAME:latest ${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}:latest
+          docker push ${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}:latest
