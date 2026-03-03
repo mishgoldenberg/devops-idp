@@ -59,6 +59,11 @@ services:
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_secure_password}
       JWT_SECRET: ${JWT_SECRET}
+      # External integrations (passed from host .env)
+      USE_MOCK_AZURE_DEVOPS: ${USE_MOCK_AZURE_DEVOPS:-true}
+      AZURE_DEVOPS_API_URL: ${AZURE_DEVOPS_API_URL:-https://dev.azure.com}
+      AZURE_DEVOPS_PAT: ${AZURE_DEVOPS_PAT:-}
+      AZURE_DEVOPS_QUERY_USER: ${AZURE_DEVOPS_QUERY_USER:-}
     ports:
       - "8000:8000"
     depends_on:
