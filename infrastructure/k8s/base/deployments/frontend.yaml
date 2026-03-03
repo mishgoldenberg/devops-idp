@@ -6,7 +6,7 @@ metadata:
     app: frontend
     tier: frontend
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: frontend
@@ -18,14 +18,14 @@ spec:
     spec:
       containers:
       - name: frontend
-        image: devops-control-center/frontend:latest
+        image: europe-west1-docker.pkg.dev/devops-idp-489012/devops-idp/frontend:latest
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 3000
           name: http
         env:
         - name: NEXT_PUBLIC_API_GATEWAY_URL
-          value: "http://api-gateway:8000"
+          value: "http://backend:8000"
         - name: NODE_ENV
           value: "production"
         resources:

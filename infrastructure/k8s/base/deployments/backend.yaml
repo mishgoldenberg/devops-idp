@@ -1,24 +1,24 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: api-gateway
+  name: backend
   labels:
-    app: api-gateway
+    app: backend
     tier: backend
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
-      app: api-gateway
+      app: backend
   template:
     metadata:
       labels:
-        app: api-gateway
+        app: backend
         tier: backend
     spec:
       containers:
-      - name: api-gateway
-        image: devops-control-center/api-gateway:latest
+      - name: backend
+        image: europe-west1-docker.pkg.dev/devops-idp-489012/devops-idp/backend:latest
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8000
@@ -32,8 +32,8 @@ spec:
         - name: DATABASE_URL
           valueFrom:
             secretKeyRef:
-              name: database-secret
-              key: connection-string
+              name: postgres-secret
+              key: POSTGRES_PASSWORD
         - name: REDIS_HOST
           value: redis-service
         - name: REDIS_PORT
@@ -42,17 +42,17 @@ spec:
           valueFrom:
             secretKeyRef:
               name: redis-secret
-              key: password
-        - name: JWT_SECRET
-          valueFrom:
-            secretKeyRef:
-              name: auth-secret
-              key: jwt-secret
-        - name: SESSION_SECRET
-          valueFrom:
-            secretKeyRef:
-              name: auth-secret
-              key: session-secret
+              key: REDIS_PASSWORD
+        # - name: JWT_SECRET
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: auth-secret
+        #       key: JWT_SECRET
+        # - name: SESSION_SECRET
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: auth-secret
+        #       key: SESSION_SECRET
         # Services URLs
         - name: AUTH_SERVICE_URL
           value: "http://auth-service:8001"

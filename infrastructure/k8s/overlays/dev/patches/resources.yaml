@@ -1,12 +1,12 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: api-gateway
+  name: backend
 spec:
   template:
     spec:
       containers:
-        - name: api-gateway
+        - name: backend
           resources:
             requests:
               cpu: "250m"

@@ -22,7 +22,7 @@ patchesStrategicMerge:
 
 # Update images for production
 images:
-  - name: devops-control-center/api-gateway
+  - name: devops-control-center/backend
     newTag: v1.0.0
   - name: devops-control-center/frontend
     newTag: v1.0.0
