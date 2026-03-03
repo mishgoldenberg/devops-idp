@@ -48,7 +48,7 @@ jobs:
 
           # Build the Docker image
           echo "Building Docker image: $IMAGE"
-          docker build -t $IMAGE $SERVICE_PATH
+          docker build -f $SERVICE_PATH/Dockerfile -t $IMAGE .
 
           # Set IMAGE as GitHub env for downstream steps
           echo "IMAGE=$IMAGE" >> $GITHUB_ENV
