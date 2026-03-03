@@ -20,12 +20,15 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     setMounted(true);
     // Check localStorage for saved theme preference
     const savedTheme = localStorage.getItem('theme') as Theme | null;
-    if (savedTheme) {
-      setThemeState(savedTheme);
+    const initialTheme = savedTheme || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    setThemeState(initialTheme);
+    
+    // Apply theme immediately to prevent flash
+    const root = document.documentElement;
+    if (initialTheme === 'dark') {
+      root.classList.add('dark');
     } else {
-      // Check system preference
-      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      setThemeState(prefersDark ? 'dark' : 'light');
+      root.classList.remove('dark');
     }
   }, []);
 

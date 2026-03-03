@@ -16,7 +16,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    Frontend (Next.js)                        │
+│                    Frontend (Next.js)                      │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
 │  │   Dashboard  │  │   Approvals  │  │ Observability│      │
 │  │   Widgets    │  │   Self-Svc   │  │   Metrics    │      │
@@ -26,28 +26,21 @@
                             │ REST API
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              API Gateway / BFF (Node.js)                     │
-│  - Authentication & Authorization                            │
-│  - Request routing & aggregation                             │
-│  - Rate limiting & caching                                   │
-└────────┬────────┬────────┬────────┬────────┬────────┬───────┘
-         │        │        │        │        │        │
-    ┌────▼───┐┌──▼───┐┌───▼───┐┌──▼───┐┌───▼───┐┌──▼───┐
-    │  Auth  ││ ADO  ││ Sonar ││ Arti ││  SNow ││  AI  │
-    │  Svc   ││ Svc  ││  Svc  ││  Svc ││  Svc  ││ Svc  │
-    └────┬───┘└──┬───┘└───┬───┘└──┬───┘└───┬───┘└──┬───┘
-         │       │        │       │        │       │
-         └───────┴────────┴───────┴────────┴───────┘
-                            │
-         ┌──────────────────┴──────────────────┐
-         │                                      │
-    ┌────▼────────┐                    ┌───────▼────┐
-    │ PostgreSQL  │                    │   Redis    │
-    │  - Users    │                    │  - Cache   │
-    │  - Dashbds  │                    │  - Session │
-    │  - Apprvls  │                    └────────────┘
-    │  - Audit    │
-    └─────────────┘
+│           Backend API / BFF (Python + FastAPI)             │
+│  - Authentication & Authorization                          │
+│  - Request routing & aggregation                           │
+│  - Rate limiting & caching (via Redis)                     │
+│  - Adapter modules for ADO / SonarQube / Artifactory       │
+│    / ServiceNow / AI Chatbot (mocked by default)           │
+└───────────────┬────────────────────────────────────────────┘
+                │
+   ┌────────────▼────────────┐          ┌───────────────────┐
+   │       PostgreSQL        │          │       Redis       │
+   │  - Users                │          │  - Cache          │
+   │  - Dashboards           │          │  - Session        │
+   │  - Approvals            │          └───────────────────┘
+   │  - Audit & Metrics      │
+   └─────────────────────────┘
 ```
 
 ### Services Architecture
@@ -55,14 +48,7 @@
 | Service | Port | Purpose |
 |---------|------|---------|
 | **frontend** | 3000 | Next.js web application |
-| **api-gateway** | 8000 | BFF, auth, routing, aggregation |
-| **auth-service** | 8001 | SSO integration, RBAC mapping |
-| **azure-devops-service** | 8002 | ADO integration (PBIs, PRs, pipelines) |
-| **sonarqube-service** | 8003 | Code quality metrics |
-| **artifactory-service** | 8004 | Artifact management |
-| **servicenow-service** | 8005 | Ticket integration |
-| **ai-chatbot-service** | 8006 | AI assistant integration |
-| **approval-service** | 8007 | Self-service approvals & audit |
+| **api-gateway** | 8000 | Python FastAPI backend (BFF, auth, routing, aggregation, approvals, integrations) |
 | **postgres** | 5432 | Primary data store |
 | **redis** | 6379 | Cache & session store |
 
@@ -190,11 +176,11 @@ Every approval action logs:
 
 ### Adapter Pattern
 
-Each external system has:
-1. **Service Layer** - Dedicated microservice
-2. **Mock Adapter** - Returns realistic sample data for local dev
-3. **Real Adapter** - Placeholder for production integration
-4. **Interface Contract** - TypeScript types shared with frontend
+Each external system is integrated via an **adapter module inside the Python backend**:
+1. **Adapter Module** - Python code that knows how to talk to the external system
+2. **Mock Implementation** - Returns realistic sample data for local dev (current default)
+3. **Real Implementation** - Placeholder for production integration
+4. **Stable API Contract** - JSON shapes shared with the frontend via the REST API
 
 ### Integration Points (Currently Mocked)
 
@@ -294,7 +280,7 @@ The setup script will:
 1. ✅ Check prerequisites (Docker, Node.js)
 2. ✅ Copy `env.example` to `.env` if it doesn't exist
 3. ✅ Build all Docker images
-4. ✅ Start all services (database, Redis, backend services, frontend)
+4. ✅ Start all services (database, Redis, Python backend, frontend)
 5. ✅ Wait for services to be healthy
 6. ✅ Run database migrations
 7. ✅ Seed initial data (roles, users, widgets)
@@ -348,7 +334,7 @@ docker compose up -d
 
 This will:
 - Pull required Docker images (PostgreSQL, Redis)
-- Build application images (frontend, backend services)
+- Build application images (frontend, Python backend)
 - Start all containers
 - Set up Docker networks and volumes
 
@@ -521,18 +507,9 @@ docker compose exec redis redis-cli -a Devops4ever
      ./restart.sh --rebuild-frontend
      ```
 
-2. **Backend Changes:**
-   - Edit files in `backend/services/{service-name}/src/`
-   - Changes are reflected immediately (services run with volume mounts)
-   - Quick restart:
-     ```bash
-     # Windows
-     .\restart.ps1
-     
-     # Linux/Mac
-     ./restart.sh
-     ```
-   - Or restart specific service:
+2. **Backend Changes (Python):**
+   - Edit files in `backend/python_backend/app/`
+   - Rebuild/restart backend container:
      ```bash
      # Windows
      .\restart.ps1 -Service api-gateway
@@ -725,27 +702,14 @@ devops-control-center/
 │   └── next.config.js
 │
 ├── backend/
-│   ├── services/
-│   │   ├── api-gateway/         # Main API Gateway + BFF
-│   │   │   ├── src/
-│   │   │   │   ├── routes/
-│   │   │   │   ├── middleware/
-│   │   │   │   ├── services/
-│   │   │   │   └── index.ts
-│   │   │   └── package.json
-│   │   │
-│   │   ├── auth-service/        # SSO + RBAC
-│   │   ├── azure-devops-service/
-│   │   ├── sonarqube-service/
-│   │   ├── artifactory-service/
-│   │   ├── servicenow-service/
-│   │   ├── ai-chatbot-service/
-│   │   └── approval-service/
-│   │
-│   ├── shared/                   # Shared libraries
-│   │   ├── types/
-│   │   ├── utils/
-│   │   └── rbac/
+│   ├── python_backend/           # Python FastAPI backend (single service)
+│   │   ├── app/
+│   │   │   ├── api/             # Routers (auth, dashboards, metrics, integrations, approvals)
+│   │   │   ├── db.py            # Postgres helper
+│   │   │   ├── redis_client.py  # Redis helper
+│   │   │   ├── security.py      # JWT + RBAC helpers
+│   │   │   └── main.py          # FastAPI entrypoint
+│   │   └── requirements.txt
 │   │
 │   └── database/
 │       ├── migrations/
@@ -755,7 +719,7 @@ devops-control-center/
 ├── infrastructure/
 │   ├── docker/
 │   │   ├── Dockerfile.frontend
-│   │   ├── Dockerfile.backend
+│   │   ├── Dockerfile.python-backend
 │   │   └── nginx.conf
 │   │
 │   ├── k8s/                      # Kubernetes manifests
@@ -793,8 +757,7 @@ devops-control-center/
 The `docker-compose.yml` orchestrates all services:
 
 - Frontend (port 3000)
-- API Gateway (port 8000)
-- 7 Backend services (ports 8001-8007)
+- Python backend API (`api-gateway` service, port 8000)
 - PostgreSQL (port 5432)
 - Redis (port 6379)
 

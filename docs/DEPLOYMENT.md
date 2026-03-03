@@ -21,21 +21,20 @@ cp .env.example .env
 # Edit .env with your configuration
 
 # 3. Start all services with Docker Compose
-docker-compose up -d
+docker compose up -d
 
 # 4. Wait for services to be healthy
-docker-compose ps
+docker compose ps
 
-# 5. Run database migrations
-docker-compose exec api-gateway npm run migrate
+# 5. Run database migrations (from host)
+npm run migrate
 
-# 6. Seed initial data
-docker-compose exec api-gateway npm run seed
+# 6. Seed initial data (from host)
+npm run seed
 
 # 7. Access the application
 # Frontend: http://localhost:3000
-# API Gateway: http://localhost:8000
-# API Docs: http://localhost:8000/api-docs
+# Backend API: http://localhost:8000
 ```
 
 ### Test Login
@@ -61,14 +60,11 @@ Use these seeded accounts:
 ### Step 1: Build Container Images
 
 ```bash
-# Build backend services
+# Build Python backend
 docker build \
-  --build-arg SERVICE_PATH=backend/services/api-gateway \
-  -f infrastructure/docker/Dockerfile.backend \
+  -f infrastructure/docker/Dockerfile.python-backend \
   -t your-registry/devops-control-center/api-gateway:v1.0.0 \
   .
-
-# Repeat for other services (auth, azure-devops, sonarqube, etc.)
 
 # Build frontend
 docker build \
@@ -164,14 +160,10 @@ kubectl logs -f deployment/frontend -n devops-control-center
 ### Step 5: Run Database Migrations
 
 ```bash
-# Get API Gateway pod name
-POD=$(kubectl get pods -n devops-control-center -l app=api-gateway -o jsonpath='{.items[0].metadata.name}')
-
-# Run migrations
-kubectl exec -it $POD -n devops-control-center -- npm run migrate
-
-# Seed initial data
-kubectl exec -it $POD -n devops-control-center -- npm run seed
+# From a CI job or an admin pod that has Node.js available:
+cd /workspace/devops-control-center
+npm run migrate
+npm run seed
 ```
 
 ### Step 6: Access Application

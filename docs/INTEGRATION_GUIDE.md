@@ -6,26 +6,25 @@ This guide explains how to replace mock adapters with real integrations for exte
 
 ## General Integration Pattern
 
-All external system integrations follow the **Adapter Pattern**:
+All external system integrations now follow the **Adapter Pattern inside the Python backend**:
 
 ```
-Service
-├── src/
-│   ├── adapters/
-│   │   ├── mock-adapter.ts    # Development mock
-│   │   ├── real-adapter.ts    # Production integration
-│   │   └── index.ts           # Adapter factory
-│   ├── config/
-│   │   └── index.ts           # Configuration
-│   └── index.ts               # Service entry point
+backend/python_backend/app/
+├── api/
+│   ├── azure_devops.py   # ADO adapter (mocked by default)
+│   ├── sonarqube.py      # SonarQube adapter (mocked by default)
+│   ├── artifactory.py    # Artifactory adapter (mocked by default)
+│   ├── servicenow.py     # ServiceNow adapter (mocked by default)
+│   └── ai_chatbot.py     # AI chatbot adapter (mocked by default)
+└── ...
 ```
 
 To switch from mock to real integration:
 
-1. Set environment variable: `USE_MOCK_DATA=false`
-2. Configure credentials in environment or Vault
-3. Implement real adapter methods
-4. Test connectivity
+1. Add real HTTP calls in the relevant `*.py` module (e.g. `azure_devops.py`)
+2. Configure credentials in environment variables or Vault
+3. Keep the response JSON shape compatible with the existing API reference
+4. Test connectivity from the running Python backend container
 
 ---
 
@@ -35,7 +34,6 @@ To switch from mock to real integration:
 
 ```bash
 # Environment variables
-USE_MOCK_AZURE_DEVOPS=false
 AZURE_DEVOPS_ORG=your-organization
 AZURE_DEVOPS_PAT=your-personal-access-token
 AZURE_DEVOPS_API_URL=https://dev.azure.com/${AZURE_DEVOPS_ORG}
@@ -43,53 +41,8 @@ AZURE_DEVOPS_API_URL=https://dev.azure.com/${AZURE_DEVOPS_ORG}
 
 ### Implementation
 
-File: `backend/services/azure-devops-service/src/adapters/real-adapter.ts`
-
-```typescript
-export class RealAzureDevOpsAdapter {
-  private client: AxiosInstance;
-
-  constructor(org: string, pat: string) {
-    this.client = axios.create({
-      baseURL: `https://dev.azure.com/${org}`,
-      headers: {
-        'Authorization': `Basic ${Buffer.from(`:${pat}`).toString('base64')}`,
-      },
-    });
-  }
-
-  async getWorkItems(username: string): Promise<WorkItem[]> {
-    const response = await this.client.post(
-      `/_apis/wit/wiql?api-version=7.0`,
-      {
-        query: `SELECT [System.Id], [System.Title], [System.State] 
-                FROM WorkItems 
-                WHERE [System.AssignedTo] = '${username}'
-                AND [System.State] <> 'Closed'`
-      }
-    );
-    
-    const workItemIds = response.data.workItems.map((wi: any) => wi.id);
-    
-    // Batch fetch work item details
-    const detailsResponse = await this.client.post(
-      `/_apis/wit/workitemsbatch?api-version=7.0`,
-      {
-        ids: workItemIds,
-        fields: ['System.Id', 'System.Title', 'System.State', 'System.WorkItemType']
-      }
-    );
-    
-    return detailsResponse.data.value.map((item: any) => ({
-      id: item.id,
-      title: item.fields['System.Title'],
-      state: item.fields['System.State'],
-      type: item.fields['System.WorkItemType'],
-      // ... map other fields
-    }));
-  }
-}
-```
+Extend `backend/python_backend/app/api/azure_devops.py` to call the real Azure DevOps REST API
+and map responses into the existing JSON shape documented in `docs/API_REFERENCE.md`.
 
 ### API Documentation
 
@@ -110,48 +63,8 @@ SONARQUBE_TOKEN=your-sonarqube-token
 
 ### Implementation
 
-```typescript
-export class RealSonarQubeAdapter {
-  private client: AxiosInstance;
-
-  constructor(url: string, token: string) {
-    this.client = axios.create({
-      baseURL: url,
-      headers: {
-        'Authorization': `Bearer ${token}`,
-      },
-    });
-  }
-
-  async getProjects(): Promise<SonarProject[]> {
-    const response = await this.client.get('/api/components/search', {
-      params: {
-        qualifiers: 'TRK',
-        ps: 100
-      }
-    });
-    
-    // For each project, fetch quality gate and metrics
-    const projects = await Promise.all(
-      response.data.components.map(async (component: any) => {
-        const [qualityGate, measures] = await Promise.all([
-          this.getQualityGate(component.key),
-          this.getMetrics(component.key)
-        ]);
-        
-        return {
-          key: component.key,
-          name: component.name,
-          quality_gate: qualityGate,
-          metrics: measures
-        };
-      })
-    );
-    
-    return projects;
-  }
-}
-```
+Extend `backend/python_backend/app/api/sonarqube.py` to call the real SonarQube API
+and keep the response structure aligned with the existing widgets.
 
 ### API Documentation
 
@@ -172,42 +85,8 @@ ARTIFACTORY_USERNAME=your-username
 
 ### Implementation
 
-```typescript
-export class RealArtifactoryAdapter {
-  private client: AxiosInstance;
-
-  constructor(url: string, apiKey: string, username: string) {
-    this.client = axios.create({
-      baseURL: url,
-      headers: {
-        'X-JFrog-Art-Api': apiKey,
-      },
-      auth: {
-        username,
-        password: apiKey
-      }
-    });
-  }
-
-  async getArtifacts(): Promise<Artifact[]> {
-    const response = await this.client.get('/api/storage/', {
-      params: {
-        list: true,
-        deep: 1,
-        listFolders: 0
-      }
-    });
-    
-    return response.data.files.map((file: any) => ({
-      name: file.uri,
-      path: file.path,
-      size: file.size,
-      created: new Date(file.created),
-      // ... map other fields
-    }));
-  }
-}
-```
+Extend `backend/python_backend/app/api/artifactory.py` with real HTTP calls
+to Artifactory, mapping responses into the current JSON fields.
 
 ### API Documentation
 
@@ -232,53 +111,8 @@ SERVICENOW_PASSWORD=your-password
 
 ### Implementation
 
-```typescript
-export class RealServiceNowAdapter {
-  private client: AxiosInstance;
-  private accessToken: string | null = null;
-
-  constructor(url: string, clientId: string, clientSecret: string) {
-    this.client = axios.create({
-      baseURL: url,
-    });
-  }
-
-  async authenticate(): Promise<void> {
-    const response = await this.client.post('/oauth_token.do', {
-      grant_type: 'client_credentials',
-      client_id: this.clientId,
-      client_secret: this.clientSecret
-    });
-    
-    this.accessToken = response.data.access_token;
-  }
-
-  async getTickets(username: string): Promise<Ticket[]> {
-    if (!this.accessToken) {
-      await this.authenticate();
-    }
-    
-    const response = await this.client.get('/api/now/table/incident', {
-      headers: {
-        'Authorization': `Bearer ${this.accessToken}`
-      },
-      params: {
-        sysparm_query: `assigned_to.email=${username}^active=true`,
-        sysparm_fields: 'number,short_description,state,priority,sys_created_on',
-        sysparm_limit: 100
-      }
-    });
-    
-    return response.data.result.map((incident: any) => ({
-      number: incident.number,
-      short_description: incident.short_description,
-      state: incident.state,
-      priority: incident.priority,
-      // ... map other fields
-    }));
-  }
-}
-```
+Extend `backend/python_backend/app/api/servicenow.py` to call the real ServiceNow
+APIs and return the same ticket JSON currently expected by the frontend.
 
 ### API Documentation
 
@@ -299,148 +133,38 @@ AI_CHATBOT_TOKEN=your-ai-token
 
 ### Implementation
 
-```typescript
-export class RealAIChatbotAdapter {
-  private client: AxiosInstance;
-
-  constructor(apiUrl: string, token: string) {
-    this.client = axios.create({
-      baseURL: apiUrl,
-      headers: {
-        'Authorization': `Bearer ${token}`,
-      },
-    });
-  }
-
-  async sendMessage(message: string, conversationId?: string): Promise<ChatResponse> {
-    const response = await this.client.post('/chat', {
-      message,
-      conversation_id: conversationId,
-      stream: false
-    });
-    
-    return {
-      message: response.data.response,
-      conversationId: response.data.conversation_id,
-      // ... map other fields
-    };
-  }
-}
-```
+Extend `backend/python_backend/app/api/ai_chatbot.py` to forward chat messages
+to a real AI backend and return the response in the existing format.
 
 ---
 
 ## Testing Integrations
 
-### 1. Unit Tests
-
-```typescript
-// Example test
-describe('RealAzureDevOpsAdapter', () => {
-  it('should fetch work items', async () => {
-    const adapter = new RealAzureDevOpsAdapter('org', 'pat');
-    const workItems = await adapter.getWorkItems('user@email.com');
-    
-    expect(workItems).toBeInstanceOf(Array);
-    expect(workItems[0]).toHaveProperty('id');
-    expect(workItems[0]).toHaveProperty('title');
-  });
-});
-```
-
-### 2. Integration Tests
-
-```bash
-# Set test environment
-export USE_MOCK_DATA=false
-export AZURE_DEVOPS_ORG=test-org
-export AZURE_DEVOPS_PAT=test-pat
-
-# Run integration tests
-npm run test:integration
-```
-
-### 3. Manual Testing
-
-```bash
-# Start service
-cd backend/services/azure-devops-service
-npm run dev
-
-# Test endpoint
-curl -X GET "http://localhost:8002/work-items?username=test@email.com"
-```
+Use Python testing tools (e.g. `pytest`, FastAPI's `TestClient`) to exercise the
+FastAPI endpoints once real integrations are added, and manually test via `curl`
+against the `/api/...` endpoints exposed by the Python backend.
 
 ---
 
 ## Error Handling
 
-All adapters should implement proper error handling:
-
-```typescript
-async getWorkItems(username: string): Promise<WorkItem[]> {
-  try {
-    const response = await this.client.get('/api/workitems');
-    return response.data;
-  } catch (error) {
-    if (axios.isAxiosError(error)) {
-      if (error.response?.status === 401) {
-        throw new Error('Authentication failed - check credentials');
-      } else if (error.response?.status === 404) {
-        throw new Error('Resource not found');
-      } else if (error.response?.status >= 500) {
-        throw new Error('External service unavailable');
-      }
-    }
-    throw new Error(`Failed to fetch work items: ${error.message}`);
-  }
-}
-```
+All adapters should implement proper error handling, mapping external API
+errors into clear messages and appropriate HTTP status codes from the
+FastAPI routes.
 
 ---
 
 ## Caching Strategy
 
-Implement caching to reduce external API calls:
-
-```typescript
-async getWorkItems(username: string): Promise<WorkItem[]> {
-  const cacheKey = `workitems:${username}`;
-  
-  // Check cache
-  const cached = await this.redis.get(cacheKey);
-  if (cached) {
-    return JSON.parse(cached);
-  }
-  
-  // Fetch from API
-  const workItems = await this.fetchFromAPI(username);
-  
-  // Cache for 5 minutes
-  await this.redis.setex(cacheKey, 300, JSON.stringify(workItems));
-  
-  return workItems;
-}
-```
+Implement caching to reduce external API calls using the shared Redis client
+in `backend/python_backend/app/redis_client.py`.
 
 ---
 
 ## Monitoring Integration Health
 
-Update service health status:
-
-```typescript
-async updateHealthStatus(serviceName: string, isHealthy: boolean) {
-  const status = isHealthy ? 'HEALTHY' : 'DOWN';
-  
-  await pool.query(
-    `UPDATE service_health 
-     SET status = $1, last_check_at = CURRENT_TIMESTAMP 
-     WHERE service_name = $2`,
-    [status, serviceName]
-  );
-}
-```
+Update service health status from the Python backend by writing to the
+`service_health` table using the helpers in `backend/python_backend/app/db.py`.
 
 ---
 

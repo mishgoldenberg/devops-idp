@@ -139,14 +139,14 @@ export default function HowToPage() {
   const [searchQuery, setSearchQuery] = useState('');
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       {/* Header */}
-      <div className="bg-white border-b border-gray-200">
+      <div className="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="flex items-center justify-between mb-6">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900">Developer How-To Guides</h1>
-              <p className="mt-2 text-gray-600">Step-by-step tutorials and guides to help you build amazing applications</p>
+              <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">Developer How-To Guides</h1>
+              <p className="mt-2 text-gray-600 dark:text-gray-300">Step-by-step tutorials and guides to help you build amazing applications</p>
             </div>
             <div className="relative">
               <input
@@ -154,9 +154,9 @@ export default function HowToPage() {
                 placeholder="Search guides..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-80 pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                className="w-80 pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               />
-              <Search className="absolute left-3 top-2.5 w-5 h-5 text-gray-400" />
+              <Search className="absolute left-3 top-2.5 w-5 h-5 text-gray-400 dark:text-gray-500" />
             </div>
           </div>
 
@@ -169,7 +169,7 @@ export default function HowToPage() {
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${
                   selectedCategory === cat.id
                     ? 'bg-blue-600 text-white'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
                 }`}
               >
                 <cat.icon className="w-4 h-4" />
@@ -180,8 +180,8 @@ export default function HowToPage() {
 
           {/* Sort Options */}
           <div className="flex items-center gap-4 mt-4">
-            <span className="text-sm text-gray-600">Sort by:</span>
-            <select className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500">
+            <span className="text-sm text-gray-600 dark:text-gray-300">Sort by:</span>
+            <select className="px-3 py-1.5 border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500">
               <option>Recent</option>
               <option>Popular</option>
               <option>Most Viewed</option>
@@ -196,7 +196,7 @@ export default function HowToPage() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Featured Guides */}
         <div className="mb-12">
-          <h2 className="text-2xl font-bold text-gray-900 mb-6">Featured Guides</h2>
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-6">Featured Guides</h2>
           <div className="grid md:grid-cols-2 gap-6">
             {featuredGuides.map((guide) => (
               <Card key={guide.id} className="overflow-hidden hover:shadow-lg transition-shadow cursor-pointer">
@@ -234,8 +234,8 @@ export default function HowToPage() {
         {/* Latest Guides */}
         <div>
           <div className="flex items-center justify-between mb-6">
-            <h2 className="text-2xl font-bold text-gray-900">Latest Guides</h2>
-            <a href="#" className="text-blue-600 hover:text-blue-700 font-medium text-sm">View all guides →</a>
+            <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Latest Guides</h2>
+            <a href="#" className="text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 font-medium text-sm">View all guides →</a>
           </div>
 
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -247,7 +247,7 @@ export default function HowToPage() {
                 <div className="p-6">
                   <Badge className="mb-3">{guide.difficulty}</Badge>
                   <h3 className="text-lg font-bold text-gray-900 mb-2">{guide.title}</h3>
-                  <p className="text-sm text-gray-600 mb-4 line-clamp-2">{guide.description}</p>
+                  <p className="text-sm text-gray-600 dark:text-gray-300 mb-4 line-clamp-2">{guide.description}</p>
                   
                   <div className="flex items-center justify-between text-sm text-gray-500 mb-4">
                     <span className="flex items-center gap-1">
@@ -256,9 +256,9 @@ export default function HowToPage() {
                     </span>
                   </div>
 
-                  <div className="flex items-center justify-between pt-4 border-t border-gray-200">
-                    <span className="text-xs text-gray-600">{guide.author}</span>
-                    <div className="flex items-center gap-3 text-xs text-gray-600">
+                  <div className="flex items-center justify-between pt-4 border-t border-gray-200 dark:border-gray-700">
+                    <span className="text-xs text-gray-600 dark:text-gray-400">{guide.author}</span>
+                    <div className="flex items-center gap-3 text-xs text-gray-600 dark:text-gray-400">
                       <span>❤️ {guide.likes}</span>
                       <span>💬 {guide.comments}</span>
                     </div>
@@ -287,12 +287,12 @@ export default function HowToPage() {
 
         {/* Popular Tags */}
         <div className="mt-8">
-          <h3 className="text-sm font-medium text-gray-700 mb-3">Popular Tags:</h3>
+          <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Popular Tags:</h3>
           <div className="flex flex-wrap gap-2">
             {tags.map((tag) => (
               <button
                 key={tag}
-                className="px-3 py-1 bg-white border border-gray-300 rounded-full text-sm text-gray-700 hover:bg-gray-50"
+                className="px-3 py-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-full text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
               >
                 #{tag}
               </button>
