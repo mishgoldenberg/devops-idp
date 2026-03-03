@@ -1,0 +1,64 @@
+name: Service Template
+
+on:
+  workflow_call:
+    inputs:
+      service_path:
+        required: true
+        type: string
+      image_name:
+        required: true
+        type: string
+      gcp_project:
+        required: true
+        type: string
+      gcp_region:
+        required: true
+        type: string
+    secrets:
+      GCP_SA_KEY:
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # 🔐 Authenticate using JSON key
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ inputs.gcp_project }}
+
+      - name: Configure Docker for Artifact Registry
+        run: |
+          gcloud auth configure-docker ${{ inputs.gcp_region }}-docker.pkg.dev --quiet
+
+      - name: Build Docker image
+        run: |
+          IMAGE=${{ inputs.gcp_region }}-docker.pkg.dev/${{ inputs.gcp_project }}/devops-idp/${{ inputs.image_name }}:latest
+          SERVICE_PATH=${{ inputs.service_path }}
+
+          # If the service is backend, copy the shared template Dockerfile
+          if [[ "$SERVICE_PATH" == backend* ]]; then
+            echo "Copying shared Dockerfile template for backend service..."
+            cp backend/shared/Dockerfile.template $SERVICE_PATH/Dockerfile
+          fi
+
+          # Build the Docker image
+          echo "Building Docker image: $IMAGE"
+          docker build -t $IMAGE $SERVICE_PATH
+
+          # Set IMAGE as GitHub env for downstream steps
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+
+      - name: Push Docker image
+        run: |
+          docker push $IMAGE

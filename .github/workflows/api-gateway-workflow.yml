@@ -1,0 +1,17 @@
+name: Service api-gateway CI
+
+on:
+  push:
+    paths:
+      - "backend/services/api-gateway/**"
+
+jobs:
+  api-gateway:
+    uses: ./.github/workflows/service-template.yml
+    with:
+      service_path: backend/services/api-gateway
+      image_name: api-gateway
+      gcp_project: devops-idp-489012
+      gcp_region: europe-west1
+    secrets:
+      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
