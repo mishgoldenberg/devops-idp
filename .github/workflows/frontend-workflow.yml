@@ -7,7 +7,7 @@ on:
 
 jobs:
   frontend:
-    uses: ./.github/workflows/service-template.yml
+    uses: ./.github/workflows/template-workflow.yml
     with:
       service_path: frontend
       image_name: frontend

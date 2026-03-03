@@ -6,8 +6,8 @@ on:
       - "backend/app/**"
 
 jobs:
-  api-gateway:
-    uses: ./.github/workflows/service-template.yml
+  backend:
+    uses: ./.github/workflows/template-workflow.yml
     with:
       service_path: backend/app
       image_name: backend
