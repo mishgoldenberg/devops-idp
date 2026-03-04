@@ -14,8 +14,6 @@ resources:
   - configmaps/application-config.yaml
   - configmaps/azure-devops-config.yaml
   - ingress.yaml
-  - secrets/postgres-secret.yaml
-  - secrets/redis-secret.yaml
   - persistent-volume-claim/postgres-pvc.yaml
 
 configMapGenerator:
