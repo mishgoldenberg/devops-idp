@@ -17,8 +17,13 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 # Set build-time environment variables
+# 1. Declare the arguments
 ARG NEXT_PUBLIC_API_GATEWAY_URL
+ARG NEXT_PUBLIC_APP_NAME
+
+# 2. Set them as environment variables so Next.js sees them during 'npm run build'
 ENV NEXT_PUBLIC_API_GATEWAY_URL=$NEXT_PUBLIC_API_GATEWAY_URL
+ENV NEXT_PUBLIC_APP_NAME=$NEXT_PUBLIC_APP_NAME
 
 RUN npm run build
 
