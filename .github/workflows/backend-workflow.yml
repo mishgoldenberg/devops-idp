@@ -1,0 +1,17 @@
+name: Service Backend CI
+
+on:
+  push:
+    paths:
+      - "backend/app/**"
+
+jobs:
+  backend:
+    uses: ./.github/workflows/template-workflow.yml
+    with:
+      service_path: backend/app
+      image_name: backend
+      gcp_project: devops-idp-489012
+      gcp_region: europe-west1
+    secrets:
+      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}

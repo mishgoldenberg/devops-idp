@@ -1,0 +1,17 @@
+name: Frontend CI
+
+on:
+  push:
+    paths:
+      - "frontend/**"
+
+jobs:
+  frontend:
+    uses: ./.github/workflows/template-workflow.yml
+    with:
+      service_path: frontend
+      image_name: frontend
+      gcp_project: devops-idp-489012
+      gcp_region: europe-west1
+    secrets:
+      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}

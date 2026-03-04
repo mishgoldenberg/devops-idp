@@ -1,25 +1,24 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: api-gateway
-  namespace: devops-control-center
+  name: backend
   labels:
-    app: api-gateway
+    app: backend
     tier: backend
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
-      app: api-gateway
+      app: backend
   template:
     metadata:
       labels:
-        app: api-gateway
+        app: backend
         tier: backend
     spec:
       containers:
-      - name: api-gateway
-        image: devops-control-center/api-gateway:latest
+      - name: backend
+        image: europe-west1-docker.pkg.dev/devops-idp-489012/devops-idp/backend:latest
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8000
@@ -30,6 +29,7 @@ spec:
           value: "production"
         - name: PORT
           value: "8000"
+<<<<<<< HEAD:infrastructure/k8s/base/deployments/api-gateway.yaml
         
         # Database configuration
         - name: DATABASE_URL
@@ -39,6 +39,14 @@ spec:
               key: connection-string
         
         # Redis configuration
+=======
+        # Secrets and other environment variables
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: POSTGRES_PASSWORD
+>>>>>>> feat/liz/k8s-deployment-gcp:infrastructure/k8s/base/deployments/backend.yaml
         - name: REDIS_HOST
           value: redis-service
         - name: REDIS_PORT
@@ -47,6 +55,7 @@ spec:
           valueFrom:
             secretKeyRef:
               name: redis-secret
+<<<<<<< HEAD:infrastructure/k8s/base/deployments/api-gateway.yaml
               key: password
         
         # Authentication & Security
@@ -75,6 +84,34 @@ spec:
               name: azure-devops-config
               key: query-user
         
+=======
+              key: REDIS_PASSWORD
+        # - name: JWT_SECRET
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: auth-secret
+        #       key: JWT_SECRET
+        # - name: SESSION_SECRET
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: auth-secret
+        #       key: SESSION_SECRET
+        # Services URLs
+        - name: AUTH_SERVICE_URL
+          value: "http://auth-service:8001"
+        - name: AZURE_DEVOPS_SERVICE_URL
+          value: "http://azure-devops-service:8002"
+        - name: SONARQUBE_SERVICE_URL
+          value: "http://sonarqube-service:8003"
+        - name: ARTIFACTORY_SERVICE_URL
+          value: "http://artifactory-service:8004"
+        - name: SERVICENOW_SERVICE_URL
+          value: "http://servicenow-service:8005"
+        - name: AI_CHATBOT_SERVICE_URL
+          value: "http://ai-chatbot-service:8006"
+        - name: APPROVAL_SERVICE_URL
+          value: "http://approval-service:8007"
+>>>>>>> feat/liz/k8s-deployment-gcp:infrastructure/k8s/base/deployments/backend.yaml
         resources:
           requests:
             cpu: 250m
@@ -98,6 +135,7 @@ spec:
             path: /api/health/ready
             port: 8000
           initialDelaySeconds: 10
+<<<<<<< HEAD:infrastructure/k8s/base/deployments/api-gateway.yaml
           periodSeconds: 5
           timeoutSeconds: 3
           failureThreshold: 2
@@ -111,3 +149,6 @@ spec:
           capabilities:
             drop:
             - ALL
+=======
+          periodSeconds: 5
+>>>>>>> feat/liz/k8s-deployment-gcp:infrastructure/k8s/base/deployments/backend.yaml
