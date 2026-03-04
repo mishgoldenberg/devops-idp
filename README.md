@@ -298,6 +298,28 @@ The setup script will:
 5. ✅ Wait for services to be healthy
 6. ✅ Run database migrations
 7. ✅ Seed initial data (roles, users, widgets)
+
+### Run the backend locally (recommended)
+
+If you need to run the FastAPI backend directly (for debugging or development), prefer running it as a module so Python resolves relative imports correctly. Running the file directly (for example `python backend/python_backend/app/main.py`) can trigger "attempted relative import with no known parent package" errors.
+
+Recommended commands:
+
+```bash
+# Run using uvicorn with the package module path (when running from repository root)
+uvicorn backend.python_backend.app.main:app --reload --host 0.0.0.0 --port 8000
+
+# Alternate (matches Docker image layout where code is copied to `backend_python`):
+uvicorn backend_python.app.main:app --reload --host 0.0.0.0 --port 8000
+
+# Run via python module (ensures package context)
+python -m backend.python_backend.app.main
+```
+
+Notes:
+- The `uvicorn` forms above launch the FastAPI app in a way that preserves package context, so relative imports like `from .api import api_router` work as expected.
+- Prefer `docker compose up -d` for local development to keep the environment consistent with other services (Postgres, Redis, frontend).
+- If a contributor still runs the file directly and sees import errors, run the `uvicorn` command instead; a small fallback exists in `backend/python_backend/app/main.py` to help but module-based invocation is the correct long-term approach.
 8. ✅ Open the application in your browser
 
 **Manual Setup (Step-by-Step)**
