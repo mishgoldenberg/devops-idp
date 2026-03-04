@@ -30,6 +30,6 @@ configMapGenerator:
 
 # Removed disableNameSuffixHash to allow for automatic Pod restarts on changes
 secretGenerator:
-  - name: common-secrets
+  - name: all-secrets
     envs:
       - secrets/.env

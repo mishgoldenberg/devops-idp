@@ -33,7 +33,7 @@ spec:
         - name: DATABASE_URL
           valueFrom:
             secretKeyRef:
-              name: postgres-secret
+              name: all-secrets
               key: POSTGRES_PASSWORD
         - name: REDIS_HOST
           value: redis-service
@@ -42,7 +42,7 @@ spec:
         - name: REDIS_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: redis-secret
+              name: all-secrets
               key: REDIS_PASSWORD
         
         # Azure DevOps Integration
@@ -56,7 +56,7 @@ spec:
         - name: AZURE_DEVOPS_PAT
           valueFrom:
             secretKeyRef:
-              name: azure-devops-secret
+              name: all-secrets
               key: AZURE_DEVOPS_PAT
         - name: AZURE_DEVOPS_QUERY_USER
           valueFrom:
