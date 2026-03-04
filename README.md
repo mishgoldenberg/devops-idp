@@ -16,7 +16,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    Frontend (Next.js)                        │
+│                    Frontend (Next.js)                      │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
 │  │   Dashboard  │  │   Approvals  │  │ Observability│      │
 │  │   Widgets    │  │   Self-Svc   │  │   Metrics    │      │
@@ -26,28 +26,21 @@
                             │ REST API
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              API Gateway / BFF (Node.js)                     │
-│  - Authentication & Authorization                            │
-│  - Request routing & aggregation                             │
-│  - Rate limiting & caching                                   │
-└────────┬────────┬────────┬────────┬────────┬────────┬───────┘
-         │        │        │        │        │        │
-    ┌────▼───┐┌──▼───┐┌───▼───┐┌──▼───┐┌───▼───┐┌──▼───┐
-    │  Auth  ││ ADO  ││ Sonar ││ Arti ││  SNow ││  AI  │
-    │  Svc   ││ Svc  ││  Svc  ││  Svc ││  Svc  ││ Svc  │
-    └────┬───┘└──┬───┘└───┬───┘└──┬───┘└───┬───┘└──┬───┘
-         │       │        │       │        │       │
-         └───────┴────────┴───────┴────────┴───────┘
-                            │
-         ┌──────────────────┴──────────────────┐
-         │                                      │
-    ┌────▼────────┐                    ┌───────▼────┐
-    │ PostgreSQL  │                    │   Redis    │
-    │  - Users    │                    │  - Cache   │
-    │  - Dashbds  │                    │  - Session │
-    │  - Apprvls  │                    └────────────┘
-    │  - Audit    │
-    └─────────────┘
+│           Backend API / BFF (Python + FastAPI)             │
+│  - Authentication & Authorization                          │
+│  - Request routing & aggregation                           │
+│  - Rate limiting & caching (via Redis)                     │
+│  - Adapter modules for ADO / SonarQube / Artifactory       │
+│    / ServiceNow / AI Chatbot (mocked by default)           │
+└───────────────┬────────────────────────────────────────────┘
+                │
+   ┌────────────▼────────────┐          ┌───────────────────┐
+   │       PostgreSQL        │          │       Redis       │
+   │  - Users                │          │  - Cache          │
+   │  - Dashboards           │          │  - Session        │
+   │  - Approvals            │          └───────────────────┘
+   │  - Audit & Metrics      │
+   └─────────────────────────┘
 ```
 
 ### Services Architecture
@@ -55,14 +48,7 @@
 | Service | Port | Purpose |
 |---------|------|---------|
 | **frontend** | 3000 | Next.js web application |
-| **api-gateway** | 8000 | BFF, auth, routing, aggregation |
-| **auth-service** | 8001 | SSO integration, RBAC mapping |
-| **azure-devops-service** | 8002 | ADO integration (PBIs, PRs, pipelines) |
-| **sonarqube-service** | 8003 | Code quality metrics |
-| **artifactory-service** | 8004 | Artifact management |
-| **servicenow-service** | 8005 | Ticket integration |
-| **ai-chatbot-service** | 8006 | AI assistant integration |
-| **approval-service** | 8007 | Self-service approvals & audit |
+| **api-gateway** | 8000 | Python FastAPI backend (BFF, auth, routing, aggregation, approvals, integrations) |
 | **postgres** | 5432 | Primary data store |
 | **redis** | 6379 | Cache & session store |
 
@@ -141,42 +127,55 @@ Widgets are self-contained React components that:
 
 ---
 
-## 🔄 Self-Service & Approval System
+## 🔄 Self-Service Features
 
-### Approved Self-Services
+### Self-Service Project Creation
 
-| Action | Requires Approval | Approver Roles | Implementation |
-|--------|:-----------------:|----------------|----------------|
-| Create Azure DevOps Project | ✓ | Platform Admin, Branch Head | Approval workflow → ADO service |
-| Enable SonarQube PR Scanning | ✓ | Platform Admin, Head of Section | Approval workflow → Sonar service |
-| Request AI Model Access | ✓ | Platform Admin | Approval workflow → AI service |
+**Status**: ✅ Direct provisioning (no approval required)
+
+Users with appropriate roles can directly create Azure DevOps projects with:
+- **Custom process templates** - Creates dedicated inherited process (e.g., `project-name-Scrum`)
+- **Process types** - Scrum, Agile, CMMI, or Basic
+- **Admin user assignment** - Automatically grants Project Administrator permissions
+- **Instant provisioning** - Project available immediately via "Open in Azure DevOps" button
+
+**Access**: Project Manager+  
+**Endpoint**: `POST /api/azure-devops/projects/create`  
+**Request**:
+```json
+{
+  "project_name": "my-new-project",
+  "process_type": "Scrum",
+  "admin_username": "user@company.com"
+}
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "project": {...},
+    "added_admin": true,
+    "project_url": "https://dev.azure.com/org/my-new-project"
+  }
+}
+```
+
+### Future Approval-Based Self-Services
+
+These services are planned for future phases with approval workflows:
+
+| Action | Status | Approver Roles | Implementation |
+|--------|:------:|----------------|----------------|
+| Enable SonarQube PR Scanning | 🔄 Planned | Platform Admin, Head of Section | Approval workflow → Sonar integration |
+| Request AI Model Access | 🔄 Planned | Platform Admin | Approval workflow → AI service |
 
 ### Redirect-Only Services (No Portal Implementation)
 
 - **ServiceNow Ticket Creation** - Redirects to ServiceNow
 - **OpenShift Namespace Creation** - Redirects to OpenShift Console
 - **Artifactory Repository Creation** - Redirects to Artifactory
-
-### Approval Workflow
-
-```
-User Request → [approval-service] → Store in DB (status: PENDING)
-                                   ↓
-                        Notify approvers (in-app)
-                                   ↓
-          Approver reviews → APPROVED / REJECTED
-                                   ↓
-                  Execute via adapter service (if approved)
-                                   ↓
-                      Update request status + audit log
-                                   ↓
-                         Notify requester
-```
-
-### Audit Trail
-
-Every approval action logs:
-- Requester identity (username + role)
 - Request timestamp
 - Request details (JSON payload)
 - Approver identity
@@ -190,11 +189,11 @@ Every approval action logs:
 
 ### Adapter Pattern
 
-Each external system has:
-1. **Service Layer** - Dedicated microservice
-2. **Mock Adapter** - Returns realistic sample data for local dev
-3. **Real Adapter** - Placeholder for production integration
-4. **Interface Contract** - TypeScript types shared with frontend
+Each external system is integrated via an **adapter module inside the Python backend**:
+1. **Adapter Module** - Python code that knows how to talk to the external system
+2. **Mock Implementation** - Returns realistic sample data for local dev (current default)
+3. **Real Implementation** - Placeholder for production integration
+4. **Stable API Contract** - JSON shapes shared with the frontend via the REST API
 
 ### Integration Points (Currently Mocked)
 
@@ -254,16 +253,17 @@ export const USE_MOCK = process.env.USE_MOCK_DATA === 'true'; // Set to false fo
 
 Before you begin, ensure you have the following installed:
 
-- **Node.js** 20+ ([Download](https://nodejs.org/))
-- **Docker Desktop** ([Download](https://www.docker.com/products/docker-desktop))
-- **Git** ([Download](https://git-scm.com/))
+- **Docker Desktop** with Docker Compose ([Download](https://www.docker.com/products/docker-desktop)) - **Required**
+- **Git** ([Download](https://git-scm.com/)) - **Required**
 - **8GB RAM minimum** (recommended: 16GB)
 
-**Verify installations:**
+**Note:** Node.js is *not* required locally — the frontend runs in a Docker container.  
+Python is *not* required locally — the backend (FastAPI) runs in a Docker container.
+
+**Verify Docker installations:**
 ```bash
-node --version    # Should be v20.x.x or higher
-docker --version  # Should be 20.10+
-docker compose version  # Should be 2.0+
+docker --version      # Should be 20.10+
+docker compose version # Should be 2.0+
 git --version
 ```
 
@@ -294,10 +294,32 @@ The setup script will:
 1. ✅ Check prerequisites (Docker, Node.js)
 2. ✅ Copy `env.example` to `.env` if it doesn't exist
 3. ✅ Build all Docker images
-4. ✅ Start all services (database, Redis, backend services, frontend)
+4. ✅ Start all services (database, Redis, Python backend, frontend)
 5. ✅ Wait for services to be healthy
 6. ✅ Run database migrations
 7. ✅ Seed initial data (roles, users, widgets)
+
+### Run the backend locally (recommended)
+
+If you need to run the FastAPI backend directly (for debugging or development), prefer running it as a module so Python resolves relative imports correctly. Running the file directly (for example `python backend/python_backend/app/main.py`) can trigger "attempted relative import with no known parent package" errors.
+
+Recommended commands:
+
+```bash
+# Run using uvicorn with the package module path (when running from repository root)
+uvicorn backend.python_backend.app.main:app --reload --host 0.0.0.0 --port 8000
+
+# Alternate (matches Docker image layout where code is copied to `backend_python`):
+uvicorn backend_python.app.main:app --reload --host 0.0.0.0 --port 8000
+
+# Run via python module (ensures package context)
+python -m backend.python_backend.app.main
+```
+
+Notes:
+- The `uvicorn` forms above launch the FastAPI app in a way that preserves package context, so relative imports like `from .api import api_router` work as expected.
+- Prefer `docker compose up -d` for local development to keep the environment consistent with other services (Postgres, Redis, frontend).
+- If a contributor still runs the file directly and sees import errors, run the `uvicorn` command instead; a small fallback exists in `backend/python_backend/app/main.py` to help but module-based invocation is the correct long-term approach.
 8. ✅ Open the application in your browser
 
 **Manual Setup (Step-by-Step)**
@@ -348,7 +370,7 @@ docker compose up -d
 
 This will:
 - Pull required Docker images (PostgreSQL, Redis)
-- Build application images (frontend, backend services)
+- Build application images (frontend, Python backend)
 - Start all containers
 - Set up Docker networks and volumes
 
@@ -375,30 +397,31 @@ docker compose logs frontend
 docker compose logs -f
 ```
 
-#### Step 5: Run Database Migrations
+#### Step 5: Database Migrations & Seeding
 
-Create database tables and schema:
+**Database migrations and initial data seeding happen automatically when containers start.**
 
-```bash
-npm run migrate
-```
-
-**Note:** This script uses the `DATABASE_URL` from your `.env` file. Ensure `POSTGRES_HOST`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` are set correctly.
-
-If you see connection errors:
-- Verify PostgreSQL container is running: `docker compose ps postgres`
-- Check database credentials in `.env` match `docker-compose.yml`
-- Wait a few seconds for PostgreSQL to fully initialize
-
-#### Step 6: Seed Initial Data
-
-Populate the database with initial data (roles, users, widget types, etc.):
+The Python backend runs migrations from `backend/database/migrations/` and seeds from `backend/database/seeds/` during first startup. You can verify this:
 
 ```bash
-npm run seed
+# Check backend logs for initialization
+docker compose logs api-gateway | grep -i "migrat\|seed\|ready"
 ```
 
-This creates:
+**If migrations fail:** Check the logs. If you need to manually debug:
+
+```bash
+# Connect to the database directly
+docker compose exec postgres psql -U devops_user -d devops_control_center
+
+# View tables
+\dt
+
+# Exit
+\q
+```
+
+Once the database is ready:
 - 7 role definitions (Platform Admin through Regular User)
 - Sample users for each role (login with any `@internal` domain user)
 - Widget type definitions
@@ -521,18 +544,9 @@ docker compose exec redis redis-cli -a Devops4ever
      ./restart.sh --rebuild-frontend
      ```
 
-2. **Backend Changes:**
-   - Edit files in `backend/services/{service-name}/src/`
-   - Changes are reflected immediately (services run with volume mounts)
-   - Quick restart:
-     ```bash
-     # Windows
-     .\restart.ps1
-     
-     # Linux/Mac
-     ./restart.sh
-     ```
-   - Or restart specific service:
+2. **Backend Changes (Python):**
+   - Edit files in `backend/python_backend/app/`
+   - Rebuild/restart backend container:
      ```bash
      # Windows
      .\restart.ps1 -Service api-gateway
@@ -725,27 +739,14 @@ devops-control-center/
 │   └── next.config.js
 │
 ├── backend/
-│   ├── services/
-│   │   ├── api-gateway/         # Main API Gateway + BFF
-│   │   │   ├── src/
-│   │   │   │   ├── routes/
-│   │   │   │   ├── middleware/
-│   │   │   │   ├── services/
-│   │   │   │   └── index.ts
-│   │   │   └── package.json
-│   │   │
-│   │   ├── auth-service/        # SSO + RBAC
-│   │   ├── azure-devops-service/
-│   │   ├── sonarqube-service/
-│   │   ├── artifactory-service/
-│   │   ├── servicenow-service/
-│   │   ├── ai-chatbot-service/
-│   │   └── approval-service/
-│   │
-│   ├── shared/                   # Shared libraries
-│   │   ├── types/
-│   │   ├── utils/
-│   │   └── rbac/
+│   ├── python_backend/           # Python FastAPI backend (single service)
+│   │   ├── app/
+│   │   │   ├── api/             # Routers (auth, dashboards, metrics, integrations, approvals)
+│   │   │   ├── db.py            # Postgres helper
+│   │   │   ├── redis_client.py  # Redis helper
+│   │   │   ├── security.py      # JWT + RBAC helpers
+│   │   │   └── main.py          # FastAPI entrypoint
+│   │   └── requirements.txt
 │   │
 │   └── database/
 │       ├── migrations/
@@ -755,7 +756,7 @@ devops-control-center/
 ├── infrastructure/
 │   ├── docker/
 │   │   ├── Dockerfile.frontend
-│   │   ├── Dockerfile.backend
+│   │   ├── Dockerfile.python-backend
 │   │   └── nginx.conf
 │   │
 │   ├── k8s/                      # Kubernetes manifests
@@ -793,8 +794,7 @@ devops-control-center/
 The `docker-compose.yml` orchestrates all services:
 
 - Frontend (port 3000)
-- API Gateway (port 8000)
-- 7 Backend services (ports 8001-8007)
+- Python backend API (`api-gateway` service, port 8000)
 - PostgreSQL (port 5432)
 - Redis (port 6379)
 

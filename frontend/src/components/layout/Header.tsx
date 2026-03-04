@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { getUser, isAuthenticated } from '@/lib/auth';
 import { apiClient } from '@/lib/api-client';
-import { Home, BookOpen, FileText, Zap, FileCheck, Activity, LogOut, Menu, X } from 'lucide-react';
+import { Home, BookOpen, FileText, Zap, FileCheck, Activity, LogOut, Menu, X, Wrench } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ThemeToggle } from '@/components/common/ThemeToggle';
 
@@ -19,8 +19,7 @@ export function Header() {
   const navigation = [
     { name: 'Home', href: '/dashboard', icon: Home },
     { name: 'How-To Articles', href: '/how-to', icon: BookOpen },
-    { name: 'Requests', href: '/requests', icon: FileText },
-    { name: 'Automation', href: '/automation', icon: Zap },
+    { name: 'Self-Service', href: '/self-service', icon: Wrench },
   ];
 
   const adminNavigation = [
@@ -84,8 +83,8 @@ export function Header() {
                       className={cn(
                         'flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
                         isActive
-                          ? 'bg-primary-50 text-primary'
-                          : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                          ? 'bg-primary-50 dark:bg-primary-900/30 text-primary dark:text-primary-400'
+                          : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-50 dark:hover:bg-gray-700'
                       )}
                     >
                       <item.icon className="w-4 h-4" />
@@ -103,7 +102,9 @@ export function Header() {
               <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{user?.username}</span>
               <span className="text-xs text-secondary-500 dark:text-secondary-400">{user?.role}</span>
             </div>
-            <ThemeToggle />
+            <div className="hidden sm:block">
+              <ThemeToggle />
+            </div>
             <button
               onClick={handleLogout}
               className="p-2 text-secondary-600 dark:text-secondary-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"

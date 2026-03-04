@@ -1,0 +1,50 @@
+# DevOps Control Center - Python Backend Dependencies
+# 
+# This file lists all Python packages required for the FastAPI backend.
+# Install with: pip install -r requirements.txt
+#
+# CORE FRAMEWORK:
+#   - fastapi: Modern async web framework with automatic OpenAPI documentation
+#   - uvicorn: ASGI server for running FastAPI applications
+# 
+# DATABASE:
+#   - psycopg2-binary: PostgreSQL adapter (binary build, no compilation needed)
+# 
+# CACHING & SESSIONS:
+#   - redis: Python client for Redis cache and session store
+# 
+# AUTHENTICATION:
+#   - PyJWT: JWT token generation and validation for auth endpoints
+# 
+# VALIDATION & TYPES:
+#   - pydantic: Data validation using Python type hints
+# 
+# HTTP REQUESTS:
+#   - httpx: Async HTTP client for calling Azure DevOps and other APIs
+#
+# EXTERNAL INTEGRATIONS:
+#   All external system calls (Azure DevOps, SonarQube, Artifactory, ServiceNow)
+#   go through httpx. Use HTTPS everywhere. Credentials via environment variables.
+#
+
+# Core framework
+fastapi==0.115.0
+uvicorn[standard]==0.30.0
+
+# Database
+psycopg2-binary==2.9.9
+
+# Caching
+redis==5.0.4
+
+# Authentication & JWT
+PyJWT==2.9.0
+
+# Data validation
+pydantic==2.9.0
+
+# HTTP client for external APIs
+httpx==0.24.1
+
+
+

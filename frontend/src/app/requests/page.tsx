@@ -137,12 +137,12 @@ const statusConfig = {
 
 export default function RequestsPage() {
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       {/* Hero Section */}
-      <div className="bg-white border-b border-gray-200">
+      <div className="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 text-center">
-          <h1 className="text-4xl font-bold text-gray-900 mb-4">Requests</h1>
-          <p className="text-lg text-gray-600 max-w-2xl mx-auto">
+          <h1 className="text-4xl font-bold text-gray-900 dark:text-gray-100 mb-4">Requests</h1>
+          <p className="text-lg text-gray-600 dark:text-gray-300 max-w-2xl mx-auto">
             Streamline your development workflow with automated requests, documentation, and DevOps integration.
           </p>
         </div>
@@ -153,8 +153,8 @@ export default function RequestsPage() {
         <div className="mb-12">
           <div className="flex items-center justify-between mb-6">
             <div>
-              <h2 className="text-2xl font-bold text-gray-900">DevOps Requests</h2>
-              <p className="text-gray-600">Generate common requests or use pipeline templates</p>
+              <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">DevOps Requests</h2>
+              <p className="text-gray-600 dark:text-gray-400">Generate common requests or use pipeline templates</p>
             </div>
             <button className="px-6 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 shadow-lg">
               + New Request
@@ -165,15 +165,15 @@ export default function RequestsPage() {
             {requestTypes.map((type) => (
               <Card
                 key={type.id}
-                className={`${type.bgColor} border-2 ${type.borderColor} hover:shadow-xl transition-all cursor-pointer group`}
+                className={`${type.bgColor} dark:bg-gray-800 border-2 ${type.borderColor} dark:border-gray-700 hover:shadow-xl transition-all cursor-pointer group`}
               >
                 <div className="p-6">
                   <div className={`w-12 h-12 ${type.iconBg} rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}>
                     <type.icon className="w-6 h-6 text-white" />
                   </div>
-                  <h3 className="text-lg font-bold text-gray-900 mb-2">{type.title}</h3>
-                  <p className="text-sm text-gray-600 mb-4">{type.description}</p>
-                  <button className="flex items-center gap-2 text-sm font-medium text-blue-600 hover:text-blue-700">
+                  <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100 mb-2">{type.title}</h3>
+                  <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">{type.description}</p>
+                  <button className="flex items-center gap-2 text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300">
                     Create Request
                     <ArrowRight className="w-4 h-4" />
                   </button>
@@ -185,20 +185,20 @@ export default function RequestsPage() {
 
         {/* Pipeline Templates Section */}
         <div className="mb-12">
-          <h2 className="text-2xl font-bold text-gray-900 mb-6">Pipeline Templates</h2>
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-6">Pipeline Templates</h2>
           <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
             {pipelineTemplates.map((template) => (
               <Card
                 key={template.id}
-                className="bg-white hover:shadow-lg transition-shadow cursor-pointer group"
+                className="bg-white dark:bg-gray-800 hover:shadow-lg transition-shadow cursor-pointer group"
               >
                 <div className="p-6">
                   <div className="flex items-center justify-between mb-3">
                     <span className="text-3xl">{template.icon}</span>
                     <ArrowRight className="w-5 h-5 text-gray-400 group-hover:text-blue-600 group-hover:translate-x-1 transition-all" />
                   </div>
-                  <h3 className="font-bold text-gray-900 mb-1">{template.title}</h3>
-                  <p className="text-xs text-gray-600">{template.description}</p>
+                  <h3 className="font-bold text-gray-900 dark:text-gray-100 mb-1">{template.title}</h3>
+                  <p className="text-xs text-gray-600 dark:text-gray-300">{template.description}</p>
                 </div>
               </Card>
             ))}
@@ -207,21 +207,21 @@ export default function RequestsPage() {
 
         {/* Recent Requests Section */}
         <div>
-          <h2 className="text-2xl font-bold text-gray-900 mb-6">Recent Requests</h2>
-          <Card className="bg-white">
-            <div className="divide-y divide-gray-200">
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-6">Recent Requests</h2>
+          <Card className="bg-white dark:bg-gray-800">
+            <div className="divide-y divide-gray-200 dark:divide-gray-700">
               {recentRequests.map((request) => {
                 const StatusIcon = statusConfig[request.status as keyof typeof statusConfig].icon;
                 return (
-                  <div key={request.id} className="p-6 hover:bg-gray-50 transition-colors cursor-pointer">
+                  <div key={request.id} className="p-6 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors cursor-pointer">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center text-xl">
+                        <div className="w-10 h-10 bg-gray-100 dark:bg-gray-700 rounded-lg flex items-center justify-center text-xl">
                           {request.icon}
                         </div>
                         <div>
-                          <h3 className="font-semibold text-gray-900">{request.title}</h3>
-                          <p className="text-sm text-gray-600">Requested {request.timeAgo}</p>
+                          <h3 className="font-semibold text-gray-900 dark:text-gray-100">{request.title}</h3>
+                          <p className="text-sm text-gray-600 dark:text-gray-400">Requested {request.timeAgo}</p>
                         </div>
                       </div>
                       <div className="flex items-center gap-4">

@@ -93,12 +93,12 @@ export function AzureDevOpsWorkItems() {
       <CardBody className="flex-1 overflow-auto">
         <div className="flex gap-4 mb-4">
           <div className="flex items-center gap-2">
-            <span className="text-2xl font-bold text-secondary-600">{toDoCount}</span>
-            <span className="text-sm text-secondary-500">To Do</span>
+            <span className="text-2xl font-bold text-secondary-600 dark:text-secondary-300">{toDoCount}</span>
+            <span className="text-sm text-secondary-500 dark:text-secondary-400">To Do</span>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-2xl font-bold text-primary">{inProgressCount}</span>
-            <span className="text-sm text-secondary-500">In Progress</span>
+            <span className="text-sm text-secondary-500 dark:text-secondary-400">In Progress</span>
           </div>
         </div>
         
@@ -109,17 +109,17 @@ export function AzureDevOpsWorkItems() {
               href={item.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="block p-3 border border-gray-200 rounded-lg hover:border-primary hover:bg-primary-50 transition-colors"
+              className="block p-3 border border-gray-200 dark:border-gray-700 rounded-lg hover:border-primary dark:hover:border-primary-500 hover:bg-primary-50 dark:hover:bg-primary-900/30 transition-colors"
             >
               <div className="flex items-start justify-between gap-2 mb-2">
-                <span className="text-sm font-medium text-gray-900 flex-1 line-clamp-2">
+                <span className="text-sm font-medium text-gray-900 dark:text-gray-100 flex-1 line-clamp-2">
                   {item.title}
                 </span>
                 <Badge variant={getStatusColor(item.state) as any}>
                   {item.state}
                 </Badge>
               </div>
-              <div className="flex items-center gap-2 text-xs text-secondary-500">
+              <div className="flex items-center gap-2 text-xs text-secondary-500 dark:text-secondary-400">
                 <span>{item.type}</span>
                 <span>•</span>
                 <span>{formatRelativeTime(item.changed_date)}</span>

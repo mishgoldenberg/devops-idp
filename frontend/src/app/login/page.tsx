@@ -99,9 +99,9 @@ export default function LoginPage() {
                 Sign In
               </Button>
 
-              <div className="mt-4 p-4 bg-primary-50 rounded-lg">
-                <p className="text-xs text-primary-700 font-medium mb-2">Demo Users:</p>
-                <div className="space-y-1 text-xs text-primary-600">
+              <div className="mt-4 p-4 bg-primary-50 dark:bg-primary-900/30 rounded-lg border border-primary-200 dark:border-primary-800">
+                <p className="text-xs text-primary-700 dark:text-primary-300 font-medium mb-2">Demo Users:</p>
+                <div className="space-y-1 text-xs text-primary-600 dark:text-primary-400">
                   <p>• admin@internal (Platform Admin)</p>
                   <p>• lead@internal (Team Lead)</p>
                   <p>• user@internal (Regular User)</p>

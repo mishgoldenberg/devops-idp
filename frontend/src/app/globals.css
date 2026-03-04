@@ -156,6 +156,11 @@
   border-radius: 8px;
 }
 
+.dark .react-grid-item.react-grid-placeholder {
+  background: rgba(59, 130, 246, 0.2);
+  border-color: #3b82f6;
+}
+
 .react-grid-item > .react-resizable-handle {
   position: absolute;
   width: 20px;
