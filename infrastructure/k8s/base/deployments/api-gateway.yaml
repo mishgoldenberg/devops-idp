@@ -25,15 +25,20 @@ spec:
         - containerPort: 8000
           name: http
         env:
+        # Application settings
         - name: NODE_ENV
           value: "production"
         - name: PORT
           value: "8000"
+        
+        # Database configuration
         - name: DATABASE_URL
           valueFrom:
             secretKeyRef:
               name: database-secret
               key: connection-string
+        
+        # Redis configuration
         - name: REDIS_HOST
           value: redis-service
         - name: REDIS_PORT
@@ -43,65 +48,66 @@ spec:
             secretKeyRef:
               name: redis-secret
               key: password
+        
+        # Authentication & Security
         - name: JWT_SECRET
           valueFrom:
             secretKeyRef:
               name: auth-secret
               key: jwt-secret
-        - name: SESSION_SECRET
+        
+        # Azure DevOps Integration
+        - name: USE_MOCK_AZURE_DEVOPS
+          value: "false"
+        - name: AZURE_DEVOPS_API_URL
+          valueFrom:
+            configMapKeyRef:
+              name: azure-devops-config
+              key: api-url
+        - name: AZURE_DEVOPS_PAT
           valueFrom:
             secretKeyRef:
-              name: auth-secret
-              key: session-secret
-        - name: AUTH_SERVICE_URL
-          value: "http://auth-service:8001"
-        - name: AZURE_DEVOPS_SERVICE_URL
-          value: "http://azure-devops-service:8002"
-        - name: SONARQUBE_SERVICE_URL
-          value: "http://sonarqube-service:8003"
-        - name: ARTIFACTORY_SERVICE_URL
-          value: "http://artifactory-service:8004"
-        - name: SERVICENOW_SERVICE_URL
-          value: "http://servicenow-service:8005"
-        - name: AI_CHATBOT_SERVICE_URL
-          value: "http://ai-chatbot-service:8006"
-        - name: APPROVAL_SERVICE_URL
-          value: "http://approval-service:8007"
+              name: azure-devops-secret
+              key: pat
+        - name: AZURE_DEVOPS_QUERY_USER
+          valueFrom:
+            configMapKeyRef:
+              name: azure-devops-config
+              key: query-user
+        
         resources:
           requests:
-            cpu: 200m
-            memory: 256Mi
+            cpu: 250m
+            memory: 512Mi
           limits:
             cpu: 500m
-            memory: 512Mi
+            memory: 768Mi
+        
+        # Kubernetes probes
         livenessProbe:
           httpGet:
             path: /api/health/live
             port: 8000
           initialDelaySeconds: 30
           periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
         readinessProbe:
           httpGet:
             path: /api/health/ready
             port: 8000
           initialDelaySeconds: 10
           periodSeconds: 5
-
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: api-gateway
-  namespace: devops-control-center
-  labels:
-    app: api-gateway
-spec:
-  type: ClusterIP
-  ports:
-  - port: 8000
-    targetPort: 8000
-    protocol: TCP
-    name: http
-  selector:
-    app: api-gateway
-
+          timeoutSeconds: 3
+          failureThreshold: 2
+        
+        # Security context
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL

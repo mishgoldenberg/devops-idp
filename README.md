@@ -127,42 +127,55 @@ Widgets are self-contained React components that:
 
 ---
 
-## 🔄 Self-Service & Approval System
+## 🔄 Self-Service Features
 
-### Approved Self-Services
+### Self-Service Project Creation
 
-| Action | Requires Approval | Approver Roles | Implementation |
-|--------|:-----------------:|----------------|----------------|
-| Create Azure DevOps Project | ✓ | Platform Admin, Branch Head | Approval workflow → ADO service |
-| Enable SonarQube PR Scanning | ✓ | Platform Admin, Head of Section | Approval workflow → Sonar service |
-| Request AI Model Access | ✓ | Platform Admin | Approval workflow → AI service |
+**Status**: ✅ Direct provisioning (no approval required)
+
+Users with appropriate roles can directly create Azure DevOps projects with:
+- **Custom process templates** - Creates dedicated inherited process (e.g., `project-name-Scrum`)
+- **Process types** - Scrum, Agile, CMMI, or Basic
+- **Admin user assignment** - Automatically grants Project Administrator permissions
+- **Instant provisioning** - Project available immediately via "Open in Azure DevOps" button
+
+**Access**: Project Manager+  
+**Endpoint**: `POST /api/azure-devops/projects/create`  
+**Request**:
+```json
+{
+  "project_name": "my-new-project",
+  "process_type": "Scrum",
+  "admin_username": "user@company.com"
+}
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "project": {...},
+    "added_admin": true,
+    "project_url": "https://dev.azure.com/org/my-new-project"
+  }
+}
+```
+
+### Future Approval-Based Self-Services
+
+These services are planned for future phases with approval workflows:
+
+| Action | Status | Approver Roles | Implementation |
+|--------|:------:|----------------|----------------|
+| Enable SonarQube PR Scanning | 🔄 Planned | Platform Admin, Head of Section | Approval workflow → Sonar integration |
+| Request AI Model Access | 🔄 Planned | Platform Admin | Approval workflow → AI service |
 
 ### Redirect-Only Services (No Portal Implementation)
 
 - **ServiceNow Ticket Creation** - Redirects to ServiceNow
 - **OpenShift Namespace Creation** - Redirects to OpenShift Console
 - **Artifactory Repository Creation** - Redirects to Artifactory
-
-### Approval Workflow
-
-```
-User Request → [approval-service] → Store in DB (status: PENDING)
-                                   ↓
-                        Notify approvers (in-app)
-                                   ↓
-          Approver reviews → APPROVED / REJECTED
-                                   ↓
-                  Execute via adapter service (if approved)
-                                   ↓
-                      Update request status + audit log
-                                   ↓
-                         Notify requester
-```
-
-### Audit Trail
-
-Every approval action logs:
-- Requester identity (username + role)
 - Request timestamp
 - Request details (JSON payload)
 - Approver identity
@@ -240,16 +253,17 @@ export const USE_MOCK = process.env.USE_MOCK_DATA === 'true'; // Set to false fo
 
 Before you begin, ensure you have the following installed:
 
-- **Node.js** 20+ ([Download](https://nodejs.org/))
-- **Docker Desktop** ([Download](https://www.docker.com/products/docker-desktop))
-- **Git** ([Download](https://git-scm.com/))
+- **Docker Desktop** with Docker Compose ([Download](https://www.docker.com/products/docker-desktop)) - **Required**
+- **Git** ([Download](https://git-scm.com/)) - **Required**
 - **8GB RAM minimum** (recommended: 16GB)
 
-**Verify installations:**
+**Note:** Node.js is *not* required locally — the frontend runs in a Docker container.  
+Python is *not* required locally — the backend (FastAPI) runs in a Docker container.
+
+**Verify Docker installations:**
 ```bash
-node --version    # Should be v20.x.x or higher
-docker --version  # Should be 20.10+
-docker compose version  # Should be 2.0+
+docker --version      # Should be 20.10+
+docker compose version # Should be 2.0+
 git --version
 ```
 
@@ -361,30 +375,31 @@ docker compose logs frontend
 docker compose logs -f
 ```
 
-#### Step 5: Run Database Migrations
+#### Step 5: Database Migrations & Seeding
 
-Create database tables and schema:
+**Database migrations and initial data seeding happen automatically when containers start.**
 
-```bash
-npm run migrate
-```
-
-**Note:** This script uses the `DATABASE_URL` from your `.env` file. Ensure `POSTGRES_HOST`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` are set correctly.
-
-If you see connection errors:
-- Verify PostgreSQL container is running: `docker compose ps postgres`
-- Check database credentials in `.env` match `docker-compose.yml`
-- Wait a few seconds for PostgreSQL to fully initialize
-
-#### Step 6: Seed Initial Data
-
-Populate the database with initial data (roles, users, widget types, etc.):
+The Python backend runs migrations from `backend/database/migrations/` and seeds from `backend/database/seeds/` during first startup. You can verify this:
 
 ```bash
-npm run seed
+# Check backend logs for initialization
+docker compose logs api-gateway | grep -i "migrat\|seed\|ready"
 ```
 
-This creates:
+**If migrations fail:** Check the logs. If you need to manually debug:
+
+```bash
+# Connect to the database directly
+docker compose exec postgres psql -U devops_user -d devops_control_center
+
+# View tables
+\dt
+
+# Exit
+\q
+```
+
+Once the database is ready:
 - 7 role definitions (Platform Admin through Regular User)
 - Sample users for each role (login with any `@internal` domain user)
 - Widget type definitions

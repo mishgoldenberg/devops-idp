@@ -1,3 +1,32 @@
+"""
+Azure DevOps Integration API Module
+
+This module provides FastAPI endpoints for Azure DevOps integration, including:
+- Real-time work item & PR queries  
+- Custom process & project creation (Self-Service)
+- Pipeline status monitoring
+- Mock implementations for local development
+
+CONFIGURATION:
+  - USE_MOCK_AZURE_DEVOPS: Set to 'false' to use real Azure DevOps API (default: 'true' for dev)
+  - AZURE_DEVOPS_API_URL: Base URL of Azure DevOps instance (default: 'https://dev.azure.com')
+  - AZURE_DEVOPS_PAT: Personal Access Token (required for real API calls)
+  - AZURE_DEVOPS_QUERY_USER: Optional test user for local development
+
+SELF-SERVICE FEATURE:
+  POST /api/azure-devops/projects/create
+  - Direct provisioning (no approval workflow)
+  - Creates custom process based on requested type (Scrum/Agile/CMMI/Basic)
+  - Automatically assigns admin user to Project Administrators group
+  - Returns project URL for immediate access
+
+ENDPOINTS:
+  GET  /api/azure-devops/work-items          - User's assigned work items
+  GET  /api/azure-devops/pull-requests       - User's pull requests
+  GET  /api/azure-devops/pipelines           - Project pipeline status
+  POST /api/azure-devops/projects/create     - Self-service project creation
+"""
+
 from typing import Any, Dict, List, Optional
 import os
 
@@ -9,7 +38,7 @@ from ..security import AuthUser, get_current_user
 
 router = APIRouter()
 
-
+# Configuration from environment variables
 USE_MOCK = os.getenv("USE_MOCK_AZURE_DEVOPS", "true").lower() in ("true", "1")
 ADO_BASE = os.getenv("AZURE_DEVOPS_API_URL", "https://dev.azure.com")
 ADO_PAT = os.getenv("AZURE_DEVOPS_PAT", "")
@@ -378,14 +407,43 @@ def create_ado_project(
     payload: ProjectCreationPayload,
     current_user: AuthUser = Depends(get_current_user),
 ):
-    """Self‑service API that creates a custom process & project and grants the
-    specified user Project Administrator rights.
-
-    The implementation creates a custom process named ``{project_name}-{process_type}`` 
-    based on the built‑in process template, then creates the project using that custom 
-    process. Afterwards it attempts to add the ``admin_username`` to the "Project 
-    Administrators" group for the new project. Any failure in the permission step is 
-    logged but does not prevent the project from being created.
+    """Self-Service Project Creation Endpoint
+    
+    Creates a new Azure DevOps project with a custom process and grants admin permissions.
+    
+    IMPLEMENTATION FLOW:
+    1. Locate the base process template (Scrum/Agile/CMMI/Basic) 
+    2. Create a custom inherited process named '{project_name}-{process_type}'
+    3. Create the project using the custom process
+    4. Add the specified admin_username to Project Administrators group
+    
+    REQUEST PARAMETERS:
+    - project_name: str - Name of the new project (becomes part of custom process name)
+    - process_type: str - Based process type: Scrum, Agile, CMMI, or Basic
+    - admin_username: str - Email or principal name to grant admin rights
+    
+    RESPONSE:
+    - success: bool - Whether the operation completed
+    - data: dict - Created project details including URL
+    - timestamp: str - ISO 8601 timestamp
+    
+    MOCK MODE (USE_MOCK_AZURE_DEVOPS=true):
+    - Returns simulated project creation response without calling real Azure DevOps API
+    - Useful for local development and testing
+    
+    REAL MODE (USE_MOCK_AZURE_DEVOPS=false):
+    - Requires valid AZURE_DEVOPS_PAT (Personal Access Token) with:
+      * Project & Team Read/Write
+      * Process Template Access  
+      * Group Membership Read/Write
+    - Calls actual Azure DevOps REST API v7.0+ 
+    - May take 10-30 seconds as ADO processes the creation
+    
+    ERROR CASES:
+    - 400 Bad Request: Missing required fields, unknown process type
+    - 401 Unauthorized: Invalid or missing ADO_PAT
+    - 403 Forbidden: Insufficient permissions in Azure DevOps
+    - 500 Internal Server Error: ADO API errors, database issues
     """
 
     org = ADO_BASE.split("/")[-1]

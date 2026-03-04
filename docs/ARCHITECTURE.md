@@ -25,13 +25,14 @@ DevOps Control Center is built using a **microservice architecture** with clear 
 ┌─────────────────────────────────────────────────────────────┐
 │                     API Gateway Layer                        │
 │  ┌────────────────────────────────────────────────────────┐ │
-│  │         API Gateway (Node.js + Express)                 │ │
+│  │         API Gateway (Python 3.11 + FastAPI + Uvicorn)   │ │
 │  │  • Authentication middleware (JWT)                      │ │
 │  │  • Authorization middleware (RBAC)                      │ │
 │  │  • Rate limiting                                        │ │
 │  │  • Request routing & aggregation                        │ │
 │  │  • Audit logging                                        │ │
 │  │  • Session management (Redis)                           │ │
+│  │  • Health check endpoints (/api/health/live, ready)    │ │
 │  └────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
                              │
@@ -76,63 +77,50 @@ DevOps Control Center is built using a **microservice architecture** with clear 
 
 ### 1. Adapter Pattern (External Systems)
 
-Each external system integration follows the same structure:
+Each external system integration is accessible via the FastAPI API Gateway:
 
 ```
-backend/services/azure-devops-service/
-├── src/
-│   ├── adapters/
-│   │   ├── mock-adapter.ts      # Development mock
-│   │   ├── real-adapter.ts      # Production integration
-│   │   └── index.ts             # Adapter factory
-│   ├── config/
-│   │   └── index.ts             # Service configuration
-│   └── index.ts                 # Express app + routes
-├── package.json
-└── tsconfig.json
+backend/python_backend/app/
+├── api/
+│   ├── __init__.py
+│   ├── azure_devops.py      # Azure DevOps endpoints
+│   ├── auth.py              # Authentication endpoints
+│   ├── approvals.py         # Approval workflow endpoints
+│   ├── artifactory.py       # Artifactory integration
+│   ├── dashboards.py        # Dashboard endpoints
+│   ├── health.py            # Health check endpoints
+│   ├── metrics.py           # Metrics/observability
+│   ├── servicenow.py        # ServiceNow integration
+│   ├── sonarqube.py         # SonarQube integration
+│   └── ai_chatbot.py        # AI Chatbot integration
+├── db.py                    # Database connection pool
+├── redis_client.py          # Redis cache management
+├── security.py              # RBAC authorization
+├── config.py                # Environment configuration
+└── main.py                  # FastAPI application factory
 ```
 
-**Benefits:**
-- Easy to switch between mock and real implementations
-- Clear integration points
-- Testable in isolation
-- Mock data for development without external dependencies
+**benefits:**
+- Clean API route organization by domain
+- Environment-based URL and authentication
+- Mock implementations for testing
+- Async request handling for better concurrency
 
-### 2. Backend for Frontend (BFF)
-
-API Gateway acts as BFF:
-- Aggregates multiple backend calls into single frontend requests
-- Handles authentication/authorization centrally
-- Transforms backend responses for frontend consumption
-- Reduces chattiness between frontend and backend
-
-### 3. Repository Pattern (Data Access)
-
-Database queries are centralized:
-```typescript
-// backend/services/api-gateway/src/db/index.ts
-export async function query<T>(text: string, params?: any[]): Promise<T[]>
-```
-
-**Benefits:**
-- Single point for database access
-- Consistent error handling
-- Easy to add query logging
-- Simplifies testing with mock repositories
-
-### 4. Middleware Chain (Express)
+### 4. Middleware Chain (FastAPI)
 
 Request processing pipeline:
-```typescript
-app.use(requestId);           // Add correlation ID
-app.use(helmet());            // Security headers
-app.use(cors());              // CORS handling
-app.use(rateLimit);           // Rate limiting
-app.use(authenticate);        // JWT validation
-app.use(authorize);           // RBAC check
-app.use(auditLog);            // Audit logging
-app.use(routes);              // Application routes
-app.use(errorHandler);        // Error handling
+```python
+# In main.py
+app.add_middleware(TrustedHostMiddleware)    # Security headers
+app.add_middleware(CORSMiddleware)           # CORS handling
+app.add_middleware(RequestIdMiddleware)      # Correlation ID
+app.add_middleware(RateLimitMiddleware)      # Rate limiting
+# Also applied via decorators:
+@app.get("/api/...")
+@require_auth                                # JWT validation
+@require_permission(["read:projects"])      # RBAC check
+@audit_log                                   # Audit logging
+def endpoint(...)...
 ```
 
 ### 5. Layered Architecture (Frontend)
@@ -375,13 +363,15 @@ Namespace: devops-control-center
 
 ## Technology Decisions
 
-### Why Node.js for Backend?
+### Why Python (FastAPI) for Backend?
 
-- **JavaScript ecosystem**: Same language as frontend
-- **Async I/O**: Perfect for I/O-bound operations (external APIs)
-- **NPM packages**: Rich ecosystem of libraries
-- **Developer familiarity**: Lower learning curve
-- **Performance**: V8 engine is fast for I/O operations
+- **FastAPI framework**: Modern async web framework with automatic OpenAPI docs
+- **Async/await**: Native async I/O for handling concurrent requests efficiently
+- **Type hints**: Built-in Python type annotations with Pydantic for validation
+- **Performance**: Comparable to Node.js/Express for I/O-bound operations
+- **Rich ecosystem**: Extensive libraries for DevOps integrations (Azure SDK, requests, etc.)
+- **Data science ready**: Natural evolution path if analytics/ML features needed
+- **Production ready**: Used by major tech companies, well-documented
 
 ### Why Next.js for Frontend?
 

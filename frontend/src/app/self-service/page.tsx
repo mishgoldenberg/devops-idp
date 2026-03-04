@@ -1,9 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card } from '@/components/common/Card';
 import { Badge } from '@/components/common/Badge';
-import { Plus, X, Package, CheckCircle, ArrowRight } from 'lucide-react';
+import { Plus, X, Package, CheckCircle, ArrowRight, Loader } from 'lucide-react';
 import { CreateProjectForm } from '@/components/self-service/CreateProjectForm';
 
 const stats = [
@@ -13,6 +13,18 @@ const stats = [
 export default function SelfServicePage() {
   const [showModal, setShowModal] = useState(false);
   const [createdProject, setCreatedProject] = useState<any>(null);
+  const [isButtonReady, setIsButtonReady] = useState(false);
+
+  // 3-second delay before button becomes clickable
+  useEffect(() => {
+    if (createdProject) {
+      setIsButtonReady(false);
+      const timer = setTimeout(() => {
+        setIsButtonReady(true);
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [createdProject]);
 
   const services = [
     {
@@ -95,15 +107,22 @@ export default function SelfServicePage() {
                 </div>
                 {createdProject.project_url && (
                   <div className="pt-4 border-t border-green-300/50 dark:border-green-700/30">
-                    <a
-                      href={createdProject.project_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition-all duration-200 hover:shadow-md"
-                    >
-                      Open in Azure DevOps
-                      <ArrowRight className="w-4 h-4" />
-                    </a>
+                    {isButtonReady ? (
+                      <a
+                        href={createdProject.project_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition-all duration-200 hover:shadow-md"
+                      >
+                        Open in Azure DevOps
+                        <ArrowRight className="w-4 h-4" />
+                      </a>
+                    ) : (
+                      <div className="flex items-center gap-2 text-gray-700 dark:text-gray-300">
+                        <Loader className="w-5 h-5 animate-spin" />
+                        <span>Creating project in Azure DevOps…</span>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

@@ -1,3 +1,42 @@
+# DevOps Control Center - Docker Compose Configuration
+#
+# Local Development Environment Setup
+# 
+# This file orchestrates all services needed for local development:
+# - PostgreSQL database
+# - Redis cache & session store
+# - Python/FastAPI backend API gateway
+# - Next.js frontend
+#
+# USAGE:
+#   docker compose up -d                    # Start all services
+#   docker compose logs -f                  # View all logs
+#   docker compose logs api-gateway         # View backend logs
+#   docker compose down                     # Stop all services
+#   docker compose down -v                  # Stop and remove volumes (clean slate)
+#
+# NETWORKING:
+#   - All services connected via 'devops-network' bridge
+#   - Services can reach each other by hostname (postgres, redis, api-gateway, frontend)
+#   - Frontend accessible at http://localhost:3000
+#   - Backend accessible at http://localhost:8000
+#
+# VOLUMES:
+#   - postgres-data: Persists database between container restarts
+#   - redis-data: Persists Redis cache between container restarts
+#   - Frontend src: Hot-reload friendly mount for development
+#
+# HEALTH CHECKS:
+#   - PostgreSQL: pg_isready command
+#   - Redis: Redis ping command
+#   - Backend: /api/health/ready HTTP endpoint (for K8s readiness probe compatibility)
+#
+# ENVIRONMENT:
+#   - Configured via .env file (copy from env.example)
+#   - All services use docker-compose network DNS for inter-service communication
+#   - Mock Azure DevOps by default (USE_MOCK_AZURE_DEVOPS=true)
+#
+
 version: '3.9'
 
 services:
@@ -73,6 +112,12 @@ services:
         condition: service_healthy
     networks:
       - devops-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
 
   # ============================================
