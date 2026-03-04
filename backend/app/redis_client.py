@@ -2,7 +2,7 @@ from typing import Optional
 
 import redis
 
-from .config import get_settings
+from config import get_settings
 
 
 _client: Optional[redis.Redis] = None

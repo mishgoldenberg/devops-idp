@@ -4,8 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException, Path, status
 from pydantic import BaseModel
 from uuid import uuid4
 
-from ..db import query_all, query_one, execute_returning, execute
-from ..security import AuthUser, get_current_user
+from db import query_all, query_one, execute_returning, execute
+from security import AuthUser, get_current_user
 
 
 router = APIRouter()

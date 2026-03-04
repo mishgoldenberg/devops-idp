@@ -2,7 +2,7 @@ from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
 
-from ..security import AuthUser, get_current_user
+from security import AuthUser, get_current_user
 
 
 router = APIRouter()

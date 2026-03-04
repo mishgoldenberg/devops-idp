@@ -2,8 +2,8 @@ from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from ..db import query_all
-from ..security import AuthUser, can_view_observability, get_current_user
+from db import query_all
+from security import AuthUser, can_view_observability, get_current_user
 
 
 router = APIRouter()

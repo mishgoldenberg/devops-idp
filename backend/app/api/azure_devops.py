@@ -33,7 +33,7 @@ import os
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 import httpx
 
-from ..security import AuthUser, get_current_user
+from security import AuthUser, get_current_user
 
 
 router = APIRouter()

@@ -4,7 +4,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
-from .config import get_settings
+from config import get_settings
 
 
 @contextmanager

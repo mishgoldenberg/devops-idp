@@ -3,8 +3,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from pydantic import BaseModel
 
-from ..db import query_all, query_one, execute, execute_returning
-from ..security import AuthUser, get_current_user
+from db import query_all, query_one, execute, execute_returning
+from security import AuthUser, get_current_user
 
 
 router = APIRouter()

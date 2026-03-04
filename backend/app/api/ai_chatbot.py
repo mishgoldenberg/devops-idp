@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from uuid import uuid4
 
-from ..security import AuthUser, get_current_user
+from security import AuthUser, get_current_user
 
 
 router = APIRouter()

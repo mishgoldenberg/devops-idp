@@ -57,25 +57,12 @@ spec:
           valueFrom:
             secretKeyRef:
               name: azure-devops-secret
-              key: pat
+              key: AZURE_DEVOPS_PAT
         - name: AZURE_DEVOPS_QUERY_USER
           valueFrom:
             configMapKeyRef:
               name: azure-devops-config
               key: query-user
-        
-              
-        # - name: JWT_SECRET
-        #   valueFrom:
-        #     secretKeyRef:
-        #       name: auth-secret
-        #       key: JWT_SECRET
-        # - name: SESSION_SECRET
-        #   valueFrom:
-        #     secretKeyRef:
-        #       name: auth-secret
-        #       key: SESSION_SECRET
-        # Services URLs
         - name: AUTH_SERVICE_URL
           value: "http://auth-service:8001"
         - name: AZURE_DEVOPS_SERVICE_URL
@@ -113,7 +100,6 @@ spec:
             path: /api/health/ready
             port: 8000
           initialDelaySeconds: 10
-<<<<<<< HEAD:infrastructure/k8s/base/deployments/api-gateway.yaml
           periodSeconds: 5
           timeoutSeconds: 3
           failureThreshold: 2
@@ -127,6 +113,3 @@ spec:
           capabilities:
             drop:
             - ALL
-=======
-          periodSeconds: 5
->>>>>>> feat/liz/k8s-deployment-gcp:infrastructure/k8s/base/deployments/backend.yaml

@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
-from ..db import health_check as db_health_check
-from ..redis_client import health_check as redis_health_check
+from db import health_check as db_health_check
+from redis_client import health_check as redis_health_check
 
 
 router = APIRouter()

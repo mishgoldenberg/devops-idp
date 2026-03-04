@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Query
 
-from ..security import AuthUser, get_current_user
+from security import AuthUser, get_current_user
 
 
 router = APIRouter()
