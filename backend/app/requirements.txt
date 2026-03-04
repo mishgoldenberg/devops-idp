@@ -42,12 +42,9 @@ PyJWT==2.9.0
 
 # Data validation
 pydantic==2.9.0
-<<<<<<< HEAD:backend/python_backend/requirements.txt
 
 # HTTP client for external APIs
 httpx==0.24.1
 
 
 
-=======
->>>>>>> feat/liz/k8s-deployment-gcp:backend/app/requirements.txt
