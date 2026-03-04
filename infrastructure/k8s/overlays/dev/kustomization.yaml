@@ -12,6 +12,7 @@ configMapGenerator:
       - ENVIRONMENT=development
       - USE_MOCK_DATA=true
 
-patchesStrategicMerge:
-  - patches/replicas.yaml
-  - patches/resources.yaml
+# Use 'patches' as 'patchesStrategicMerge' is deprecated
+patches:
+  - path: patches/replicas.yaml
+  - path: patches/resources.yaml

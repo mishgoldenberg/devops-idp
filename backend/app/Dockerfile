@@ -54,5 +54,5 @@ EXPOSE 8000
 #
 # NOTE: For auto-reload during development, use --reload flag
 # For production, configure multiple workers with --workers
-ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 
