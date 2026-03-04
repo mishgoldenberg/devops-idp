@@ -29,24 +29,12 @@ spec:
           value: "production"
         - name: PORT
           value: "8000"
-<<<<<<< HEAD:infrastructure/k8s/base/deployments/api-gateway.yaml
-        
-        # Database configuration
-        - name: DATABASE_URL
-          valueFrom:
-            secretKeyRef:
-              name: database-secret
-              key: connection-string
-        
-        # Redis configuration
-=======
         # Secrets and other environment variables
         - name: DATABASE_URL
           valueFrom:
             secretKeyRef:
               name: postgres-secret
               key: POSTGRES_PASSWORD
->>>>>>> feat/liz/k8s-deployment-gcp:infrastructure/k8s/base/deployments/backend.yaml
         - name: REDIS_HOST
           value: redis-service
         - name: REDIS_PORT
@@ -55,15 +43,7 @@ spec:
           valueFrom:
             secretKeyRef:
               name: redis-secret
-<<<<<<< HEAD:infrastructure/k8s/base/deployments/api-gateway.yaml
-              key: password
-        
-        # Authentication & Security
-        - name: JWT_SECRET
-          valueFrom:
-            secretKeyRef:
-              name: auth-secret
-              key: jwt-secret
+              key: REDIS_PASSWORD
         
         # Azure DevOps Integration
         - name: USE_MOCK_AZURE_DEVOPS
@@ -84,8 +64,7 @@ spec:
               name: azure-devops-config
               key: query-user
         
-=======
-              key: REDIS_PASSWORD
+              
         # - name: JWT_SECRET
         #   valueFrom:
         #     secretKeyRef:
@@ -111,7 +90,6 @@ spec:
           value: "http://ai-chatbot-service:8006"
         - name: APPROVAL_SERVICE_URL
           value: "http://approval-service:8007"
->>>>>>> feat/liz/k8s-deployment-gcp:infrastructure/k8s/base/deployments/backend.yaml
         resources:
           requests:
             cpu: 250m

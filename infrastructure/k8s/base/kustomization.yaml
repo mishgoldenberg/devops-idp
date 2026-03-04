@@ -12,6 +12,7 @@ resources:
   - services/redis-service.yaml
   - services/postgres-service.yaml
   - configmaps/application-config.yaml
+  - configmaps/azure-devops-config.yaml
   - ingress.yaml
   - secrets/postgres-secret.yaml
   - secrets/redis-secret.yaml
