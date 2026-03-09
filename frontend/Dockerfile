@@ -6,25 +6,32 @@ FROM base AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
+# Copy root and frontend package files
 COPY package*.json ./
+COPY frontend/package*.json ./frontend/
+
+# Install all dependencies (hoisted)
 RUN npm install
 
 # Build stage
 FROM base AS builder
 WORKDIR /app
 
-COPY --from=deps /app/node_modules ./node_modules
+# Copy source code
 COPY . .
+# Copy node_modules from deps
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/frontend/node_modules ./frontend/node_modules
 
 # Set build-time environment variables
-# 1. Declare the arguments
 ARG NEXT_PUBLIC_API_GATEWAY_URL
 ARG NEXT_PUBLIC_APP_NAME
 
-# 2. Set them as environment variables so Next.js sees them during 'npm run build'
 ENV NEXT_PUBLIC_API_GATEWAY_URL=$NEXT_PUBLIC_API_GATEWAY_URL
 ENV NEXT_PUBLIC_APP_NAME=$NEXT_PUBLIC_APP_NAME
 
+# Build directly from the frontend directory
+WORKDIR /app/frontend
 RUN npm run build
 
 # Production stage
@@ -37,10 +44,10 @@ ENV NODE_ENV=production
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
 
-# Copy built application
-COPY --from=builder /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+# Copy only necessary files from builder
+COPY --from=builder /app/frontend/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/frontend/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/frontend/.next/static ./.next/static
 
 USER nextjs
 
