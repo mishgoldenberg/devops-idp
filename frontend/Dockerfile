@@ -1,52 +1,44 @@
-# Multi-stage build for Next.js frontend
+# Stage 1: Base (for shared environment)
 FROM node:20-alpine AS base
-
-# Install dependencies
-FROM base AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
-# Copy package files
+# Stage 2: Dependencies (Install everything in one go)
+FROM base AS deps
+# Copy root and frontend package.json
 COPY package.json ./
 COPY frontend/package.json ./frontend/
-
-# Install dependencies in BOTH root and frontend
+# Run install at root (hoisting dependencies)
 RUN npm install
-RUN cd frontend && npm install
 
-# Build stage
+# Stage 3: Builder (Compile the app)
 FROM base AS builder
-WORKDIR /app
-
-# Copy all source
+# Copy dependencies from the deps stage
+COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Copy node_modules from deps to both locations
-COPY --from=deps /app/node_modules ./node_modules
-COPY --from=deps /app/frontend/node_modules ./frontend/node_modules
-
-# Set build-time environment variables
+# Set environment variables for the build
 ARG NEXT_PUBLIC_API_GATEWAY_URL
 ARG NEXT_PUBLIC_APP_NAME
 ENV NEXT_PUBLIC_API_GATEWAY_URL=$NEXT_PUBLIC_API_GATEWAY_URL
 ENV NEXT_PUBLIC_APP_NAME=$NEXT_PUBLIC_APP_NAME
 
-# Build
+# Run the build inside the frontend directory
 WORKDIR /app/frontend
 RUN npm run build
 
-# Production stage
-FROM base AS runner
+# Stage 4: Runner (Minimal production runtime)
+FROM node:20-alpine AS runner
 WORKDIR /app
-ENV NODE_ENV=production
 
+ENV NODE_ENV=production
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
 
-# Copy built application from /app/frontend
+# Copy only the standalone output and static assets
+COPY --from=builder /app/frontend/.next/standalone ./
+COPY --from=builder /app/frontend/.next/static ./.next/static
 COPY --from=builder /app/frontend/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/frontend/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/frontend/.next/static ./.next/static
 
 USER nextjs
 EXPOSE 3000
