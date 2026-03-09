@@ -46,9 +46,12 @@ jobs:
           IMAGE=${{ inputs.gcp_region }}-docker.pkg.dev/${{ inputs.gcp_project }}/devops-idp/${{ inputs.image_name }}:latest
           SERVICE_PATH=${{ inputs.service_path }}
 
-          # Build the Docker image
+          # Build the Docker image with build arguments
           echo "Building Docker image: $IMAGE"
-          docker build -f $SERVICE_PATH/Dockerfile -t $IMAGE .
+          docker build \
+            --build-arg NEXT_PUBLIC_API_GATEWAY_URL=https://devops.internal.company/api \
+            --build-arg NEXT_PUBLIC_APP_NAME="DevOps Control Center" \
+            -f $SERVICE_PATH/Dockerfile -t $IMAGE .
 
           # Set IMAGE as GitHub env for downstream steps
           echo "IMAGE=$IMAGE" >> $GITHUB_ENV
