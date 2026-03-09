@@ -7,8 +7,8 @@ RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
 # Copy package files
-COPY package.json package-lock.json ./
-COPY frontend/package.json frontend/package-lock.json ./frontend/
+COPY package.json ./
+COPY frontend/package.json ./frontend/
 
 # Install dependencies in BOTH root and frontend
 RUN npm install
