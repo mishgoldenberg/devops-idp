@@ -23,11 +23,9 @@ spec:
         ports:
         - containerPort: 3000
           name: http
-        env:
-        - name: NEXT_PUBLIC_API_GATEWAY_URL
-          value: "http://backend:8000"
-        - name: NODE_ENV
-          value: "production"
+        envFrom:
+        - secretRef:
+            name: all-secrets
         resources:
           requests:
             cpu: 100m

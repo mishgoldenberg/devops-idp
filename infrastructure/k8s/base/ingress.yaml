@@ -2,33 +2,26 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: devops-control-center-ingress
+  namespace: devops-control-center-dev
   annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
-    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
-    # Add your specific ingress controller annotations
+    nginx.ingress.kubernetes.io/rewrite-target: /$1
 spec:
-  ingressClassName: nginx  # Adjust based on your ingress controller
+  ingressClassName: nginx
   rules:
-  - host: devops.internal.company  # Replace with your internal domain
+  - host: devops.internal.company
     http:
       paths:
-      - path: /api
-        pathType: Prefix
+      - path: /api/(.*)
+        pathType: ImplementationSpecific
         backend:
           service:
             name: backend-service
             port:
               number: 8000
-      - path: /
-        pathType: Prefix
+      - path: /(.*)
+        pathType: ImplementationSpecific
         backend:
           service:
             name: frontend-service
             port:
               number: 3000
-  tls:
-  - hosts:
-    - devops.internal.company
-    secretName: devops-tls-secret  # Create this secret with your TLS certificates
-
