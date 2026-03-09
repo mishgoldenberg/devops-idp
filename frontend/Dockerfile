@@ -37,23 +37,28 @@ RUN npm run build
 # -------------------------------
 # Stage 4: Runner (Production)
 # -------------------------------
+# Stage 4: Runner (Minimal production runtime)
 FROM node:20-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
+
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
 
-# Copy standalone build from builder
-COPY --from=builder /app/frontend/.next/standalone ./  
+# 1. Copy the entire standalone folder
+# This ALREADY contains the pruned node_modules you need
+COPY --from=builder /app/frontend/.next/standalone ./
+
+# 2. Copy static files and public folder
 COPY --from=builder /app/frontend/.next/static ./.next/static
 COPY --from=builder /app/frontend/public ./public
 
-# Install only production dependencies inside standalone
-RUN npm install --production
+# 3. Ensure permissions are correct for the nextjs user
+RUN chown -R nextjs:nodejs /app
 
 USER nextjs
 EXPOSE 3000
 
-# Run the Next.js standalone server
+# Next.js standalone server entry point
 CMD ["node", "server.js"]
