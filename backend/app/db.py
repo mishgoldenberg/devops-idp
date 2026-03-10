@@ -3,20 +3,26 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
-
 from config import get_settings
 
+# Initialize a connection pool globally (create once, reuse many times)
+settings = get_settings()
+db_pool = psycopg2.pool.SimpleConnectionPool(
+    1, 20, settings.database_url
+)
 
 @contextmanager
 def get_connection():
-    """Context manager yielding a PostgreSQL connection."""
-    settings = get_settings()
-    conn = psycopg2.connect(settings.database_url)
+    """Context manager yielding a PostgreSQL connection from the pool."""
+    conn = db_pool.getconn()
     try:
         yield conn
+        conn.commit()  # Automatically commit if no errors occur
+    except Exception as e:
+        conn.rollback()  # Roll back if an error occurs
+        raise e
     finally:
-        conn.close()
-
+        db_pool.putconn(conn) # Return connection to the pool
 
 def query_all(sql: str, params: Optional[Sequence[Any]] = None) -> List[Dict[str, Any]]:
     """Run a SELECT query and return all rows as dictionaries."""
