@@ -54,6 +54,9 @@ COPY --from=builder /app/frontend/.next/standalone ./
 COPY --from=builder /app/frontend/.next/static ./.next/static
 COPY --from=builder /app/frontend/public ./public
 
+COPY --from=builder /app/frontend/.next/standalone/package.json ./package.json
+RUN npm install --production
+
 # 3. Ensure permissions are correct for the nextjs user
 RUN chown -R nextjs:nodejs /app
 
