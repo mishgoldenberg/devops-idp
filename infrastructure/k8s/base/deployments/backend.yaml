@@ -85,7 +85,7 @@ spec:
               name: all-secrets
               key: OAUTH_CLIENT_SECRET
         - name: OAUTH_REDIRECT_URI
-          value: "https://devops.internal.company/auth/callback"
+          value: "https://devops.internal.company/api/auth/callback"
         - name: OAUTH_ISSUER
           value: "https://accounts.google.com"
         - name: OAUTH_AUTH_URL
