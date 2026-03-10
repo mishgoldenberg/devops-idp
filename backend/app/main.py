@@ -33,7 +33,7 @@ from fastapi import FastAPI, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from api import api_router
+from .api import api_router
 from config import get_settings
 
 

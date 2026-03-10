@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
-from db import query_one, query_all
+from ..db import query_one, query_all
 from security import AuthUser, create_access_token, decode_access_token
 
 

@@ -2,8 +2,9 @@ from contextlib import contextmanager
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import psycopg2
+from psycopg2 import pool
 from psycopg2.extras import RealDictCursor
-from config import get_settings
+from .config import get_settings
 
 # Initialize a connection pool globally (create once, reuse many times)
 settings = get_settings()
