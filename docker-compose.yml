@@ -156,3 +156,4 @@ volumes:
     name: devops-postgres-data
   redis-data:
     name: devops-redis-data
+
