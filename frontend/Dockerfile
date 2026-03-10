@@ -16,6 +16,7 @@ FROM base AS builder
 # Copy dependencies from the deps stage
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+
 # Run the build inside the frontend directory
 WORKDIR /app/frontend
 RUN npm run build
@@ -29,7 +30,7 @@ RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
 
 # Copy only the standalone output and static assets
-COPY --from=builder /app/frontend/.next/standalone/frontend ./
+COPY --from=builder /app/frontend/.next/standalone ./
 COPY --from=builder /app/frontend/.next/static ./.next/static
 COPY --from=builder /app/frontend/public ./public
 
