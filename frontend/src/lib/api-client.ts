@@ -66,7 +66,7 @@ class ApiClient {
 
   // Auth API
   async login(username: string): Promise<any> {
-    const response = await this.client.post('/login', { username });
+    const response = await this.client.post('/auth/login', { username });
     if (response.data.success) {
       this.setToken(response.data.data.token);
       if (typeof window !== 'undefined') {

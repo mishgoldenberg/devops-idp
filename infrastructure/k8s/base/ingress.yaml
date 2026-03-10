@@ -3,23 +3,24 @@ kind: Ingress
 metadata:
   name: devops-control-center-ingress
   namespace: devops-control-center-dev
-  annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /$1
+  # REMOVED: nginx.ingress.kubernetes.io/rewrite-target annotation
 spec:
   ingressClassName: nginx
   rules:
   - host: devops.internal.company
     http:
       paths:
-      - path: /api/(.*)
-        pathType: ImplementationSpecific
+      # Route /api to backend without rewriting/stripping
+      - path: /api
+        pathType: Prefix
         backend:
           service:
             name: backend-service
             port:
               number: 8000
-      - path: /(.*)
-        pathType: ImplementationSpecific
+      # Route everything else to frontend
+      - path: /
+        pathType: Prefix
         backend:
           service:
             name: frontend-service
