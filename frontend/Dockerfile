@@ -22,6 +22,7 @@ WORKDIR /app/frontend
 RUN npm run build
 
 # Stage 4: Runner (Minimal production runtime)
+# Stage 4: Runner
 FROM node:20-alpine AS runner
 WORKDIR /app
 
@@ -29,10 +30,17 @@ ENV NODE_ENV=production
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
 
-# Copy only the standalone output and static assets
-COPY --from=builder /app/frontend/.next/standalone ./
+# 1. Copy everything from the nested standalone folder to the root
+# The 'server.js' and the 'node_modules' are inside the 'frontend' folder
+COPY --from=builder /app/frontend/.next/standalone/ ./
+COPY --from=builder /app/node_modules ./node_modules
+
+# 2. Copy static files (these are NOT inside the standalone folder)
 COPY --from=builder /app/frontend/.next/static ./.next/static
 COPY --from=builder /app/frontend/public ./public
+
+# 3. Fix permissions
+RUN chown -R nextjs:nodejs /app
 
 USER nextjs
 EXPOSE 3000
