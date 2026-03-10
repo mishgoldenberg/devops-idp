@@ -1,31 +1,28 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
+# Namespace for production
 namespace: devops-control-center
 
+# Base resources
 resources:
-  - ../../base/namespace.yaml
-  - ../../base/deployments/api-gateway.yaml
-  - ../../base/deployments/frontend.yaml
-  - ../../base/configmaps/application-config.yaml
-  - ../../base/secrets/secrets.example.yaml
-  - ../../base/ingress.yaml
+  - ../../base
 
+# Environment-specific configMap
 configMapGenerator:
   - name: prod-config
     literals:
       - ENVIRONMENT=production
       - USE_MOCK_DATA=false
 
-replicas:
-  - name: api-gateway
-    count: 3
-  - name: frontend
-    count: 2
+# Patches to set replicas and resource limits
+patchesStrategicMerge:
+  - patches/replicas.yaml
+  - patches/resources.yaml
 
+# Update images for production
 images:
-  - name: devops-control-center/api-gateway
+  - name: devops-control-center/backend
     newTag: v1.0.0
   - name: devops-control-center/frontend
     newTag: v1.0.0
-

@@ -1,0 +1,135 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  labels:
+    app: backend
+    tier: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+        tier: backend
+    spec:
+      containers:
+      - name: backend
+        image: europe-west1-docker.pkg.dev/devops-idp-489012/devops-idp/backend:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8000
+          name: http
+        env:
+        # Application settings
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "8000"
+        # Secrets and other environment variables
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: all-secrets
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: all-secrets
+              key: POSTGRES_PASSWORD
+        - name: POSTGRES_DB
+          valueFrom:  
+            secretKeyRef:
+              name: all-secrets
+              key: POSTGRES_DB
+        - name: POSTGRES_PORT
+          valueFrom:  
+            secretKeyRef:
+              name: all-secrets
+              key: POSTGRES_PORT
+        - name: POSTGRES_HOST
+          value: postgres-service
+        - name: DATABASE_URL
+          value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)"
+           
+        - name: REDIS_HOST
+          value: redis-service
+        - name: REDIS_PORT
+          value: "6379"
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: all-secrets
+              key: REDIS_PASSWORD
+        
+        # Azure DevOps Integration
+        - name: USE_MOCK_AZURE_DEVOPS
+          value: "false"
+        - name: AZURE_DEVOPS_API_URL
+          valueFrom:
+            configMapKeyRef:
+              name: azure-devops-config
+              key: api-url
+        - name: AZURE_DEVOPS_PAT
+          valueFrom:
+            secretKeyRef:
+              name: all-secrets
+              key: AZURE_DEVOPS_PAT
+        - name: AZURE_DEVOPS_QUERY_USER
+          valueFrom:
+            configMapKeyRef:
+              name: azure-devops-config
+              key: query-user
+        - name: AUTH_SERVICE_URL
+          value: "http://auth-service:8001"
+        - name: AZURE_DEVOPS_SERVICE_URL
+          value: "http://azure-devops-service:8002"
+        - name: SONARQUBE_SERVICE_URL
+          value: "http://sonarqube-service:8003"
+        - name: ARTIFACTORY_SERVICE_URL
+          value: "http://artifactory-service:8004"
+        - name: SERVICENOW_SERVICE_URL
+          value: "http://servicenow-service:8005"
+        - name: AI_CHATBOT_SERVICE_URL
+          value: "http://ai-chatbot-service:8006"
+        - name: APPROVAL_SERVICE_URL
+          value: "http://approval-service:8007"
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            cpu: 500m
+            memory: 768Mi
+        
+        # Kubernetes probes
+        livenessProbe:
+          httpGet:
+            path: /api/health/live
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /api/health/ready
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 2
+        
+        # Security context
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
