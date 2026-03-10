@@ -46,11 +46,11 @@ def create_app() -> FastAPI:
     )
 
     # CORS Middleware
-    # In docker-compose, frontend and backend run on the same network, so we're permissive in dev.
-    # For production, configure specific allowed origins.
+    # Use configured CORS_ORIGINS (comma-separated) or "*" as a fallback.
+    allowed_origins = settings.cors_origins_list
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=allowed_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

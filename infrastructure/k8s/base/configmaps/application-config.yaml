@@ -21,7 +21,7 @@ data:
   USE_MOCK_AI_CHATBOT: "false"
   
   # CORS
-  CORS_ORIGINS: "http://localhost:3000"
+  CORS_ORIGINS: "http://localhost:3000,https://devops.internal.company"
   
   # Rate limiting
   RATE_LIMIT_WINDOW_MS: "60000"

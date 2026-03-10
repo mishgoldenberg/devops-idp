@@ -1,6 +1,9 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
 
-const API_BASE_URL = '';
+const API_BASE_URL =
+  typeof window === 'undefined'
+    ? process.env.NEXT_PUBLIC_API_BASE_URL || ''
+    : (process.env.NEXT_PUBLIC_API_BASE_URL as string) || '';
 
 class ApiClient {
   private client: AxiosInstance;
@@ -65,15 +68,11 @@ class ApiClient {
   }
 
   // Auth API
-  async login(username: string): Promise<any> {
-    const response = await this.client.post('/auth/login', { username });
-    if (response.data.success) {
-      this.setToken(response.data.data.token);
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('user_data', JSON.stringify(response.data.data.user));
-      }
+  async completeOAuthLoginFromMessage(data: { token: string; user: any }) {
+    this.setToken(data.token);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('user_data', JSON.stringify(data.user));
     }
-    return response.data;
   }
 
   async logout(): Promise<void> {
