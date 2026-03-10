@@ -1,0 +1,15 @@
+postgres:
+  enabled: true
+  primary:
+    service:
+      ports:
+        postgres: 5432
+      type: ClusterIP
+
+redis:
+  enabled: true
+  master:
+    service:
+      ports:
+        redis: 6379
+      type: ClusterIP

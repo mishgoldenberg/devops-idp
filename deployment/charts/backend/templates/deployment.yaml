@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Chart.Name }}
+  labels:
+    app: {{ .Chart.Name }}
+    tier: backend
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Chart.Name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Chart.Name }}
+        tier: backend
+    spec:
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: PORT
+              value: "8000"
+            - name: POSTGRES_HOST
+              value: {{ .Values.db.host | quote }}
+            - name: POSTGRES_PORT
+              value: {{ .Values.db.port | quote }}
+            - name: REDIS_HOST
+              value: {{ .Values.redis.host | quote }}
+            - name: REDIS_PORT
+              value: {{ .Values.redis.port | quote }}
+            - name: USE_MOCK_AZURE_DEVOPS
+              value: "false"
+            # External Service URLs from values
+            {{- range $key, $val := .Values.services }}
+            - name: {{ $key | upper }}_SERVICE_URL
+              value: {{ $val | quote }}
+            {{- end }}
+            # Secrets from all-secrets
+            {{- range $secretKey := list "POSTGRES_USER" "POSTGRES_PASSWORD" "POSTGRES_DB" "REDIS_PASSWORD" "AZURE_DEVOPS_PAT" }}
+            - name: {{ $secretKey }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.secretName }}
+                  key: {{ $secretKey }}
+            {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Values.azureDevopsConfig.configMapName }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /api/health/live
+              port: 8000
+          readinessProbe:
+            httpGet:
+              path: /api/health/ready
+              port: 8000
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

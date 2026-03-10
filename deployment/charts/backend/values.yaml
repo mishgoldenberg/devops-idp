@@ -1,0 +1,44 @@
+replicaCount: 1
+image:
+  repository: europe-west1-docker.pkg.dev/devops-idp-489012/devops-idp/backend
+  tag: latest
+  pullPolicy: Always
+
+# External Service URLs (Easy to update as you split microservices!)
+services:
+  auth: http://auth-service:8001
+  azureDevops: http://azure-devops-service:8002
+  sonarqube: http://sonarqube-service:8003
+  artifactory: http://artifactory-service:8004
+  servicenow: http://servicenow-service:8005
+  aiChatbot: http://ai-chatbot-service:8006
+  approval: http://approval-service:8007
+
+# Azure DevOps Config
+azureDevopsConfig:
+  configMapName: azure-devops-config
+
+# Database & Redis Settings
+db:
+  host: postgres-service
+  port: 5432
+redis:
+  host: redis-service
+  port: 6379
+
+tier: backend
+
+service:
+  type: ClusterIP
+  port: 8000
+  targetPort: 8000
+
+secretName: all-secrets
+
+ingress:
+  enabled: true
+  className: nginx
+  host: devops.internal.company
+  path: /api
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"

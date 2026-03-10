@@ -1,4 +1,4 @@
-name: Service Backend CI
+name: Docker Backend CI
 
 on:
   push:
@@ -13,5 +13,6 @@ jobs:
       image_name: backend
       gcp_project: devops-idp-489012
       gcp_region: europe-west1
+      repository_name: devops-idp
     secrets:
       GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}

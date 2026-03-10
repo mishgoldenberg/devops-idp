@@ -1,4 +1,4 @@
-name: Service Template
+name: Docker Template
 
 on:
   workflow_call:
@@ -13,6 +13,9 @@ on:
         required: true
         type: string
       gcp_region:
+        required: true
+        type: string
+      repository_name: # The name of your Artifact Registry repo (e.g., 'devops-idp')
         required: true
         type: string
     secrets:
@@ -43,7 +46,7 @@ jobs:
 
       - name: Build Docker image
         run: |
-          IMAGE=${{ inputs.gcp_region }}-docker.pkg.dev/${{ inputs.gcp_project }}/devops-idp/${{ inputs.image_name }}:latest
+          IMAGE=${{ inputs.gcp_region }}-docker.pkg.dev/${{ inputs.gcp_project }}/${{ inputs.repository_name }}/${{ inputs.image_name }}:latest
           SERVICE_PATH=${{ inputs.service_path }}
 
           # Build the Docker image with build arguments

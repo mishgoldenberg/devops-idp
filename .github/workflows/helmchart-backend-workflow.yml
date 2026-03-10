@@ -1,0 +1,18 @@
+name: Helm Chart Backend CI
+
+on:
+  push:
+    paths:
+      - "deployment/charts/backend/**"
+
+jobs:
+  backend:
+    uses: ./.github/workflows/helmchart-template-workflow.yml
+    with:
+      service_path: deployment/charts/backend
+      helm_name: backend
+      gcp_project: devops-idp-489012
+      gcp_region: europe-west1
+      repository_name: devops-idp-helm-charts
+    secrets:
+      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}

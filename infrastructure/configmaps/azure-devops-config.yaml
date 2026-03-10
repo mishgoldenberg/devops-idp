@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: azure-devops-config
+  labels:
+    app: api-gateway
+    component: azure-devops
+data:
+  # Azure DevOps REST API base URL
+  api-url: "https://dev.azure.com"
+  
+  # Optional: Query user email for WIQL work item filters
+  # Leave empty to use authenticated user's email
+  query-user: "golden.mihel@gmail.com"
+  
+  # Organization name (used in URLs)
+  # Example: https://dev.azure.com/{organization}
+  organization: "DevCollection-Inheritance"
