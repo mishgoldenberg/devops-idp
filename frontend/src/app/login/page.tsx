@@ -9,21 +9,13 @@ import { Card, CardHeader, CardBody } from '@/components/common/Card';
 export default function LoginPage() {
   const router = useRouter();
 
-  // Immediately check authentication - if logged in, redirect to dashboard
   useEffect(() => {
     if (isAuthenticated()) {
-      // Use replace to prevent going back to login page via browser back button
+      // If already authenticated, redirect to dashboard
       router.replace('/dashboard');
+      return;
     }
-  }, [router]);
 
-  // Don't render login form if already authenticated
-  // This prevents any flash of the login form
-  if (typeof window !== 'undefined' && isAuthenticated()) {
-    return null;
-  }
-
-  useEffect(() => {
     function handleMessage(event: MessageEvent) {
       if (event.data && event.data.type === 'auth:success') {
         const { token, user } = event.data.data || {};
