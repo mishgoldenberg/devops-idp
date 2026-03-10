@@ -13,6 +13,15 @@ RUN npm install
 
 # Stage 3: Builder (Compile the app)
 FROM base AS builder
+
+# --- ADD THESE ARGS ---
+ARG NEXT_PUBLIC_API_GATEWAY_URL
+ARG NEXT_PUBLIC_APP_NAME
+
+# --- MAP ARGS TO ENV ---
+ENV NEXT_PUBLIC_API_GATEWAY_URL=$NEXT_PUBLIC_API_GATEWAY_URL
+ENV NEXT_PUBLIC_APP_NAME=$NEXT_PUBLIC_APP_NAME
+
 # Copy dependencies from the deps stage
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
