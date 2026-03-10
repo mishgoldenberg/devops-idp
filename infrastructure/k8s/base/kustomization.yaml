@@ -5,8 +5,8 @@ resources:
   - namespace.yaml
   - deployments/backend.yaml
   - deployments/frontend.yaml
-  - deployments/redis.yaml
-  - deployments/postgres.yaml
+  - stateful-state/postgres-state.yaml
+  - stateful-state/redis-state.yaml
   - services/backend-service.yaml
   - services/frontend-service.yaml
   - services/redis-service.yaml
@@ -14,17 +14,12 @@ resources:
   - configmaps/application-config.yaml
   - configmaps/azure-devops-config.yaml
   - ingress.yaml
-  - persistent-volume-claim/postgres-pvc.yaml
 
 configMapGenerator:
   - name: common-config
     literals:
       - ENVIRONMENT=base
       - USE_MOCK_DATA=true
-  - name: postgres-init-scripts
-    files:
-      # This points to the folder containing your .sql or .sh files
-      - database-replace-later-helm/init/01-create-database.sql
 
 # Removed disableNameSuffixHash to allow for automatic Pod restarts on changes
 secretGenerator:

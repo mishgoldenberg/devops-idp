@@ -30,11 +30,31 @@ spec:
         - name: PORT
           value: "8000"
         # Secrets and other environment variables
-        - name: DATABASE_URL
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: all-secrets
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
           valueFrom:
             secretKeyRef:
               name: all-secrets
               key: POSTGRES_PASSWORD
+        - name: POSTGRES_DB
+          valueFrom:  
+            secretKeyRef:
+              name: all-secrets
+              key: POSTGRES_DB
+        - name: POSTGRES_PORT
+          valueFrom:  
+            secretKeyRef:
+              name: all-secrets
+              key: POSTGRES_PORT
+        - name: POSTGRES_HOST
+          value: postgres-service
+        - name: DATABASE_URL
+          value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)"
+           
         - name: REDIS_HOST
           value: redis-service
         - name: REDIS_PORT

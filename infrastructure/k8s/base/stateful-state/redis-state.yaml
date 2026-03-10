@@ -1,9 +1,9 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: redis
 spec:
-  replicas: 1
+  serviceName: redis-service
   selector:
     matchLabels:
       app: redis
@@ -15,18 +15,17 @@ spec:
       containers:
         - name: redis
           image: redis:7-alpine
-          command: ["redis-server", "--requirepass", "$(REDIS_PASSWORD)"]
-          env:
-            - name: REDIS_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: redis-secret
-                  key: REDIS_PASSWORD
+          command: ["redis-server", "--appendonly", "yes"] # Enable persistence
           ports:
             - containerPort: 6379
           volumeMounts:
             - name: redis-storage
               mountPath: /data
-      volumes:
-        - name: redis-storage
-          emptyDir: {}  # ephemeral storage
+  volumeClaimTemplates:
+    - metadata:
+        name: redis-storage
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 500Mi
