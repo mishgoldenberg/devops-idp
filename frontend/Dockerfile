@@ -21,7 +21,6 @@ COPY . .
 WORKDIR /app/frontend
 RUN npm run build
 
-# Stage 4: Runner (Minimal production runtime)
 # Stage 4: Runner
 FROM node:20-alpine AS runner
 WORKDIR /app
