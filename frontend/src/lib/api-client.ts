@@ -120,20 +120,6 @@ class ApiClient {
     return response.data;
   }
 
-  // Azure DevOps PAT management
-  async getAzureDevOpsPatStatus(): Promise<{ success: boolean; data: { configured: boolean } }> {
-    const response = await this.client.get('/azure-devops/pat');
-    return response.data;
-  }
-
-  async setAzureDevOpsPat(pat: string): Promise<void> {
-    await this.client.post('/azure-devops/pat', { pat });
-  }
-
-  async deleteAzureDevOpsPat(): Promise<void> {
-    await this.client.delete('/azure-devops/pat');
-  }
-
   // SonarQube API
   async getSonarProjects(): Promise<any> {
     const response = await this.client.get('/sonarqube/projects');

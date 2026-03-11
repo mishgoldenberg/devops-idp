@@ -30,16 +30,10 @@ ENDPOINTS:
 from typing import Any, Dict, List, Optional
 import os
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status, Response
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 import httpx
 
 from security import AuthUser, get_current_user
-from secrets_manager import (
-    delete_user_azure_devops_pat,
-    get_user_azure_devops_pat,
-    store_user_azure_devops_pat,
-)
 
 
 router = APIRouter()
@@ -47,6 +41,7 @@ router = APIRouter()
 # Configuration from environment variables
 USE_MOCK = os.getenv("USE_MOCK_AZURE_DEVOPS", "true").lower() in ("true", "1")
 ADO_BASE = os.getenv("AZURE_DEVOPS_API_URL", "https://dev.azure.com")
+ADO_PAT = os.getenv("AZURE_DEVOPS_PAT", "")
 ADO_QUERY_USER = os.getenv("AZURE_DEVOPS_QUERY_USER", "")
 
 
@@ -54,71 +49,6 @@ def _now_iso() -> str:
     from datetime import datetime, timezone
 
     return datetime.now(timezone.utc).isoformat()
-
-
-def _get_pat_for_user(current_user: AuthUser) -> str:
-    """
-    Resolve the Azure DevOps PAT for the current user.
-
-    - Primary source: per-user secret from Vault or system_config
-    - No PAT is ever logged or returned to the caller
-    """
-    user_id = str(current_user.get("id"))
-    pat = get_user_azure_devops_pat(user_id)
-    if not pat:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Azure DevOps PAT is not configured for this user",
-        )
-    return pat
-
-
-class PatPayload(BaseModel):
-    pat: str
-
-
-@router.get("/pat")
-def get_pat_status(current_user: AuthUser = Depends(get_current_user)):
-    """
-    Return whether the current user has configured an Azure DevOps PAT.
-    The PAT value itself is never returned.
-    """
-    user_id = str(current_user.get("id"))
-    pat = get_user_azure_devops_pat(user_id)
-    return {
-        "success": True,
-        "data": {"configured": bool(pat)},
-        "timestamp": _now_iso(),
-    }
-
-
-@router.post("/pat", status_code=status.HTTP_204_NO_CONTENT)
-def set_pat(payload: PatPayload, current_user: AuthUser = Depends(get_current_user)):
-    """
-    Create or update the current user's Azure DevOps PAT.
-
-    The PAT is stored in Vault (if USE_VAULT=true) or in the system_config
-    table marked as sensitive. It is never echoed back in responses.
-    """
-    raw_pat = (payload.pat or "").strip()
-    if len(raw_pat) < 10:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Provided PAT appears invalid",
-        )
-    user_id = str(current_user.get("id"))
-    store_user_azure_devops_pat(user_id, raw_pat)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-@router.delete("/pat", status_code=status.HTTP_204_NO_CONTENT)
-def delete_pat(current_user: AuthUser = Depends(get_current_user)):
-    """
-    Remove the current user's Azure DevOps PAT.
-    """
-    user_id = str(current_user.get("id"))
-    delete_user_azure_devops_pat(user_id)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/work-items")
@@ -152,15 +82,20 @@ def get_work_items(
         ]
         return {"success": True, "data": work_items, "timestamp": _now_iso()}
 
-    # Try to query Azure DevOps using WIQL
+    # Try to query Azure DevOps using WIQL with a shared PAT, filtering by the
+    # signed-in user's identity (email/username).
     try:
         query = {
             "query": f"Select [System.Id], [System.Title], [System.State], [System.WorkItemType] "
             f"From WorkItems Where [System.AssignedTo] = '{effective_username}' AND [System.State] <> 'Closed' "
             f"Order By [System.ChangedDate] Desc"
         }
-        pat = _get_pat_for_user(current_user)
-        auth = httpx.BasicAuth("", pat)
+        if not ADO_PAT:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Azure DevOps PAT is not configured on the server",
+            )
+        auth = httpx.BasicAuth("", ADO_PAT)
         wiql_url = f"{ADO_BASE}/_apis/wit/wiql?api-version=7.0"
         with httpx.Client(auth=auth, timeout=30.0) as client:
             r = client.post(wiql_url, json=query)
@@ -274,8 +209,12 @@ def get_pull_requests(
 
     # Try to query Azure DevOps for real PRs
     try:
-        pat = _get_pat_for_user(current_user)
-        auth = httpx.BasicAuth("", pat)
+        if not ADO_PAT:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Azure DevOps PAT is not configured on the server",
+            )
+        auth = httpx.BasicAuth("", ADO_PAT)
         # Query all projects in the org
         projects_url = f"{ADO_BASE}/_apis/projects?api-version=7.0"
         with httpx.Client(auth=auth, timeout=30.0) as client:
@@ -378,8 +317,12 @@ def get_pipelines(
 
     # Try to query Azure DevOps for real pipelines
     try:
-        pat = _get_pat_for_user(current_user)
-        auth = httpx.BasicAuth("", pat)
+        if not ADO_PAT:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Azure DevOps PAT is not configured on the server",
+            )
+        auth = httpx.BasicAuth("", ADO_PAT)
         # Query all projects in the org and get their recent builds
         projects_url = f"{ADO_BASE}/_apis/projects?api-version=7.0"
         with httpx.Client(auth=auth, timeout=30.0) as client:
@@ -526,8 +469,12 @@ def create_ado_project(
     """
 
     org = ADO_BASE.split("/")[-1]
-    pat = _get_pat_for_user(current_user)
-    auth = httpx.BasicAuth("", pat)
+    if not ADO_PAT:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Azure DevOps PAT is not configured on the server",
+        )
+    auth = httpx.BasicAuth("", ADO_PAT)
 
     with httpx.Client(auth=auth, timeout=60.0) as client:
         # 1. locate parent process template for the requested type

@@ -21,26 +21,26 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _map_role_to_effective(role_name: str) -> str:
+def _map_role_to_effective(role_name: str, email: Optional[str]) -> str:
     """
     Map detailed platform roles into simplified app roles:
       - Admin
       - TeamLead
       - User
+
+    For now we only expose three roles in the app. TeamLead and User share
+    the same permissions; Admin has access to admin-only features.
     """
-    normalized = (role_name or "").strip().lower()
-    if normalized in {
-        "platform admin",
-        "head of section",
-        "branch head",
-        "unit commander",
-    }:
+    # Hard-code a primary admin account for initial testing
+    if email and email.lower() == "golden.mihel@gmail.com":
         return "Admin"
-    if normalized in {
-        "team lead",
-        "project manager",
-    }:
+
+    normalized = (role_name or "").strip().lower()
+    if normalized == "platform admin":
+        return "Admin"
+    if normalized == "team lead":
         return "TeamLead"
+    # All other backend roles are treated as regular users in the app
     return "User"
 
 
@@ -183,7 +183,7 @@ async def oauth_callback(request: Request, code: Optional[str] = None, state: Op
         "username": user_row["username"],
         "email": user_row["email"],
         # Expose simplified role for frontend & RBAC helpers
-        "role": _map_role_to_effective(str(user_row["role_name"])),
+        "role": _map_role_to_effective(str(user_row["role_name"]), email),
         "hierarchy_level": int(user_row["hierarchy_level"]),
         "permissions": user_row.get("permissions") or [],
     }
