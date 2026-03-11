@@ -97,14 +97,14 @@ spec:
         - name: OAUTH_SCOPES
           value: "openid email profile"
 
-        # Azure DevOps Integration
+        # Azure DevOps Integration (real API; base URL = https://dev.azure.com/{organization})
         - name: USE_MOCK_AZURE_DEVOPS
           value: "false"
-        - name: AZURE_DEVOPS_API_URL
+        - name: AZURE_DEVOPS_ORGANIZATION
           valueFrom:
             configMapKeyRef:
               name: azure-devops-config
-              key: api-url
+              key: organization
         - name: AZURE_DEVOPS_PAT
           valueFrom:
             secretKeyRef:

@@ -29,6 +29,16 @@ STARTUP:
   uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 """
 
+# Load .env when present (backend/.env or backend/app/.env for local dev)
+try:
+    from pathlib import Path
+    from dotenv import load_dotenv
+    _env_dir = Path(__file__).resolve().parent.parent  # backend/app -> backend
+    load_dotenv(_env_dir / ".env")
+    load_dotenv(_env_dir / "app" / ".env")
+except ImportError:
+    pass
+
 from fastapi import FastAPI, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse

@@ -4,8 +4,10 @@ import { useEffect, useState } from 'react';
 import { Card, CardHeader, CardBody } from '../common/Card';
 import { Badge } from '../common/Badge';
 import { Skeleton } from '../common/Skeleton';
+import { AzureConnectPrompt } from '../common/AzureConnectPrompt';
 import { apiClient } from '@/lib/api-client';
 import { getUser } from '@/lib/auth';
+import { useAzureDevOpsConnection } from '@/hooks/useAzureDevOpsConnection';
 import { getStatusColor, formatRelativeTime } from '@/lib/utils';
 import { CheckSquare } from 'lucide-react';
 
@@ -19,39 +21,45 @@ interface WorkItem {
 }
 
 export function AzureDevOpsWorkItems() {
+  const connection = useAzureDevOpsConnection();
   const [workItems, setWorkItems] = useState<WorkItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchWorkItems();
-  }, []);
+    if (connection.connected && !connection.checking) {
+      fetchWorkItems();
+    }
+  }, [connection.connected, connection.checking]);
 
   async function fetchWorkItems() {
     try {
       setLoading(true);
+      setError(null);
       const user = getUser();
-      const response = await apiClient.getWorkItems(user?.username || '');
-      
+      const response = await apiClient.getWorkItems(user?.email || user?.username || '');
       if (response.success) {
         setWorkItems(response.data);
       }
     } catch (err: any) {
-      setError(err.message);
+      const detail = err?.response?.data?.detail ?? err?.message ?? 'Failed to load work items';
+      setError(detail);
     } finally {
       setLoading(false);
     }
   }
 
-  if (loading) {
+  const header = (
+    <div className="flex items-center gap-2">
+      <CheckSquare className="w-5 h-5 text-primary" />
+      <h3 className="font-semibold">My Work Items</h3>
+    </div>
+  );
+
+  if (connection.checking || (connection.connected && loading)) {
     return (
       <Card className="h-full">
-        <CardHeader>
-          <div className="flex items-center gap-2">
-            <CheckSquare className="w-5 h-5 text-primary" />
-            <h3 className="font-semibold">My Work Items</h3>
-          </div>
-        </CardHeader>
+        <CardHeader>{header}</CardHeader>
         <CardBody>
           <div className="space-y-3">
             <Skeleton className="h-16 w-full" />
@@ -63,17 +71,24 @@ export function AzureDevOpsWorkItems() {
     );
   }
 
+  if (!connection.connected) {
+    return (
+      <Card className="h-full">
+        <CardHeader>{header}</CardHeader>
+        <CardBody>
+          <AzureConnectPrompt connection={connection} accentClass="bg-primary" />
+        </CardBody>
+      </Card>
+    );
+  }
+
   if (error) {
     return (
       <Card className="h-full">
-        <CardHeader>
-          <div className="flex items-center gap-2">
-            <CheckSquare className="w-5 h-5 text-primary" />
-            <h3 className="font-semibold">My Work Items</h3>
-          </div>
-        </CardHeader>
+        <CardHeader>{header}</CardHeader>
         <CardBody>
-          <p className="text-error text-sm">Failed to load work items</p>
+          <p className="text-sm text-red-500 mb-4">{error}</p>
+          <AzureConnectPrompt connection={connection} accentClass="bg-primary" />
         </CardBody>
       </Card>
     );
@@ -84,12 +99,7 @@ export function AzureDevOpsWorkItems() {
 
   return (
     <Card className="h-full flex flex-col">
-      <CardHeader>
-        <div className="flex items-center gap-2">
-          <CheckSquare className="w-5 h-5 text-primary" />
-          <h3 className="font-semibold">My Work Items</h3>
-        </div>
-      </CardHeader>
+      <CardHeader>{header}</CardHeader>
       <CardBody className="flex-1 overflow-auto">
         <div className="flex gap-4 mb-4">
           <div className="flex items-center gap-2">
@@ -101,7 +111,7 @@ export function AzureDevOpsWorkItems() {
             <span className="text-sm text-secondary-500 dark:text-secondary-400">In Progress</span>
           </div>
         </div>
-        
+
         <div className="space-y-3">
           {workItems.slice(0, 5).map(item => (
             <a
@@ -134,8 +144,9 @@ export function AzureDevOpsWorkItems() {
             <p>No work items assigned</p>
           </div>
         )}
+
+        <AzureConnectPrompt connection={connection} accentClass="bg-primary" />
       </CardBody>
     </Card>
   );
 }
-
