@@ -22,10 +22,31 @@ export function AzureDevOpsWorkItems() {
   const [workItems, setWorkItems] = useState<WorkItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [patConfigured, setPatConfigured] = useState<boolean | null>(null);
+  const [pat, setPat] = useState('');
+  const [savingPat, setSavingPat] = useState(false);
+  const [patError, setPatError] = useState<string | null>(null);
+  const [patSuccess, setPatSuccess] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchWorkItems();
+    initialize();
   }, []);
+
+  async function initialize() {
+    try {
+      const status = await apiClient.getAzureDevOpsPatStatus();
+      const configured = !!status?.data?.configured;
+      setPatConfigured(configured);
+      if (configured) {
+        await fetchWorkItems();
+      } else {
+        setLoading(false);
+      }
+    } catch (err: any) {
+      setError('Failed to check Azure DevOps connection');
+      setLoading(false);
+    }
+  }
 
   async function fetchWorkItems() {
     try {
@@ -40,6 +61,36 @@ export function AzureDevOpsWorkItems() {
       setError(err.message);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleSavePat(e: React.FormEvent) {
+    e.preventDefault();
+    setPatError(null);
+    setPatSuccess(null);
+    try {
+      setSavingPat(true);
+      await apiClient.setAzureDevOpsPat(pat);
+      setPat('');
+      setPatConfigured(true);
+      setPatSuccess('Azure DevOps connection saved. Loading your work items...');
+      await fetchWorkItems();
+    } catch (err: any) {
+      setPatError('Failed to save Personal Access Token. Please verify the value and try again.');
+    } finally {
+      setSavingPat(false);
+    }
+  }
+
+  async function handleDisconnect() {
+    setPatError(null);
+    setPatSuccess(null);
+    try {
+      await apiClient.deleteAzureDevOpsPat();
+      setPatConfigured(false);
+      setWorkItems([]);
+    } catch {
+      setPatError('Failed to remove Azure DevOps connection.');
     }
   }
 
@@ -79,15 +130,90 @@ export function AzureDevOpsWorkItems() {
     );
   }
 
+  if (patConfigured === false) {
+    return (
+      <Card className="h-full flex flex-col">
+        <CardHeader>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <CheckSquare className="w-5 h-5 text-primary" />
+              <h3 className="font-semibold">Connect Azure DevOps</h3>
+            </div>
+          </div>
+        </CardHeader>
+        <CardBody className="flex-1 flex flex-col justify-between gap-4">
+          <div>
+            <p className="text-sm text-secondary-600 dark:text-secondary-400 mb-4">
+              To show your Azure DevOps work items, connect your account using a Personal Access Token (PAT).
+              The token is stored securely on the backend (Vault or encrypted config) and is never shown in the UI or logs.
+            </p>
+            <form onSubmit={handleSavePat} className="space-y-3">
+              <div className="flex flex-col gap-1">
+                <label className="text-sm font-medium text-secondary-700 dark:text-secondary-300">
+                  Azure DevOps Personal Access Token
+                </label>
+                <input
+                  type="password"
+                  value={pat}
+                  onChange={(e) => setPat(e.target.value)}
+                  className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary"
+                  placeholder="Paste your PAT here"
+                  autoComplete="off"
+                  required
+                />
+                <p className="text-xs text-secondary-500 dark:text-secondary-400">
+                  Required scopes typically include Work Items (Read), Code (Read), and Build (Read). Do not reuse this token elsewhere.
+                </p>
+              </div>
+              {patError && (
+                <p className="text-xs text-red-600 dark:text-red-400">
+                  {patError}
+                </p>
+              )}
+              {patSuccess && (
+                <p className="text-xs text-green-600 dark:text-green-400">
+                  {patSuccess}
+                </p>
+              )}
+              <div className="flex items-center gap-2">
+                <button
+                  type="submit"
+                  disabled={savingPat || !pat}
+                  className="inline-flex items-center justify-center px-4 py-2 rounded-md bg-primary text-white text-sm font-medium hover:bg-primary-600 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+                >
+                  {savingPat ? 'Saving…' : 'Save & Connect'}
+                </button>
+              </div>
+            </form>
+          </div>
+          <p className="text-xs text-secondary-500 dark:text-secondary-400">
+            You can update or remove this connection at any time. The token is only used by the backend to call Azure DevOps on your behalf.
+          </p>
+        </CardBody>
+      </Card>
+    );
+  }
+
   const toDoCount = workItems.filter(wi => wi.state === 'To Do').length;
   const inProgressCount = workItems.filter(wi => wi.state === 'In Progress').length;
 
   return (
     <Card className="h-full flex flex-col">
       <CardHeader>
-        <div className="flex items-center gap-2">
-          <CheckSquare className="w-5 h-5 text-primary" />
-          <h3 className="font-semibold">My Work Items</h3>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <CheckSquare className="w-5 h-5 text-primary" />
+            <h3 className="font-semibold">My Work Items</h3>
+          </div>
+          {patConfigured && (
+            <button
+              type="button"
+              onClick={handleDisconnect}
+              className="text-xs text-secondary-500 hover:text-red-600 dark:hover:text-red-400 underline-offset-2 hover:underline"
+            >
+              Disconnect
+            </button>
+          )}
         </div>
       </CardHeader>
       <CardBody className="flex-1 overflow-auto">

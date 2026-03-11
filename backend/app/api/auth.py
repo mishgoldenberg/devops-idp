@@ -21,6 +21,29 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _map_role_to_effective(role_name: str) -> str:
+    """
+    Map detailed platform roles into simplified app roles:
+      - Admin
+      - TeamLead
+      - User
+    """
+    normalized = (role_name or "").strip().lower()
+    if normalized in {
+        "platform admin",
+        "head of section",
+        "branch head",
+        "unit commander",
+    }:
+        return "Admin"
+    if normalized in {
+        "team lead",
+        "project manager",
+    }:
+        return "TeamLead"
+    return "User"
+
+
 def _get_or_create_user_by_email(email: str, full_name: Optional[str]) -> Dict[str, Any]:
     """
     Look up a user by email; if not found, create a regular user with lowest role.
@@ -159,7 +182,8 @@ async def oauth_callback(request: Request, code: Optional[str] = None, state: Op
         "id": str(user_row["id"]),
         "username": user_row["username"],
         "email": user_row["email"],
-        "role": user_row["role_name"],
+        # Expose simplified role for frontend & RBAC helpers
+        "role": _map_role_to_effective(str(user_row["role_name"])),
         "hierarchy_level": int(user_row["hierarchy_level"]),
         "permissions": user_row.get("permissions") or [],
     }

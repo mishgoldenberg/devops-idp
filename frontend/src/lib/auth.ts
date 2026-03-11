@@ -55,8 +55,8 @@ export function hasRoleLevel(requiredLevel: number): boolean {
 export function canViewObservability(): boolean {
   const user = getUser();
   if (!user) return false;
-  // Platform Admin (1), Head of Section (4), Team Lead (6)
-  return [1, 4, 6].includes(user.hierarchy_level);
+  // Observability and monitoring are Admin-only in the UI layer
+  return user.role === 'Admin';
 }
 
 export function canViewAggregatedMetrics(): boolean {
@@ -68,6 +68,6 @@ export function canViewAggregatedMetrics(): boolean {
 
 export function isPlatformAdmin(): boolean {
   const user = getUser();
-  return user?.hierarchy_level === 1;
+  return user?.role === 'Admin';
 }
 

@@ -46,5 +46,8 @@ pydantic==2.9.0
 # HTTP client for external APIs
 httpx==0.24.1
 
+# Optional: HashiCorp Vault client (for secure per-user PAT storage)
+hvac==1.2.1
+
 
 
