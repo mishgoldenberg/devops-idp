@@ -29,13 +29,17 @@ STARTUP:
   uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 """
 
-# Load .env when present (backend/.env or backend/app/.env for local dev)
+# Load .env files when present (local dev).  Earlier files take precedence;
+# dotenv's load_dotenv() does NOT overwrite already-set env vars by default.
 try:
     from pathlib import Path
     from dotenv import load_dotenv
-    _env_dir = Path(__file__).resolve().parent.parent  # backend/app -> backend
-    load_dotenv(_env_dir / ".env")
-    load_dotenv(_env_dir / "app" / ".env")
+    _repo_root = Path(__file__).resolve().parent.parent.parent  # backend/app -> repo root
+    _backend_dir = _repo_root / "backend"
+    # Highest priority first: dedicated backend .env, then the shared secrets .env
+    load_dotenv(_backend_dir / ".env")
+    load_dotenv(_backend_dir / "app" / ".env")
+    load_dotenv(_repo_root / "infrastructure" / "k8s" / "base" / "secrets" / ".env")
 except ImportError:
     pass
 

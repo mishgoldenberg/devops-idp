@@ -38,13 +38,24 @@ export function AzureConnectPrompt({ connection, accentClass = 'bg-blue-600' }: 
 
   if (connected && !showForm) {
     if (!hasPersonalPat) {
-      // Using server-level PAT fallback – just show a small "use your own" link
-      return null;
+      // Connected via the shared server PAT – show a subtle prompt to add a personal one
+      return (
+        <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 mt-3">
+          <KeyRound className="w-3 h-3 text-yellow-400" />
+          <span>Using shared token.</span>
+          <button
+            onClick={() => setShowForm(true)}
+            className="ml-auto text-blue-500 hover:underline transition"
+          >
+            Add your own PAT
+          </button>
+        </div>
+      );
     }
     return (
-      <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 mt-2">
+      <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 mt-3">
         <KeyRound className="w-3 h-3 text-green-500" />
-        <span>Connected with your PAT</span>
+        <span>Connected with your personal PAT</span>
         <button
           onClick={disconnect}
           disabled={saving}
