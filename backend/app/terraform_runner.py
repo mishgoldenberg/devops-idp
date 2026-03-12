@@ -35,14 +35,21 @@ TF_GCP_SA = "devops-terraform-sa@devops-idp-489012.iam.gserviceaccount.com"
 TF_K8S_SA = "devops-terraform-sa"
 K8S_NAMESPACE = "devops-control-center"
 TF_IMAGE = "hashicorp/terraform:1.6"
-ADO_SECRET_NAME = "all-secrets"
-# Key that holds the read-only query PAT (always required).
+# Dedicated fixed-name secret that lives in K8S_NAMESPACE and holds the PATs
+# used by the Terraform container.  Unlike the main 'all-secrets' Secret this
+# one is NOT managed by Kustomize so its name never gets a hash suffix and the
+# programmatically-created K8s Job can always reference it by the same name.
+# Create / update it with:
+#   kubectl create secret generic terraform-ado-credentials \
+#     -n devops-control-center \
+#     --from-literal=AZURE_DEVOPS_PAT=<read-only PAT> \
+#     --from-literal=AZURE_DEVOPS_ADMIN_PAT=<admin PAT> \
+#     --dry-run=client -o yaml | kubectl apply -f -
+ADO_SECRET_NAME = "terraform-ado-credentials"
+# Key for the read-only query PAT (fallback).
 ADO_SECRET_KEY = "AZURE_DEVOPS_PAT"
-# Key that holds an admin PAT with "Project and Team (Read, Write & Manage)"
-# scope — required for Terraform to create ADO projects.  If this key is
-# present in the secret the Terraform container prefers it; otherwise it falls
-# back to ADO_SECRET_KEY.  Set AZURE_DEVOPS_ADMIN_PAT in your .env / K8s
-# Secret to enable project creation without touching the read-only PAT.
+# Key for the admin PAT (preferred).  Requires at minimum:
+#   Project and Team (Read, Write & Manage)
 ADO_ADMIN_SECRET_KEY = "AZURE_DEVOPS_ADMIN_PAT"
 
 # In-memory mock job store — only used when USE_MOCK_AZURE_DEVOPS=true
@@ -266,6 +273,10 @@ def _create_k8s_job(project_name: str, process_name: str, ado_org: str, admin_us
                                 "terraform init -no-color && "
                                 "terraform apply -auto-approve -no-color"
                             ],
+                            resources=k8s.V1ResourceRequirements(
+                                requests={"cpu": "100m", "memory": "128Mi"},
+                                limits={"cpu": "500m", "memory": "512Mi"},
+                            ),
                             volume_mounts=[
                                 k8s.V1VolumeMount(
                                     name="tf-config", mount_path="/workspace"
