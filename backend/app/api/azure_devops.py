@@ -633,76 +633,132 @@ def create_ado_project(
     pat = _get_pat_for_user(current_user)
     auth = httpx.BasicAuth("", pat)
 
-    with httpx.Client(auth=auth, timeout=30.0) as client:
-        # 1. Uniqueness check
-        r = client.get(f"{ADO_BASE}/_apis/projects?$top=500&api-version=7.0")
-        r.raise_for_status()
-        existing_names = [p["name"].lower() for p in r.json().get("value", [])]
-        if project_name.lower() in existing_names:
-            raise HTTPException(
-                status_code=409,
-                detail=f"A project named '{project_name}' already exists in Azure DevOps.",
-            )
+    try:
+        with httpx.Client(auth=auth, timeout=30.0) as client:
 
-        # 2. Admin user existence check
-        users_url = (
-            f"{ADO_BASE}/_apis/graph/users?api-version=7.0"
-            f"&$filter=principalName eq '{admin_username}'"
-        )
-        ru = client.get(users_url)
-        ru.raise_for_status()
-        if not ru.json().get("value"):
-            raise HTTPException(
-                status_code=422,
-                detail=f"Azure DevOps user '{admin_username}' was not found in the organisation.",
-            )
-
-        # 3. Locate parent process template
-        r_procs = client.get(f"{ADO_BASE}/_apis/process/processes?api-version=7.0")
-        r_procs.raise_for_status()
-        all_procs = r_procs.json().get("value", [])
-
-        parent_proc = next(
-            (p for p in all_procs if p.get("type") == "system"
-             and p.get("name", "").lower() == process_type.lower()),
-            None,
-        )
-        if not parent_proc:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unknown process type '{process_type}'.",
-            )
-
-        # 4. Pre-create custom inherited process if it doesn't exist yet
-        custom_exists = any(
-            p.get("name", "").lower() == custom_process_name.lower()
-            and p.get("type") != "system"
-            for p in all_procs
-        )
-        if not custom_exists:
-            create_proc_url = (
-                f"{ADO_BASE}/_apis/process/processes?api-version=7.1-preview.1"
-            )
-            r_cp = client.post(
-                create_proc_url,
-                json={
-                    "name": custom_process_name,
-                    "description": (
-                        f"Custom {process_type} process for {project_name}"
+            # 1. Uniqueness check — requires Project (Read) PAT scope
+            try:
+                r = client.get(f"{ADO_BASE}/_apis/projects?$top=500&api-version=7.0")
+                r.raise_for_status()
+                existing_names = [p["name"].lower() for p in r.json().get("value", [])]
+                if project_name.lower() in existing_names:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"A project named '{project_name}' already exists in Azure DevOps.",
+                    )
+            except HTTPException:
+                raise
+            except httpx.HTTPStatusError as exc:
+                _logging.error("ADO projects list failed (%s): %s", exc.response.status_code, exc.response.text[:200])
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        f"Could not reach Azure DevOps (projects API returned {exc.response.status_code}). "
+                        "Verify AZURE_DEVOPS_PAT has 'Project and Team (Read & Write)' scope."
                     ),
-                    "parentProcessTypeId": parent_proc["id"],
-                },
-            )
-            if r_cp.status_code in (200, 201):
-                _logging.info("Created custom process: %s", custom_process_name)
-            else:
-                _logging.warning(
-                    "Custom process creation returned %s — Terraform will attempt "
-                    "to use the built-in '%s' process instead.",
-                    r_cp.status_code,
-                    process_type,
                 )
+
+            # 2. Admin user existence check — requires Graph (Read) PAT scope.
+            #    If the PAT lacks that scope (403/401) we skip the check rather than
+            #    blocking the request; Terraform will surface the error post-job.
+            try:
+                users_url = (
+                    f"{ADO_BASE}/_apis/graph/users?api-version=7.0"
+                    f"&$filter=principalName eq '{admin_username}'"
+                )
+                ru = client.get(users_url)
+                if ru.status_code in (401, 403):
+                    _logging.warning(
+                        "Graph API returned %s for admin user check — "
+                        "PAT may lack 'Graph (Read)' scope. Skipping pre-flight check.",
+                        ru.status_code,
+                    )
+                else:
+                    ru.raise_for_status()
+                    if not ru.json().get("value"):
+                        raise HTTPException(
+                            status_code=422,
+                            detail=f"Azure DevOps user '{admin_username}' was not found in the organisation.",
+                        )
+            except HTTPException:
+                raise
+            except httpx.HTTPStatusError as exc:
+                _logging.warning(
+                    "Admin user check failed (%s) — skipping pre-flight validation.",
+                    exc.response.status_code,
+                )
+
+            # 3. Locate parent process template
+            parent_proc_id: Optional[str] = None
+            all_procs: list = []
+            try:
+                r_procs = client.get(f"{ADO_BASE}/_apis/process/processes?api-version=7.0")
+                r_procs.raise_for_status()
+                all_procs = r_procs.json().get("value", [])
+
+                parent_proc = next(
+                    (
+                        p for p in all_procs
+                        if p.get("type") == "system"
+                        and p.get("name", "").lower() == process_type.lower()
+                    ),
+                    None,
+                )
+                if not parent_proc:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Unknown process type '{process_type}'.",
+                    )
+                parent_proc_id = parent_proc["id"]
+            except HTTPException:
+                raise
+            except httpx.HTTPStatusError as exc:
+                _logging.warning(
+                    "Process templates API failed (%s) — will use built-in process name.",
+                    exc.response.status_code,
+                )
+
+            # 4. Pre-create custom inherited process if it doesn't exist yet.
+            #    Only attempted when we successfully retrieved the process list.
+            if parent_proc_id:
+                custom_exists = any(
+                    p.get("name", "").lower() == custom_process_name.lower()
+                    and p.get("type") != "system"
+                    for p in all_procs
+                )
+                if not custom_exists:
+                    try:
+                        r_cp = client.post(
+                            f"{ADO_BASE}/_apis/process/processes?api-version=7.1-preview.1",
+                            json={
+                                "name": custom_process_name,
+                                "description": f"Custom {process_type} process for {project_name}",
+                                "parentProcessTypeId": parent_proc_id,
+                            },
+                        )
+                        if r_cp.status_code in (200, 201):
+                            _logging.info("Created custom process: %s", custom_process_name)
+                        else:
+                            _logging.warning(
+                                "Custom process creation returned %s — using built-in '%s'.",
+                                r_cp.status_code, process_type,
+                            )
+                            custom_process_name = process_type
+                    except Exception as exc:
+                        _logging.warning("Custom process creation failed: %s — using built-in.", exc)
+                        custom_process_name = process_type
+            else:
+                # Could not retrieve process list — pass the built-in name to Terraform
                 custom_process_name = process_type
+
+    except HTTPException:
+        raise
+    except httpx.RequestError as exc:
+        _logging.error("Network error reaching Azure DevOps: %s", exc)
+        raise HTTPException(
+            status_code=502,
+            detail="Could not connect to Azure DevOps. Check network connectivity and AZURE_DEVOPS_ORGANIZATION.",
+        )
 
     # 5. Submit Terraform job
     try:
