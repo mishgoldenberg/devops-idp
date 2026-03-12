@@ -63,6 +63,9 @@ ADO_BASE = _get_ado_base()
 # Shared server-level PAT (env). Used as fallback only for admin users so they
 # can test immediately without entering a per-user PAT.
 _ENV_PAT = os.getenv("AZURE_DEVOPS_PAT", "")
+# Admin PAT used for write operations (process creation).
+# Requires scope: Process (Read & Manage) — or Full Access.
+_ENV_ADMIN_PAT = os.getenv("AZURE_DEVOPS_ADMIN_PAT", "")
 ADO_QUERY_USER = os.getenv("AZURE_DEVOPS_QUERY_USER", "")
 
 
@@ -720,33 +723,61 @@ def create_ado_project(
 
             # 4. Pre-create custom inherited process if it doesn't exist yet.
             #    Only attempted when we successfully retrieved the process list.
+            #
+            #    Uses the admin PAT (AZURE_DEVOPS_ADMIN_PAT) which requires
+            #    "Process (Read & Manage)" scope.  Falls back to the user PAT
+            #    if no admin PAT is configured, which may fail with 403 if the
+            #    user's token lacks process-write scope.
             if parent_proc_id:
                 custom_exists = any(
                     p.get("name", "").lower() == custom_process_name.lower()
                     and p.get("type") != "system"
                     for p in all_procs
                 )
-                if not custom_exists:
+                if custom_exists:
+                    _logging.info("Custom process '%s' already exists — skipping creation.", custom_process_name)
+                else:
+                    # Use the admin PAT for the write call; fall back to user PAT.
+                    write_pat = _ENV_ADMIN_PAT or pat
+                    write_auth = httpx.BasicAuth("", write_pat)
                     try:
                         r_cp = client.post(
-                            f"{ADO_BASE}/_apis/process/processes?api-version=7.1-preview.1",
+                            # Correct write API — _apis/process/processes is read-only legacy.
+                            f"{ADO_BASE}/_apis/work/processes?api-version=7.1-preview.2",
+                            auth=write_auth,
                             json={
                                 "name": custom_process_name,
                                 "description": f"Custom {process_type} process for {project_name}",
                                 "parentProcessTypeId": parent_proc_id,
+                                "isDefault": False,
+                                "isEnabled": True,
                             },
                         )
                         if r_cp.status_code in (200, 201):
                             _logging.info("Created custom process: %s", custom_process_name)
                         else:
-                            _logging.warning(
-                                "Custom process creation returned %s — using built-in '%s'.",
-                                r_cp.status_code, process_type,
+                            body_preview = r_cp.text[:300]
+                            _logging.error(
+                                "Custom process creation returned %s: %s",
+                                r_cp.status_code, body_preview,
                             )
-                            custom_process_name = process_type
+                            raise HTTPException(
+                                status_code=502,
+                                detail=(
+                                    f"Azure DevOps rejected the process creation request "
+                                    f"(HTTP {r_cp.status_code}). "
+                                    "Ensure AZURE_DEVOPS_ADMIN_PAT has 'Process (Read & Manage)' scope. "
+                                    f"Response: {body_preview}"
+                                ),
+                            )
+                    except HTTPException:
+                        raise
                     except Exception as exc:
-                        _logging.warning("Custom process creation failed: %s — using built-in.", exc)
-                        custom_process_name = process_type
+                        _logging.error("Custom process creation failed: %s", exc)
+                        raise HTTPException(
+                            status_code=502,
+                            detail=f"Could not create custom process '{custom_process_name}': {exc}",
+                        )
             else:
                 # Could not retrieve process list — pass the built-in name to Terraform
                 custom_process_name = process_type

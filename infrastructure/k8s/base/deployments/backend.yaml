@@ -111,6 +111,12 @@ spec:
             secretKeyRef:
               name: all-secrets
               key: AZURE_DEVOPS_PAT
+        - name: AZURE_DEVOPS_ADMIN_PAT
+          valueFrom:
+            secretKeyRef:
+              name: all-secrets
+              key: AZURE_DEVOPS_ADMIN_PAT
+              optional: true
         - name: AZURE_DEVOPS_QUERY_USER
           valueFrom:
             configMapKeyRef:

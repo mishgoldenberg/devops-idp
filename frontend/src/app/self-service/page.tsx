@@ -72,12 +72,15 @@ export default function SelfServicePage() {
   const [state, setState] = useState<ProvisioningState>({ type: 'idle' });
   const [loadingStep, setLoadingStep] = useState(0);
 
-  // ── Cycle through loading step labels while provisioning ──────────────────
+  // ── Advance through loading step labels while provisioning ───────────────
+  // Steps move forward one-by-one every 8 seconds and stop at the last one
+  // ("Applying final configuration…") until the job actually completes.
+  // They never cycle back so the UI always reads as forward progress.
   useEffect(() => {
     if (state.type !== 'provisioning') return;
     const id = setInterval(() => {
-      setLoadingStep((s) => (s + 1) % LOADING_STEPS.length);
-    }, 3500);
+      setLoadingStep((s) => Math.min(s + 1, LOADING_STEPS.length - 1));
+    }, 8000);
     return () => clearInterval(id);
   }, [state.type]);
 
