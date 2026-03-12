@@ -24,6 +24,8 @@ type ProvisioningState =
       job_id: string;
       project_name: string;
       process_type: string;
+      /** Unix ms when provisioning started — used for the 8-min timeout. */
+      startedAt: number;
     }
   | {
       type: 'success';
@@ -85,9 +87,26 @@ export default function SelfServicePage() {
   const jobId = state.type === 'provisioning' ? state.job_id : null;
   const jobProjectName = state.type === 'provisioning' ? state.project_name : '';
   const jobProcessType = state.type === 'provisioning' ? state.process_type : '';
+  const jobStartedAt = state.type === 'provisioning' ? state.startedAt : 0;
+
+  const POLL_TIMEOUT_MS = 8 * 60 * 1000; // 8 minutes
 
   const poll = useCallback(async () => {
     if (!jobId) return;
+
+    // Hard timeout — surface a clear error instead of spinning forever.
+    if (Date.now() - jobStartedAt > POLL_TIMEOUT_MS) {
+      setState({
+        type: 'error',
+        project_name: jobProjectName,
+        message:
+          'Provisioning timed out after 8 minutes. ' +
+          'Check the Terraform job logs: ' +
+          `kubectl logs -n devops-control-center -l app=terraform-runner --tail=100`,
+      });
+      return;
+    }
+
     try {
       const res = await apiClient.getProjectCreationStatus(jobId);
       const { status: jobStatus, project_url, error } = res.data;
@@ -99,7 +118,7 @@ export default function SelfServicePage() {
           process_type: jobProcessType,
           project_url,
         });
-      } else if (jobStatus === 'failed') {
+      } else if (jobStatus === 'failed' || jobStatus === 'error') {
         setState({
           type: 'error',
           project_name: jobProjectName,
@@ -109,7 +128,8 @@ export default function SelfServicePage() {
     } catch {
       // Transient network error — keep polling
     }
-  }, [jobId, jobProjectName, jobProcessType]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobId, jobProjectName, jobProcessType, jobStartedAt]);
 
   useEffect(() => {
     if (!jobId) return;
@@ -127,6 +147,7 @@ export default function SelfServicePage() {
       job_id: result.job_id,
       project_name: result.project_name,
       process_type: result.process_type,
+      startedAt: Date.now(),
     });
   };
 

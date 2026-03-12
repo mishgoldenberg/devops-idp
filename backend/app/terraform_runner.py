@@ -36,7 +36,14 @@ TF_K8S_SA = "devops-terraform-sa"
 K8S_NAMESPACE = "devops-control-center"
 TF_IMAGE = "hashicorp/terraform:1.6"
 ADO_SECRET_NAME = "all-secrets"
+# Key that holds the read-only query PAT (always required).
 ADO_SECRET_KEY = "AZURE_DEVOPS_PAT"
+# Key that holds an admin PAT with "Project and Team (Read, Write & Manage)"
+# scope — required for Terraform to create ADO projects.  If this key is
+# present in the secret the Terraform container prefers it; otherwise it falls
+# back to ADO_SECRET_KEY.  Set AZURE_DEVOPS_ADMIN_PAT in your .env / K8s
+# Secret to enable project creation without touching the read-only PAT.
+ADO_ADMIN_SECRET_KEY = "AZURE_DEVOPS_ADMIN_PAT"
 
 # In-memory mock job store — only used when USE_MOCK_AZURE_DEVOPS=true
 _mock_jobs: Dict[str, Dict[str, Any]] = {}
@@ -250,6 +257,12 @@ def _create_k8s_job(project_name: str, process_name: str, ado_org: str, admin_us
                             working_dir="/workspace",
                             command=["/bin/sh", "-c"],
                             args=[
+                                # Prefer the admin PAT when available; fall back
+                                # to the read-only PAT so existing installs keep
+                                # working.  The admin PAT needs at minimum:
+                                #   Project and Team (Read, Write & Manage)
+                                "export AZDO_PERSONAL_ACCESS_TOKEN="
+                                '"${AZURE_DEVOPS_ADMIN_PAT:-${AZURE_DEVOPS_PAT}}" && '
                                 "terraform init -no-color && "
                                 "terraform apply -auto-approve -no-color"
                             ],
@@ -259,12 +272,25 @@ def _create_k8s_job(project_name: str, process_name: str, ado_org: str, admin_us
                                 )
                             ],
                             env=[
+                                # Base read-only PAT (always injected as fallback).
                                 k8s.V1EnvVar(
-                                    name="AZDO_PERSONAL_ACCESS_TOKEN",
+                                    name="AZURE_DEVOPS_PAT",
                                     value_from=k8s.V1EnvVarSource(
                                         secret_key_ref=k8s.V1SecretKeySelector(
                                             name=ADO_SECRET_NAME,
                                             key=ADO_SECRET_KEY,
+                                        )
+                                    ),
+                                ),
+                                # Admin PAT — optional key.  If present in the
+                                # secret it is preferred over AZURE_DEVOPS_PAT.
+                                k8s.V1EnvVar(
+                                    name="AZURE_DEVOPS_ADMIN_PAT",
+                                    value_from=k8s.V1EnvVarSource(
+                                        secret_key_ref=k8s.V1SecretKeySelector(
+                                            name=ADO_SECRET_NAME,
+                                            key=ADO_ADMIN_SECRET_KEY,
+                                            optional=True,
                                         )
                                     ),
                                 ),
@@ -315,10 +341,78 @@ def _get_k8s_status(job_id: str) -> Dict[str, Any]:
     if failed > 0:
         return {"status": "failed", "error": _extract_error(job_id, core)}
 
+    # Check pod-level conditions while the Job is still "active" or "pending".
+    # This surfaces fast-fail situations (bad image, missing SA, OOM) long
+    # before K8s' backoff timer would mark the Job itself as failed.
+    if active > 0 or (succeeded == 0 and failed == 0):
+        pod_failure = _check_pod_early_failure(job_id, core)
+        if pod_failure:
+            return {"status": "failed", "error": pod_failure}
+
     if active > 0:
         return {"status": "running"}
 
     return {"status": "pending"}
+
+
+_POD_TERMINAL_REASONS = {
+    "ImagePullBackOff": (
+        "Terraform container image could not be pulled ({reason}). "
+        "Ensure the cluster has Docker Hub access or mirror hashicorp/terraform:1.6 "
+        "to your private registry."
+    ),
+    "ErrImagePull": (
+        "Terraform container image pull failed ({reason}). "
+        "Check network connectivity from the cluster to Docker Hub."
+    ),
+    "CrashLoopBackOff": (
+        "Terraform container crashed on startup ({reason}). "
+        "Check the pod logs: kubectl logs -n {ns} -l job-name={job} --tail=50"
+    ),
+    "OOMKilled": (
+        "Terraform container was killed due to out-of-memory ({reason}). "
+        "Consider increasing the Job resource limits."
+    ),
+    "Error": (
+        "Terraform container exited with an error. "
+        "Check logs: kubectl logs -n {ns} -l job-name={job} --tail=50"
+    ),
+}
+
+
+def _check_pod_early_failure(job_id: str, core: Any) -> str:
+    """
+    Inspect pod conditions for terminal failure states that surface before
+    the K8s Job itself is marked failed.  Returns an error string or ''.
+    """
+    try:
+        pods = core.list_namespaced_pod(
+            namespace=K8S_NAMESPACE, label_selector=f"job-name={job_id}"
+        )
+        for pod in pods.items:
+            # Completed/failed pod phase
+            if (pod.status.phase or "") == "Failed":
+                return _extract_error(job_id, core) or "Terraform pod failed."
+
+            for cs in pod.status.container_statuses or []:
+                waiting = cs.state.waiting if cs.state else None
+                terminated = cs.state.terminated if cs.state else None
+
+                if waiting and waiting.reason in _POD_TERMINAL_REASONS:
+                    tmpl = _POD_TERMINAL_REASONS[waiting.reason]
+                    return tmpl.format(
+                        reason=waiting.reason, ns=K8S_NAMESPACE, job=job_id
+                    )
+
+                if terminated and terminated.exit_code not in (None, 0):
+                    reason = terminated.reason or "Error"
+                    tmpl = _POD_TERMINAL_REASONS.get(reason, _POD_TERMINAL_REASONS["Error"])
+                    return tmpl.format(
+                        reason=reason, ns=K8S_NAMESPACE, job=job_id
+                    )
+    except Exception as exc:
+        logger.warning("Pod early-failure check failed for '%s': %s", job_id, exc)
+    return ""
 
 
 # ── Log helpers ───────────────────────────────────────────────────────────────
