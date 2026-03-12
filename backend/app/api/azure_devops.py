@@ -691,96 +691,103 @@ def create_ado_project(
                     exc.response.status_code,
                 )
 
-            # 3. Locate parent process template
-            parent_proc_id: Optional[str] = None
-            all_procs: list = []
+            # 3 + 4. Fetch process list and pre-create the inherited process.
+            #
+            # Uses the newer _apis/work/processes endpoint (7.1-preview.2) for
+            # both read and write.  This API returns customizationType/typeId
+            # (vs type/id on the legacy _apis/process/processes endpoint) and
+            # supports POST for creating inherited processes.
+            #
+            # Both calls use the admin PAT so no extra PAT scope is required
+            # from the end user.  Failures are surfaced as HTTP 502 — the
+            # silent fallback to plain Scrum has been removed.
+            proc_auth = httpx.BasicAuth("", _ENV_ADMIN_PAT or pat)
+
             try:
-                r_procs = client.get(f"{ADO_BASE}/_apis/process/processes?api-version=7.0")
+                r_procs = client.get(
+                    f"{ADO_BASE}/_apis/work/processes?api-version=7.1-preview.2",
+                    auth=proc_auth,
+                )
                 r_procs.raise_for_status()
                 all_procs = r_procs.json().get("value", [])
-
-                parent_proc = next(
-                    (
-                        p for p in all_procs
-                        if p.get("type") == "system"
-                        and p.get("name", "").lower() == process_type.lower()
-                    ),
-                    None,
-                )
-                if not parent_proc:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Unknown process type '{process_type}'.",
-                    )
-                parent_proc_id = parent_proc["id"]
             except HTTPException:
                 raise
             except httpx.HTTPStatusError as exc:
-                _logging.warning(
-                    "Process templates API failed (%s) — will use built-in process name.",
-                    exc.response.status_code,
+                _logging.error(
+                    "Process list API failed (%s): %s",
+                    exc.response.status_code, exc.response.text[:200],
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        f"Could not fetch Azure DevOps process list "
+                        f"(HTTP {exc.response.status_code}). "
+                        "Ensure AZURE_DEVOPS_ADMIN_PAT has 'Process (Read & Manage)' scope."
+                    ),
                 )
 
-            # 4. Pre-create custom inherited process if it doesn't exist yet.
-            #    Only attempted when we successfully retrieved the process list.
-            #
-            #    Uses the admin PAT (AZURE_DEVOPS_ADMIN_PAT) which requires
-            #    "Process (Read & Manage)" scope.  Falls back to the user PAT
-            #    if no admin PAT is configured, which may fail with 403 if the
-            #    user's token lacks process-write scope.
-            if parent_proc_id:
-                custom_exists = any(
-                    p.get("name", "").lower() == custom_process_name.lower()
-                    and p.get("type") != "system"
-                    for p in all_procs
+            parent_proc = next(
+                (
+                    p for p in all_procs
+                    if p.get("customizationType") == "system"
+                    and p.get("name", "").lower() == process_type.lower()
+                ),
+                None,
+            )
+            if not parent_proc:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Unknown process type '{process_type}'. "
+                        f"Available system processes: "
+                        + ", ".join(
+                            p["name"] for p in all_procs
+                            if p.get("customizationType") == "system"
+                        )
+                    ),
                 )
-                if custom_exists:
-                    _logging.info("Custom process '%s' already exists — skipping creation.", custom_process_name)
-                else:
-                    # Use the admin PAT for the write call; fall back to user PAT.
-                    write_pat = _ENV_ADMIN_PAT or pat
-                    write_auth = httpx.BasicAuth("", write_pat)
-                    try:
-                        r_cp = client.post(
-                            # Correct write API — _apis/process/processes is read-only legacy.
-                            f"{ADO_BASE}/_apis/work/processes?api-version=7.1-preview.2",
-                            auth=write_auth,
-                            json={
-                                "name": custom_process_name,
-                                "description": f"Custom {process_type} process for {project_name}",
-                                "parentProcessTypeId": parent_proc_id,
-                                "isDefault": False,
-                                "isEnabled": True,
-                            },
-                        )
-                        if r_cp.status_code in (200, 201):
-                            _logging.info("Created custom process: %s", custom_process_name)
-                        else:
-                            body_preview = r_cp.text[:300]
-                            _logging.error(
-                                "Custom process creation returned %s: %s",
-                                r_cp.status_code, body_preview,
-                            )
-                            raise HTTPException(
-                                status_code=502,
-                                detail=(
-                                    f"Azure DevOps rejected the process creation request "
-                                    f"(HTTP {r_cp.status_code}). "
-                                    "Ensure AZURE_DEVOPS_ADMIN_PAT has 'Process (Read & Manage)' scope. "
-                                    f"Response: {body_preview}"
-                                ),
-                            )
-                    except HTTPException:
-                        raise
-                    except Exception as exc:
-                        _logging.error("Custom process creation failed: %s", exc)
-                        raise HTTPException(
-                            status_code=502,
-                            detail=f"Could not create custom process '{custom_process_name}': {exc}",
-                        )
+            parent_proc_id = parent_proc["typeId"]
+
+            # Skip creation if the inherited process already exists.
+            custom_exists = any(
+                p.get("name", "").lower() == custom_process_name.lower()
+                and p.get("customizationType") != "system"
+                for p in all_procs
+            )
+            if custom_exists:
+                _logging.info(
+                    "Custom process '%s' already exists — skipping creation.",
+                    custom_process_name,
+                )
             else:
-                # Could not retrieve process list — pass the built-in name to Terraform
-                custom_process_name = process_type
+                r_cp = client.post(
+                    f"{ADO_BASE}/_apis/work/processes?api-version=7.1-preview.2",
+                    auth=proc_auth,
+                    json={
+                        "name": custom_process_name,
+                        "description": f"Custom {process_type} process for {project_name}",
+                        "parentProcessTypeId": parent_proc_id,
+                        "isDefault": False,
+                        "isEnabled": True,
+                    },
+                )
+                if r_cp.status_code in (200, 201):
+                    _logging.info("Created custom process: %s", custom_process_name)
+                else:
+                    body_preview = r_cp.text[:400]
+                    _logging.error(
+                        "Custom process creation returned %s: %s",
+                        r_cp.status_code, body_preview,
+                    )
+                    raise HTTPException(
+                        status_code=502,
+                        detail=(
+                            f"Azure DevOps rejected the process creation "
+                            f"(HTTP {r_cp.status_code}). "
+                            "Ensure AZURE_DEVOPS_ADMIN_PAT has 'Process (Read & Manage)' scope. "
+                            f"Details: {body_preview}"
+                        ),
+                    )
 
     except HTTPException:
         raise
