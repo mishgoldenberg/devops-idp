@@ -705,13 +705,35 @@ def create_ado_project(
                 custom_process_name = process_type
 
     # 5. Submit Terraform job
-    job_id = submit_terraform_job(
-        project_name=project_name,
-        process_name=custom_process_name,
-        ado_org=org,
-        admin_username=admin_username,
-        use_mock=False,
-    )
+    try:
+        job_id = submit_terraform_job(
+            project_name=project_name,
+            process_name=custom_process_name,
+            ado_org=org,
+            admin_username=admin_username,
+            use_mock=False,
+        )
+    except ImportError as exc:
+        _logging.error("Terraform runner unavailable (kubernetes package missing?): %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "The project provisioning service is not available in this environment. "
+                "Ensure the backend image has been rebuilt with the latest requirements "
+                "(google-cloud-storage, kubernetes) and that the K8s RBAC prerequisites "
+                "from docs/SELF_SERVICE_TERRAFORM.md §7 have been applied."
+            ),
+        )
+    except Exception as exc:
+        _logging.error("Failed to submit Terraform job for '%s': %s", project_name, exc, exc_info=True)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not start the provisioning job. "
+                "Check that the devops-terraform-sa ServiceAccount exists and that the "
+                "backend pod has permission to create K8s Jobs (see docs/SELF_SERVICE_TERRAFORM.md §7)."
+            ),
+        )
 
     return {
         "success": True,

@@ -80,37 +80,43 @@ export default function SelfServicePage() {
   }, [state.type]);
 
   // ── Poll Terraform job status ─────────────────────────────────────────────
+  // Extract primitives so the callback/effect only re-create when these values
+  // actually change (avoids object-identity re-runs on unrelated renders).
+  const jobId = state.type === 'provisioning' ? state.job_id : null;
+  const jobProjectName = state.type === 'provisioning' ? state.project_name : '';
+  const jobProcessType = state.type === 'provisioning' ? state.process_type : '';
+
   const poll = useCallback(async () => {
-    if (state.type !== 'provisioning') return;
+    if (!jobId) return;
     try {
-      const res = await apiClient.getProjectCreationStatus(state.job_id);
+      const res = await apiClient.getProjectCreationStatus(jobId);
       const { status: jobStatus, project_url, error } = res.data;
 
       if (jobStatus === 'succeeded' && project_url) {
         setState({
           type: 'success',
-          project_name: state.project_name,
-          process_type: state.process_type,
+          project_name: jobProjectName,
+          process_type: jobProcessType,
           project_url,
         });
       } else if (jobStatus === 'failed') {
         setState({
           type: 'error',
-          project_name: state.project_name,
+          project_name: jobProjectName,
           message: error ?? 'Project creation failed.',
         });
       }
     } catch {
       // Transient network error — keep polling
     }
-  }, [state]);
+  }, [jobId, jobProjectName, jobProcessType]);
 
   useEffect(() => {
-    if (state.type !== 'provisioning') return;
+    if (!jobId) return;
     poll(); // immediate first poll
     const id = setInterval(poll, 3000);
     return () => clearInterval(id);
-  }, [state.type, poll]);
+  }, [jobId, poll]);
 
   // ── Form success handler ──────────────────────────────────────────────────
   const handleFormSuccess = (result: ProjectCreationResult) => {
