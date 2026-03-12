@@ -264,6 +264,12 @@ def _create_k8s_job(project_name: str, process_name: str, ado_org: str, admin_us
                             working_dir="/workspace",
                             command=["/bin/sh", "-c"],
                             args=[
+                                # /tf-config is read-only (ConfigMap mount).
+                                # /workspace is a writable emptyDir where
+                                # Terraform can create .terraform/, plan files,
+                                # and the state lock.
+                                "cp /tf-config/main.tf /workspace/main.tf && "
+                                "cd /workspace && "
                                 # Prefer the admin PAT when available; fall back
                                 # to the read-only PAT so existing installs keep
                                 # working.  The admin PAT needs at minimum:
@@ -279,8 +285,14 @@ def _create_k8s_job(project_name: str, process_name: str, ado_org: str, admin_us
                             ),
                             volume_mounts=[
                                 k8s.V1VolumeMount(
-                                    name="tf-config", mount_path="/workspace"
-                                )
+                                    name="tf-config",
+                                    mount_path="/tf-config",
+                                    read_only=True,
+                                ),
+                                k8s.V1VolumeMount(
+                                    name="tf-workspace",
+                                    mount_path="/workspace",
+                                ),
                             ],
                             env=[
                                 # Base read-only PAT (always injected as fallback).
@@ -313,7 +325,14 @@ def _create_k8s_job(project_name: str, process_name: str, ado_org: str, admin_us
                         k8s.V1Volume(
                             name="tf-config",
                             config_map=k8s.V1ConfigMapVolumeSource(name=resource_name),
-                        )
+                        ),
+                        # Writable scratch space for .terraform/, plan files,
+                        # and the GCS state lock.  ConfigMap mounts are
+                        # read-only so Terraform cannot use them as workdir.
+                        k8s.V1Volume(
+                            name="tf-workspace",
+                            empty_dir=k8s.V1EmptyDirVolumeSource(),
+                        ),
                     ],
                 ),
             ),
