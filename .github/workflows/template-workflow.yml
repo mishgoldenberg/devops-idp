@@ -15,6 +15,15 @@ on:
       gcp_region:
         required: true
         type: string
+      # GKE cluster details for automatic rollout
+      gke_cluster:
+        required: false
+        type: string
+        default: devops-idp-cluster
+      k8s_namespace:
+        required: false
+        type: string
+        default: devops-control-center-dev
     secrets:
       GCP_SA_KEY:
         required: true
@@ -41,21 +50,53 @@ jobs:
         run: |
           gcloud auth configure-docker ${{ inputs.gcp_region }}-docker.pkg.dev --quiet
 
+      # Short commit SHA used as immutable image tag so Kubernetes always detects a change
+      - name: Set image tag
+        run: echo "SHORT_SHA=${GITHUB_SHA::7}" >> $GITHUB_ENV
+
       - name: Build Docker image
         run: |
-          IMAGE=${{ inputs.gcp_region }}-docker.pkg.dev/${{ inputs.gcp_project }}/devops-idp/${{ inputs.image_name }}:latest
-          SERVICE_PATH=${{ inputs.service_path }}
+          REGISTRY="${{ inputs.gcp_region }}-docker.pkg.dev/${{ inputs.gcp_project }}/devops-idp"
+          IMAGE_NAME="${{ inputs.image_name }}"
+          IMAGE_LATEST="$REGISTRY/$IMAGE_NAME:latest"
+          IMAGE_SHA="$REGISTRY/$IMAGE_NAME:sha-$SHORT_SHA"
 
-          # Build the Docker image with build arguments
-          echo "Building Docker image: $IMAGE"
+          echo "Building $IMAGE_SHA"
           docker build \
             --build-arg NEXT_PUBLIC_API_GATEWAY_URL=https://devops.internal.company/api \
             --build-arg NEXT_PUBLIC_APP_NAME="DevOps Control Center" \
-            -f $SERVICE_PATH/Dockerfile -t $IMAGE .
+            -f ${{ inputs.service_path }}/Dockerfile \
+            -t "$IMAGE_LATEST" \
+            -t "$IMAGE_SHA" \
+            .
 
-          # Set IMAGE as GitHub env for downstream steps
-          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+          echo "IMAGE_LATEST=$IMAGE_LATEST" >> $GITHUB_ENV
+          echo "IMAGE_SHA=$IMAGE_SHA" >> $GITHUB_ENV
 
-      - name: Push Docker image
+      - name: Push Docker images
         run: |
-          docker push $IMAGE
+          docker push "$IMAGE_LATEST"
+          docker push "$IMAGE_SHA"
+
+      # ── Deploy ────────────────────────────────────────────────────────────────
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Get GKE credentials
+        run: |
+          gcloud container clusters get-credentials ${{ inputs.gke_cluster }} \
+            --region ${{ inputs.gcp_region }} \
+            --project ${{ inputs.gcp_project }}
+
+      - name: Update image tag in deployment
+        run: |
+          REGISTRY="${{ inputs.gcp_region }}-docker.pkg.dev/${{ inputs.gcp_project }}/devops-idp"
+          kubectl set image deployment/${{ inputs.image_name }} \
+            ${{ inputs.image_name }}="$REGISTRY/${{ inputs.image_name }}:sha-$SHORT_SHA" \
+            -n ${{ inputs.k8s_namespace }}
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/${{ inputs.image_name }} \
+            -n ${{ inputs.k8s_namespace }} \
+            --timeout=300s

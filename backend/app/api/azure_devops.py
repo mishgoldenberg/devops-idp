@@ -136,18 +136,29 @@ def remove_pat(current_user: AuthUser = Depends(get_current_user)):
 def _fetch_state_categories(client: httpx.Client, project: str, work_item_type: str) -> dict:
     """
     Returns a mapping of {state_name: state_category} for a given project + work item type.
-    State categories are standard strings like 'Proposed', 'InProgress', 'Resolved',
-    'Completed', 'Removed' regardless of how the team named their custom states.
-    Results are not cached at module level (short-lived per request is fine).
+    State categories are ADO-standard strings: 'Proposed', 'InProgress', 'Resolved',
+    'Completed', 'Removed' — these are stable regardless of custom state names (e.g. "Doing").
+    Returns an empty dict (not None) on failure so callers can fall back to name heuristics.
     """
-    # URL-encode the work item type name (e.g. "User Story" -> "User%20Story")
+    import logging
     from urllib.parse import quote
-    url = f"{ADO_BASE}/{quote(project)}/_apis/wit/workitemtypes/{quote(work_item_type)}/states?api-version=7.0"
+
+    url = (
+        f"{ADO_BASE}/{quote(project, safe='')}/_apis/wit/workitemtypes"
+        f"/{quote(work_item_type, safe='')}/"
+        f"states?api-version=7.0"
+    )
     try:
         r = client.get(url, timeout=10.0)
         r.raise_for_status()
-        return {s["name"]: s.get("stateCategory", "") for s in r.json().get("value", [])}
-    except Exception:
+        mapping = {s["name"]: s.get("stateCategory", "") for s in r.json().get("value", [])}
+        logging.debug("State categories for %s/%s: %s", project, work_item_type, mapping)
+        return mapping
+    except Exception as exc:
+        logging.warning(
+            "Could not fetch state categories for %s/%s (%s) — falling back to name heuristics",
+            project, work_item_type, exc,
+        )
         return {}
 
 

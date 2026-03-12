@@ -26,10 +26,31 @@ interface Project {
   name: string;
 }
 
-// Azure DevOps state categories that count as "In Progress"
+// Known Azure DevOps state category strings
 const IN_PROGRESS_CATEGORIES = new Set(['InProgress', 'Resolved']);
-// State categories that count as "To Do"
-const TODO_CATEGORIES = new Set(['Proposed', '']);
+const TODO_CATEGORIES = new Set(['Proposed']);
+const DONE_CATEGORIES = new Set(['Completed', 'Removed']);
+
+// Name-based heuristic used when the backend couldn't fetch the state category
+// (e.g. API permission issue on the process endpoint).
+const IN_PROGRESS_NAMES = [
+  'doing', 'in progress', 'active', 'committed', 'in development',
+  'in review', 'in progress', 'started', 'wip',
+];
+const DONE_NAMES = ['done', 'closed', 'completed', 'resolved', 'removed', 'cancelled', 'canceled'];
+
+function getEffectiveCategory(item: WorkItem): string {
+  const cat = item.state_category;
+  // Prefer the authoritative category from the backend when available
+  if (cat && (IN_PROGRESS_CATEGORIES.has(cat) || TODO_CATEGORIES.has(cat) || DONE_CATEGORIES.has(cat))) {
+    return cat;
+  }
+  // Fall back to state name matching (handles custom names like "Doing")
+  const lower = (item.state ?? '').toLowerCase();
+  if (DONE_NAMES.includes(lower)) return 'Completed';
+  if (IN_PROGRESS_NAMES.some(k => lower.includes(k))) return 'InProgress';
+  return 'Proposed';
+}
 
 export function AzureDevOpsWorkItems() {
   const connection = useAzureDevOpsConnection();
@@ -147,9 +168,9 @@ export function AzureDevOpsWorkItems() {
     );
   }
 
-  // Count by state category (works for any custom state name)
-  const toDoCount = workItems.filter(wi => TODO_CATEGORIES.has(wi.state_category)).length;
-  const inProgressCount = workItems.filter(wi => IN_PROGRESS_CATEGORIES.has(wi.state_category)).length;
+  // Count by effective category (uses name heuristic if state_category is missing)
+  const toDoCount = workItems.filter(wi => TODO_CATEGORIES.has(getEffectiveCategory(wi))).length;
+  const inProgressCount = workItems.filter(wi => IN_PROGRESS_CATEGORIES.has(getEffectiveCategory(wi))).length;
 
   return (
     <Card className="h-full flex flex-col">
