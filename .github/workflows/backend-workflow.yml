@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - "backend/app/**"
+  workflow_dispatch:
 
 jobs:
   backend:
