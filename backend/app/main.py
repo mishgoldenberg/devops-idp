@@ -29,6 +29,20 @@ STARTUP:
   uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 """
 
+# Load .env files when present (local dev).  Earlier files take precedence;
+# dotenv's load_dotenv() does NOT overwrite already-set env vars by default.
+try:
+    from pathlib import Path
+    from dotenv import load_dotenv
+    _repo_root = Path(__file__).resolve().parent.parent.parent  # backend/app -> repo root
+    _backend_dir = _repo_root / "backend"
+    # Highest priority first: dedicated backend .env, then the shared secrets .env
+    load_dotenv(_backend_dir / ".env")
+    load_dotenv(_backend_dir / "app" / ".env")
+    load_dotenv(_repo_root / "infrastructure" / "k8s" / "base" / "secrets" / ".env")
+except ImportError:
+    pass
+
 from fastapi import FastAPI, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -46,11 +60,11 @@ def create_app() -> FastAPI:
     )
 
     # CORS Middleware
-    # In docker-compose, frontend and backend run on the same network, so we're permissive in dev.
-    # For production, configure specific allowed origins.
+    # Use configured CORS_ORIGINS (comma-separated) or "*" as a fallback.
+    allowed_origins = settings.cors_origins_list
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=allowed_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -117,5 +131,3 @@ def _now_iso() -> str:
 
 # Application instance (entry point for uvicorn)
 app = create_app()
-
-

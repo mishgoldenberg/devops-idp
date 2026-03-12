@@ -1,49 +1,47 @@
 'use client';
 
-import { useState, FormEvent, useEffect } from 'react';
+import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { apiClient } from '@/lib/api-client';
 import { isAuthenticated } from '@/lib/auth';
 import { Button } from '@/components/common/Button';
 import { Card, CardHeader, CardBody } from '@/components/common/Card';
 
 export default function LoginPage() {
   const router = useRouter();
-  const [username, setUsername] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
 
-  // Immediately check authentication - if logged in, redirect to dashboard
   useEffect(() => {
     if (isAuthenticated()) {
-      // Use replace to prevent going back to login page via browser back button
+      // If already authenticated, redirect to dashboard
       router.replace('/dashboard');
+      return;
     }
+
+    function handleMessage(event: MessageEvent) {
+      if (event.data && event.data.type === 'auth:success') {
+        const { token, user } = event.data.data || {};
+        if (token && user) {
+          const { apiClient } = require('@/lib/api-client');
+          apiClient.completeOAuthLoginFromMessage({ token, user });
+          router.push('/dashboard');
+        }
+      }
+    }
+
+    window.addEventListener('message', handleMessage);
+    return () => {
+      window.removeEventListener('message', handleMessage);
+    };
   }, [router]);
 
-  // Don't render login form if already authenticated
-  // This prevents any flash of the login form
-  if (typeof window !== 'undefined' && isAuthenticated()) {
-    return null;
-  }
-
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    setError('');
-    setLoading(true);
-
-    try {
-      const response = await apiClient.login(username);
-      
-      if (response.success) {
-        router.push('/dashboard');
-      } else {
-        setError(response.error || 'Login failed');
-      }
-    } catch (err: any) {
-      setError(err.response?.data?.error || 'Login failed');
-    } finally {
-      setLoading(false);
+  function startGoogleLogin() {
+    const authWindow = window.open(
+      '/api/auth/login',
+      'google-oauth',
+      'width=500,height=600'
+    );
+    if (!authWindow) {
+      // Popup blocked; fallback to full redirect
+      window.location.href = '/api/auth/login';
     }
   }
 
@@ -64,50 +62,19 @@ export default function LoginPage() {
 
         <Card>
           <CardHeader>
-            <h3 className="text-lg font-semibold text-center">Login</h3>
+            <h3 className="text-lg font-semibold text-center">Sign in with Google</h3>
           </CardHeader>
           <CardBody>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              {error && (
-                <div className="p-3 bg-error-50 dark:bg-error-900/30 border border-error-200 dark:border-error-800 rounded-lg">
-                  <p className="text-sm text-error-700 dark:text-error-400">{error}</p>
-                </div>
-              )}
-
-              <div>
-                <label htmlFor="username" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Username
-                </label>
-                <input
-                  id="username"
-                  type="text"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  className="input"
-                  placeholder="Enter your username"
-                  required
-                  autoFocus
-                />
-              </div>
-
+            <div className="space-y-6">
               <Button
-                type="submit"
+                type="button"
                 variant="primary"
                 className="w-full"
-                isLoading={loading}
+                onClick={startGoogleLogin}
               >
-                Sign In
+                Continue with Google
               </Button>
-
-              <div className="mt-4 p-4 bg-primary-50 dark:bg-primary-900/30 rounded-lg border border-primary-200 dark:border-primary-800">
-                <p className="text-xs text-primary-700 dark:text-primary-300 font-medium mb-2">Demo Users:</p>
-                <div className="space-y-1 text-xs text-primary-600 dark:text-primary-400">
-                  <p>• admin@internal (Platform Admin)</p>
-                  <p>• lead@internal (Team Lead)</p>
-                  <p>• user@internal (Regular User)</p>
-                </div>
-              </div>
-            </form>
+            </div>
           </CardBody>
         </Card>
       </div>

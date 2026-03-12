@@ -19,6 +19,7 @@ spec:
       containers:
       - name: backend
         image: europe-west1-docker.pkg.dev/devops-idp-489012/devops-idp/backend:latest
+        # CI overrides this tag with the git commit SHA via `kubectl set image`
         imagePullPolicy: Always
         ports:
         - containerPort: 8000
@@ -64,15 +65,47 @@ spec:
             secretKeyRef:
               name: all-secrets
               key: REDIS_PASSWORD
-        
-        # Azure DevOps Integration
+        # JWT auth
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: all-secrets
+              key: JWT_SECRET
+        - name: JWT_EXPIRY
+          value: "8h"
+
+        # OAuth / OIDC (Google SSO)
+        - name: OAUTH_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: all-secrets
+              key: OAUTH_CLIENT_ID
+        - name: OAUTH_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: all-secrets
+              key: OAUTH_CLIENT_SECRET
+        - name: OAUTH_REDIRECT_URI
+          value: "https://devops.internal.company/api/auth/callback"
+        - name: OAUTH_ISSUER
+          value: "https://accounts.google.com"
+        - name: OAUTH_AUTH_URL
+          value: "https://accounts.google.com/o/oauth2/v2/auth"
+        - name: OAUTH_TOKEN_URL
+          value: "https://oauth2.googleapis.com/token"
+        - name: OAUTH_JWKS_URL
+          value: "https://www.googleapis.com/oauth2/v3/certs"
+        - name: OAUTH_SCOPES
+          value: "openid email profile"
+
+        # Azure DevOps Integration (real API; base URL = https://dev.azure.com/{organization})
         - name: USE_MOCK_AZURE_DEVOPS
           value: "false"
-        - name: AZURE_DEVOPS_API_URL
+        - name: AZURE_DEVOPS_ORGANIZATION
           valueFrom:
             configMapKeyRef:
               name: azure-devops-config
-              key: api-url
+              key: organization
         - name: AZURE_DEVOPS_PAT
           valueFrom:
             secretKeyRef:

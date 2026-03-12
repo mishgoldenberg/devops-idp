@@ -14,7 +14,7 @@ export function Header() {
   const user = getUser();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  const isAdmin = user?.role === 'Platform Admin' || user?.role === 'Head of Section';
+  const isAdmin = user?.role === 'Admin';
 
   const navigation = [
     { name: 'Home', href: '/dashboard', icon: Home },

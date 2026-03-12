@@ -423,7 +423,6 @@ docker compose exec postgres psql -U devops_user -d devops_control_center
 
 Once the database is ready:
 - 7 role definitions (Platform Admin through Regular User)
-- Sample users for each role (login with any `@internal` domain user)
 - Widget type definitions
 - Approval rules
 - Service health entries
@@ -438,21 +437,9 @@ Once the database is ready:
 
 **Database:** `localhost:5432` (user: `devops`, password: from `.env`)
 
-### Test Users
+### Authentication
 
-After seeding, you can log in with any of these demo users:
-
-| Username | Role | Description |
-|----------|------|-------------|
-| `admin@internal` | Platform Admin | Full system access, can approve requests, view observability |
-| `commander@internal` | Unit Commander | Cross-branch visibility, strategic metrics |
-| `branch.head@internal` | Branch Head | Branch-level aggregation |
-| `section.head@internal` | Head of Section | Section metrics, observability access |
-| `pm@internal` | Project Manager | Project-level visibility |
-| `lead@internal` | Team Lead | Team metrics, observability access |
-| `user@internal` | Regular User | Personal dashboard, basic self-service |
-
-**Note:** In local development, authentication uses mock SSO. Any username ending in `@internal` will be accepted and mapped to a role based on the seeded users.
+Authentication now uses **Google OAuth (OpenID Connect)**. Users sign in with their Google accounts and are created on first login, with roles assigned according to backend configuration.
 
 ### Common Commands
 

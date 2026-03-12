@@ -33,16 +33,71 @@ To switch from mock to real integration:
 ### Configuration
 
 ```bash
-# Environment variables
-AZURE_DEVOPS_ORG=your-organization
-AZURE_DEVOPS_PAT=your-personal-access-token
-AZURE_DEVOPS_API_URL=https://dev.azure.com/${AZURE_DEVOPS_ORG}
+# Core environment variables
+USE_MOCK_AZURE_DEVOPS=false
+AZURE_DEVOPS_API_URL=https://dev.azure.com/your-org
+
+# Vault-backed per-user PAT storage (recommended for non-dev)
+USE_VAULT=true
+VAULT_ADDR=https://vault.internal.company
+VAULT_TOKEN=your_vault_token
+VAULT_PATH=secret/devops-control-center
+```
+
+In this model:
+
+- Each user supplies their own Personal Access Token (PAT) via the UI
+- The backend stores the PAT securely using:
+  - HashiCorp Vault KV v2 under `${VAULT_PATH}/azure-devops/{user_id}` with key `azure_devops_pat`, or
+  - The `system_config` table (when `USE_VAULT=false`), marked as `is_sensitive = true`
+- The PAT is **never** returned to the frontend or written to logs
+
+### Local Testing (.env-only, no Vault)
+
+1. Copy `env.example` to `.env`
+2. Set:
+
+```bash
+USE_MOCK_AZURE_DEVOPS=false
+USE_VAULT=false
+AZURE_DEVOPS_API_URL=https://dev.azure.com/your-org
+```
+
+3. Run the backend and frontend
+4. Log in via SSO, then open the "Azure DevOps Work Items" widget
+5. When prompted, paste a test PAT for your own Azure DevOps user
+6. Verify that work items, PRs, and pipelines load without the PAT ever appearing in responses
+
+### Local Testing with Vault
+
+1. Start a local Vault dev server (KV v2 enabled) and obtain a token
+2. In `.env` set:
+
+```bash
+USE_MOCK_AZURE_DEVOPS=false
+USE_VAULT=true
+VAULT_ADDR=http://127.0.0.1:8200
+VAULT_TOKEN=dev-root-token
+VAULT_PATH=secret/devops-control-center
+```
+
+3. Log in to the app and configure your PAT from the Azure DevOps widget
+4. Confirm in Vault that a secret exists at:
+
+```bash
+vault kv get secret/devops-control-center/azure-devops/{user_id}
 ```
 
 ### Implementation
 
-Extend `backend/python_backend/app/api/azure_devops.py` to call the real Azure DevOps REST API
-and map responses into the existing JSON shape documented in `docs/API_REFERENCE.md`.
+The FastAPI adapter in `backend/app/api/azure_devops.py`:
+
+- Uses `get_user_azure_devops_pat()` to fetch the PAT for the authenticated user
+- Calls the Azure DevOps REST API on behalf of that user
+- Enforces that a PAT must be configured before any real Azure DevOps call is made
+
+The secrets helper in `backend/app/secrets_manager.py` abstracts Vault vs. database storage
+and must be used for all PAT operations.
 
 ### API Documentation
 
