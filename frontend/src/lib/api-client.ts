@@ -101,10 +101,15 @@ class ApiClient {
   }
 
   // Azure DevOps API
-  async getWorkItems(username: string): Promise<any> {
+  async getWorkItems(project?: string): Promise<any> {
     const response = await this.client.get('/azure-devops/work-items', {
-      params: { username },
+      params: project ? { project } : {},
     });
+    return response.data;
+  }
+
+  async getAzureDevOpsProjects(): Promise<{ success: boolean; data: { id: string; name: string }[] }> {
+    const response = await this.client.get('/azure-devops/projects');
     return response.data;
   }
 

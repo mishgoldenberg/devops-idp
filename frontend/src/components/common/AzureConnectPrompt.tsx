@@ -38,28 +38,28 @@ export function AzureConnectPrompt({ connection, accentClass = 'bg-blue-600' }: 
 
   if (connected && !showForm) {
     if (!hasPersonalPat) {
-      // Connected via the shared server PAT – show a subtle prompt to add a personal one
+      // Connected via the shared server PAT – tiny footer link to add a personal one
       return (
-        <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 mt-3">
-          <KeyRound className="w-3 h-3 text-yellow-400" />
-          <span>Using shared token.</span>
+        <div className="mt-4 pt-3 border-t border-gray-100 dark:border-gray-700/60 flex items-center gap-1.5 text-[11px] text-gray-400 dark:text-gray-500">
+          <KeyRound className="w-3 h-3 shrink-0" />
+          <span>Using shared token</span>
           <button
             onClick={() => setShowForm(true)}
-            className="ml-auto text-blue-500 hover:underline transition"
+            className="ml-auto text-blue-400 hover:text-blue-500 hover:underline transition"
           >
-            Add your own PAT
+            Use your own PAT
           </button>
         </div>
       );
     }
     return (
-      <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 mt-3">
-        <KeyRound className="w-3 h-3 text-green-500" />
-        <span>Connected with your personal PAT</span>
+      <div className="mt-4 pt-3 border-t border-gray-100 dark:border-gray-700/60 flex items-center gap-1.5 text-[11px] text-gray-400 dark:text-gray-500">
+        <KeyRound className="w-3 h-3 shrink-0 text-green-500" />
+        <span>Personal PAT active</span>
         <button
           onClick={disconnect}
           disabled={saving}
-          className="ml-auto flex items-center gap-1 text-red-500 hover:text-red-700 transition disabled:opacity-50"
+          className="ml-auto flex items-center gap-1 text-red-400 hover:text-red-500 transition disabled:opacity-50"
         >
           {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Unlink className="w-3 h-3" />}
           Disconnect
@@ -70,24 +70,24 @@ export function AzureConnectPrompt({ connection, accentClass = 'bg-blue-600' }: 
 
   if (!connected && !showForm) {
     return (
-      <div className="mt-4 p-4 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 text-center space-y-3">
-        <p className="text-sm text-gray-600 dark:text-gray-400">
-          Connect your Azure DevOps account to view live data.
+      <div className="mt-4 rounded-lg border border-dashed border-gray-200 dark:border-gray-700 p-4 space-y-3 text-center">
+        <p className="text-xs text-gray-500 dark:text-gray-400">
+          Connect Azure DevOps to view live data.
         </p>
+        <button
+          onClick={() => setShowForm(true)}
+          className={`w-full py-1.5 rounded-md text-white text-xs font-medium transition ${accentClass} hover:opacity-90`}
+        >
+          Connect via PAT
+        </button>
         <a
           href="https://learn.microsoft.com/en-us/azure/devops/organizations/accounts/use-personal-access-tokens-to-authenticate"
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-1 text-xs text-blue-500 hover:underline"
+          className="inline-flex items-center justify-center gap-1 text-[11px] text-gray-400 hover:text-blue-500 hover:underline transition"
         >
           <ExternalLink className="w-3 h-3" /> How to create a PAT
         </a>
-        <button
-          onClick={() => setShowForm(true)}
-          className={`w-full py-2 rounded-md text-white text-sm font-medium transition ${accentClass} hover:opacity-90`}
-        >
-          Connect via Personal Access Token
-        </button>
       </div>
     );
   }

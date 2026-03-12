@@ -6,38 +6,71 @@ import { Badge } from '../common/Badge';
 import { Skeleton } from '../common/Skeleton';
 import { AzureConnectPrompt } from '../common/AzureConnectPrompt';
 import { apiClient } from '@/lib/api-client';
-import { getUser } from '@/lib/auth';
 import { useAzureDevOpsConnection } from '@/hooks/useAzureDevOpsConnection';
 import { getStatusColor, formatRelativeTime } from '@/lib/utils';
-import { CheckSquare } from 'lucide-react';
+import { CheckSquare, ChevronDown } from 'lucide-react';
 
 interface WorkItem {
   id: number;
   title: string;
   state: string;
+  state_category: string;
   type: string;
+  project: string;
   url: string;
   changed_date: string;
 }
 
+interface Project {
+  id: string;
+  name: string;
+}
+
+// Azure DevOps state categories that count as "In Progress"
+const IN_PROGRESS_CATEGORIES = new Set(['InProgress', 'Resolved']);
+// State categories that count as "To Do"
+const TODO_CATEGORIES = new Set(['Proposed', '']);
+
 export function AzureDevOpsWorkItems() {
   const connection = useAzureDevOpsConnection();
   const [workItems, setWorkItems] = useState<WorkItem[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [selectedProject, setSelectedProject] = useState<string>('');
   const [loading, setLoading] = useState(false);
+  const [projectsLoading, setProjectsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Load project list once connected
   useEffect(() => {
     if (connection.connected && !connection.checking) {
-      fetchWorkItems();
+      loadProjects();
     }
   }, [connection.connected, connection.checking]);
 
-  async function fetchWorkItems() {
+  // Reload work items whenever the selected project changes
+  useEffect(() => {
+    if (connection.connected && !connection.checking) {
+      fetchWorkItems(selectedProject);
+    }
+  }, [connection.connected, connection.checking, selectedProject]);
+
+  async function loadProjects() {
+    setProjectsLoading(true);
+    try {
+      const res = await apiClient.getAzureDevOpsProjects();
+      if (res.success) setProjects(res.data);
+    } catch {
+      // Non-critical – project list just won't be available
+    } finally {
+      setProjectsLoading(false);
+    }
+  }
+
+  async function fetchWorkItems(project: string) {
     try {
       setLoading(true);
       setError(null);
-      const user = getUser();
-      const response = await apiClient.getWorkItems(user?.email || user?.username || '');
+      const response = await apiClient.getWorkItems(project || undefined);
       if (response.success) {
         setWorkItems(response.data);
       }
@@ -50,9 +83,29 @@ export function AzureDevOpsWorkItems() {
   }
 
   const header = (
-    <div className="flex items-center gap-2">
-      <CheckSquare className="w-5 h-5 text-primary" />
-      <h3 className="font-semibold">My Work Items</h3>
+    <div className="flex items-center justify-between gap-2">
+      <div className="flex items-center gap-2">
+        <CheckSquare className="w-5 h-5 text-primary" />
+        <h3 className="font-semibold">My Work Items</h3>
+      </div>
+
+      {/* Project selector */}
+      {connection.connected && !connection.checking && (
+        <div className="relative">
+          <select
+            value={selectedProject}
+            onChange={e => setSelectedProject(e.target.value)}
+            disabled={projectsLoading}
+            className="appearance-none pl-2 pr-6 py-1 text-xs rounded-md border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-primary cursor-pointer disabled:opacity-50"
+          >
+            <option value="">All projects</option>
+            {projects.map(p => (
+              <option key={p.id} value={p.name}>{p.name}</option>
+            ))}
+          </select>
+          <ChevronDown className="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-400" />
+        </div>
+      )}
     </div>
   );
 
@@ -94,13 +147,14 @@ export function AzureDevOpsWorkItems() {
     );
   }
 
-  const toDoCount = workItems.filter(wi => wi.state === 'To Do').length;
-  const inProgressCount = workItems.filter(wi => wi.state === 'In Progress').length;
+  // Count by state category (works for any custom state name)
+  const toDoCount = workItems.filter(wi => TODO_CATEGORIES.has(wi.state_category)).length;
+  const inProgressCount = workItems.filter(wi => IN_PROGRESS_CATEGORIES.has(wi.state_category)).length;
 
   return (
     <Card className="h-full flex flex-col">
       <CardHeader>{header}</CardHeader>
-      <CardBody className="flex-1 overflow-auto">
+      <CardBody className="flex-1 overflow-auto flex flex-col">
         <div className="flex gap-4 mb-4">
           <div className="flex items-center gap-2">
             <span className="text-2xl font-bold text-secondary-600 dark:text-secondary-300">{toDoCount}</span>
@@ -112,7 +166,7 @@ export function AzureDevOpsWorkItems() {
           </div>
         </div>
 
-        <div className="space-y-3">
+        <div className="space-y-3 flex-1">
           {workItems.slice(0, 5).map(item => (
             <a
               key={item.id}
@@ -121,16 +175,17 @@ export function AzureDevOpsWorkItems() {
               rel="noopener noreferrer"
               className="block p-3 border border-gray-200 dark:border-gray-700 rounded-lg hover:border-primary dark:hover:border-primary-500 hover:bg-primary-50 dark:hover:bg-primary-900/30 transition-colors"
             >
-              <div className="flex items-start justify-between gap-2 mb-2">
+              <div className="flex items-start justify-between gap-2 mb-1">
                 <span className="text-sm font-medium text-gray-900 dark:text-gray-100 flex-1 line-clamp-2">
                   {item.title}
                 </span>
-                <Badge variant={getStatusColor(item.state) as any}>
+                <Badge variant={getStatusColor(item.state) as any} className="shrink-0">
                   {item.state}
                 </Badge>
               </div>
               <div className="flex items-center gap-2 text-xs text-secondary-500 dark:text-secondary-400">
                 <span>{item.type}</span>
+                {item.project && <><span>•</span><span className="truncate max-w-[120px]">{item.project}</span></>}
                 <span>•</span>
                 <span>{formatRelativeTime(item.changed_date)}</span>
               </div>
@@ -139,9 +194,9 @@ export function AzureDevOpsWorkItems() {
         </div>
 
         {workItems.length === 0 && (
-          <div className="text-center py-8 text-secondary-500">
+          <div className="text-center py-8 text-secondary-500 flex-1">
             <CheckSquare className="w-12 h-12 mx-auto mb-2 opacity-30" />
-            <p>No work items assigned</p>
+            <p>No open work items assigned to you</p>
           </div>
         )}
 

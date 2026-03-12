@@ -133,30 +133,77 @@ def remove_pat(current_user: AuthUser = Depends(get_current_user)):
     return Response(status_code=204)
 
 
+def _fetch_state_categories(client: httpx.Client, project: str, work_item_type: str) -> dict:
+    """
+    Returns a mapping of {state_name: state_category} for a given project + work item type.
+    State categories are standard strings like 'Proposed', 'InProgress', 'Resolved',
+    'Completed', 'Removed' regardless of how the team named their custom states.
+    Results are not cached at module level (short-lived per request is fine).
+    """
+    # URL-encode the work item type name (e.g. "User Story" -> "User%20Story")
+    from urllib.parse import quote
+    url = f"{ADO_BASE}/{quote(project)}/_apis/wit/workitemtypes/{quote(work_item_type)}/states?api-version=7.0"
+    try:
+        r = client.get(url, timeout=10.0)
+        r.raise_for_status()
+        return {s["name"]: s.get("stateCategory", "") for s in r.json().get("value", [])}
+    except Exception:
+        return {}
+
+
+@router.get("/projects")
+def get_projects(current_user: AuthUser = Depends(get_current_user)):
+    """List all Azure DevOps projects the PAT has access to."""
+    if USE_MOCK:
+        return {
+            "success": True,
+            "data": [
+                {"id": "mock-1", "name": "DevOps"},
+                {"id": "mock-2", "name": "backend-api"},
+            ],
+            "timestamp": _now_iso(),
+        }
+    if not ADO_BASE or ADO_BASE.rstrip("/") == "https://dev.azure.com":
+        raise HTTPException(status_code=500, detail="AZURE_DEVOPS_ORG is not configured")
+
+    pat = _get_pat_for_user(current_user)
+    auth = httpx.BasicAuth("", pat)
+    try:
+        with httpx.Client(auth=auth, timeout=20.0) as client:
+            r = client.get(f"{ADO_BASE}/_apis/projects?$top=200&api-version=7.0")
+            r.raise_for_status()
+            projects = [
+                {"id": p.get("id"), "name": p.get("name")}
+                for p in r.json().get("value", [])
+            ]
+        return {"success": True, "data": projects, "timestamp": _now_iso()}
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=502, detail=f"Azure DevOps API error: {exc.response.status_code}")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Azure DevOps request failed: {exc!s}")
+
+
 @router.get("/work-items")
 def get_work_items(
-    username: Optional[str] = Query(None),
+    project: Optional[str] = Query(None),
     current_user: AuthUser = Depends(get_current_user),
 ):
-    effective_username = username or current_user.get("username")
-    # If a test ADO account is provided via env, use that (helpful for local testing)
-    if ADO_QUERY_USER:
-        effective_username = ADO_QUERY_USER
-    if not effective_username:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username required",
-        )
-
+    """
+    Return work items assigned to the PAT owner (@Me macro ensures we query the right user).
+    Optionally filter by project name.  Each item includes state_category so the
+    frontend can group by 'Proposed'/'InProgress'/'Resolved'/'Completed' regardless
+    of the team's custom state names (e.g. 'Doing' → 'InProgress').
+    """
     if USE_MOCK:
-        # Mock data (legacy)
         work_items = [
             {
                 "id": 1001,
                 "title": "Implement feature",
                 "state": "In Progress",
+                "state_category": "InProgress",
                 "type": "User Story",
-                "assigned_to": effective_username,
+                "project": "DevOps",
+                "assigned_to": "you",
                 "created_date": "2024-01-14T09:00:00Z",
                 "changed_date": "2024-01-15T10:00:00Z",
                 "url": "https://dev.azure.com/org/project/_workitems/edit/1001",
@@ -171,64 +218,88 @@ def get_work_items(
         )
     try:
         pat = _get_pat_for_user(current_user)
-        query = {
-            "query": f"Select [System.Id], [System.Title], [System.State], [System.WorkItemType] "
-            f"From WorkItems Where [System.AssignedTo] = '{effective_username}' AND [System.State] <> 'Closed' "
-            f"Order By [System.ChangedDate] Desc"
-        }
         auth = httpx.BasicAuth("", pat)
+
+        # @Me resolves to the identity that owns the PAT – no need to pass the username
+        project_clause = f"AND [System.TeamProject] = '{project}'" if project else ""
+        # Also exclude Done / Completed states by filtering on category not name
+        query = {
+            "query": (
+                "Select [System.Id], [System.Title], [System.State], "
+                "[System.WorkItemType], [System.TeamProject] "
+                "From WorkItems "
+                f"Where [System.AssignedTo] = @Me "
+                "AND [System.State] <> 'Closed' "
+                "AND [System.State] <> 'Done' "
+                "AND [System.State] <> 'Removed' "
+                f"{project_clause}"
+                "Order By [System.ChangedDate] Desc"
+            )
+        }
+        # Use test override if configured (helpful when local PAT belongs to a service account)
+        if ADO_QUERY_USER:
+            query["query"] = query["query"].replace(
+                "[System.AssignedTo] = @Me",
+                f"[System.AssignedTo] = '{ADO_QUERY_USER}'",
+            )
+
         wiql_url = f"{ADO_BASE}/_apis/wit/wiql?api-version=7.0"
         with httpx.Client(auth=auth, timeout=30.0) as client:
             r = client.post(wiql_url, json=query)
             r.raise_for_status()
-            wiql = r.json()
-
-            ids = [str(item.get("id")) for item in wiql.get("workItems", [])]
+            ids = [str(item["id"]) for item in r.json().get("workItems", [])]
             if not ids:
                 return {"success": True, "data": [], "timestamp": _now_iso()}
 
-            ids_chunk = ",".join(ids)
-            workitems_url = f"{ADO_BASE}/_apis/wit/workitems?ids={ids_chunk}&api-version=7.0"
-            r2 = client.get(workitems_url)
-            r2.raise_for_status()
-            items = r2.json().get("value", [])
+            # Fetch full details in batches of 200 (API limit)
+            items: list = []
+            for i in range(0, len(ids), 200):
+                chunk = ",".join(ids[i : i + 200])
+                r2 = client.get(
+                    f"{ADO_BASE}/_apis/wit/workitems?ids={chunk}"
+                    "&fields=System.Id,System.Title,System.State,System.WorkItemType,"
+                    "System.TeamProject,System.AssignedTo,System.CreatedDate,System.ChangedDate"
+                    "&api-version=7.0"
+                )
+                r2.raise_for_status()
+                items.extend(r2.json().get("value", []))
 
-        work_items = []
-        for it in items:
-            fields = it.get("fields", {})
-            work_item_id = it.get("id")
-            # Extract org and project from ADO_BASE
-            # ADO_BASE is like https://dev.azure.com/DevCollection-Inheritance
+            # Build state-category map per (project, type) – one API call each, minimal overhead
+            _cat_cache: dict = {}
             org = ADO_BASE.split("/")[-1]
-            # Get project from the response - it's in the _links
-            project_link = it.get("_links", {}).get("self", {}).get("href", "")
-            project = ""
-            if project_link:
-                # Extract project from URL like /_apis/wit/projects/PROJECT/_workitems/...
-                parts = project_link.split("/")
-                if "projects" in parts:
-                    idx = parts.index("projects")
-                    if idx + 1 < len(parts):
-                        project = parts[idx + 1]
-            
-            # Construct proper portal URL
-            if project:
-                portal_url = f"https://dev.azure.com/{org}/{project}/_workitems/edit/{work_item_id}"
-            else:
-                portal_url = f"https://dev.azure.com/{org}/_workitems/edit/{work_item_id}"
-            
-            work_items.append(
-                {
-                    "id": work_item_id,
-                    "title": fields.get("System.Title"),
-                    "state": fields.get("System.State"),
-                    "type": fields.get("System.WorkItemType"),
-                    "assigned_to": fields.get("System.AssignedTo"),
-                    "created_date": fields.get("System.CreatedDate"),
-                    "changed_date": fields.get("System.ChangedDate"),
-                    "url": portal_url,
-                }
-            )
+
+            work_items = []
+            for it in items:
+                fields = it.get("fields", {})
+                wi_id = it.get("id")
+                wi_state = fields.get("System.State") or ""
+                wi_type = fields.get("System.WorkItemType") or ""
+                wi_project = fields.get("System.TeamProject") or ""
+
+                cache_key = (wi_project, wi_type)
+                if cache_key not in _cat_cache:
+                    _cat_cache[cache_key] = _fetch_state_categories(client, wi_project, wi_type)
+                state_category = _cat_cache[cache_key].get(wi_state, "")
+
+                portal_url = (
+                    f"https://dev.azure.com/{org}/{wi_project}/_workitems/edit/{wi_id}"
+                    if wi_project
+                    else f"https://dev.azure.com/{org}/_workitems/edit/{wi_id}"
+                )
+                work_items.append(
+                    {
+                        "id": wi_id,
+                        "title": fields.get("System.Title"),
+                        "state": wi_state,
+                        "state_category": state_category,
+                        "type": wi_type,
+                        "project": wi_project,
+                        "assigned_to": fields.get("System.AssignedTo"),
+                        "created_date": fields.get("System.CreatedDate"),
+                        "changed_date": fields.get("System.ChangedDate"),
+                        "url": portal_url,
+                    }
+                )
 
         return {"success": True, "data": work_items, "timestamp": _now_iso()}
     except httpx.HTTPStatusError as exc:
