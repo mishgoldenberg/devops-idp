@@ -785,9 +785,11 @@ def create_ado_project(
         raise HTTPException(
             status_code=503,
             detail=(
-                "Could not start the provisioning job. "
-                "Check that the devops-terraform-sa ServiceAccount exists and that the "
-                "backend pod has permission to create K8s Jobs (see docs/SELF_SERVICE_TERRAFORM.md §7)."
+                f"Could not start the provisioning job: {exc}. "
+                "Check that kubectl apply -k infrastructure/k8s/base/ has been run, "
+                "that the devops-terraform-sa and backend-sa ServiceAccounts exist, "
+                "and that the backend pod has permission to create K8s Jobs "
+                "(see docs/SELF_SERVICE_TERRAFORM.md §7)."
             ),
         )
 
