@@ -16,6 +16,9 @@ spec:
         app: backend
         tier: backend
     spec:
+      # backend-sa is granted terraform-job-manager Role (rbac/terraform-rbac.yaml)
+      # so the backend pod can create K8s Jobs and ConfigMaps for Terraform runs.
+      serviceAccountName: backend-sa
       containers:
       - name: backend
         image: europe-west1-docker.pkg.dev/devops-idp-489012/devops-idp/backend:latest
@@ -42,12 +45,12 @@ spec:
               name: all-secrets
               key: POSTGRES_PASSWORD
         - name: POSTGRES_DB
-          valueFrom:  
+          valueFrom:
             secretKeyRef:
               name: all-secrets
               key: POSTGRES_DB
         - name: POSTGRES_PORT
-          valueFrom:  
+          valueFrom:
             secretKeyRef:
               name: all-secrets
               key: POSTGRES_PORT
@@ -55,7 +58,6 @@ spec:
           value: postgres-service
         - name: DATABASE_URL
           value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)"
-           
         - name: REDIS_HOST
           value: redis-service
         - name: REDIS_PORT
@@ -73,7 +75,6 @@ spec:
               key: JWT_SECRET
         - name: JWT_EXPIRY
           value: "8h"
-
         # OAuth / OIDC (Google SSO)
         - name: OAUTH_CLIENT_ID
           valueFrom:
@@ -97,7 +98,6 @@ spec:
           value: "https://www.googleapis.com/oauth2/v3/certs"
         - name: OAUTH_SCOPES
           value: "openid email profile"
-
         # Azure DevOps Integration (real API; base URL = https://dev.azure.com/{organization})
         - name: USE_MOCK_AZURE_DEVOPS
           value: "false"
@@ -137,7 +137,6 @@ spec:
           limits:
             cpu: 500m
             memory: 768Mi
-        
         # Kubernetes probes
         livenessProbe:
           httpGet:
@@ -147,7 +146,6 @@ spec:
           periodSeconds: 10
           timeoutSeconds: 5
           failureThreshold: 3
-        
         readinessProbe:
           httpGet:
             path: /api/health/ready
@@ -156,7 +154,6 @@ spec:
           periodSeconds: 5
           timeoutSeconds: 3
           failureThreshold: 2
-        
         # Security context
         securityContext:
           runAsNonRoot: true

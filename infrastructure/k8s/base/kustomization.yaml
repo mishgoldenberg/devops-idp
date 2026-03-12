@@ -3,6 +3,8 @@ kind: Kustomization
 
 resources:
   - namespace.yaml
+  - rbac/service-accounts.yaml
+  - rbac/terraform-rbac.yaml
   - deployments/backend.yaml
   - deployments/frontend.yaml
   - stateful-state/postgres-state.yaml

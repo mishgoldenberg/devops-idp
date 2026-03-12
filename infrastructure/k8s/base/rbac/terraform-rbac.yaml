@@ -1,0 +1,51 @@
+# ── RBAC: backend-sa permissions for Terraform job management ─────────────────
+#
+# Grants the backend pod (running as backend-sa) the minimum permissions needed
+# to orchestrate Terraform provisioning jobs:
+#
+#   batch/jobs        create, get, list, watch
+#     → submit Terraform runs and poll their completion status
+#
+#   configmaps        create, get, delete
+#     → store generated main.tf as a ConfigMap mounted into the Job pod
+#
+#   pods / pods/log   get, list, watch
+#     → read Terraform output and error logs to extract project_url,
+#       determine failure reason, and upload logs to GCS
+#
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: terraform-job-manager
+  namespace: devops-control-center
+  labels:
+    app: backend
+    component: rbac
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "get", "delete"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: terraform-job-manager
+  namespace: devops-control-center
+  labels:
+    app: backend
+    component: rbac
+subjects:
+  - kind: ServiceAccount
+    name: backend-sa
+    namespace: devops-control-center
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: terraform-job-manager
