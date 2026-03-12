@@ -437,9 +437,13 @@ Once the database is ready:
 
 **Database:** `localhost:5432` (user: `devops`, password: from `.env`)
 
-### Authentication
+### Authentication (Google SSO)
 
-Authentication now uses **Google OAuth (OpenID Connect)**. Users sign in with their Google accounts and are created on first login, with roles assigned according to backend configuration.
+Authentication uses **Google OAuth 2.0 / OpenID Connect**. Users sign in with their Google (Gmail) accounts; the backend creates or looks up users by email and issues an internal JWT (8-hour session by default).
+
+- **Login:** Frontend “Continue with Google” → backend redirects to Google consent → callback at `/api/auth/callback` → backend issues JWT and returns token/user to frontend (popup or redirect).
+- **Config:** Backend needs `OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET`, `OAUTH_REDIRECT_URI` (e.g. `https://devops.internal.company/api/auth/callback`), plus `JWT_SECRET` and `CORS_ORIGINS`. Frontend needs `NEXT_PUBLIC_API_BASE_URL` pointing at the same host.
+- **Full setup, env vars, GCP checklist, and troubleshooting:** [docs/SSO_GOOGLE_OAUTH.md](docs/SSO_GOOGLE_OAUTH.md).
 
 ### Common Commands
 
@@ -766,7 +770,8 @@ devops-control-center/
 │   ├── ARCHITECTURE.md
 │   ├── DEPLOYMENT.md
 │   ├── API_REFERENCE.md
-│   └── INTEGRATION_GUIDE.md
+│   ├── INTEGRATION_GUIDE.md
+│   └── SSO_GOOGLE_OAUTH.md
 │
 ├── docker-compose.yml
 ├── .env.example
@@ -944,6 +949,7 @@ npm run test:load
 - [API Reference](docs/API_REFERENCE.md)
 - [Integration Guide](docs/INTEGRATION_GUIDE.md)
 - [Deployment Guide](docs/DEPLOYMENT.md)
+- [Google SSO (OAuth / OIDC)](docs/SSO_GOOGLE_OAUTH.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 
 ---

@@ -49,5 +49,11 @@ httpx==0.24.1
 # Optional: load .env file when running locally
 python-dotenv==1.0.0
 
+# GCP Storage — saves Terraform logs to gs://devops-control-center-tfstate
+google-cloud-storage==2.18.0
+
+# Kubernetes client — creates/monitors Terraform runner Jobs
+kubernetes==29.0.0
+
 
 

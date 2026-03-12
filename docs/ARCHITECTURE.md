@@ -406,6 +406,85 @@ Namespace: devops-control-center
 
 ---
 
+## Terraform Runner Sub-system
+
+The self-service project creation feature uses an async Terraform execution model to avoid blocking HTTP requests during Azure DevOps provisioning (which can take 30–90 seconds).
+
+### Component diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  FastAPI (api-gateway pod)                                           │
+│                                                                      │
+│  POST /projects/create                                               │
+│    ├── validate inputs (ADO uniqueness check, user existence check)  │
+│    ├── pre-create custom inherited process via ADO REST API          │
+│    ├── terraform_runner.generate_main_tf()  ──────────────────────┐  │
+│    ├── K8s API: create ConfigMap (tf-<name>-<ts>)                 │  │
+│    ├── K8s API: create Job (tf-<name>-<ts>)                       │  │
+│    └── return { job_id, status: "pending" }                       │  │
+│                                                                   │  │
+│  GET /projects/create/status/{job_id}                             │  │
+│    ├── K8s API: read Job .status                                  │  │
+│    ├── (on succeeded) parse project_url from pod logs             │  │
+│    ├── (on succeeded) assign admin via ADO Graph API              │  │
+│    └── (on terminal) save pod logs → GCS                         │  │
+└───────────────────────────────────────────────────────────────────┘  │
+                                                                       │ main.tf
+┌──────────────────────────────────────────────────────────────────────┘
+│  K8s Job (hashicorp/terraform:1.6)
+│   ServiceAccount: devops-terraform-sa
+│   Workload Identity → devops-terraform-sa@devops-idp-489012.iam.gserviceaccount.com
+│
+│   volumes:
+│     - ConfigMap (main.tf)  →  /workspace/main.tf
+│
+│   env:
+│     - AZDO_PERSONAL_ACCESS_TOKEN  (from all-secrets K8s Secret)
+│     - TF_LOG=INFO
+│
+│   command:
+│     terraform init    (GCS backend → gs://devops-control-center-tfstate/terraform/state/…)
+│     terraform apply   (creates azuredevops_project resource)
+│
+│   output:
+│     project_url = "https://dev.azure.com/<org>/<project>"
+└─────────────────────────────────────────────────────────────────────
+                  │ tfstate
+                  ▼
+   gs://devops-control-center-tfstate/terraform/state/<project>/
+                  │ logs (uploaded by backend on job completion)
+                  ▼
+   gs://devops-control-center-tfstate/terraform/logs/<project>-YYYYMMDD-HHMM.log
+```
+
+### Module locations
+
+| Module | Path | Purpose |
+|---|---|---|
+| Terraform orchestration | `backend/app/terraform_runner.py` | ConfigMap/Job CRUD, status polling, GCS log upload, mock mode |
+| API endpoints | `backend/app/api/azure_devops.py` | REST handlers; input validation; delegates to `terraform_runner` |
+| Frontend form | `frontend/src/components/self-service/CreateProjectForm.tsx` | Multi-step form with tooltips and confirmation modal |
+| Frontend page | `frontend/src/app/self-service/page.tsx` | Provisioning banner, polling loop, success/error states |
+| API client | `frontend/src/lib/api-client.ts` | `createProject()` and `getProjectCreationStatus()` methods |
+
+### Credential flow
+
+```
+GCS backend auth:   K8s SA (devops-terraform-sa)
+                      → Workload Identity token
+                      → ADC metadata server
+                      → GCS API
+
+ADO auth:           K8s Secret (all-secrets.AZURE_DEVOPS_PAT)
+                      → env var AZDO_PERSONAL_ACCESS_TOKEN
+                      → azuredevops Terraform provider
+```
+
+No long-lived GCP SA key files are used anywhere.
+
+---
+
 ## Future Enhancements
 
 ### Phase 2 Features

@@ -549,12 +549,28 @@ def create_project(payload: Dict[str, Any], current_user: AuthUser = Depends(get
 
 
 
-# ── self-service project creation ───────────────────────────────────────────
+# ── Self-service project creation via Terraform ──────────────────────────────
+
+import logging as _logging
+
+from terraform_runner import (
+    sanitize_ado_name,
+    submit_terraform_job,
+    get_job_status,
+    save_logs_to_gcs,
+)
+
+# Track jobs where the post-Terraform admin assignment has already been applied.
+# A simple in-memory set is sufficient for single-replica deployments.
+_admin_assigned_jobs: set = set()
+
+VALID_PROCESS_TYPES = {"scrum", "agile", "cmmi", "basic"}
+
 
 class ProjectCreationPayload(BaseModel):
     project_name: str
-    process_type: str  # Scrum, Agile, CMMI, Basic
-    admin_username: str  # email/principalName of the user to grant admin rights
+    process_type: str   # Scrum | Agile | CMMI | Basic
+    admin_username: str  # Azure DevOps principal name / e-mail
 
 
 @router.post("/projects/create")
@@ -562,204 +578,255 @@ def create_ado_project(
     payload: ProjectCreationPayload,
     current_user: AuthUser = Depends(get_current_user),
 ):
-    """Self-Service Project Creation Endpoint
-    
-    Creates a new Azure DevOps project with a custom process and grants admin permissions.
-    
-    IMPLEMENTATION FLOW:
-    1. Locate the base process template (Scrum/Agile/CMMI/Basic) 
-    2. Create a custom inherited process named '{project_name}-{process_type}'
-    3. Create the project using the custom process
-    4. Add the specified admin_username to Project Administrators group
-    
-    REQUEST PARAMETERS:
-    - project_name: str - Name of the new project (becomes part of custom process name)
-    - process_type: str - Based process type: Scrum, Agile, CMMI, or Basic
-    - admin_username: str - Email or principal name to grant admin rights
-    
-    RESPONSE:
-    - success: bool - Whether the operation completed
-    - data: dict - Created project details including URL
-    - timestamp: str - ISO 8601 timestamp
-    
-    MOCK MODE (USE_MOCK_AZURE_DEVOPS=true):
-    - Returns simulated project creation response without calling real Azure DevOps API
-    - Useful for local development and testing
-    
-    REAL MODE (USE_MOCK_AZURE_DEVOPS=false):
-    - Requires valid AZURE_DEVOPS_PAT (Personal Access Token) with:
-      * Project & Team Read/Write
-      * Process Template Access  
-      * Group Membership Read/Write
-    - Calls actual Azure DevOps REST API v7.0+ 
-    - May take 10-30 seconds as ADO processes the creation
-    
-    ERROR CASES:
-    - 400 Bad Request: Missing required fields, unknown process type
-    - 401 Unauthorized: Invalid or missing ADO_PAT
-    - 403 Forbidden: Insufficient permissions in Azure DevOps
-    - 500 Internal Server Error: ADO API errors, database issues
     """
+    Self-Service: provision an Azure DevOps project via a Terraform container.
 
+    Flow
+    ────
+    1. Sanitize + validate inputs.
+    2. [Real mode only] Verify the project name is unique in Azure DevOps (409 if taken).
+    3. [Real mode only] Verify the admin user exists in the organisation (422 if missing).
+    4. [Real mode only] Pre-create the custom inherited process
+       '<project_name>-<process_type>' via REST API if it does not yet exist.
+    5. Generate a Terraform module and submit it as a Kubernetes Job
+       (image: hashicorp/terraform:1.6, SA: devops-terraform-sa).
+    6. Return a job_id for the client to poll via GET /projects/create/status/{job_id}.
+    """
+    # ── Basic validation ───────────────────────────────────────────────────
+    project_name = sanitize_ado_name(payload.project_name.strip())
+    if not project_name:
+        raise HTTPException(status_code=400, detail="project_name is required.")
+
+    process_type = payload.process_type.strip()
+    if process_type.lower() not in VALID_PROCESS_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"process_type must be one of: Scrum, Agile, CMMI, Basic.",
+        )
+
+    admin_username = payload.admin_username.strip()
+    if not admin_username:
+        raise HTTPException(status_code=400, detail="admin_username is required.")
+
+    custom_process_name = f"{project_name}-{process_type}"
     org = ADO_BASE.split("/")[-1]
+
+    # ── Mock mode ──────────────────────────────────────────────────────────
+    if USE_MOCK:
+        job_id = submit_terraform_job(
+            project_name=project_name,
+            process_name=custom_process_name,
+            ado_org=org,
+            admin_username=admin_username,
+            use_mock=True,
+        )
+        return {
+            "success": True,
+            "data": {"job_id": job_id, "status": "pending"},
+            "timestamp": _now_iso(),
+        }
+
+    # ── Real mode ──────────────────────────────────────────────────────────
+    if not ADO_BASE or ADO_BASE.rstrip("/") == "https://dev.azure.com":
+        raise HTTPException(status_code=500, detail="AZURE_DEVOPS_ORG is not configured.")
+
     pat = _get_pat_for_user(current_user)
     auth = httpx.BasicAuth("", pat)
 
-    with httpx.Client(auth=auth, timeout=60.0) as client:
-        # 1. locate parent process template for the requested type
-        procs_url = f"{ADO_BASE}/_apis/process/processes?api-version=7.0"
-        r = client.get(procs_url)
+    with httpx.Client(auth=auth, timeout=30.0) as client:
+        # 1. Uniqueness check
+        r = client.get(f"{ADO_BASE}/_apis/projects?$top=500&api-version=7.0")
         r.raise_for_status()
-        procs = r.json().get("value", [])
-        parent_proc = None
-        for p in procs:
-            # built‑in processes have type "system"
-            if p.get("type") == "system" and p.get("name").lower() == payload.process_type.lower():
-                parent_proc = p
-                break
-        if not parent_proc:
+        existing_names = [p["name"].lower() for p in r.json().get("value", [])]
+        if project_name.lower() in existing_names:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"unknown process type '{payload.process_type}'",
+                status_code=409,
+                detail=f"A project named '{project_name}' already exists in Azure DevOps.",
             )
 
-        # 2. create a custom process based on the built-in template using Inherited Process API
-        custom_process_name = f"{payload.project_name}-{payload.process_type}"
-        custom_proc_body = {
-            "name": custom_process_name,
-            "description": f"Custom {payload.process_type} process for {payload.project_name}",
-            "parentProcessTypeId": parent_proc.get("id"),
-        }
-        
-        # Check if custom process already exists
-        custom_proc_id = None
-        try:
-            # Try to get inherited processes
-            inherited_procs_url = f"{ADO_BASE}/_apis/process/processes?api-version=7.0"
-            r_inherited = client.get(inherited_procs_url)
-            r_inherited.raise_for_status()
-            all_procs = r_inherited.json().get("value", [])
-            
-            # Look for our custom process (might not exist yet)
-            for p in all_procs:
-                if p.get("name").lower() == custom_process_name.lower() and p.get("type") != "system":
-                    custom_proc_id = p.get("id")
-                    break
-        except Exception as exc:
-            import logging
-            logging.error("Error checking for existing processes: %s", str(exc))
-        
-        # If not found, try to create it
-        if not custom_proc_id:
-            try:
-                # Use the inherited process create API
-                create_url = f"{ADO_BASE}/_apis/process/processes?api-version=7.1-preview.1"
-                r_create = client.post(create_url, json=custom_proc_body)
-                
-                if r_create.status_code in [200, 201]:
-                    created_proc = r_create.json()
-                    custom_proc_id = created_proc.get("id")
-                    import logging
-                    logging.info("Successfully created custom process: %s", custom_process_name)
-                else:
-                    # Try with a simpler version or log the error
-                    import logging
-                    error_text = r_create.text[:200] if r_create.text else f"HTTP {r_create.status_code}"
-                    logging.warning(
-                        "Failed to create custom process (status %s): %s. Using built-in process.",
-                        r_create.status_code,
-                        error_text,
-                    )
-                    custom_proc_id = parent_proc.get("id")
-            except Exception as exc:
-                import logging
-                logging.warning(
-                    "Exception creating custom process '%s': %s. Using built-in process.",
-                    custom_process_name,
-                    str(exc),
-                )
-                custom_proc_id = parent_proc.get("id")
-        
-
-        # 3. create project using the custom process
-        proj_body = {
-            "name": payload.project_name,
-            "description": "Self‑service created project",
-            "capabilities": {
-                "versioncontrol": {"sourceControlType": "Git"},
-                "processTemplate": {"templateTypeId": custom_proc_id},
-            },
-        }
-        proj_url = f"{ADO_BASE}/_apis/projects?api-version=7.0"
-        r3 = client.post(proj_url, json=proj_body)
-        r3.raise_for_status()
-        project = r3.json()
-        project_id = project.get("id")
-        
-        # Extract the correct portal URL format
-        # Azure DevOps portals URLs follow format: https://dev.azure.com/{organization}/{project}
-        # The project name might need URL encoding for safety
-        import urllib.parse
-        encoded_project_name = urllib.parse.quote(payload.project_name, safe='')
-        encoded_project_name = encoded_project_name.replace('%20', '%20')  # spaces as %20
-        
-        # Most likely correct format
-        project_portal_url = f"https://dev.azure.com/{org}/{payload.project_name}"
-        
-        import logging
-        logging.info(
-            "Successfully created project '%s' (id=%s). Portal URL: %s",
-            payload.project_name,
-            project_id,
-            project_portal_url,
+        # 2. Admin user existence check
+        users_url = (
+            f"{ADO_BASE}/_apis/graph/users?api-version=7.0"
+            f"&$filter=principalName eq '{admin_username}'"
         )
+        ru = client.get(users_url)
+        ru.raise_for_status()
+        if not ru.json().get("value"):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Azure DevOps user '{admin_username}' was not found in the organisation.",
+            )
 
-        # 3. try to add the admin user to the "Project Administrators" group
-        added_admin = False
-        try:
-            # find user descriptor
-            users_url = f"{ADO_BASE}/_apis/graph/users?api-version=7.0&$filter=principalName eq '{payload.admin_username}'"
-            ru = client.get(users_url)
-            ru.raise_for_status()
-            users = ru.json().get("value", [])
-            if not users:
-                raise ValueError("user not found in org")
-            user_desc = users[0].get("descriptor")
+        # 3. Locate parent process template
+        r_procs = client.get(f"{ADO_BASE}/_apis/process/processes?api-version=7.0")
+        r_procs.raise_for_status()
+        all_procs = r_procs.json().get("value", [])
 
-            # find project administrators group descriptor
-            group_name = f"{payload.project_name} Project Administrators"
-            groups_url = f"{ADO_BASE}/_apis/graph/groups?api-version=7.0&$filter=displayName eq '{group_name}'"
-            rg = client.get(groups_url)
-            rg.raise_for_status()
-            groups = rg.json().get("value", [])
-            if groups:
-                group_desc = groups[0].get("descriptor")
-                # create membership
-                membership_url = f"{ADO_BASE}/_apis/graph/memberships/{user_desc}/{group_desc}?api-version=7.0"
-                client.put(membership_url)
-                added_admin = True
-        except Exception as exc:  # noqa: BLE001
-            try:
-                import logging
+        parent_proc = next(
+            (p for p in all_procs if p.get("type") == "system"
+             and p.get("name", "").lower() == process_type.lower()),
+            None,
+        )
+        if not parent_proc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown process type '{process_type}'.",
+            )
 
-                logging.warning(
-                    "failed to add %s to project administrators: %s",
-                    payload.admin_username,
-                    exc,
+        # 4. Pre-create custom inherited process if it doesn't exist yet
+        custom_exists = any(
+            p.get("name", "").lower() == custom_process_name.lower()
+            and p.get("type") != "system"
+            for p in all_procs
+        )
+        if not custom_exists:
+            create_proc_url = (
+                f"{ADO_BASE}/_apis/process/processes?api-version=7.1-preview.1"
+            )
+            r_cp = client.post(
+                create_proc_url,
+                json={
+                    "name": custom_process_name,
+                    "description": (
+                        f"Custom {process_type} process for {project_name}"
+                    ),
+                    "parentProcessTypeId": parent_proc["id"],
+                },
+            )
+            if r_cp.status_code in (200, 201):
+                _logging.info("Created custom process: %s", custom_process_name)
+            else:
+                _logging.warning(
+                    "Custom process creation returned %s — Terraform will attempt "
+                    "to use the built-in '%s' process instead.",
+                    r_cp.status_code,
+                    process_type,
                 )
-            except Exception:
-                print("warning: could not add admin user", exc)
+                custom_process_name = process_type
+
+    # 5. Submit Terraform job
+    job_id = submit_terraform_job(
+        project_name=project_name,
+        process_name=custom_process_name,
+        ado_org=org,
+        admin_username=admin_username,
+        use_mock=False,
+    )
 
     return {
         "success": True,
-        "data": {
-            "project": project, 
-            "added_admin": added_admin, 
-            "project_url": project_portal_url
-        },
+        "data": {"job_id": job_id, "status": "pending"},
         "timestamp": _now_iso(),
     }
 
 
+@router.get("/projects/create/status/{job_id}")
+def get_project_creation_status(
+    job_id: str,
+    current_user: AuthUser = Depends(get_current_user),
+):
+    """
+    Poll the status of a Terraform project-creation job.
+
+    Returns
+    ───────
+    data.status  : pending | running | succeeded | failed
+    data.project_url : (on succeeded) Azure DevOps project URL
+    data.error   : (on failed) user-facing error message
+
+    On first 'succeeded' poll:
+      • Assigns admin_username to the project's 'Project Administrators' group.
+      • Saves Terraform logs to gs://devops-control-center-tfstate/terraform/logs/
+    """
+    result = get_job_status(job_id, use_mock=USE_MOCK)
+
+    if result["status"] == "succeeded" and job_id not in _admin_assigned_jobs:
+        _admin_assigned_jobs.add(job_id)
+        # Best-effort admin assignment; never fails the response
+        try:
+            _assign_admin_post_terraform(job_id, current_user)
+        except Exception as exc:
+            _logging.warning("Post-Terraform admin assignment failed: %s", exc)
+        try:
+            save_logs_to_gcs(job_id, job_id)
+        except Exception as exc:
+            _logging.warning("GCS log save failed: %s", exc)
+
+    if result["status"] == "failed":
+        if job_id not in _admin_assigned_jobs:
+            _admin_assigned_jobs.add(job_id)
+            try:
+                save_logs_to_gcs(job_id, job_id)
+            except Exception:
+                pass
+
+    return {"success": True, "data": result, "timestamp": _now_iso()}
+
+
+def _assign_admin_post_terraform(job_id: str, current_user: AuthUser) -> None:
+    """
+    After Terraform creates the project, add the admin user to the
+    'Project Administrators' group via the ADO Graph API.
+    Failures are tolerated (logged as warnings) so the UI still shows success.
+    """
+    if USE_MOCK:
+        return
+
+    if not ADO_BASE or ADO_BASE.rstrip("/") == "https://dev.azure.com":
+        return
+
+    pat = _get_pat_for_user(current_user)
+    auth = httpx.BasicAuth("", pat)
+
+    # Retrieve project metadata from the job annotations (K8s only)
+    admin_username: Optional[str] = None
+    project_name: Optional[str] = None
+    try:
+        from kubernetes import client as k8s, config as k8s_cfg  # type: ignore
+
+        try:
+            k8s_cfg.load_incluster_config()
+        except Exception:
+            k8s_cfg.load_kube_config()
+        job_obj = k8s.BatchV1Api().read_namespaced_job(
+            name=job_id, namespace="devops-control-center"
+        )
+        annotations = job_obj.metadata.annotations or {}
+        project_name = annotations.get("devops-portal/project-name")
+        admin_username = annotations.get("devops-portal/admin-username")
+    except Exception as exc:
+        _logging.debug("Could not read job annotations for admin assignment: %s", exc)
+        return
+
+    if not project_name:
+        return
+
+    with httpx.Client(auth=auth, timeout=20.0) as client:
+        # Resolve user descriptor
+        ru = client.get(
+            f"{ADO_BASE}/_apis/graph/users?api-version=7.0"
+            f"&$filter=principalName eq '{admin_username}'"
+        )
+        users = ru.json().get("value", []) if ru.is_success else []
+        if not users:
+            _logging.warning("Admin user '%s' not found for post-TF assignment.", admin_username)
+            return
+        user_desc = users[0].get("descriptor")
+
+        # Resolve Project Administrators group descriptor
+        groups_url = (
+            f"{ADO_BASE}/_apis/graph/groups?api-version=7.0"
+            f"&$filter=displayName eq '{project_name} Project Administrators'"
+        )
+        rg = client.get(groups_url)
+        groups = rg.json().get("value", []) if rg.is_success else []
+        if not groups:
+            return
+        group_desc = groups[0].get("descriptor")
+
+        client.put(
+            f"{ADO_BASE}/_apis/graph/memberships/{user_desc}/{group_desc}?api-version=7.0"
+        )
+        _logging.info("Assigned '%s' to Project Administrators for '%s'.", admin_username, project_name)
 
 

@@ -125,6 +125,29 @@ class ApiClient {
     return response.data;
   }
 
+  async createProject(payload: {
+    project_name: string;
+    process_type: string;
+    admin_username: string;
+  }): Promise<{ success: boolean; data: { job_id: string; status: string } }> {
+    const response = await this.client.post('/azure-devops/projects/create', payload);
+    return response.data;
+  }
+
+  async getProjectCreationStatus(jobId: string): Promise<{
+    success: boolean;
+    data: {
+      status: 'pending' | 'running' | 'succeeded' | 'failed' | 'error';
+      project_url?: string;
+      error?: string;
+    };
+  }> {
+    const response = await this.client.get(
+      `/azure-devops/projects/create/status/${jobId}`
+    );
+    return response.data;
+  }
+
   // Azure DevOps PAT management
   async getAzureDevOpsPatStatus(): Promise<{ success: boolean; data: { configured: boolean; has_personal_pat: boolean } }> {
     const response = await this.client.get('/azure-devops/pat');

@@ -58,14 +58,9 @@ docker compose logs api-gateway
 docker compose exec postgres psql -U devops_user -d devops_control_center -c "\dt"
 ```
 
-### Test Login
+### Authentication (Google SSO)
 
-Use these seeded accounts:
-- **Platform Admin**: `admin@internal`
-- **Team Lead**: `lead@internal`
-- **Regular User**: `user@internal`
-
-(No passwords required in dev mode with `DEV_MODE_BYPASS_AUTH=true`)
+The app uses **Google OAuth (SSO)** for sign-in. There are no seeded usernames/passwords; users sign in with their Google accounts and are created on first login. See [SSO_GOOGLE_OAUTH.md](SSO_GOOGLE_OAUTH.md) for configuration, environment variables, and GCP setup.
 
 ### Viewing Logs
 
@@ -419,6 +414,102 @@ kubectl rollout undo deployment/api-gateway --to-revision=2 -n devops-control-ce
 
 ---
 
+## Terraform Self-Service Prerequisites
+
+The self-service project creation feature requires several one-time cluster and GCP resources. Apply these **before** deploying the application to a new cluster.
+
+### 1. Kubernetes ServiceAccount & Workload Identity
+
+```bash
+# Create the K8s SA in the correct namespace
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: devops-terraform-sa
+  namespace: devops-control-center
+  annotations:
+    iam.gke.io/gcp-service-account: devops-terraform-sa@devops-idp-489012.iam.gserviceaccount.com
+EOF
+
+# Bind the K8s SA to the GCP SA via Workload Identity
+gcloud iam service-accounts add-iam-policy-binding \
+  devops-terraform-sa@devops-idp-489012.iam.gserviceaccount.com \
+  --role roles/iam.workloadIdentityUser \
+  --member "serviceAccount:devops-idp-489012.svc.id.goog[devops-control-center/devops-terraform-sa]"
+```
+
+### 2. GCS Bucket Access
+
+```bash
+# Grant the Terraform SA write access to the tfstate bucket
+gcloud storage buckets add-iam-policy-binding \
+  gs://devops-control-center-tfstate \
+  --member="serviceAccount:devops-terraform-sa@devops-idp-489012.iam.gserviceaccount.com" \
+  --role="roles/storage.objectAdmin"
+```
+
+### 3. Backend Pod RBAC (Job/ConfigMap/Pod management)
+
+The API pod needs permission to create Kubernetes Jobs and ConfigMaps (for the Terraform workspace) and to read pod logs (for status polling and GCS log upload).
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: terraform-job-manager
+  namespace: devops-control-center
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "get", "delete"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: terraform-job-manager
+  namespace: devops-control-center
+subjects:
+  - kind: ServiceAccount
+    name: api-gateway
+    namespace: devops-control-center
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: terraform-job-manager
+EOF
+```
+
+### 4. Verify
+
+```bash
+# K8s SA exists and has WI annotation
+kubectl get sa devops-terraform-sa -n devops-control-center -o yaml
+
+# Backend RBAC is in place
+kubectl auth can-i create jobs \
+  --as=system:serviceaccount:devops-control-center:api-gateway \
+  -n devops-control-center
+# Expected: yes
+
+# GCS bucket accessible via WI (run from a test pod using the devops-terraform-sa SA)
+kubectl run -it --rm tf-test \
+  --image=gcr.io/google.com/cloudsdktool/cloud-sdk:alpine \
+  --serviceaccount=devops-terraform-sa \
+  --restart=Never \
+  -n devops-control-center \
+  -- gsutil ls gs://devops-control-center-tfstate
+```
+
+---
+
 ## Production Checklist
 
 - [ ] All secrets created and stored securely
@@ -436,4 +527,10 @@ kubectl rollout undo deployment/api-gateway --to-revision=2 -n devops-control-ce
 - [ ] External system integrations tested
 - [ ] Performance testing completed
 - [ ] Security scan passed
+- [ ] `devops-terraform-sa` K8s ServiceAccount created with Workload Identity annotation
+- [ ] GCP Workload Identity binding configured for `devops-terraform-sa`
+- [ ] `devops-control-center-tfstate` GCS bucket exists and SA has `objectAdmin`
+- [ ] `terraform-job-manager` Role and RoleBinding applied
+- [ ] `AZURE_DEVOPS_PAT` present in `all-secrets` K8s Secret (required by Terraform runner)
+- [ ] Self-service project creation tested end-to-end (mock mode off)
 
