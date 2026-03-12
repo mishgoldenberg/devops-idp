@@ -82,23 +82,16 @@ jobs:
       - name: Install kubectl
         uses: azure/setup-kubectl@v4
 
-      # gke-gcloud-auth-plugin is required by kubectl >= 1.26 to talk to GKE.
-      # It is not bundled with the GitHub Actions runner, so install via apt.
-      - name: Install GKE auth plugin
-        run: |
-          sudo apt-get install -y google-cloud-sdk-gke-gcloud-auth-plugin
-
+      # This action installs gke-gcloud-auth-plugin, writes kubeconfig, and
+      # sets USE_GKE_GCLOUD_AUTH_PLUGIN automatically — no manual apt needed.
       - name: Get GKE credentials
-        env:
-          USE_GKE_GCLOUD_AUTH_PLUGIN: "True"
-        run: |
-          gcloud container clusters get-credentials ${{ inputs.gke_cluster }} \
-            --region ${{ inputs.gcp_region }} \
-            --project ${{ inputs.gcp_project }}
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ inputs.gke_cluster }}
+          location: ${{ inputs.gcp_region }}
+          project_id: ${{ inputs.gcp_project }}
 
       - name: Update image tag in deployment
-        env:
-          USE_GKE_GCLOUD_AUTH_PLUGIN: "True"
         run: |
           REGISTRY="${{ inputs.gcp_region }}-docker.pkg.dev/${{ inputs.gcp_project }}/devops-idp"
           kubectl set image deployment/${{ inputs.image_name }} \
@@ -106,8 +99,6 @@ jobs:
             -n ${{ inputs.k8s_namespace }}
 
       - name: Wait for rollout
-        env:
-          USE_GKE_GCLOUD_AUTH_PLUGIN: "True"
         run: |
           kubectl rollout status deployment/${{ inputs.image_name }} \
             -n ${{ inputs.k8s_namespace }} \
