@@ -7,12 +7,13 @@ metadata:
     component: azure-devops
 data:
   # Azure DevOps REST API base URL
-  api-url: "https://dev.azure.com"
+  # not used - need to delete from code 
+  #api-url: "https://dev.azure.com"
   
   # Optional: Query user email for WIQL work item filters
   # Leave empty to use authenticated user's email
-  query-user: "golden.mihel@gmail.com"
-  
+  AZURE_DEVOPS_QUERY_USER: "golden.mihel@gmail.com"
+
   # Organization name (used in URLs)
   # Example: https://dev.azure.com/{organization}
-  organization: "DevCollection-Inheritance"
+  AZURE_DEVOPS_ORGANIZATION: "DevCollection-Inheritance"

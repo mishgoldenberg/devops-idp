@@ -20,7 +20,6 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: terraform-job-manager
-  namespace: devops-control-center
   labels:
     app: backend
     component: rbac
@@ -39,7 +38,6 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: terraform-job-manager
-  namespace: devops-control-center
   labels:
     app: backend
     component: rbac
@@ -49,10 +47,6 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: backend-sa
-    namespace: devops-control-center-dev
-  - kind: ServiceAccount
-    name: backend-sa
-    namespace: devops-control-center
 roleRef:
   kind: Role
   apiGroup: rbac.authorization.k8s.io

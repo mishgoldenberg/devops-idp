@@ -7,7 +7,7 @@ service:
   port: 3000
   annotations:
     cloud.google.com/neg: '{"ingress": true}'
-  targetPort: 80
+  targetPort: 3000
 
 resources:
   requests:

@@ -90,7 +90,20 @@ jobs:
           cluster_name: ${{ inputs.gke_cluster }}
           location: ${{ inputs.gcp_region }}
           project_id: ${{ inputs.gcp_project }}
+      
+      - name: Inject Secrets into K8s
+        run: |
+          kubectl create secret generic all-secrets \
+            --from-literal=POSTGRES_PASSWORD="${{ secrets.POSTGRES_PASSWORD }}" \
+            --from-literal=REDIS_PASSWORD="${{ secrets.REDIS_PASSWORD }}" \
+            --from-literal=AZURE_DEVOPS_PAT="${{ secrets.AZURE_DEVOPS_PAT }}" \
+            --from-literal=AZURE_DEVOPS_ADMIN_PAT="${{ secrets.AZURE_DEVOPS_ADMIN_PAT }}" \
+            --from-literal=JWT_SECRET="${{ secrets.JWT_SECRET }}" \
+            --from-literal=OAUTH_CLIENT_ID="${{ secrets.SSO_CLIENT_ID }}" \
+            --from-literal=OAUTH_CLIENT_SECRET="${{ secrets.SSO_CLIENT_SECRET }}" \
 
+            -n devops-control-center-prod \
+            --dry-run=client -o yaml | kubectl apply -f -
       # Apply RBAC for the Terraform self-service runner.
       #
       # Why this step exists:

@@ -17,24 +17,7 @@ data:
 
   FRONTEND_URL: {{ .Values.config.frontendUrl | quote }}
 
-  # ============================================
-  # SESSION & SECURITY
-  # ============================================
-  SESSION_EXPIRAY_HOURS: {{ .Values.config.sessionExpiryHours | quote }}
-  CORS_ORIGINS: {{ .Values.config.corsOrigins | quote }}
-  JWT_EXPIRATION_HOURS: {{ .Values.config.jwtExpirationHours | quote }}
-
-  # ============================================
-  # AUTHENTICATION & SSO
-  # ============================================
-  #AUTH_SERVICE_HOST: {{ .Values.config.authServiceHost | quote }}
-  #AUTH_SERVICE_PORT: {{ .Values.config.authServicePort | quote }}
-  SSO_PROVIDER: {{ .Values.config.ssoProvider | quote }}
-  SSO_CLIENT_ID: {{ .Values.config.ssoClientId | quote }}
-  SSO_ISSUER_URL: {{ .Values.config.ssoIssuerUrl | quote }}
-  SSO_CALLBACK_URL: {{ .Values.config.ssoCallbackUrl | quote }}
-  SSO_JWKS_URI: {{ .Values.config.ssoJwksUri | quote }}
-
+  # ==========================================
   # # ============================================
   # # EXTERNAL SERVICES - AZURE DEVOPS
   # # ============================================

@@ -35,14 +35,10 @@ global:
     postgresPort: 5432
     postgresUser: "devops"
     postgresDB: "devops_control_center"
+    databaseUrl: "postgresql://devops:$(POSTGRES_PASSWORD)@postgres-service:5432/devops_control_center"
     redisHost: "redis-service"
     redisPort: 6379
-  
-  # Secrets referenced by sub-charts
-  secrets:
-    postgresPassword: ""
-    redisPassword: ""
-    azureDevopsPAT: ""
+
 
 ingress-prod:
   controller:

@@ -23,7 +23,14 @@ service:
   port: 8000
   targetPort: 8000
 
-secretName: all-secrets
+secrets:
+  postgresPassword: ""
+  redisPassword: ""
+  azureDevopsPat: ""
+  azureDevopsAdminPat: ""
+  jwtSecret: ""
+  oauthClientSecret: ""
+  oauthClientId: ""
 
 ingress:
   enabled: true

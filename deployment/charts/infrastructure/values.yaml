@@ -21,9 +21,5 @@ config:
   frontendUrl: "https://devops.internal.company"
   sessionExpiryHours: 24
   corsOrigins: "https://devops.internal.company"
-  jwtExpirationHours: 24
-  ssoProvider: "keycloak"
-  ssoClientId: "devops-control-center-client"
-  ssoIssuerUrl: "http://keycloak-service:8080/realms/devops"
-  ssoCallbackUrl: "https://devops.internal.company/auth/callback"
-  ssoJwksUri: "http://keycloak-service:8080/realms/devops/protocol/openid-connect/certs"
+
+  

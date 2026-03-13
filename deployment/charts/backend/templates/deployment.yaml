@@ -16,6 +16,7 @@ spec:
         app: {{ .Chart.Name }}
         tier: backend
     spec:
+      serviceAccountName: backend-sa
       containers:
         - name: {{ .Chart.Name }}
           image: {{ .Values.global.customImage.repository }}/{{ .Chart.Name }}:{{ .Values.image.tag }}
@@ -28,29 +29,24 @@ spec:
               value: "production"
             - name: PORT
               value: "8000"
-            - name: POSTGRES_HOST
-              value: {{ .Values.global.endpoints.postgresHost | quote }}
-            - name: POSTGRES_PORT
-              value: {{ .Values.global.endpoints.postgresPort | quote }}
-            - name: POSTGRES_USER
-              value: {{ .Values.global.endpoints.postgresUser | quote }}
-            - name: REDIS_HOST
-              value: {{ .Values.global.endpoints.redisHost | quote }}
-            - name: REDIS_PORT
-              value: {{ .Values.global.endpoints.redisPort | quote }}
-            - name: POSTGRES_DB
-              value: {{ .Values.global.endpoints.postgresDB | quote }}
-            - name: POSTGRES_PASSWORD
-              value: {{ .Values.global.secrets.postgresPassword | quote }}
-            - name: REDIS_PASSWORD
-              value: {{ .Values.global.secrets.redisPassword | quote }}
-            - name: AZURE_DEVOPS_PAT
-              value: {{ .Values.global.secrets.azureDevopsPAT | quote }}
             - name: USE_MOCK_AZURE_DEVOPS
               value: "false"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: all-secrets
+                  key: POSTGRES_PASSWORD
+            - name: DATABASE_URL
+              value: "postgresql://{{ .Values.global.endpoints.postgresUser }}:$(POSTGRES_PASSWORD)@{{ .Values.global.endpoints.postgresHost }}:{{ .Values.global.endpoints.postgresPort }}/{{ .Values.global.endpoints.postgresDB }}"
           envFrom:
+            - secretRef:
+                name: all-secrets
             - configMapRef:
-                name: {{ .Values.azureDevopsConfig.configMapName }}
+                name: infra-config
+            - configMapRef:
+                name: azure-devops-config
+            - configMapRef:
+                name: sso-config
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           livenessProbe:
