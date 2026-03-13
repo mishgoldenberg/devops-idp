@@ -1,16 +1,13 @@
 # charts/frontend/values.yaml
-replicaCount: 1
-
 image:
-  repository: europe-west1-docker.pkg.dev/devops-idp-489012/devops-idp/frontend
   tag: latest
-  pullPolicy: Always
 
 service:
   type: ClusterIP
   port: 3000
   annotations:
     cloud.google.com/neg: '{"ingress": true}'
+  targetPort: 80
 
 resources:
   requests:
@@ -25,7 +22,7 @@ secretName: all-secrets
 ingress:
   enabled: true
   className: nginx
-  host: devops.internal.company
+  host: devops.internal.company.prod
   path: /
   annotations:
     nginx.ingress.kubernetes.io/ssl-redirect: "false"

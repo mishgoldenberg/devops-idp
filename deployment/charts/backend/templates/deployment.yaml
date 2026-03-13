@@ -6,7 +6,7 @@ metadata:
     app: {{ .Chart.Name }}
     tier: backend
 spec:
-  replicas: {{ .Values.replicaCount }}
+  replicas: {{ .Values.global.replicaCount }}
   selector:
     matchLabels:
       app: {{ .Chart.Name }}
@@ -18,8 +18,8 @@ spec:
     spec:
       containers:
         - name: {{ .Chart.Name }}
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          image: {{ .Values.global.customImage.repository }}/{{ .Chart.Name }}:{{ .Values.image.tag }}
+          imagePullPolicy: {{ .Values.global.customImage.pullPolicy }}
           ports:
             - containerPort: 8000
               name: http
@@ -29,28 +29,25 @@ spec:
             - name: PORT
               value: "8000"
             - name: POSTGRES_HOST
-              value: {{ .Values.db.host | quote }}
+              value: {{ .Values.global.endpoints.postgresHost | quote }}
             - name: POSTGRES_PORT
-              value: {{ .Values.db.port | quote }}
+              value: {{ .Values.global.endpoints.postgresPort | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.global.endpoints.postgresUser | quote }}
             - name: REDIS_HOST
-              value: {{ .Values.redis.host | quote }}
+              value: {{ .Values.global.endpoints.redisHost | quote }}
             - name: REDIS_PORT
-              value: {{ .Values.redis.port | quote }}
+              value: {{ .Values.global.endpoints.redisPort | quote }}
+            - name: POSTGRES_DB
+              value: {{ .Values.global.endpoints.postgresDB | quote }}
+            - name: POSTGRES_PASSWORD
+              value: {{ .Values.global.secrets.postgresPassword | quote }}
+            - name: REDIS_PASSWORD
+              value: {{ .Values.global.secrets.redisPassword | quote }}
+            - name: AZURE_DEVOPS_PAT
+              value: {{ .Values.global.secrets.azureDevopsPAT | quote }}
             - name: USE_MOCK_AZURE_DEVOPS
               value: "false"
-            # External Service URLs from values
-            {{- range $key, $val := .Values.services }}
-            - name: {{ $key | upper }}_SERVICE_URL
-              value: {{ $val | quote }}
-            {{- end }}
-            # Secrets from all-secrets
-            {{- range $secretKey := list "POSTGRES_USER" "POSTGRES_PASSWORD" "POSTGRES_DB" "REDIS_PASSWORD" "AZURE_DEVOPS_PAT" }}
-            - name: {{ $secretKey }}
-              valueFrom:
-                secretKeyRef:
-                  name: {{ $.Values.secretName }}
-                  key: {{ $secretKey }}
-            {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ .Values.azureDevopsConfig.configMapName }}

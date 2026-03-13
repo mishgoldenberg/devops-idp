@@ -1,9 +1,10 @@
-name: Docker Frontend CI
+name: Frontend CI
 
 on:
   push:
     paths:
       - "frontend/**"
+  workflow_dispatch:
 
 jobs:
   frontend:
@@ -13,6 +14,5 @@ jobs:
       image_name: frontend
       gcp_project: devops-idp-489012
       gcp_region: europe-west1
-      repository_name: devops-idp
     secrets:
       GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}

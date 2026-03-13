@@ -1,0 +1,10 @@
+apiVersion: v2
+name: infrastructure
+description: Shared infrastructure components (Postgres and Redis)
+type: application
+
+# The chart version (increment this when you change the chart structure)
+version: 0.1.0
+
+# The version of the actual software suite you are deploying
+appVersion: "0.1.0"

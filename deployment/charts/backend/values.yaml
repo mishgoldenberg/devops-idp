@@ -1,8 +1,6 @@
-replicaCount: 1
+
 image:
-  repository: europe-west1-docker.pkg.dev/devops-idp-489012/devops-idp/backend
   tag: latest
-  pullPolicy: Always
 
 # External Service URLs (Easy to update as you split microservices!)
 services:
@@ -18,14 +16,6 @@ services:
 azureDevopsConfig:
   configMapName: azure-devops-config
 
-# Database & Redis Settings
-db:
-  host: postgres-service
-  port: 5432
-redis:
-  host: redis-service
-  port: 6379
-
 tier: backend
 
 service:
@@ -38,7 +28,7 @@ secretName: all-secrets
 ingress:
   enabled: true
   className: nginx
-  host: devops.internal.company
+  host: devops.internal.company.prod
   path: /api
   annotations:
     nginx.ingress.kubernetes.io/ssl-redirect: "false"
