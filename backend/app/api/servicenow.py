@@ -11,8 +11,22 @@ from security import AuthUser, get_current_user
 router = APIRouter()
 
 USE_MOCK = os.getenv("USE_MOCK_SERVICENOW", "true").lower() in ("true", "1")
-_INSTANCE = os.getenv("SERVICENOW_INSTANCE", "").rstrip("/")
-_USER = os.getenv("SERVICENOW_USER", "")
+
+# Accept either SERVICENOW_URL (full URL already in .env) or construct from SERVICENOW_INSTANCE
+def _resolve_instance() -> str:
+    url = os.getenv("SERVICENOW_URL", "").rstrip("/")
+    if url and url.startswith("http"):
+        return url
+    instance = os.getenv("SERVICENOW_INSTANCE", "").rstrip("/")
+    if instance.startswith("http"):
+        return instance
+    if instance:
+        return f"https://{instance}.service-now.com"
+    return ""
+
+_INSTANCE = _resolve_instance()
+# SERVICENOW_USERNAME is the primary env var name used in the project .env files
+_USER = os.getenv("SERVICENOW_USERNAME") or os.getenv("SERVICENOW_USER", "")
 _PASSWORD = os.getenv("SERVICENOW_PASSWORD", "")
 
 
@@ -21,6 +35,7 @@ _PASSWORD = os.getenv("SERVICENOW_PASSWORD", "")
 class CreateTicketRequest(BaseModel):
     title: str
     description: str
+    priority: str = "3"  # ServiceNow priority code: 1=Critical 2=High 3=Moderate 4=Low 5=Planning
 
 
 class ReplyRequest(BaseModel):
@@ -302,6 +317,15 @@ def create_ticket(
 ):
     assigned_user = current_user.get("username", "admin")
 
+    _PRIORITY_LABELS = {
+        "1": "1 - Critical",
+        "2": "2 - High",
+        "3": "3 - Moderate",
+        "4": "4 - Low",
+        "5": "5 - Planning",
+    }
+    priority_label = _PRIORITY_LABELS.get(str(body.priority), "3 - Moderate")
+
     if USE_MOCK:
         new_sys_id = f"new_{int(datetime.now(timezone.utc).timestamp())}"
         ticket_number = f"INC{int(datetime.now(timezone.utc).timestamp()) % 10_000_000:07d}"
@@ -310,7 +334,7 @@ def create_ticket(
             "number": ticket_number,
             "short_description": body.title,
             "state": "New",
-            "priority": "3 - Moderate",
+            "priority": priority_label,
             "assigned_to": assigned_user,
             "opened_at": _now_iso(),
             "description": body.description,
@@ -335,6 +359,7 @@ def create_ticket(
                     "description": body.description,
                     "assigned_to": assigned_user,
                     "caller_id": assigned_user,
+                    "priority": str(body.priority),
                 },
                 params={"sysparm_display_value": "true"},
             )

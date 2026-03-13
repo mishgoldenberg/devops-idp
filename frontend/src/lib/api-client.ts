@@ -207,8 +207,8 @@ class ApiClient {
     return response.data;
   }
 
-  async createSupportTicket(title: string, description: string): Promise<any> {
-    const response = await this.client.post('/support/tickets', { title, description });
+  async createSupportTicket(title: string, description: string, priority: string = '3'): Promise<any> {
+    const response = await this.client.post('/support/tickets', { title, description, priority });
     return response.data;
   }
 

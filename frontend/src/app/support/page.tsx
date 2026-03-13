@@ -97,6 +97,7 @@ export default function SupportPage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [createTitle, setCreateTitle] = useState('');
   const [createDescription, setCreateDescription] = useState('');
+  const [createPriority, setCreatePriority] = useState('3');
   const [createLoading, setCreateLoading] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -175,7 +176,7 @@ export default function SupportPage() {
     setCreateLoading(true);
     setCreateError(null);
     try {
-      const res = await apiClient.createSupportTicket(createTitle.trim(), createDescription.trim());
+      const res = await apiClient.createSupportTicket(createTitle.trim(), createDescription.trim(), createPriority);
       if (res.success) {
         setShowCreateModal(false);
         setCreateTitle('');
@@ -519,6 +520,7 @@ export default function SupportPage() {
                   setShowCreateModal(false);
                   setCreateTitle('');
                   setCreateDescription('');
+                  setCreatePriority('3');
                   setCreateError(null);
                 }}
                 className="p-1.5 hover:bg-blue-500/30 rounded-lg transition-colors text-white"
@@ -564,19 +566,38 @@ export default function SupportPage() {
                 />
               </div>
 
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Priority
+                </label>
+                <select
+                  value={createPriority}
+                  onChange={(e) => setCreatePriority(e.target.value)}
+                  disabled={createLoading}
+                  className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors disabled:opacity-50"
+                >
+                  <option value="1">1 - Critical</option>
+                  <option value="2">2 - High</option>
+                  <option value="3">3 - Moderate</option>
+                  <option value="4">4 - Low</option>
+                  <option value="5">5 - Planning</option>
+                </select>
+              </div>
+
               <div className="flex gap-3 pt-2">
                 <button
                   onClick={() => {
-                    setShowCreateModal(false);
-                    setCreateTitle('');
-                    setCreateDescription('');
-                    setCreateError(null);
-                  }}
-                  disabled={createLoading}
-                  className="flex-1 px-4 py-2 border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
-                >
-                  Cancel
-                </button>
+                  setShowCreateModal(false);
+                  setCreateTitle('');
+                  setCreateDescription('');
+                  setCreatePriority('3');
+                  setCreateError(null);
+                }}
+                disabled={createLoading}
+                className="flex-1 px-4 py-2 border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
                 <button
                   onClick={handleCreateTicket}
                   disabled={createLoading || !createTitle.trim() || !createDescription.trim()}
