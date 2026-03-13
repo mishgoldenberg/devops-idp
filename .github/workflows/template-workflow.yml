@@ -27,6 +27,20 @@ on:
     secrets:
       GCP_SA_KEY:
         required: true
+      POSTGRES_PASSWORD:
+        required: false
+      REDIS_PASSWORD:
+        required: false
+      JWT_SECRET:
+        required: false
+      OAUTH_CLIENT_SECRET:
+        required: false
+      OAUTH_CLIENT_ID:
+        required: false
+      AZURE_DEVOPS_PAT:
+        required: false
+      AZURE_DEVOPS_ADMIN_PAT:
+        required: false
 
 jobs:
   build:
@@ -92,6 +106,7 @@ jobs:
           project_id: ${{ inputs.gcp_project }}
       
       - name: Inject Secrets into K8s
+        if: ${{ secrets.POSTGRES_PASSWORD != '' }}
         run: |
           kubectl create secret generic all-secrets \
             --from-literal=POSTGRES_PASSWORD="${{ secrets.POSTGRES_PASSWORD }}" \
