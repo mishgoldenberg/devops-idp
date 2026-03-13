@@ -34,6 +34,11 @@ class Settings:
     oauth_jwks_url: str
     oauth_scopes: str
 
+    # ServiceNow
+    servicenow_instance: Optional[str]
+    servicenow_user: Optional[str]
+    servicenow_password: Optional[str]
+
     # CORS
     cors_origins: str
 
@@ -64,6 +69,11 @@ class Settings:
         self.oauth_token_url = os.getenv("OAUTH_TOKEN_URL", "https://oauth2.googleapis.com/token")
         self.oauth_jwks_url = os.getenv("OAUTH_JWKS_URL", "https://www.googleapis.com/oauth2/v3/certs")
         self.oauth_scopes = os.getenv("OAUTH_SCOPES", "openid email profile")
+
+        # ServiceNow
+        self.servicenow_instance = os.getenv("SERVICENOW_INSTANCE")
+        self.servicenow_user = os.getenv("SERVICENOW_USER")
+        self.servicenow_password = os.getenv("SERVICENOW_PASSWORD")
 
         # CORS
         # Comma-separated list of origins, e.g. "http://localhost:3000,https://devops.internal.company"

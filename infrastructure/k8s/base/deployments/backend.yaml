@@ -122,6 +122,24 @@ spec:
             configMapKeyRef:
               name: azure-devops-config
               key: query-user
+        # ServiceNow Integration
+        - name: USE_MOCK_SERVICENOW
+          value: "false"
+        - name: SERVICENOW_INSTANCE
+          valueFrom:
+            secretKeyRef:
+              name: all-secrets
+              key: SERVICENOW_INSTANCE
+        - name: SERVICENOW_USER
+          valueFrom:
+            secretKeyRef:
+              name: all-secrets
+              key: SERVICENOW_USER
+        - name: SERVICENOW_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: all-secrets
+              key: SERVICENOW_PASSWORD
         - name: AUTH_SERVICE_URL
           value: "http://auth-service:8001"
         - name: AZURE_DEVOPS_SERVICE_URL

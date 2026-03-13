@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { getUser, isAuthenticated } from '@/lib/auth';
 import { apiClient } from '@/lib/api-client';
-import { Home, BookOpen, FileText, Zap, FileCheck, Activity, LogOut, Menu, X, Wrench } from 'lucide-react';
+import { Home, BookOpen, FileCheck, Activity, LogOut, Menu, X, Wrench, LifeBuoy } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ThemeToggle } from '@/components/common/ThemeToggle';
 
@@ -20,6 +20,7 @@ export function Header() {
     { name: 'Home', href: '/dashboard', icon: Home },
     { name: 'How-To Articles', href: '/how-to', icon: BookOpen },
     { name: 'Self-Service', href: '/self-service', icon: Wrench },
+    { name: 'Support', href: '/support', icon: LifeBuoy },
   ];
 
   const adminNavigation = [

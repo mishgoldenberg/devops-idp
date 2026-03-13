@@ -189,16 +189,31 @@ class ApiClient {
     return response.data;
   }
 
-  // ServiceNow API
-  async getTickets(username: string): Promise<any> {
-    const response = await this.client.get('/servicenow/tickets', {
-      params: { username },
+  // ServiceNow / Support API
+  async getTickets(username?: string): Promise<any> {
+    const response = await this.client.get('/support/tickets', {
+      params: username ? { username } : {},
     });
     return response.data;
   }
 
+  async getTicketDetail(sysId: string): Promise<any> {
+    const response = await this.client.get(`/support/tickets/${sysId}`);
+    return response.data;
+  }
+
+  async replyToTicket(sysId: string, message: string): Promise<any> {
+    const response = await this.client.post(`/support/tickets/${sysId}/reply`, { message });
+    return response.data;
+  }
+
+  async createSupportTicket(title: string, description: string): Promise<any> {
+    const response = await this.client.post('/support/tickets', { title, description });
+    return response.data;
+  }
+
   async getIncidentStats(): Promise<any> {
-    const response = await this.client.get('/servicenow/stats');
+    const response = await this.client.get('/support/stats');
     return response.data;
   }
 
