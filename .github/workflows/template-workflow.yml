@@ -101,7 +101,6 @@ jobs:
             --from-literal=JWT_SECRET="${{ secrets.JWT_SECRET }}" \
             --from-literal=OAUTH_CLIENT_ID="${{ secrets.SSO_CLIENT_ID }}" \
             --from-literal=OAUTH_CLIENT_SECRET="${{ secrets.SSO_CLIENT_SECRET }}" \
-
             -n devops-control-center-prod \
             --dry-run=client -o yaml | kubectl apply -f -
       # Apply RBAC for the Terraform self-service runner.
@@ -151,7 +150,6 @@ jobs:
       
       - name: Update Helm Dependencies
         run: |
-          
           helm dependency update ./deployment
       # 2. Deploy your Helm chart
       - name: Deploy Helm Chart
