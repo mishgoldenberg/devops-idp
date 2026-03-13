@@ -423,7 +423,6 @@ docker compose exec postgres psql -U devops_user -d devops_control_center
 
 Once the database is ready:
 - 7 role definitions (Platform Admin through Regular User)
-- Sample users for each role (login with any `@internal` domain user)
 - Widget type definitions
 - Approval rules
 - Service health entries
@@ -438,21 +437,13 @@ Once the database is ready:
 
 **Database:** `localhost:5432` (user: `devops`, password: from `.env`)
 
-### Test Users
+### Authentication (Google SSO)
 
-After seeding, you can log in with any of these demo users:
+Authentication uses **Google OAuth 2.0 / OpenID Connect**. Users sign in with their Google (Gmail) accounts; the backend creates or looks up users by email and issues an internal JWT (8-hour session by default).
 
-| Username | Role | Description |
-|----------|------|-------------|
-| `admin@internal` | Platform Admin | Full system access, can approve requests, view observability |
-| `commander@internal` | Unit Commander | Cross-branch visibility, strategic metrics |
-| `branch.head@internal` | Branch Head | Branch-level aggregation |
-| `section.head@internal` | Head of Section | Section metrics, observability access |
-| `pm@internal` | Project Manager | Project-level visibility |
-| `lead@internal` | Team Lead | Team metrics, observability access |
-| `user@internal` | Regular User | Personal dashboard, basic self-service |
-
-**Note:** In local development, authentication uses mock SSO. Any username ending in `@internal` will be accepted and mapped to a role based on the seeded users.
+- **Login:** Frontend “Continue with Google” → backend redirects to Google consent → callback at `/api/auth/callback` → backend issues JWT and returns token/user to frontend (popup or redirect).
+- **Config:** Backend needs `OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET`, `OAUTH_REDIRECT_URI` (e.g. `https://devops.internal.company/api/auth/callback`), plus `JWT_SECRET` and `CORS_ORIGINS`. Frontend needs `NEXT_PUBLIC_API_BASE_URL` pointing at the same host.
+- **Full setup, env vars, GCP checklist, and troubleshooting:** [docs/SSO_GOOGLE_OAUTH.md](docs/SSO_GOOGLE_OAUTH.md).
 
 ### Common Commands
 
@@ -779,7 +770,8 @@ devops-control-center/
 │   ├── ARCHITECTURE.md
 │   ├── DEPLOYMENT.md
 │   ├── API_REFERENCE.md
-│   └── INTEGRATION_GUIDE.md
+│   ├── INTEGRATION_GUIDE.md
+│   └── SSO_GOOGLE_OAUTH.md
 │
 ├── docker-compose.yml
 ├── .env.example
@@ -957,6 +949,7 @@ npm run test:load
 - [API Reference](docs/API_REFERENCE.md)
 - [Integration Guide](docs/INTEGRATION_GUIDE.md)
 - [Deployment Guide](docs/DEPLOYMENT.md)
+- [Google SSO (OAuth / OIDC)](docs/SSO_GOOGLE_OAUTH.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 
 ---

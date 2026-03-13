@@ -1,0 +1,189 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  labels:
+    app: backend
+    tier: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+        tier: backend
+    spec:
+      # backend-sa is granted terraform-job-manager Role (rbac/terraform-rbac.yaml)
+      # so the backend pod can create K8s Jobs and ConfigMaps for Terraform runs.
+      serviceAccountName: backend-sa
+      containers:
+      - name: backend
+        image: europe-west1-docker.pkg.dev/devops-idp-489012/devops-idp/backend:latest
+        # CI overrides this tag with the git commit SHA via `kubectl set image`
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8000
+          name: http
+        env:
+        # Application settings
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "8000"
+        # Secrets and other environment variables
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: all-secrets
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: all-secrets
+              key: POSTGRES_PASSWORD
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: all-secrets
+              key: POSTGRES_DB
+        - name: POSTGRES_PORT
+          valueFrom:
+            secretKeyRef:
+              name: all-secrets
+              key: POSTGRES_PORT
+        - name: POSTGRES_HOST
+          value: postgres-service
+        - name: DATABASE_URL
+          value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)"
+        - name: REDIS_HOST
+          value: redis-service
+        - name: REDIS_PORT
+          value: "6379"
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: all-secrets
+              key: REDIS_PASSWORD
+        # JWT auth
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: all-secrets
+              key: JWT_SECRET
+        - name: JWT_EXPIRY
+          value: "8h"
+        # OAuth / OIDC (Google SSO)
+        - name: OAUTH_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: all-secrets
+              key: OAUTH_CLIENT_ID
+        - name: OAUTH_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: all-secrets
+              key: OAUTH_CLIENT_SECRET
+        - name: OAUTH_REDIRECT_URI
+          value: "https://devops.internal.company/api/auth/callback"
+        - name: OAUTH_ISSUER
+          value: "https://accounts.google.com"
+        - name: OAUTH_AUTH_URL
+          value: "https://accounts.google.com/o/oauth2/v2/auth"
+        - name: OAUTH_TOKEN_URL
+          value: "https://oauth2.googleapis.com/token"
+        - name: OAUTH_JWKS_URL
+          value: "https://www.googleapis.com/oauth2/v3/certs"
+        - name: OAUTH_SCOPES
+          value: "openid email profile"
+        # Azure DevOps Integration (real API; base URL = https://dev.azure.com/{organization})
+        - name: USE_MOCK_AZURE_DEVOPS
+          value: "false"
+        - name: AZURE_DEVOPS_ORGANIZATION
+          valueFrom:
+            configMapKeyRef:
+              name: azure-devops-config
+              key: organization
+        - name: AZURE_DEVOPS_PAT
+          valueFrom:
+            secretKeyRef:
+              name: all-secrets
+              key: AZURE_DEVOPS_PAT
+        - name: AZURE_DEVOPS_ADMIN_PAT
+          valueFrom:
+            secretKeyRef:
+              name: all-secrets
+              key: AZURE_DEVOPS_ADMIN_PAT
+              optional: true
+        - name: AZURE_DEVOPS_QUERY_USER
+          valueFrom:
+            configMapKeyRef:
+              name: azure-devops-config
+              key: query-user
+        # ServiceNow Integration
+        - name: USE_MOCK_SERVICENOW
+          value: "false"
+        - name: SERVICENOW_INSTANCE
+          valueFrom:
+            secretKeyRef:
+              name: all-secrets
+              key: SERVICENOW_INSTANCE
+        - name: SERVICENOW_USER
+          valueFrom:
+            secretKeyRef:
+              name: all-secrets
+              key: SERVICENOW_USER
+        - name: SERVICENOW_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: all-secrets
+              key: SERVICENOW_PASSWORD
+        - name: AUTH_SERVICE_URL
+          value: "http://auth-service:8001"
+        - name: AZURE_DEVOPS_SERVICE_URL
+          value: "http://azure-devops-service:8002"
+        - name: SONARQUBE_SERVICE_URL
+          value: "http://sonarqube-service:8003"
+        - name: ARTIFACTORY_SERVICE_URL
+          value: "http://artifactory-service:8004"
+        - name: SERVICENOW_SERVICE_URL
+          value: "http://servicenow-service:8005"
+        - name: AI_CHATBOT_SERVICE_URL
+          value: "http://ai-chatbot-service:8006"
+        - name: APPROVAL_SERVICE_URL
+          value: "http://approval-service:8007"
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            cpu: 500m
+            memory: 768Mi
+        # Kubernetes probes
+        livenessProbe:
+          httpGet:
+            path: /api/health/live
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /api/health/ready
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 2
+        # Security context
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL

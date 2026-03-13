@@ -21,7 +21,7 @@ api_router.include_router(metrics.router, prefix="/metrics", tags=["metrics"])
 api_router.include_router(azure_devops.router, prefix="/azure-devops", tags=["azure-devops"])
 api_router.include_router(sonarqube.router, prefix="/sonarqube", tags=["sonarqube"])
 api_router.include_router(artifactory.router, prefix="/artifactory", tags=["artifactory"])
-api_router.include_router(servicenow.router, prefix="/servicenow", tags=["servicenow"])
+api_router.include_router(servicenow.router, prefix="/support", tags=["support"])
 api_router.include_router(ai_chatbot.router, prefix="/ai-chatbot", tags=["ai-chatbot"])
 
 # Approvals

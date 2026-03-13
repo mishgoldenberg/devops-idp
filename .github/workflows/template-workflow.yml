@@ -23,7 +23,7 @@ on:
       k8s_namespace:
         required: false
         type: string
-        default: devops-control-center-prod
+        default: devops-control-center-dev
     secrets:
       GCP_SA_KEY:
         required: true

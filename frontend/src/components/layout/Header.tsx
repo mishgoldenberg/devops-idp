@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { getUser, isAuthenticated } from '@/lib/auth';
 import { apiClient } from '@/lib/api-client';
-import { Home, BookOpen, FileText, Zap, FileCheck, Activity, LogOut, Menu, X, Wrench } from 'lucide-react';
+import { Home, BookOpen, FileCheck, Activity, LogOut, Menu, X, Wrench, LifeBuoy } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ThemeToggle } from '@/components/common/ThemeToggle';
 
@@ -14,12 +14,13 @@ export function Header() {
   const user = getUser();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  const isAdmin = user?.role === 'Platform Admin' || user?.role === 'Head of Section';
+  const isAdmin = user?.role === 'Admin';
 
   const navigation = [
     { name: 'Home', href: '/dashboard', icon: Home },
     { name: 'How-To Articles', href: '/how-to', icon: BookOpen },
     { name: 'Self-Service', href: '/self-service', icon: Wrench },
+    { name: 'Support', href: '/support', icon: LifeBuoy },
   ];
 
   const adminNavigation = [

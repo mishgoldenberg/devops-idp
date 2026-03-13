@@ -30,24 +30,41 @@ To switch from mock to real integration:
 
 ## Azure DevOps Integration
 
-### Configuration
+> **Full documentation:** [docs/AZURE_DEVOPS.md](./AZURE_DEVOPS.md)
+
+### Quick-start configuration
 
 ```bash
-# Environment variables
-AZURE_DEVOPS_ORG=your-organization
-AZURE_DEVOPS_PAT=your-personal-access-token
-AZURE_DEVOPS_API_URL=https://dev.azure.com/${AZURE_DEVOPS_ORG}
+USE_MOCK_AZURE_DEVOPS=false
+AZURE_DEVOPS_ORG=YourOrgName          # organisation name only, NOT the full URL
+AZURE_DEVOPS_PAT=your-pat-here        # server-level fallback for the admin account
 ```
 
-### Implementation
+### Authentication model
 
-Extend `backend/python_backend/app/api/azure_devops.py` to call the real Azure DevOps REST API
-and map responses into the existing JSON shape documented in `docs/API_REFERENCE.md`.
+- Each user saves their own PAT via the "Connect via PAT" prompt in the Azure DevOps widgets.
+- PATs are stored server-side in the `system_config` PostgreSQL table (`is_sensitive = true`), never returned to the browser or written to logs.
+- If `AZURE_DEVOPS_PAT` is set in the environment, it acts as a fallback for users who have not yet configured a personal PAT (primarily the admin account).
+- Vault storage is supported — set `USE_VAULT=true` (see full docs for details).
+
+### What's implemented
+
+| Feature | Location |
+|---|---|
+| Per-user PAT storage (DB or Vault) | `backend/app/secrets_manager.py` |
+| PAT management endpoints (GET / POST / DELETE) | `backend/app/api/azure_devops.py` |
+| Work items — `@Me` WIQL, project filter, state categories | `backend/app/api/azure_devops.py` |
+| Project list for widget dropdown | `backend/app/api/azure_devops.py` |
+| Shared connection hook with 60 s cache | `frontend/src/hooks/useAzureDevOpsConnection.ts` |
+| Reusable connect/disconnect UI | `frontend/src/components/common/AzureConnectPrompt.tsx` |
+| Work items widget with project dropdown | `frontend/src/components/widgets/AzureDevOpsWorkItems.tsx` |
+| PR and Pipeline widgets | `frontend/src/components/widgets/Latest{PR,Pipeline}Widget.tsx` |
 
 ### API Documentation
 
 - [Azure DevOps REST API Reference](https://learn.microsoft.com/en-us/rest/api/azure/devops/)
 - [Work Item Tracking API](https://learn.microsoft.com/en-us/rest/api/azure/devops/wit/)
+- [Personal Access Tokens](https://learn.microsoft.com/en-us/azure/devops/organizations/accounts/use-personal-access-tokens-to-authenticate)
 
 ---
 

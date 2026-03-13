@@ -116,8 +116,17 @@ def has_permission(user: AuthUser, permission: str) -> bool:
 
 
 def can_view_observability(user: AuthUser) -> bool:
-    # Platform Admin (1), Head of Section (4), Team Lead (6)
-    return int(user.get("hierarchy_level", 99)) in {1, 4, 6}
+    """
+    Observability and monitoring are restricted to Admins only.
+
+    Frontend exposes three simplified roles:
+      - Admin
+      - TeamLead
+      - User
+
+    The underlying database roles are mapped to these effective roles in the auth payload.
+    """
+    return str(user.get("role")) == "Admin"
 
 
 def can_view_aggregated_metrics(user: AuthUser) -> bool:
