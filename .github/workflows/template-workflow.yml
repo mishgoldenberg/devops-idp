@@ -174,4 +174,4 @@ jobs:
           helm dependency update ./deployment
       # 2. Deploy your Helm chart
       - name: Deploy Helm Chart
-        run: helm upgrade --install devops-stack ./deployment -n devops-control-center-prod
+        run: helm upgrade --install devops-stack ./deployment -n devops-control-center-prod --wait --timeout 10m
