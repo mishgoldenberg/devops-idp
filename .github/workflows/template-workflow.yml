@@ -110,6 +110,8 @@ jobs:
           PG_PASS: ${{ secrets.POSTGRES_PASSWORD }}
         if: ${{ env.PG_PASS != '' }}
         run: |
+
+          # Updating the all-scecrets only in case of backend deployment to not override the values
           kubectl create secret generic all-secrets \
             --from-literal=POSTGRES_PASSWORD="${{ secrets.POSTGRES_PASSWORD }}" \
             --from-literal=REDIS_PASSWORD="${{ secrets.REDIS_PASSWORD }}" \
