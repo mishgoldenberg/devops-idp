@@ -105,23 +105,6 @@ jobs:
           location: ${{ inputs.gcp_region }}
           project_id: ${{ inputs.gcp_project }}
       
-      - name: Inject Secrets into K8s
-        env:
-          PG_PASS: ${{ secrets.POSTGRES_PASSWORD }}
-        if: ${{ env.PG_PASS != '' }}
-        run: |
-
-          # Updating the all-scecrets only in case of backend deployment to not override the values
-          kubectl create secret generic all-secrets \
-            --from-literal=POSTGRES_PASSWORD="${{ secrets.POSTGRES_PASSWORD }}" \
-            --from-literal=REDIS_PASSWORD="${{ secrets.REDIS_PASSWORD }}" \
-            --from-literal=AZURE_DEVOPS_PAT="${{ secrets.AZURE_DEVOPS_PAT }}" \
-            --from-literal=AZURE_DEVOPS_ADMIN_PAT="${{ secrets.AZURE_DEVOPS_ADMIN_PAT }}" \
-            --from-literal=JWT_SECRET="${{ secrets.JWT_SECRET }}" \
-            --from-literal=OAUTH_CLIENT_ID="${{ secrets.OAUTH_CLIENT_ID }}" \
-            --from-literal=OAUTH_CLIENT_SECRET="${{ secrets.OAUTH_CLIENT_SECRET }}" \
-            -n devops-control-center-prod \
-            --dry-run=client -o yaml | kubectl apply -f -
       # Apply RBAC for the Terraform self-service runner.
       #
       # Why this step exists:
@@ -137,24 +120,24 @@ jobs:
       #   3. Patches the Deployment to use backend-sa (idempotent merge patch).
 
       # TODO!: refactor to be applied as a service and not the general CI
-      - name: Apply Terraform runner RBAC
-        run: |
-          NS="${{ inputs.k8s_namespace }}"
+      # - name: Apply Terraform runner RBAC
+      #   run: |
+      #     NS="${{ inputs.k8s_namespace }}"
 
-          # 1. backend-sa must exist in the deployment namespace so the pod can
-          #    use it as its service account.
-          kubectl create serviceaccount backend-sa -n "$NS" \
-            --dry-run=client -o yaml | kubectl apply -f -
+      #     # 1. backend-sa must exist in the deployment namespace so the pod can
+      #     #    use it as its service account.
+      #     kubectl create serviceaccount backend-sa -n "$NS" \
+      #       --dry-run=client -o yaml | kubectl apply -f -
 
-          # 2. Apply devops-terraform-sa SA, Role and RoleBinding into
-          #    devops-control-center (the namespace where Terraform Jobs run).
-          kubectl apply -f deployment/charts/backend/templates/service-accounts.yaml
-          kubectl apply -f deployment/charts/backend/templates/terraform-rbac.yaml
+      #     # 2. Apply devops-terraform-sa SA, Role and RoleBinding into
+      #     #    devops-control-center (the namespace where Terraform Jobs run).
+      #     kubectl apply -f deployment/charts/backend/templates/service-accounts.yaml
+      #     kubectl apply -f deployment/charts/backend/templates/terraform-rbac.yaml
 
-          # 3. Ensure the Deployment spec uses the new backend-sa.
-          kubectl patch deployment ${{ inputs.image_name }} -n "$NS" \
-            --type=merge \
-            -p '{"spec":{"template":{"spec":{"serviceAccountName":"backend-sa"}}}}'
+      #     # 3. Ensure the Deployment spec uses the new backend-sa.
+      #     kubectl patch deployment ${{ inputs.image_name }} -n "$NS" \
+      #       --type=merge \
+      #       -p '{"spec":{"template":{"spec":{"serviceAccountName":"backend-sa"}}}}'
 
       - name: Update image tag in deployment
         run: |
@@ -172,6 +155,16 @@ jobs:
       - name: Update Helm Dependencies
         run: |
           helm dependency update ./deployment
-      # 2. Deploy your Helm chart
+
       - name: Deploy Helm Chart
-        run: helm upgrade --install devops-stack ./deployment -n devops-control-center-prod --wait --timeout 10m
+        run: |
+          helm upgrade --install devops-stack ./deployment \
+            -n devops-control-center-prod \
+            --wait --timeout 10m \
+            --set secrets.postgresPassword="${{ secrets.POSTGRES_PASSWORD }}" \
+            --set secrets.oauthClientId="${{ secrets.OAUTH_CLIENT_ID }}" \
+            --set secrets.oauthClientSecret="${{ secrets.OAUTH_CLIENT_SECRET }}" \
+            --set secrets.jwtSecret="${{ secrets.JWT_SECRET }}" \
+            --set secrets.azureDevopsPat="${{ secrets.AZURE_DEVOPS_PAT }}" \
+            --set secrets.azureDevopsAdminPat="${{ secrets.AZURE_DEVOPS_ADMIN_PAT }}" \
+            --set secrets.redisPassword="${{ secrets.REDIS_PASSWORD }}"
