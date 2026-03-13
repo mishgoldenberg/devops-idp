@@ -35,7 +35,7 @@ secrets:
 ingress:
   enabled: true
   className: nginx
-  host: devops.internal.company.prod
+  host: devops.internal.company
   path: /api
   annotations:
     nginx.ingress.kubernetes.io/ssl-redirect: "false"
