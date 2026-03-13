@@ -135,6 +135,8 @@ jobs:
       #   2. Applies the devops-terraform-sa SA + Role + RoleBinding from Git
       #      (those live in devops-control-center where Terraform Jobs run).
       #   3. Patches the Deployment to use backend-sa (idempotent merge patch).
+
+      # TODO!: refactor to be applied as a service and not the general CI
       - name: Apply Terraform runner RBAC
         run: |
           NS="${{ inputs.k8s_namespace }}"
@@ -146,8 +148,8 @@ jobs:
 
           # 2. Apply devops-terraform-sa SA, Role and RoleBinding into
           #    devops-control-center (the namespace where Terraform Jobs run).
-          kubectl apply -f infrastructure/k8s/base/rbac/service-accounts.yaml
-          kubectl apply -f infrastructure/k8s/base/rbac/terraform-rbac.yaml
+          kubectl apply -f deployment/charts/backend/templates/service-accounts.yaml
+          kubectl apply -f deployment/charts/backend/templates/terraform-rbac.yaml
 
           # 3. Ensure the Deployment spec uses the new backend-sa.
           kubectl patch deployment ${{ inputs.image_name }} -n "$NS" \
