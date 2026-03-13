@@ -106,7 +106,9 @@ jobs:
           project_id: ${{ inputs.gcp_project }}
       
       - name: Inject Secrets into K8s
-        if: ${{ secrets.POSTGRES_PASSWORD != '' }}
+        env:
+          PG_PASS: ${{ secrets.POSTGRES_PASSWORD }}
+        if: ${{ env.PG_PASS != '' }}
         run: |
           kubectl create secret generic all-secrets \
             --from-literal=POSTGRES_PASSWORD="${{ secrets.POSTGRES_PASSWORD }}" \
