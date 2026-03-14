@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Chart.Name }}
+  labels:
+    app: {{ .Chart.Name }}
+    tier: backend
+spec:
+  replicas: {{ .Values.global.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Chart.Name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Chart.Name }}
+        tier: backend
+    spec:
+      serviceAccountName: backend-sa
+      containers:
+        - name: {{ .Chart.Name }}
+          image: {{ .Values.global.customImage.repository }}/{{ .Chart.Name }}:{{ .Values.image.tag }}
+          imagePullPolicy: {{ .Values.global.customImage.pullPolicy }}
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: PORT
+              value: "8000"
+            - name: USE_MOCK_AZURE_DEVOPS
+              value: "false"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: all-secrets
+                  key: POSTGRES_PASSWORD
+            - name: DATABASE_URL
+              value: "postgresql://{{ .Values.global.endpoints.postgresUser }}:$(POSTGRES_PASSWORD)@{{ .Values.global.endpoints.postgresHost }}:{{ .Values.global.endpoints.postgresPort }}/{{ .Values.global.endpoints.postgresDB }}"
+          envFrom:
+            - secretRef:
+                name: all-secrets
+            - configMapRef:
+                name: infra-config
+            - configMapRef:
+                name: azure-devops-config
+            - configMapRef:
+                name: sso-config
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /api/health/live
+              port: 8000
+          readinessProbe:
+            httpGet:
+              path: /api/health/ready
+              port: 8000
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

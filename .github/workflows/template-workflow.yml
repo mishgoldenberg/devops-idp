@@ -27,6 +27,20 @@ on:
     secrets:
       GCP_SA_KEY:
         required: true
+      POSTGRES_PASSWORD:
+        required: false
+      REDIS_PASSWORD:
+        required: false
+      JWT_SECRET:
+        required: false
+      OAUTH_CLIENT_SECRET:
+        required: false
+      OAUTH_CLIENT_ID:
+        required: false
+      AZURE_DEVOPS_PAT:
+        required: false
+      AZURE_DEVOPS_ADMIN_PAT:
+        required: false
 
 jobs:
   build:
@@ -79,27 +93,30 @@ jobs:
           docker push "$IMAGE_SHA"
 
       # ── Deploy ────────────────────────────────────────────────────────────────
-      - name: Install kubectl
-        uses: azure/setup-kubectl@v4
 
-      # This action installs gke-gcloud-auth-plugin, writes kubeconfig, and
-      # sets USE_GKE_GCLOUD_AUTH_PLUGIN automatically — no manual apt needed.
       - name: Get GKE credentials
         uses: google-github-actions/get-gke-credentials@v2
         with:
           cluster_name: ${{ inputs.gke_cluster }}
           location: ${{ inputs.gcp_region }}
           project_id: ${{ inputs.gcp_project }}
-
-      - name: Update image tag in deployment
+          # Force the use of the auth plugin
+          use_gke_gcloud_auth_plugin: true
+          
+      - name: Update Helm Dependencies
         run: |
-          REGISTRY="${{ inputs.gcp_region }}-docker.pkg.dev/${{ inputs.gcp_project }}/devops-idp"
-          kubectl set image deployment/${{ inputs.image_name }} \
-            ${{ inputs.image_name }}="$REGISTRY/${{ inputs.image_name }}:sha-$SHORT_SHA" \
-            -n ${{ inputs.k8s_namespace }}
-
-      - name: Wait for rollout
+          helm dependency update ./deployment
+      # 2. Deploy your Helm chart
+      - name: Deploy Helm Chart
         run: |
-          kubectl rollout status deployment/${{ inputs.image_name }} \
-            -n ${{ inputs.k8s_namespace }} \
-            --timeout=300s
+
+          helm upgrade --install devops-stack ./deployment \
+          -n devops-control-center-prod --wait --timeout 10m \
+          --set secrets.postgresPassword="${{ secrets.POSTGRES_PASSWORD }}" \
+          --set secrets.redisPassword="${{ secrets.REDIS_PASSWORD }}" \
+          --set secrets.oauthClientId="${{ secrets.OAUTH_CLIENT_ID }}" \
+          --set secrets.oauthClientSecret="${{ secrets.OAUTH_CLIENT_SECRET }}" \
+          --set secrets.jwtSecret="${{ secrets.JWT_SECRET }}" \
+          --set secrets.azureDevopsPat="${{ secrets.AZURE_DEVOPS_PAT }}" \
+          --set secrets.azureDevopsAdminPat="${{ secrets.AZURE_DEVOPS_ADMIN_PAT }}" \
+

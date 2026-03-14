@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sso-config
+data:
+  OAUTH_REDIRECT_URI: "https://devops.internal.company/api/auth/callback"
+  OAUTH_ISSUER: "https://accounts.google.com"
+  OAUTH_AUTH_URL: "https://accounts.google.com/o/oauth2/v2/auth"
+  OAUTH_TOKEN_URL: "https://oauth2.googleapis.com/token"
+  OAUTH_JWKS_URL: "https://www.googleapis.com/oauth2/v3/certs"
+  OAUTH_SCOPES: "openid email profile"
+  JWT_EXPIRY: "8h"

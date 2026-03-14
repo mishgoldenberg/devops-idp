@@ -125,6 +125,29 @@ class ApiClient {
     return response.data;
   }
 
+  async createProject(payload: {
+    project_name: string;
+    process_type: string;
+    admin_username: string;
+  }): Promise<{ success: boolean; data: { job_id: string; status: string } }> {
+    const response = await this.client.post('/azure-devops/projects/create', payload);
+    return response.data;
+  }
+
+  async getProjectCreationStatus(jobId: string): Promise<{
+    success: boolean;
+    data: {
+      status: 'pending' | 'running' | 'succeeded' | 'failed' | 'error';
+      project_url?: string;
+      error?: string;
+    };
+  }> {
+    const response = await this.client.get(
+      `/azure-devops/projects/create/status/${jobId}`
+    );
+    return response.data;
+  }
+
   // Azure DevOps PAT management
   async getAzureDevOpsPatStatus(): Promise<{ success: boolean; data: { configured: boolean; has_personal_pat: boolean } }> {
     const response = await this.client.get('/azure-devops/pat');
@@ -166,16 +189,31 @@ class ApiClient {
     return response.data;
   }
 
-  // ServiceNow API
-  async getTickets(username: string): Promise<any> {
-    const response = await this.client.get('/servicenow/tickets', {
-      params: { username },
+  // ServiceNow / Support API
+  async getTickets(username?: string): Promise<any> {
+    const response = await this.client.get('/support/tickets', {
+      params: username ? { username } : {},
     });
     return response.data;
   }
 
+  async getTicketDetail(sysId: string): Promise<any> {
+    const response = await this.client.get(`/support/tickets/${sysId}`);
+    return response.data;
+  }
+
+  async replyToTicket(sysId: string, message: string): Promise<any> {
+    const response = await this.client.post(`/support/tickets/${sysId}/reply`, { message });
+    return response.data;
+  }
+
+  async createSupportTicket(title: string, description: string, priority: string = '3'): Promise<any> {
+    const response = await this.client.post('/support/tickets', { title, description, priority });
+    return response.data;
+  }
+
   async getIncidentStats(): Promise<any> {
-    const response = await this.client.get('/servicenow/stats');
+    const response = await this.client.get('/support/stats');
     return response.data;
   }
 

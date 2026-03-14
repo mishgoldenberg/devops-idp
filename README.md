@@ -34,11 +34,11 @@
 │    / ServiceNow / AI Chatbot (mocked by default)           │
 └───────────────┬────────────────────────────────────────────┘
                 │
-   ┌────────────▼────────────┐          ┌───────────────────┐
-   │       PostgreSQL        │          │       Redis       │
-   │  - Users                │          │  - Cache          │
-   │  - Dashboards           │          │  - Session        │
-   │  - Approvals            │          └───────────────────┘
+   ┌────────────▼────────────┐          ┌───────────────┐
+   │       PostgreSQL        │          │     Redis     │
+   │  - Users                │          │  - Cache      │
+   │  - Dashboards           │          │  - Session    │
+   │  - Approvals            │          └───────────────┘
    │  - Audit & Metrics      │
    └─────────────────────────┘
 ```
@@ -271,25 +271,6 @@ git --version
 
 The easiest way to get started is using our automated setup scripts. They handle all the configuration, building, and database setup for you.
 
-**Windows (PowerShell):**
-```powershell
-# Run the setup script (right-click -> Run with PowerShell, or in terminal)
-.\setup.ps1
-
-# After setup, use restart script for code changes:
-.\restart.ps1                # Quick restart (backend changes)
-.\restart.ps1 -RebuildFrontend  # Frontend changes
-```
-
-**Linux/Mac (Bash):**
-```bash
-# Make scripts executable (first time only)
-chmod +x setup.sh restart.sh
-
-# Run the setup script
-./setup.sh
-```
-
 The setup script will:
 1. ✅ Check prerequisites (Docker, Node.js)
 2. ✅ Copy `env.example` to `.env` if it doesn't exist
@@ -437,9 +418,13 @@ Once the database is ready:
 
 **Database:** `localhost:5432` (user: `devops`, password: from `.env`)
 
-### Authentication
+### Authentication (Google SSO)
 
-Authentication now uses **Google OAuth (OpenID Connect)**. Users sign in with their Google accounts and are created on first login, with roles assigned according to backend configuration.
+Authentication uses **Google OAuth 2.0 / OpenID Connect**. Users sign in with their Google (Gmail) accounts; the backend creates or looks up users by email and issues an internal JWT (8-hour session by default).
+
+- **Login:** Frontend “Continue with Google” → backend redirects to Google consent → callback at `/api/auth/callback` → backend issues JWT and returns token/user to frontend (popup or redirect).
+- **Config:** Backend needs `OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET`, `OAUTH_REDIRECT_URI` (e.g. `https://devops.internal.company/api/auth/callback`), plus `JWT_SECRET` and `CORS_ORIGINS`. Frontend needs `NEXT_PUBLIC_API_BASE_URL` pointing at the same host.
+- **Full setup, env vars, GCP checklist, and troubleshooting:** [docs/SSO_GOOGLE_OAUTH.md](docs/SSO_GOOGLE_OAUTH.md).
 
 ### Common Commands
 
@@ -640,6 +625,144 @@ npm run db:reset
 
 ---
 
+Here is the consolidated Helm deployment and CI/CD documentation, optimized for your project's `README.md`.
+
+---
+
+## 🚀 Helm Deployment & CI/CD Workflow
+
+This project utilizes **Helm** for declarative infrastructure management. By using Helm templates, we eliminate manual `kubectl` patches, ensuring the cluster state is always defined by the code in your repository.
+
+### 1. The Deployment Pattern (`deployment/templates/deployment.yaml`)
+
+To ensure pods restart automatically when secrets are updated, we use a checksum annotation. This forces a rolling update the moment the secret content is modified.
+
+```yaml
+spec:
+  template:
+    metadata:
+      annotations:
+        # Forces a fresh pod restart when the secret contents change
+        checksum/secrets: {{ include (print $.Template.BasePath "/secrets.yaml") . | sha256sum }}
+    spec:
+      containers:
+        - name: backend
+          envFrom:
+            - secretRef:
+                name: all-secrets
+
+```
+
+### 2. The Secrets Pattern (`deployment/templates/secrets.yaml`)
+
+Helm manages the `all-secrets` object directly, removing the need for error-prone `kubectl create secret` commands in your CI pipeline.
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: all-secrets
+type: Opaque
+stringData:
+  POSTGRES_PASSWORD: {{ .Values.secrets.postgresPassword | quote }}
+  OAUTH_CLIENT_ID: {{ .Values.secrets.oauthClientId | quote }}
+  OAUTH_CLIENT_SECRET: {{ .Values.secrets.oauthClientSecret | quote }}
+
+```
+
+### 3. CI/CD Workflow (`template-workflow.yml`)
+
+The workflow acts as an atomic delivery vehicle. It never patches the cluster manually; it simply updates the Helm release, waiting for the deployment to reach a healthy state.
+
+```yaml
+- name: Deploy Helm Chart
+  run: |
+    # 1. Clean up any stuck locks before attempting an upgrade
+    helm rollback devops-stack 0 -n devops-control-center-prod --force || true
+    
+    # 2. Deploy using Helm (injecting secrets via --set)
+    helm upgrade --install devops-stack ./deployment \
+      -n devops-control-center-prod \
+      --wait --timeout 10m \
+      --set secrets.postgresPassword="${{ secrets.POSTGRES_PASSWORD }}" \
+      --set secrets.oauthClientId="${{ secrets.OAUTH_CLIENT_ID }}" \
+      --set secrets.oauthClientSecret="${{ secrets.OAUTH_CLIENT_SECRET }}"
+
+```
+
+### 4. Adding New Secrets
+
+Whenever you introduce a new dependency, follow this process to maintain a clean cluster state:
+
+1. **Add to GitHub Actions:** Add the new secret to **Settings > Secrets and variables > Actions**.
+2. **Pass to Workflow:** Update your caller workflow (`deploy.yml`) to pass the variable:
+```yaml
+secrets:
+  NEW_SECRET: ${{ secrets.NEW_SECRET }}
+
+``` 
+
+3. **Update Deployment:**
+* Add `--set secrets.newSecret="${{ secrets.NEW_SECRET }}"` to your `template-workflow.yml`.
+* Add `NEW_SECRET: {{ .Values.secrets.newSecret | quote }}` to your `secrets.yaml` template.
+
+
+To ensure your team can access the platform at `devops.internal.company` immediately after deployment, you need to account for local DNS resolution, as this is an internal-only environment.
+
+Add this section to your `README.md` to guide users through the initial configuration:
+
+---
+
+### 🌐 Accessing the Platform (Initial Setup)
+
+Since `devops.internal.company` is an internal domain, your workstation will not automatically know how to resolve it to your Kubernetes Ingress controller's IP address.
+
+#### 1. Identify the Ingress IP
+
+First, find the external IP assigned to your NGINX Ingress controller:
+
+```bash
+kubectl get svc -n ingress-nginx
+# Look for the 'EXTERNAL-IP' column
+
+```
+
+*(If you are running in a local environment like Minikube or Kind, run `minikube tunnel` or `kind load` to expose the IP.)*
+
+#### 2. Configure Local DNS (Hosts File)
+
+You must point the domain to your Ingress controller's IP by editing your local hosts file.
+
+**For Linux / macOS:**
+
+1. Open the file: `sudo nano /etc/hosts`
+2. Add the following line:
+```text
+<EXTERNAL-IP-FROM-STEP-1>  devops.internal.company
+
+```
+
+3. Save and exit (Ctrl+O, Enter, Ctrl+X).
+
+**For Windows (PowerShell as Administrator):**
+
+1. Run: `notepad C:\Windows\System32\drivers\etc\hosts`
+2. Add the same line:
+```text
+<EXTERNAL-IP-FROM-STEP-1>  devops.internal.company
+
+```
+3. Save the file.
+
+#### 3. Verify Connectivity
+
+Once saved, you should be able to reach the platform via your browser:
+`https://devops.internal.company`
+
+*Note: If you are using a self-signed certificate, your browser will show a "Not Secure" warning on the first visit. You can click "Advanced" and "Proceed" to continue to the site.*
+
+---
+
 ## 🗄️ Database Schema
 
 ### Core Tables
@@ -703,75 +826,140 @@ Full schema: `backend/database/schema.sql`
 ## 📦 Project Structure
 
 ```
-devops-control-center/
-├── frontend/                      # Next.js application
-│   ├── src/
-│   │   ├── app/                  # App Router pages
-│   │   │   ├── dashboard/
-│   │   │   ├── approvals/
-│   │   │   ├── observability/
-│   │   │   └── layout.tsx
-│   │   ├── components/           # React components
-│   │   │   ├── widgets/         # Dashboard widgets
-│   │   │   ├── layout/          # Layout components
-│   │   │   └── common/          # Shared components
-│   │   ├── lib/                 # Utilities
-│   │   │   ├── api-client.ts
-│   │   │   ├── auth.ts
-│   │   │   └── rbac.ts
-│   │   ├── styles/              # Global styles
-│   │   └── types/               # TypeScript types
-│   ├── public/
-│   ├── package.json
-│   └── next.config.js
-│
+devops-idp/
 ├── backend/
-│   ├── python_backend/           # Python FastAPI backend (single service)
-│   │   ├── app/
-│   │   │   ├── api/             # Routers (auth, dashboards, metrics, integrations, approvals)
-│   │   │   ├── db.py            # Postgres helper
-│   │   │   ├── redis_client.py  # Redis helper
-│   │   │   ├── security.py      # JWT + RBAC helpers
-│   │   │   └── main.py          # FastAPI entrypoint
-│   │   └── requirements.txt
-│   │
-│   └── database/
-│       ├── migrations/
-│       ├── seeds/
-│       └── schema.sql
-│
-├── infrastructure/
-│   ├── docker/
-│   │   ├── Dockerfile.frontend
-│   │   ├── Dockerfile.python-backend
-│   │   └── nginx.conf
-│   │
-│   ├── k8s/                      # Kubernetes manifests
-│   │   ├── base/
-│   │   │   ├── deployments/
-│   │   │   ├── services/
-│   │   │   ├── configmaps/
-│   │   │   └── secrets/
-│   │   └── overlays/
-│   │       ├── dev/
-│   │       └── production/
-│   │
-│   └── helm/                     # Helm charts (alternative to k8s/)
-│       └── devops-control-center/
-│           ├── Chart.yaml
-│           ├── values.yaml
-│           └── templates/
-│
+│   ├── app/
+│   │   ├── __init__.py
+│   │   ├── config.py
+│   │   ├── db.py
+│   │   ├── Dockerfile
+│   │   ├── main.py
+│   │   ├── redis_client.py
+│   │   ├── requirements.txt
+│   │   ├── secrets_manager.py
+│   │   ├── security.py
+│   │   ├── terraform_runner.py
+│   │   ├── test_rbac_and_pat.py
+│   │   └── api/
+│   │       ├── __init__.py
+│   │       ├── ai_chatbot.py
+│   │       ├── approvals.py
+│   │       ├── artifactory.py
+│   │       ├── auth.py
+│   │       ├── azure_devops.py
+│   │       ├── dashboards.py
+│   │       ├── health.py
+│   │       ├── metrics.py
+│   │       ├── servicenow.py
+│   │       └── sonarqube.py
+├── deployment/
+│   ├── Chart.yaml
+│   ├── values.yaml
+│   ├── charts/
+│   │   ├── backend/
+│   │   │   ├── Chart.yaml
+│   │   │   ├── values.yaml
+│   │   │   └── templates/
+│   │   │       ├── azure-devops-config.yaml
+│   │   │       ├── deployment.yaml
+│   │   │       ├── infra-config.yaml
+│   │   │       ├── ingress.yaml
+│   │   │       ├── secrets.yaml
+│   │   │       ├── service-accounts.yaml
+│   │   │       ├── service.yaml
+│   │   │       ├── sso-config.yaml
+│   │   │       └── terraform-rbac.yaml
+│   │   ├── frontend/
+│   │   │   ├── Chart.yaml
+│   │   │   ├── values.yaml
+│   │   │   └── templates/
+│   │   │       ├── deployment.yaml
+│   │   │       ├── ingress.yaml
+│   │   │       └── service.yaml
+│   │   └── infrastructure/
+│   │       ├── Chart.yaml
+│   │       ├── values.yaml
+│   │       ├── database/
+│   │       │   ├── 00_schema.sql
+│   │       │   ├── 01_roles.sql
+│   │       │   ├── 02_users.sql
+│   │       │   ├── 03_widget_types.sql
+│   │       │   ├── 04_approval_rules.sql
+│   │       │   └── 05_service_health.sql
+│   │       └── templates/
+│   │           ├── app-config.yaml
+│   │           ├── infra-secrets.yaml
+│   │           ├── migration-job.yaml
+│   │           ├── postgres-config.yaml
+│   │           ├── postgres-statefulset.yaml
+│   │           ├── redis-statefulset.yaml
+│   │           └── services.yaml
+│   └── ingress-nginx/
+│       ├── Chart.yaml
+│       ├── cloudbuild.yaml
+│       ├── OWNERS
+│       ├── README.md
+│       ├── README.md.gotmpl
+│       ├── values.yaml
+│       ├── changelog/
+│       ├── ci/
+│       ├── templates/
+│       └── tests/
 ├── docs/
-│   ├── ARCHITECTURE.md
-│   ├── DEPLOYMENT.md
 │   ├── API_REFERENCE.md
-│   └── INTEGRATION_GUIDE.md
-│
-├── docker-compose.yml
-├── .env.example
-├── package.json
-└── README.md
+│   ├── ARCHITECTURE.md
+│   ├── AZURE_DEVOPS.md
+│   ├── DEPLOYMENT.md
+│   ├── INTEGRATION_GUIDE.md
+│   ├── SELF_SERVICE_TERRAFORM.md
+│   ├── SSO_GOOGLE_OAUTH.md
+│   └── TROUBLESHOOTING.md
+├── frontend/
+│   ├── Dockerfile
+│   ├── next-env.d.ts
+│   ├── next.config.js
+│   ├── package.json
+│   ├── postcss.config.js
+│   ├── tailwind.config.js
+│   ├── tsconfig.json
+│   ├── public/
+│   │   └── robots.txt
+│   └── src/
+│       ├── app/
+│       │   ├── globals.css
+│       │   ├── layout.tsx
+│       │   ├── page.tsx
+│       │   ├── approvals/
+│       │   ├── automation/
+│       │   ├── dashboard/
+│       │   ├── how-to/
+│       │   ├── login/
+│       │   ├── observability/
+│       │   ├── requests/
+│       │   ├── self-service/
+│       │   └── support/
+│       ├── components/
+│       │   ├── chat/
+│       │   ├── common/
+│       │   ├── dashboard/
+│       │   ├── layout/
+│       │   ├── providers/
+│       │   ├── self-service/
+│       │   └── widgets/
+│       ├── contexts/
+│       │   └── ThemeContext.tsx
+│       ├── hooks/
+│       │   └── useAzureDevOpsConnection.ts
+│       └── lib/
+│           ├── api-client.ts
+│           ├── auth.ts
+│           ├── utils.ts
+│           └── widget-library.ts
+└── .github/
+    └── workflows/
+        ├── backend-workflow.yml
+        ├── frontend-workflow.yml
+        └── template-workflow.yml
 ```
 
 ---
@@ -914,27 +1102,10 @@ export const theme = {
 ### Data Protection
 
 - All passwords hashed with bcrypt (if storing local accounts)
-- Sensitive data (tokens, secrets) stored in Vault (not in DB)
+- Sensitive data (tokens, secrets) stored in Github Secrets (not in DB)
 - Audit logs are append-only (no deletions)
 - Session tokens expire after 8 hours
 
----
-
-## 🧪 Testing Strategy (To Be Implemented)
-
-```bash
-# Unit tests
-npm run test:unit
-
-# Integration tests
-npm run test:integration
-
-# E2E tests
-npm run test:e2e
-
-# Load tests
-npm run test:load
-```
 
 ---
 
@@ -944,13 +1115,14 @@ npm run test:load
 - [API Reference](docs/API_REFERENCE.md)
 - [Integration Guide](docs/INTEGRATION_GUIDE.md)
 - [Deployment Guide](docs/DEPLOYMENT.md)
+- [Google SSO (OAuth / OIDC)](docs/SSO_GOOGLE_OAUTH.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 
 ---
 
 ## 🤝 Contributing
 
-1. Create feature branch from `main`
+1. Create feature branch from `dev`
 2. Follow code style (Prettier + ESLint)
 3. Add tests for new features
 4. Update documentation

@@ -1,0 +1,67 @@
+# --- YOUR ORIGINAL STRUCTURE ---
+postgres:
+  enabled: true
+  primary:
+    service:
+      ports:
+        postgres: 5432
+      type: ClusterIP
+  postgresUser: "devops"
+  postgresDB: "devops_control_center"
+  storageSize: 1Gi
+  secretName: "all-secrets"
+  serviceName: "postgres-service"
+
+redis:
+  enabled: true
+  master:
+    service:
+      ports:
+        redis: 6379
+      type: ClusterIP
+  serviceName: "redis-service"
+
+# --- REFACTORED GLOBAL BLOCK (Added for cross-chart communication) ---
+global:
+  # This makes your image repo available to everyone
+  customImage:
+    repository: "europe-west1-docker.pkg.dev/devops-idp-489012/devops-idp"
+    pullPolicy: "Always"
+  replicaCount: 1
+  
+  # This makes DB connection details available to backend/frontend
+  endpoints:
+    postgresHost: "postgres-service"
+    postgresPort: 5432
+    postgresUser: "devops"
+    postgresDB: "devops_control_center"
+    databaseUrl: "postgresql://devops:$(POSTGRES_PASSWORD)@postgres-service:5432/devops_control_center"
+    redisHost: "redis-service"
+    redisPort: 6379
+
+
+ingress-prod:
+  controller:
+    ingressClassResource:
+      name: nginx-prod
+    scope:
+      enabled: true
+      namespace: devops-control-center-prod
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    admissionWebhooks:
+      image:
+        repository: "registry.k8s.io/ingress-nginx/kube-webhook-certgen"
+        tag: "v1.15.0"  
+      patch:
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+      create:
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi

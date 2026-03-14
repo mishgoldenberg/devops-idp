@@ -30,79 +30,41 @@ To switch from mock to real integration:
 
 ## Azure DevOps Integration
 
-### Configuration
+> **Full documentation:** [docs/AZURE_DEVOPS.md](./AZURE_DEVOPS.md)
 
-```bash
-# Core environment variables
-USE_MOCK_AZURE_DEVOPS=false
-AZURE_DEVOPS_API_URL=https://dev.azure.com/your-org
-
-# Vault-backed per-user PAT storage (recommended for non-dev)
-USE_VAULT=true
-VAULT_ADDR=https://vault.internal.company
-VAULT_TOKEN=your_vault_token
-VAULT_PATH=secret/devops-control-center
-```
-
-In this model:
-
-- Each user supplies their own Personal Access Token (PAT) via the UI
-- The backend stores the PAT securely using:
-  - HashiCorp Vault KV v2 under `${VAULT_PATH}/azure-devops/{user_id}` with key `azure_devops_pat`, or
-  - The `system_config` table (when `USE_VAULT=false`), marked as `is_sensitive = true`
-- The PAT is **never** returned to the frontend or written to logs
-
-### Local Testing (.env-only, no Vault)
-
-1. Copy `env.example` to `.env`
-2. Set:
+### Quick-start configuration
 
 ```bash
 USE_MOCK_AZURE_DEVOPS=false
-USE_VAULT=false
-AZURE_DEVOPS_API_URL=https://dev.azure.com/your-org
+AZURE_DEVOPS_ORG=YourOrgName          # organisation name only, NOT the full URL
+AZURE_DEVOPS_PAT=your-pat-here        # server-level fallback for the admin account
 ```
 
-3. Run the backend and frontend
-4. Log in via SSO, then open the "Azure DevOps Work Items" widget
-5. When prompted, paste a test PAT for your own Azure DevOps user
-6. Verify that work items, PRs, and pipelines load without the PAT ever appearing in responses
+### Authentication model
 
-### Local Testing with Vault
+- Each user saves their own PAT via the "Connect via PAT" prompt in the Azure DevOps widgets.
+- PATs are stored server-side in the `system_config` PostgreSQL table (`is_sensitive = true`), never returned to the browser or written to logs.
+- If `AZURE_DEVOPS_PAT` is set in the environment, it acts as a fallback for users who have not yet configured a personal PAT (primarily the admin account).
+- Vault storage is supported — set `USE_VAULT=true` (see full docs for details).
 
-1. Start a local Vault dev server (KV v2 enabled) and obtain a token
-2. In `.env` set:
+### What's implemented
 
-```bash
-USE_MOCK_AZURE_DEVOPS=false
-USE_VAULT=true
-VAULT_ADDR=http://127.0.0.1:8200
-VAULT_TOKEN=dev-root-token
-VAULT_PATH=secret/devops-control-center
-```
-
-3. Log in to the app and configure your PAT from the Azure DevOps widget
-4. Confirm in Vault that a secret exists at:
-
-```bash
-vault kv get secret/devops-control-center/azure-devops/{user_id}
-```
-
-### Implementation
-
-The FastAPI adapter in `backend/app/api/azure_devops.py`:
-
-- Uses `get_user_azure_devops_pat()` to fetch the PAT for the authenticated user
-- Calls the Azure DevOps REST API on behalf of that user
-- Enforces that a PAT must be configured before any real Azure DevOps call is made
-
-The secrets helper in `backend/app/secrets_manager.py` abstracts Vault vs. database storage
-and must be used for all PAT operations.
+| Feature | Location |
+|---|---|
+| Per-user PAT storage (DB or Vault) | `backend/app/secrets_manager.py` |
+| PAT management endpoints (GET / POST / DELETE) | `backend/app/api/azure_devops.py` |
+| Work items — `@Me` WIQL, project filter, state categories | `backend/app/api/azure_devops.py` |
+| Project list for widget dropdown | `backend/app/api/azure_devops.py` |
+| Shared connection hook with 60 s cache | `frontend/src/hooks/useAzureDevOpsConnection.ts` |
+| Reusable connect/disconnect UI | `frontend/src/components/common/AzureConnectPrompt.tsx` |
+| Work items widget with project dropdown | `frontend/src/components/widgets/AzureDevOpsWorkItems.tsx` |
+| PR and Pipeline widgets | `frontend/src/components/widgets/Latest{PR,Pipeline}Widget.tsx` |
 
 ### API Documentation
 
 - [Azure DevOps REST API Reference](https://learn.microsoft.com/en-us/rest/api/azure/devops/)
 - [Work Item Tracking API](https://learn.microsoft.com/en-us/rest/api/azure/devops/wit/)
+- [Personal Access Tokens](https://learn.microsoft.com/en-us/azure/devops/organizations/accounts/use-personal-access-tokens-to-authenticate)
 
 ---
 

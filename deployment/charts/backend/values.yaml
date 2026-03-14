@@ -1,0 +1,41 @@
+
+image:
+  tag: latest
+
+# External Service URLs (Easy to update as you split microservices!)
+services:
+  auth: http://auth-service:8001
+  azureDevops: http://azure-devops-service:8002
+  sonarqube: http://sonarqube-service:8003
+  artifactory: http://artifactory-service:8004
+  servicenow: http://servicenow-service:8005
+  aiChatbot: http://ai-chatbot-service:8006
+  approval: http://approval-service:8007
+
+# Azure DevOps Config
+azureDevopsConfig:
+  configMapName: azure-devops-config
+
+tier: backend
+
+service:
+  type: ClusterIP
+  port: 8000
+  targetPort: 8000
+
+secrets:
+  postgresPassword: ""
+  redisPassword: ""
+  azureDevopsPat: ""
+  azureDevopsAdminPat: ""
+  jwtSecret: ""
+  oauthClientSecret: ""
+  oauthClientId: ""
+
+ingress:
+  enabled: true
+  className: nginx
+  host: devops.internal.company
+  path: /api
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"

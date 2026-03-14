@@ -1,0 +1,53 @@
+# ── RBAC: backend-sa permissions for Terraform job management ─────────────────
+#
+# Grants backend-sa the minimum permissions needed to orchestrate Terraform
+# provisioning jobs in the devops-control-center namespace:
+#
+#   batch/jobs        create, get, list, watch  → submit and poll Terraform runs
+#   configmaps        create, get, delete       → store generated main.tf
+#   pods / pods/log   get, list, watch          → read Terraform output / errors
+#
+# The RoleBinding lists subjects for both deployment namespaces so the backend
+# pod can create Jobs in devops-control-center regardless of whether it is
+# running in the dev (devops-control-center-dev) or production
+# (devops-control-center) namespace.
+#
+# Note: the CI/CD pipeline (template-workflow.yml) also creates backend-sa in
+# the deployment namespace (kubectl create serviceaccount backend-sa -n $NS)
+# so the Deployment can reference it as serviceAccountName.
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: terraform-job-manager
+  labels:
+    app: backend
+    component: rbac
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "get", "delete"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: terraform-job-manager
+  labels:
+    app: backend
+    component: rbac
+# Both the dev and prod backend pods need permission to create Terraform Jobs
+# in devops-control-center.  A RoleBinding can reference ServiceAccounts from
+# other namespaces, so we list both here.
+subjects:
+  - kind: ServiceAccount
+    name: backend-sa
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: terraform-job-manager
