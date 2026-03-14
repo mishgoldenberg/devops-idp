@@ -93,35 +93,8 @@ jobs:
           docker push "$IMAGE_SHA"
 
       # ── Deploy ────────────────────────────────────────────────────────────────
-      
-      - name: Inject Secrets into K8s
-        run: |
-          # Updating the all-scecrets only in case of backend deployment to not override the values
-          kubectl create secret generic all-secrets \
-            --from-literal=POSTGRES_PASSWORD="${{ secrets.POSTGRES_PASSWORD }}" \
-            --from-literal=REDIS_PASSWORD="${{ secrets.REDIS_PASSWORD }}" \
-            --from-literal=AZURE_DEVOPS_PAT="${{ secrets.AZURE_DEVOPS_PAT }}" \
-            --from-literal=AZURE_DEVOPS_ADMIN_PAT="${{ secrets.AZURE_DEVOPS_ADMIN_PAT }}" \
-            --from-literal=JWT_SECRET="${{ secrets.JWT_SECRET }}" \
-            --from-literal=OAUTH_CLIENT_ID="${{ secrets.OAUTH_CLIENT_ID }}" \
-            --from-literal=OAUTH_CLIENT_SECRET="${{ secrets.OAUTH_CLIENT_SECRET }}" \
-            -n devops-control-center-prod \
-            --dry-run=client -o yaml | kubectl apply -f -
-      # Apply RBAC for the Terraform self-service runner.
-      #
-      # Why this step exists:
-      #   kubectl set image (below) only changes the container image — it never
-      #   applies manifest changes such as new ServiceAccounts, Roles, or
-      #   serviceAccountName on the Deployment. This step fills that gap so the
-      #   cluster always reflects the Git state.
-      #
-      # What it does:
-      #   1. Creates backend-sa in the deployment namespace (idempotent).
-      #   2. Applies the devops-terraform-sa SA + Role + RoleBinding from Git
-      #      (those live in devops-control-center where Terraform Jobs run).
-      #   3. Patches the Deployment to use backend-sa (idempotent merge patch).
 
-      # TODO!: refactor to be applied as a service and not the general CI
+
       - name: Update Helm Dependencies
         run: |
           helm dependency update ./deployment
