@@ -93,24 +93,9 @@ jobs:
           docker push "$IMAGE_SHA"
 
       # ── Deploy ────────────────────────────────────────────────────────────────
-      - name: Install kubectl
-        uses: azure/setup-kubectl@v4
-
-      # This action installs gke-gcloud-auth-plugin, writes kubeconfig, and
-      # sets USE_GKE_GCLOUD_AUTH_PLUGIN automatically — no manual apt needed.
-      - name: Get GKE credentials
-        uses: google-github-actions/get-gke-credentials@v2
-        with:
-          cluster_name: ${{ inputs.gke_cluster }}
-          location: ${{ inputs.gcp_region }}
-          project_id: ${{ inputs.gcp_project }}
       
       - name: Inject Secrets into K8s
-        env:
-          PG_PASS: ${{ secrets.POSTGRES_PASSWORD }}
-        if: ${{ env.PG_PASS != '' }}
         run: |
-
           # Updating the all-scecrets only in case of backend deployment to not override the values
           kubectl create secret generic all-secrets \
             --from-literal=POSTGRES_PASSWORD="${{ secrets.POSTGRES_PASSWORD }}" \
@@ -142,38 +127,15 @@ jobs:
           helm dependency update ./deployment
       # 2. Deploy your Helm chart
       - name: Deploy Helm Chart
-        run: helm upgrade --install devops-stack ./deployment -n devops-control-center-prod --wait --timeout 10m
-        
-      - name: Apply Terraform runner RBAC
         run: |
-          NS="${{ inputs.k8s_namespace }}"
 
-          # 1. backend-sa must exist in the deployment namespace so the pod can
-          #    use it as its service account.
-          kubectl create serviceaccount backend-sa -n "$NS" \
-            --dry-run=client -o yaml | kubectl apply -f -
+          helm upgrade --install devops-stack ./deployment \
+          -n devops-control-center-prod --wait --timeout 10m \
+          --set secrets.postgresPassword="${{ secrets.POSTGRES_PASSWORD }}" \
+          --set secrets.redisPassword="${{ secrets.REDIS_PASSWORD }}" \
+          --set secrets.oauthClientId="${{ secrets.OAUTH_CLIENT_ID }}" \
+          --set secrets.oauthClientSecret="${{ secrets.OAUTH_CLIENT_SECRET }}" \
+          --set secrets.jwtSecret="${{ secrets.JWT_SECRET }}" \
+          --set secrets.azureDevopsPat="${{ secrets.AZURE_DEVOPS_PAT }}" \
+          --set secrets.azureDevopsAdminPat="${{ secrets.AZURE_DEVOPS_ADMIN_PAT }}" \
 
-          # 2. Apply devops-terraform-sa SA, Role and RoleBinding into
-          #    devops-control-center (the namespace where Terraform Jobs run).
-          kubectl apply -f deployment/charts/backend/templates/service-accounts.yaml
-          kubectl apply -f deployment/charts/backend/templates/terraform-rbac.yaml
-
-          # 3. Ensure the Deployment spec uses the new backend-sa.
-          kubectl patch deployment ${{ inputs.image_name }} -n "$NS" \
-            --type=merge \
-            -p '{"spec":{"template":{"spec":{"serviceAccountName":"backend-sa"}}}}'
-
-      # - name: Update image tag in deployment
-      #   run: |
-      #     REGISTRY="${{ inputs.gcp_region }}-docker.pkg.dev/${{ inputs.gcp_project }}/devops-idp"
-      #     kubectl set image deployment/${{ inputs.image_name }} \
-      #       ${{ inputs.image_name }}="$REGISTRY/${{ inputs.image_name }}:sha-$SHORT_SHA" \
-      #       -n ${{ inputs.k8s_namespace }}
-
-      # - name: Wait for rollout
-      #   run: |
-      #     kubectl rollout status deployment/${{ inputs.image_name }} \
-      #       -n ${{ inputs.k8s_namespace }} \
-      #       --timeout=300s
-      
-      
