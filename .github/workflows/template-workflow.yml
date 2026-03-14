@@ -137,6 +137,13 @@ jobs:
       #   3. Patches the Deployment to use backend-sa (idempotent merge patch).
 
       # TODO!: refactor to be applied as a service and not the general CI
+      - name: Update Helm Dependencies
+        run: |
+          helm dependency update ./deployment
+      # 2. Deploy your Helm chart
+      - name: Deploy Helm Chart
+        run: helm upgrade --install devops-stack ./deployment -n devops-control-center-prod --wait --timeout 10m
+        
       - name: Apply Terraform runner RBAC
         run: |
           NS="${{ inputs.k8s_namespace }}"
@@ -156,12 +163,12 @@ jobs:
             --type=merge \
             -p '{"spec":{"template":{"spec":{"serviceAccountName":"backend-sa"}}}}'
 
-      - name: Update image tag in deployment
-        run: |
-          REGISTRY="${{ inputs.gcp_region }}-docker.pkg.dev/${{ inputs.gcp_project }}/devops-idp"
-          kubectl set image deployment/${{ inputs.image_name }} \
-            ${{ inputs.image_name }}="$REGISTRY/${{ inputs.image_name }}:sha-$SHORT_SHA" \
-            -n ${{ inputs.k8s_namespace }}
+      # - name: Update image tag in deployment
+      #   run: |
+      #     REGISTRY="${{ inputs.gcp_region }}-docker.pkg.dev/${{ inputs.gcp_project }}/devops-idp"
+      #     kubectl set image deployment/${{ inputs.image_name }} \
+      #       ${{ inputs.image_name }}="$REGISTRY/${{ inputs.image_name }}:sha-$SHORT_SHA" \
+      #       -n ${{ inputs.k8s_namespace }}
 
       # - name: Wait for rollout
       #   run: |
@@ -169,9 +176,4 @@ jobs:
       #       -n ${{ inputs.k8s_namespace }} \
       #       --timeout=300s
       
-      - name: Update Helm Dependencies
-        run: |
-          helm dependency update ./deployment
-      # 2. Deploy your Helm chart
-      - name: Deploy Helm Chart
-        run: helm upgrade --install devops-stack ./deployment -n devops-control-center-prod --wait --timeout 10m
+      
