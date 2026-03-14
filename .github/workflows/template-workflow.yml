@@ -94,7 +94,15 @@ jobs:
 
       # ── Deploy ────────────────────────────────────────────────────────────────
 
-
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ inputs.gke_cluster }}
+          location: ${{ inputs.gcp_region }}
+          project_id: ${{ inputs.gcp_project }}
+          # Force the use of the auth plugin
+          use_gke_gcloud_auth_plugin: true
+          
       - name: Update Helm Dependencies
         run: |
           helm dependency update ./deployment
