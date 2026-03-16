@@ -46,8 +46,15 @@ pydantic==2.9.0
 # HTTP client for external APIs
 httpx==0.24.1
 
+<<<<<<< HEAD:backend/app/requirements.txt
 # Optional: load .env file when running locally
 python-dotenv==1.0.0
+=======
+# Template rendering + static files (for htmx-based frontend)
+jinja2==3.1.2
+aiofiles==23.2.1
+
+>>>>>>> 035ffb8 (Remove old frontend code and replace it with a starter htmx template):backend/python_backend/requirements.txt
 
 # GCP Storage — saves Terraform logs to gs://devops-control-center-tfstate
 google-cloud-storage==2.18.0

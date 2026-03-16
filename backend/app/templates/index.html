@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>DevOps Control Center (HTMX)</title>
+		<link rel="stylesheet" href="/static/style.css" />
+		<script src="https://unpkg.com/htmx.org/dist/htmx.min.js"></script>
+	</head>
+	<body>
+		<header class="topbar">
+			<div class="container">
+				<h1>DevOps Control Center</h1>
+				<p class="tagline">
+					Starter UI (HTMX) - build new frontend from scratch
+				</p>
+			</div>
+		</header>
+
+		<main class="container">
+			<section class="card">
+				<h2>HTMX Quick Start</h2>
+				<p>
+					Click the button below to fetch an HTML fragment from the backend via
+					<strong>HTMX</strong>.
+				</p>
+				<button
+					class="btn"
+					hx-get="/ui/hello?name=DevOps"
+					hx-target="#hello"
+					hx-swap="innerHTML"
+				>
+					Load Hello
+				</button>
+				<div id="hello" class="fragment">
+					<p>Click the button to load a fragment from the server.</p>
+				</div>
+			</section>
+
+			<section class="card">
+				<h2>Backend Health</h2>
+				<p>
+					Use HTMX to show API health checks without writing client-side
+					JavaScript.
+				</p>
+				<button
+					class="btn"
+					hx-get="/api/health/ready"
+					hx-target="#health"
+					hx-swap="innerText"
+				>
+					Check /api/health/ready
+				</button>
+				<pre id="health" class="fragment"></pre>
+			</section>
+
+			<section class="card">
+				<h2>Next Steps</h2>
+				<ul>
+					<li>
+						Add new routes under <code>/ui/</code> for pages and fragments.
+					</li>
+					<li>
+						Call backend JSON APIs under <code>/api/</code> using HTMX
+						(<code>hx-get</code>, <code>hx-post</code>, etc.).
+					</li>
+					<li>
+						Keep business logic in <code>backend/python_backend/app/api</code>;
+						frontend lives in templates.
+					</li>
+				</ul>
+			</section>
+		</main>
+
+		<footer class="footer">
+			<div class="container">
+				<p>
+					Built on FastAPI + HTMX. Server time:
+					<span id="time">{{ now or "-" }}</span>
+				</p>
+			</div>
+		</footer>
+	</body>
+</html>
