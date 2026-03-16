@@ -53,7 +53,6 @@ MISSING=0
 
 check_prerequisite "Docker" "docker" || MISSING=1
 check_prerequisite "Docker Compose" "docker compose" || MISSING=1
-check_prerequisite "Node.js" "node" || MISSING=1
 check_prerequisite "Git" "git" || MISSING=1
 
 if [ $MISSING -eq 1 ]; then
@@ -178,7 +177,7 @@ export DATABASE_URL="postgresql://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${
 
 # Run migrations
 echo -e "${YELLOW}📊 Running database migrations...${NC}"
-if npm run migrate; then
+if docker compose exec -T postgres psql -U "${DB_USER}" -d "${DB_NAME}" -f backend/database/schema.sql; then
     echo -e "  ${GREEN}✅ Migrations completed successfully${NC}"
 else
     echo -e "  ${RED}❌ Failed to run migrations${NC}"
@@ -190,12 +189,16 @@ echo ""
 
 # Run seeds
 echo -e "${YELLOW}🌱 Seeding database with initial data...${NC}"
-if npm run seed; then
-    echo -e "  ${GREEN}✅ Database seeded successfully${NC}"
-else
-    echo -e "  ${RED}❌ Failed to seed database${NC}"
-    exit 1
-fi
+SEED_FILES=(backend/database/seeds/*.sql)
+for seed_file in "${SEED_FILES[@]}"; do
+    echo -e "  ${CYAN}Applying seed: ${seed_file}${NC}"
+    if ! docker compose exec -T postgres psql -U "${DB_USER}" -d "${DB_NAME}" -f "${seed_file}"; then
+        echo -e "  ${RED}❌ Failed to apply seed: ${seed_file}${NC}"
+        exit 1
+    fi
+done
+
+echo -e "  ${GREEN}✅ Database seeded successfully${NC}"
 
 echo ""
 
@@ -212,8 +215,8 @@ echo ""
 echo -e "${GREEN}✅ Setup completed successfully!${NC}"
 echo ""
 echo -e "${CYAN}🌐 Access the application:${NC}"
-echo -e "  ${NC}Frontend:  http://localhost:3000${NC}"
-echo -e "  ${NC}API Gateway: http://localhost:8000${NC}"
+echo -e "  ${NC}UI:  http://localhost:8000/ui/${NC}"
+echo -e "  ${NC}API: http://localhost:8000/api/${NC}"
 echo ""
 echo -e "${CYAN}👤 Test users (login with any @internal username):${NC}"
 echo -e "  ${NC}- admin@internal (Platform Admin)${NC}"
@@ -221,8 +224,7 @@ echo -e "  ${NC}- lead@internal (Team Lead)${NC}"
 echo -e "  ${NC}- user@internal (Regular User)${NC}"
 echo ""
 echo -e "${CYAN}📚 Useful commands:${NC}"
-echo -e "  ${NC}Quick restart: ./restart.sh (after backend code changes)"
-echo -e "  ${NC}Frontend rebuild: ./restart.sh --rebuild-frontend (after frontend changes)"
+echo -e "  ${NC}Quick restart: ./restart.sh (after backend code changes)${NC}"
 echo -e "  ${NC}View logs:    docker compose logs -f${NC}"
 echo -e "  ${NC}Stop services: docker compose down${NC}"
 echo ""
@@ -233,7 +235,7 @@ if command -v xdg-open &> /dev/null; then
     read -p "Open application in browser? (Y/n) " -n 1 -r
     echo
     if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-        xdg-open "http://localhost:3000" 2>/dev/null || true
+        xdg-open "http://localhost:8000/ui/" 2>/dev/null || true
         echo -e "  ${GREEN}✅ Opened browser${NC}"
     fi
 elif command -v open &> /dev/null; then
@@ -241,7 +243,7 @@ elif command -v open &> /dev/null; then
     read -p "Open application in browser? (Y/n) " -n 1 -r
     echo
     if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-        open "http://localhost:3000" 2>/dev/null || true
+        open "http://localhost:8000/ui/" 2>/dev/null || true
         echo -e "  ${GREEN}✅ Opened browser${NC}"
     fi
 fi

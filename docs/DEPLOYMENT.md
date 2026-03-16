@@ -25,12 +25,12 @@ docker compose up -d
 
 # 4. Wait for all services to be healthy (usually 30-60 seconds)
 docker compose ps
-# Expected: postgres (healthy), redis (healthy), 
-#           api-gateway (healthy), frontend (running)
+# Expected: postgres (healthy), redis (healthy),
+#           api-gateway (healthy)
 
 # 5. Access the application
-# Frontend: http://localhost:3000
-# Backend API: http://localhost:8000
+# UI: http://localhost:8000/ui/
+# Backend API: http://localhost:8000/api/
 # Health checks:
 #   - Liveness:  http://localhost:8000/api/health/live
 #   - Readiness: http://localhost:8000/api/health/ready
@@ -38,12 +38,11 @@ docker compose ps
 
 ### Services in Docker Compose
 
-| Service | Port | Language | Purpose |
-|---------|------|----------|---------|
-| postgres | 5432 | SQL | Primary database |
-| redis | 6379 | - | Cache & session store |
-| api-gateway | 8000 | Python (FastAPI) | Backend API |
-| frontend | 3000 | TypeScript (Next.js) | Web interface |
+| Service     | Port | Language         | Purpose               |
+| ----------- | ---- | ---------------- | --------------------- |
+| postgres    | 5432 | SQL              | Primary database      |
+| redis       | 6379 | -                | Cache & session store |
+| api-gateway | 8000 | Python (FastAPI) | Backend API + HTMX UI |
 
 ### Database Initialization
 
@@ -61,6 +60,7 @@ docker compose exec postgres psql -U devops_user -d devops_control_center -c "\d
 ### Test Login
 
 Use these seeded accounts:
+
 - **Platform Admin**: `admin@internal`
 - **Team Lead**: `lead@internal`
 - **Regular User**: `user@internal`
@@ -75,7 +75,6 @@ docker compose logs -f
 
 # Specific service
 docker compose logs -f api-gateway
-docker compose logs -f frontend
 
 # Stop following logs
 # Press Ctrl+C
@@ -111,16 +110,8 @@ docker build \
   -t your-registry/devops-control-center/api-gateway:v1.0.0 \
   .
 
-# Build frontend (Next.js)
-docker build \
-  --build-arg NEXT_PUBLIC_API_GATEWAY_URL=http://api-gateway:8000 \
-  -f infrastructure/docker/Dockerfile.frontend \
-  -t your-registry/devops-control-center/frontend:v1.0.0 \
-  .
-
 # Push to your container registry
 docker push your-registry/devops-control-center/api-gateway:v1.0.0
-docker push your-registry/devops-control-center/frontend:v1.0.0
 
 # Update image references in K8s manifests before deployment
 ```
@@ -201,7 +192,7 @@ kubectl get ingress -n devops-control-center
 
 # View logs
 kubectl logs -f deployment/api-gateway -n devops-control-center
-kubectl logs -f deployment/frontend -n devops-control-center
+kubectl logs -f deployment/api-gateway -n devops-control-center
 ```
 
 ### Step 5: Verify Health Checks & Database
@@ -258,21 +249,22 @@ spec:
   minReplicas: 2
   maxReplicas: 10
   metrics:
-  - type: Resource
-    resource:
-      name: cpu
-      target:
-        type: Utilization
-        averageUtilization: 70
-  - type: Resource
-    resource:
-      name: memory
-      target:
-        type: Utilization
-        averageUtilization: 80
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
 ```
 
 Apply:
+
 ```bash
 kubectl apply -f hpa.yaml
 ```
@@ -436,4 +428,3 @@ kubectl rollout undo deployment/api-gateway --to-revision=2 -n devops-control-ce
 - [ ] External system integrations tested
 - [ ] Performance testing completed
 - [ ] Security scan passed
-

@@ -6,7 +6,6 @@ namespace: devops-control-center
 resources:
   - ../../base/namespace.yaml
   - ../../base/deployments/api-gateway.yaml
-  - ../../base/deployments/frontend.yaml
   - ../../base/configmaps/application-config.yaml
   - ../../base/ingress.yaml
 
@@ -19,6 +18,3 @@ configMapGenerator:
 replicas:
   - name: api-gateway
     count: 1
-  - name: frontend
-    count: 1
-

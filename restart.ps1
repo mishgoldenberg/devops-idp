@@ -3,7 +3,6 @@
 
 param(
     [switch]$Rebuild,
-    [switch]$RebuildFrontend,
     [switch]$Full,
     [string]$Service
 )
@@ -51,22 +50,6 @@ if ($Full) {
         exit 1
     }
     Write-Host "  [OK] All services restarted" -ForegroundColor Green
-} elseif ($RebuildFrontend) {
-    Write-Host "Rebuilding frontend..." -ForegroundColor Yellow
-    docker compose build frontend
-    if (-not (Test-ExitCode)) {
-        Write-Host "  [FAIL] Failed to rebuild frontend" -ForegroundColor Red
-        exit 1
-    }
-    Write-Host "  [OK] Frontend rebuilt" -ForegroundColor Green
-    Write-Host ""
-    Write-Host "Restarting frontend..." -ForegroundColor Yellow
-    docker compose up -d frontend
-    if (-not (Test-ExitCode)) {
-        Write-Host "  [FAIL] Failed to restart frontend" -ForegroundColor Red
-        exit 1
-    }
-    Write-Host "  [OK] Frontend restarted" -ForegroundColor Green
 } elseif ($Rebuild) {
     Write-Host "Rebuilding services..." -ForegroundColor Yellow
     docker compose build
@@ -85,7 +68,7 @@ if ($Full) {
     Write-Host "  [OK] Services restarted" -ForegroundColor Green
 } else {
     Write-Host "Restarting all services..." -ForegroundColor Yellow
-    Write-Host "  (Use -RebuildFrontend for frontend changes, -Rebuild for all services, -Full for clean rebuild)" -ForegroundColor Cyan
+    Write-Host "  (Use -Rebuild for all services, -Full for clean rebuild)" -ForegroundColor Cyan
     docker compose restart
     if (-not (Test-ExitCode)) {
         Write-Host "  [FAIL] Failed to restart services" -ForegroundColor Red
@@ -101,7 +84,6 @@ docker compose ps
 Write-Host ""
 Write-Host "Tips:" -ForegroundColor Cyan
 Write-Host "  - Backend code changes: .\restart.ps1 (uses volume mounts, no rebuild needed)" -ForegroundColor White
-Write-Host "  - Frontend changes: .\restart.ps1 -RebuildFrontend" -ForegroundColor White
 Write-Host "  - After dependency changes: .\restart.ps1 -Rebuild" -ForegroundColor White
 Write-Host "  - Clean rebuild: .\restart.ps1 -Full" -ForegroundColor White
 Write-Host "  - Restart specific service: .\restart.ps1 -Service api-gateway" -ForegroundColor White

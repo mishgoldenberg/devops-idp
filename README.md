@@ -5,6 +5,7 @@
 ## 🏗️ Architecture Overview
 
 ### Design Principles
+
 - **Microservice-ready architecture** - Each external system has dedicated service
 - **Frontend/Backend decoupled** - Clean API contracts via API Gateway
 - **Local-first development** - Runs entirely on developer laptop
@@ -16,14 +17,14 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    Frontend (Next.js)                      │
+│        Frontend (HTMX templates served by FastAPI)         │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
 │  │   Dashboard  │  │   Approvals  │  │ Observability│      │
 │  │   Widgets    │  │   Self-Svc   │  │   Metrics    │      │
 │  └──────────────┘  └──────────────┘  └──────────────┘      │
 └───────────────────────────┬─────────────────────────────────┘
                             │
-                            │ REST API
+                            │ Server-rendered HTML / REST API
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
 │           Backend API / BFF (Python + FastAPI)             │
@@ -45,12 +46,32 @@
 
 ### Services Architecture
 
-| Service | Port | Purpose |
-|---------|------|---------|
-| **frontend** | 3000 | Next.js web application |
+| Service         | Port | Purpose                                                                           |
+| --------------- | ---- | --------------------------------------------------------------------------------- |
 | **api-gateway** | 8000 | Python FastAPI backend (BFF, auth, routing, aggregation, approvals, integrations) |
-| **postgres** | 5432 | Primary data store |
-| **redis** | 6379 | Cache & session store |
+| **postgres**    | 5432 | Primary data store                                                                |
+| **redis**       | 6379 | Cache & session store                                                             |
+
+---
+
+## 🧩 HTMX Prototype Frontend (Optional)
+
+This repository now includes a minimal HTMX-powered frontend served from the Python backend. It is intended as a starting point for rebuilding the UI from scratch while leveraging the existing FastAPI APIs.
+
+- The HTMX UI lives under: **`/ui/`**
+- Static assets (CSS, images, etc.) are served from **`/static/`**
+- Use HTMX to call existing API routes under **`/api/`** (e.g., `/api/health/ready`)
+
+### Running the HTMX prototype
+
+1. Start the backend (via Docker):
+   ```sh
+   docker compose up -d postgres redis api-gateway
+   ```
+2. Open the prototype in your browser:
+   ```
+   http://localhost:8000/ui/
+   ```
 
 ---
 
@@ -68,16 +89,16 @@
 
 ### Authorization Matrix
 
-| Capability | Platform Admin | Unit Commander | Branch Head | Head of Section | Project Manager | Team Lead | Regular User |
-|------------|:--------------:|:--------------:|:-----------:|:---------------:|:---------------:|:---------:|:------------:|
-| View own dashboard | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Customize widgets | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Create ADO project | ✓ | ✓ | ✓ | ✓ | ✓ | - | - |
-| Enable Sonar scanning | ✓ | ✓ | ✓ | ✓ | - | - | - |
-| Approve requests | ✓ | ✓ | ✓ | ✓ | Partial | - | - |
-| View aggregated metrics | ✓ | ✓ | ✓ | - | - | - | - |
-| View observability | ✓ | - | - | ✓ | - | ✓ | - |
-| Manage users | ✓ | - | - | - | - | - | - |
+| Capability              | Platform Admin | Unit Commander | Branch Head | Head of Section | Project Manager | Team Lead | Regular User |
+| ----------------------- | :------------: | :------------: | :---------: | :-------------: | :-------------: | :-------: | :----------: |
+| View own dashboard      |       ✓        |       ✓        |      ✓      |        ✓        |        ✓        |     ✓     |      ✓       |
+| Customize widgets       |       ✓        |       ✓        |      ✓      |        ✓        |        ✓        |     ✓     |      ✓       |
+| Create ADO project      |       ✓        |       ✓        |      ✓      |        ✓        |        ✓        |     -     |      -       |
+| Enable Sonar scanning   |       ✓        |       ✓        |      ✓      |        ✓        |        -        |     -     |      -       |
+| Approve requests        |       ✓        |       ✓        |      ✓      |        ✓        |     Partial     |     -     |      -       |
+| View aggregated metrics |       ✓        |       ✓        |      ✓      |        -        |        -        |     -     |      -       |
+| View observability      |       ✓        |       -        |      -      |        ✓        |        -        |     ✓     |      -       |
+| Manage users            |       ✓        |       -        |      -      |        -        |        -        |     -     |      -       |
 
 ---
 
@@ -86,6 +107,7 @@
 ### Widget Architecture
 
 Widgets are self-contained React components that:
+
 - Fetch their own data from API Gateway
 - Handle loading/error states independently
 - Respect RBAC (backend filters data by role)
@@ -95,31 +117,37 @@ Widgets are self-contained React components that:
 ### Available Widgets
 
 #### Azure DevOps
+
 - **My Work Items** - PBIs assigned to user (To Do / In Progress counts)
 - **My Pull Requests** - Active PRs with review status
 - **Pipeline Status** - Last 5 pipeline runs
 - **Sprint Progress** - Current sprint burn-down (Team Lead+)
 
 #### SonarQube
+
 - **Quality Gate** - Current project status
 - **Code Coverage** - Trend indicator
 - **Technical Debt** - Hours estimation
 - **Security Hotspots** - Critical issues count
 
 #### Artifactory
+
 - **Latest Artifacts** - Recent builds per repository
 - **Storage Usage** - Quota consumption (Team Lead+)
 - **Download Stats** - Most downloaded artifacts (PM+)
 
 #### ServiceNow
+
 - **My Tickets** - Open incident/request count
 - **Team Tickets** - Team workload (Team Lead+)
 
 #### AI Assistant
+
 - **Chatbot Widget** - Embedded conversational UI
 - **Recent Conversations** - Quick access to history
 
 #### Executive Widgets (Commander/Head roles)
+
 - **Branch Dashboard** - Aggregated metrics per branch
 - **Deployment Frequency** - Release velocity
 - **Quality Trends** - Multi-project quality overview
@@ -134,6 +162,7 @@ Widgets are self-contained React components that:
 **Status**: ✅ Direct provisioning (no approval required)
 
 Users with appropriate roles can directly create Azure DevOps projects with:
+
 - **Custom process templates** - Creates dedicated inherited process (e.g., `project-name-Scrum`)
 - **Process types** - Scrum, Agile, CMMI, or Basic
 - **Admin user assignment** - Automatically grants Project Administrator permissions
@@ -142,15 +171,17 @@ Users with appropriate roles can directly create Azure DevOps projects with:
 **Access**: Project Manager+  
 **Endpoint**: `POST /api/azure-devops/projects/create`  
 **Request**:
+
 ```json
 {
-  "project_name": "my-new-project",
-  "process_type": "Scrum",
-  "admin_username": "user@company.com"
+	"project_name": "my-new-project",
+	"process_type": "Scrum",
+	"admin_username": "user@company.com"
 }
 ```
 
 **Response**:
+
 ```json
 {
   "success": true,
@@ -166,10 +197,10 @@ Users with appropriate roles can directly create Azure DevOps projects with:
 
 These services are planned for future phases with approval workflows:
 
-| Action | Status | Approver Roles | Implementation |
-|--------|:------:|----------------|----------------|
+| Action                       |   Status   | Approver Roles                  | Implementation                        |
+| ---------------------------- | :--------: | ------------------------------- | ------------------------------------- |
 | Enable SonarQube PR Scanning | 🔄 Planned | Platform Admin, Head of Section | Approval workflow → Sonar integration |
-| Request AI Model Access | 🔄 Planned | Platform Admin | Approval workflow → AI service |
+| Request AI Model Access      | 🔄 Planned | Platform Admin                  | Approval workflow → AI service        |
 
 ### Redirect-Only Services (No Portal Implementation)
 
@@ -190,6 +221,7 @@ These services are planned for future phases with approval workflows:
 ### Adapter Pattern
 
 Each external system is integrated via an **adapter module inside the Python backend**:
+
 1. **Adapter Module** - Python code that knows how to talk to the external system
 2. **Mock Implementation** - Returns realistic sample data for local dev (current default)
 3. **Real Implementation** - Placeholder for production integration
@@ -198,6 +230,7 @@ Each external system is integrated via an **adapter module inside the Python bac
 ### Integration Points (Currently Mocked)
 
 #### Azure DevOps
+
 - **Endpoint**: `https://dev.azure.com/{org}`
 - **Auth**: PAT (Personal Access Token)
 - **APIs Used**:
@@ -206,6 +239,7 @@ Each external system is integrated via an **adapter module inside the Python bac
   - Pipelines (GET /pipelines/runs)
 
 #### SonarQube
+
 - **Endpoint**: `https://sonarqube.internal`
 - **Auth**: Token-based
 - **APIs Used**:
@@ -213,6 +247,7 @@ Each external system is integrated via an **adapter module inside the Python bac
   - Measures (GET /api/measures/component)
 
 #### Artifactory
+
 - **Endpoint**: `https://artifactory.internal`
 - **Auth**: API Key
 - **APIs Used**:
@@ -220,6 +255,7 @@ Each external system is integrated via an **adapter module inside the Python bac
   - Stats (GET /api/storageinfo)
 
 #### ServiceNow
+
 - **Endpoint**: `https://servicenow.internal`
 - **Auth**: OAuth2
 - **APIs Used**:
@@ -227,6 +263,7 @@ Each external system is integrated via an **adapter module inside the Python bac
   - Requests (GET /api/now/table/sc_request)
 
 #### AI Chatbot
+
 - **Endpoint**: Internal AI model endpoint
 - **Auth**: Internal token
 - **Integration**: iframe embed + postMessage API
@@ -242,7 +279,7 @@ To replace mocks with real integrations:
 
 ```typescript
 // Example: azure-devops-service/src/config/index.ts
-export const USE_MOCK = process.env.USE_MOCK_DATA === 'true'; // Set to false for production
+export const USE_MOCK = process.env.USE_MOCK_DATA === "true"; // Set to false for production
 ```
 
 ---
@@ -257,10 +294,10 @@ Before you begin, ensure you have the following installed:
 - **Git** ([Download](https://git-scm.com/)) - **Required**
 - **8GB RAM minimum** (recommended: 16GB)
 
-**Note:** Node.js is *not* required locally — the frontend runs in a Docker container.  
-Python is *not* required locally — the backend (FastAPI) runs in a Docker container.
+**Note:** Node.js and Python are not required locally — both UI and backend run inside Docker containers.
 
 **Verify Docker installations:**
+
 ```bash
 docker --version      # Should be 20.10+
 docker compose version # Should be 2.0+
@@ -272,16 +309,17 @@ git --version
 The easiest way to get started is using our automated setup scripts. They handle all the configuration, building, and database setup for you.
 
 **Windows (PowerShell):**
+
 ```powershell
 # Run the setup script (right-click -> Run with PowerShell, or in terminal)
 .\setup.ps1
 
 # After setup, use restart script for code changes:
 .\restart.ps1                # Quick restart (backend changes)
-.\restart.ps1 -RebuildFrontend  # Frontend changes
 ```
 
 **Linux/Mac (Bash):**
+
 ```bash
 # Make scripts executable (first time only)
 chmod +x setup.sh restart.sh
@@ -291,10 +329,11 @@ chmod +x setup.sh restart.sh
 ```
 
 The setup script will:
-1. ✅ Check prerequisites (Docker, Node.js)
+
+1. ✅ Check prerequisites (Docker)
 2. ✅ Copy `env.example` to `.env` if it doesn't exist
 3. ✅ Build all Docker images
-4. ✅ Start all services (database, Redis, Python backend, frontend)
+4. ✅ Start all services (database, Redis, Python backend)
 5. ✅ Wait for services to be healthy
 6. ✅ Run database migrations
 7. ✅ Seed initial data (roles, users, widgets)
@@ -317,9 +356,11 @@ python -m backend.python_backend.app.main
 ```
 
 Notes:
+
 - The `uvicorn` forms above launch the FastAPI app in a way that preserves package context, so relative imports like `from .api import api_router` work as expected.
-- Prefer `docker compose up -d` for local development to keep the environment consistent with other services (Postgres, Redis, frontend).
+- Prefer `docker compose up -d` for local development to keep the environment consistent with other services (Postgres, Redis).
 - If a contributor still runs the file directly and sees import errors, run the `uvicorn` command instead; a small fallback exists in `backend/python_backend/app/main.py` to help but module-based invocation is the correct long-term approach.
+
 8. ✅ Open the application in your browser
 
 **Manual Setup (Step-by-Step)**
@@ -346,11 +387,13 @@ cp env.example .env
 ```
 
 **Important:** The default `.env` values work out-of-the-box for local development. You only need to edit `.env` if you want to:
+
 - Change database passwords
 - Configure real external system integrations (currently using mocks)
 - Adjust ports or service URLs
 
 Key environment variables you might want to check:
+
 - `POSTGRES_PASSWORD` - Database password (default: `Devops4ever`)
 - `REDIS_PASSWORD` - Redis password (default: `Devops4ever`)
 - `JWT_SECRET` - JWT signing secret (auto-generated, change for production)
@@ -369,8 +412,9 @@ docker compose up -d
 ```
 
 This will:
+
 - Pull required Docker images (PostgreSQL, Redis)
-- Build application images (frontend, Python backend)
+- Build application images (Python backend)
 - Start all containers
 - Set up Docker networks and volumes
 
@@ -387,11 +431,11 @@ docker compose ps
 You should see all services with status "Up" or "running". Wait for `postgres` and `redis` to show "healthy" status before proceeding.
 
 **Troubleshooting:** If any service fails to start:
+
 ```bash
 # View logs for a specific service
 docker compose logs postgres
 docker compose logs api-gateway
-docker compose logs frontend
 
 # View all logs
 docker compose logs -f
@@ -422,6 +466,7 @@ docker compose exec postgres psql -U devops_user -d devops_control_center
 ```
 
 Once the database is ready:
+
 - 7 role definitions (Platform Admin through Regular User)
 - Sample users for each role (login with any `@internal` domain user)
 - Widget type definitions
@@ -430,9 +475,9 @@ Once the database is ready:
 
 #### Step 7: Access the Application
 
-**Frontend:** http://localhost:3000
+**UI (HTMX):** http://localhost:8000/ui/
 
-**API Gateway:** http://localhost:8000
+**API Gateway:** http://localhost:8000/api/
 
 **Health Check:** http://localhost:8000/api/health
 
@@ -442,15 +487,15 @@ Once the database is ready:
 
 After seeding, you can log in with any of these demo users:
 
-| Username | Role | Description |
-|----------|------|-------------|
-| `admin@internal` | Platform Admin | Full system access, can approve requests, view observability |
-| `commander@internal` | Unit Commander | Cross-branch visibility, strategic metrics |
-| `branch.head@internal` | Branch Head | Branch-level aggregation |
-| `section.head@internal` | Head of Section | Section metrics, observability access |
-| `pm@internal` | Project Manager | Project-level visibility |
-| `lead@internal` | Team Lead | Team metrics, observability access |
-| `user@internal` | Regular User | Personal dashboard, basic self-service |
+| Username                | Role            | Description                                                  |
+| ----------------------- | --------------- | ------------------------------------------------------------ |
+| `admin@internal`        | Platform Admin  | Full system access, can approve requests, view observability |
+| `commander@internal`    | Unit Commander  | Cross-branch visibility, strategic metrics                   |
+| `branch.head@internal`  | Branch Head     | Branch-level aggregation                                     |
+| `section.head@internal` | Head of Section | Section metrics, observability access                        |
+| `pm@internal`           | Project Manager | Project-level visibility                                     |
+| `lead@internal`         | Team Lead       | Team metrics, observability access                           |
+| `user@internal`         | Regular User    | Personal dashboard, basic self-service                       |
 
 **Note:** In local development, authentication uses mock SSO. Any username ending in `@internal` will be accepted and mapped to a role based on the seeded users.
 
@@ -463,14 +508,12 @@ The easiest way to restart services after making changes:
 ```bash
 # Windows (PowerShell)
 .\restart.ps1                    # Quick restart (backend changes)
-.\restart.ps1 -RebuildFrontend   # Rebuild frontend (frontend changes)
 .\restart.ps1 -Rebuild           # Rebuild all services (dependency changes)
 .\restart.ps1 -Full              # Clean rebuild (full reset)
 .\restart.ps1 -Service api-gateway  # Restart specific service
 
 # Linux/Mac (Bash)
 ./restart.sh                     # Quick restart (backend changes)
-./restart.sh --rebuild-frontend  # Rebuild frontend (frontend changes)
 ./restart.sh --rebuild           # Rebuild all services (dependency changes)
 ./restart.sh --full              # Clean rebuild (full reset)
 ./restart.sh --service api-gateway  # Restart specific service
@@ -493,11 +536,10 @@ docker compose logs -f
 
 # View logs for specific service
 docker compose logs -f api-gateway
-docker compose logs -f frontend
 
 # Rebuild a specific service
-docker compose build frontend
-docker compose up -d frontend
+docker compose build api-gateway
+docker compose up -d api-gateway
 
 # Rebuild all services
 docker compose build
@@ -533,29 +575,19 @@ docker compose exec redis redis-cli -a Devops4ever
 
 **Making Code Changes:**
 
-1. **Frontend Changes:**
-   - Edit files in `frontend/src/`
-   - **Important:** Frontend runs in production mode, so rebuild after changes:
-     ```bash
-     # Windows
-     .\restart.ps1 -RebuildFrontend
-     
-     # Linux/Mac
-     ./restart.sh --rebuild-frontend
-     ```
-
-2. **Backend Changes (Python):**
+1. **Backend Changes (Python):**
    - Edit files in `backend/python_backend/app/`
-   - Rebuild/restart backend container:
+   - Restart the backend container:
+
      ```bash
      # Windows
      .\restart.ps1 -Service api-gateway
-     
+
      # Linux/Mac
      ./restart.sh --service api-gateway
      ```
 
-3. **Database Changes:**
+2. **Database Changes:**
    - Edit `backend/database/schema.sql`
    - Rebuild and migrate:
      ```bash
@@ -566,12 +598,13 @@ docker compose exec redis redis-cli -a Devops4ever
      docker compose up -d
      ```
 
-4. **After Dependency Changes (package.json):**
+3. **After Dependency Changes (package.json):**
    - Rebuild affected services:
+
      ```bash
      # Windows
      .\restart.ps1 -Rebuild
-     
+
      # Linux/Mac
      ./restart.sh --rebuild
      ```
@@ -579,17 +612,19 @@ docker compose exec redis redis-cli -a Devops4ever
 ### Troubleshooting
 
 **Port Already in Use:**
+
 ```bash
 # Windows: Find process using port
-netstat -ano | findstr :3000
+netstat -ano | findstr :8000
 
 # Linux/Mac: Find process using port
-lsof -i :3000
+lsof -i :8000
 
 # Kill the process or change port in .env and docker-compose.yml
 ```
 
 **Docker Build Fails:**
+
 ```bash
 # Clear Docker cache and rebuild
 docker compose build --no-cache
@@ -599,57 +634,57 @@ docker ps
 ```
 
 **Database Connection Errors:**
+
 - Verify PostgreSQL is healthy: `docker compose ps postgres`
 - Check DATABASE_URL in `.env` matches docker-compose.yml values
 - Ensure migrations ran successfully: Check logs with `docker compose logs postgres`
 
 **Services Won't Start:**
+
 - Check Docker has enough resources (memory, CPU)
 - View service logs: `docker compose logs [service-name]`
 - Verify all required environment variables are set in `.env`
 
-**Frontend Shows Old Changes:**
-- Frontend is built in production mode, rebuild after changes:
-  ```bash
-  # Windows
-  .\restart.ps1 -RebuildFrontend
-  
-  # Linux/Mac
-  ./restart.sh --rebuild-frontend
-  ```
-
 ### Development Workflow
 
-```bash
-# Start individual service
-cd backend/services/api-gateway
-npm run dev
+- Make backend changes in `backend/python_backend/app/`.
+- Restart the backend container when code changes:
 
-# Start frontend with hot reload
-cd frontend
-npm run dev
+  ```bash
+  # Windows
+  .\restart.ps1 -Service api-gateway
 
-# Run all services in watch mode
-npm run dev:all
+  # Linux/Mac
+  ./restart.sh --service api-gateway
+  ```
 
-# View logs
-docker-compose logs -f [service-name]
+- Rebuild containers after dependency changes:
 
-# Reset database
-npm run db:reset
-```
+  ```bash
+  # Windows
+  .\restart.ps1 -Rebuild
+
+  # Linux/Mac
+  ./restart.sh --rebuild
+  ```
+
+- View backend logs:
+
+  ```bash
+  docker compose logs -f api-gateway
+  ```
 
 ### Test Users (Seeded)
 
-| Username | Role | Password |
-|----------|------|----------|
-| admin@internal | Platform Admin | admin123 |
-| commander@internal | Unit Commander | test123 |
-| branch.head@internal | Branch Head | test123 |
-| section.head@internal | Head of Section | test123 |
-| pm@internal | Project Manager | test123 |
-| lead@internal | Team Lead | test123 |
-| user@internal | Regular User | test123 |
+| Username              | Role            | Password |
+| --------------------- | --------------- | -------- |
+| admin@internal        | Platform Admin  | admin123 |
+| commander@internal    | Unit Commander  | test123  |
+| branch.head@internal  | Branch Head     | test123  |
+| section.head@internal | Head of Section | test123  |
+| pm@internal           | Project Manager | test123  |
+| lead@internal         | Team Lead       | test123  |
+| user@internal         | Regular User    | test123  |
 
 ---
 
@@ -658,6 +693,7 @@ npm run db:reset
 ### Core Tables
 
 #### users
+
 - `id` - UUID primary key
 - `username` - Unique username from SSO
 - `email` - User email
@@ -666,12 +702,14 @@ npm run db:reset
 - `created_at`, `updated_at`
 
 #### roles
+
 - `id` - Integer primary key
 - `name` - Role name (Platform Admin, Unit Commander, etc.)
 - `hierarchy_level` - Integer (1=highest, 7=lowest)
 - `permissions` - JSON array of permission strings
 
 #### dashboards
+
 - `id` - UUID primary key
 - `user_id` - Foreign key to users
 - `layout` - JSON (widget positions, sizes)
@@ -679,6 +717,7 @@ npm run db:reset
 - `updated_at`
 
 #### approval_requests
+
 - `id` - UUID primary key
 - `requester_id` - Foreign key to users
 - `request_type` - Enum (ADO_PROJECT, SONAR_SCAN, etc.)
@@ -690,6 +729,7 @@ npm run db:reset
 - `created_at`
 
 #### audit_logs
+
 - `id` - UUID primary key
 - `user_id` - Foreign key to users
 - `action` - String (CREATE_REQUEST, APPROVE, REJECT, etc.)
@@ -701,6 +741,7 @@ npm run db:reset
 - `created_at`
 
 #### usage_metrics
+
 - `id` - UUID primary key
 - `user_id` - Foreign key to users
 - `metric_type` - Enum (WIDGET_VIEW, SELF_SERVICE_USE, etc.)
@@ -715,32 +756,23 @@ Full schema: `backend/database/schema.sql`
 
 ## 📦 Project Structure
 
-```
+````
 devops-control-center/
-├── frontend/                      # Next.js application
-│   ├── src/
-│   │   ├── app/                  # App Router pages
-│   │   │   ├── dashboard/
-│   │   │   ├── approvals/
-│   │   │   ├── observability/
-│   │   │   └── layout.tsx
-│   │   ├── components/           # React components
-│   │   │   ├── widgets/         # Dashboard widgets
-│   │   │   ├── layout/          # Layout components
-│   │   │   └── common/          # Shared components
-│   │   ├── lib/                 # Utilities
-│   │   │   ├── api-client.ts
-│   │   │   ├── auth.ts
-│   │   │   └── rbac.ts
-│   │   ├── styles/              # Global styles
-│   │   └── types/               # TypeScript types
-│   ├── public/
-│   ├── package.json
-│   └── next.config.js
-│
 ├── backend/
-│   ├── python_backend/           # Python FastAPI backend (single service)
-│   │   ├── app/
+│   ├── python_backend/           # Python FastAPI backend (serves API + HTMX UI)
+│   │   ├── app/                  # FastAPI application code
+│   │   ├── database/             # DB schema, migrations, seeds
+│   │   └── requirements.txt
+├── infrastructure/              # Docker & Kubernetes manifests
+│   ├── docker/
+│   │   └── Dockerfile.python-backend
+│   └── k8s/
+├── docker-compose.yml           # Local dev environment
+├── setup.sh                     # Setup helper (build + migrate + seed)
+├── restart.sh                   # Restart helper script
+├── README.md
+└── env.example
+```│   │   ├── app/
 │   │   │   ├── api/             # Routers (auth, dashboards, metrics, integrations, approvals)
 │   │   │   ├── db.py            # Postgres helper
 │   │   │   ├── redis_client.py  # Redis helper
@@ -785,7 +817,7 @@ devops-control-center/
 ├── .env.example
 ├── package.json
 └── README.md
-```
+````
 
 ---
 
@@ -793,7 +825,6 @@ devops-control-center/
 
 The `docker-compose.yml` orchestrates all services:
 
-- Frontend (port 3000)
 - Python backend API (`api-gateway` service, port 8000)
 - PostgreSQL (port 5432)
 - Redis (port 6379)
@@ -801,6 +832,7 @@ The `docker-compose.yml` orchestrates all services:
 All services run in `devops-network` bridge network.
 
 Volumes:
+
 - `postgres-data` - Persists database
 - `redis-data` - Persists cache
 
@@ -811,6 +843,7 @@ Volumes:
 ### Structure
 
 The project is Kubernetes-ready with:
+
 - **Kustomize overlays** for dev/production environments
 - **Helm chart** as alternative approach
 - **ConfigMaps** for configuration
@@ -832,6 +865,7 @@ helm install devops-control-center infrastructure/helm/devops-control-center \
 ### Service Mesh (Optional)
 
 Platform is ready for Istio/Linkerd integration:
+
 - Services use standard Kubernetes service discovery
 - Health checks at `/health` and `/ready`
 - Metrics at `/metrics` (Prometheus format)
@@ -853,6 +887,7 @@ Accessible to Platform Admin, Head of Section, Team Lead:
 ### Usage Tracking
 
 Automatically tracked:
+
 - Widget view counts per user
 - Self-service action counts
 - Most-used features
@@ -874,6 +909,7 @@ Metrics stored in `usage_metrics` table and exposed via `/api/metrics/usage` end
 ### Component Library Choice: **Tailwind CSS + shadcn/ui**
 
 **Rationale:**
+
 - Tailwind: Maximum flexibility, easy theme customization
 - shadcn/ui: Copy-paste components, full control, no bloat
 - Executive-friendly clean aesthetic
@@ -884,16 +920,20 @@ Metrics stored in `usage_metrics` table and exposed via `/api/metrics/usage` end
 ```typescript
 // theme.config.ts
 export const theme = {
-  colors: {
-    primary: '#0066CC',      // Adjustable
-    secondary: '#6B7280',
-    success: '#10B981',
-    warning: '#F59E0B',
-    error: '#EF4444',
-    // ... more colors
-  },
-  spacing: { /* grid system */ },
-  typography: { /* font scales */ },
+	colors: {
+		primary: "#0066CC", // Adjustable
+		secondary: "#6B7280",
+		success: "#10B981",
+		warning: "#F59E0B",
+		error: "#EF4444",
+		// ... more colors
+	},
+	spacing: {
+		/* grid system */
+	},
+	typography: {
+		/* font scales */
+	},
 };
 ```
 
@@ -979,4 +1019,3 @@ Slack: #devops-control-center
 ---
 
 **This platform is designed for years of maintenance and evolution. Every decision prioritizes clean architecture over quick hacks.**
-
