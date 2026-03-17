@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
+import { useAutoRefresh } from '@/hooks/useAutoRefresh';
 import { Card, CardHeader, CardBody } from '../common/Card';
 import { Badge } from '../common/Badge';
 import { Skeleton } from '../common/Skeleton';
@@ -61,33 +62,7 @@ export function AzureDevOpsWorkItems() {
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Load project list once connected
-  useEffect(() => {
-    if (connection.connected && !connection.checking) {
-      loadProjects();
-    }
-  }, [connection.connected, connection.checking]);
-
-  // Reload work items whenever the selected project changes
-  useEffect(() => {
-    if (connection.connected && !connection.checking) {
-      fetchWorkItems(selectedProject);
-    }
-  }, [connection.connected, connection.checking, selectedProject]);
-
-  async function loadProjects() {
-    setProjectsLoading(true);
-    try {
-      const res = await apiClient.getAzureDevOpsProjects();
-      if (res.success) setProjects(res.data);
-    } catch {
-      // Non-critical – project list just won't be available
-    } finally {
-      setProjectsLoading(false);
-    }
-  }
-
-  async function fetchWorkItems(project: string) {
+  const fetchWorkItems = useCallback(async (project: string) => {
     try {
       setLoading(true);
       setError(null);
@@ -101,7 +76,31 @@ export function AzureDevOpsWorkItems() {
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
+
+  const refreshWorkItems = useCallback(() => {
+    fetchWorkItems(selectedProject);
+  }, [fetchWorkItems, selectedProject]);
+
+  // Load project list once connected
+  useEffect(() => {
+    if (connection.connected && !connection.checking) {
+      setProjectsLoading(true);
+      apiClient.getAzureDevOpsProjects()
+        .then(res => { if (res.success) setProjects(res.data); })
+        .catch(() => {})
+        .finally(() => setProjectsLoading(false));
+    }
+  }, [connection.connected, connection.checking]);
+
+  // Reload work items when connection or selected project changes
+  useEffect(() => {
+    if (connection.connected && !connection.checking) {
+      fetchWorkItems(selectedProject);
+    }
+  }, [connection.connected, connection.checking, selectedProject, fetchWorkItems]);
+
+  useAutoRefresh(refreshWorkItems, 60_000, connection.connected);
 
   const header = (
     <div className="flex items-center justify-between gap-2">

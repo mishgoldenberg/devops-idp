@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Card, CardHeader, CardBody } from '../common/Card';
 import { Badge } from '../common/Badge';
 import { Skeleton } from '../common/Skeleton';
 import { apiClient } from '@/lib/api-client';
 import { getUser } from '@/lib/auth';
 import { getStatusColor } from '@/lib/utils';
+import { useAutoRefresh } from '@/hooks/useAutoRefresh';
 import { Ticket } from 'lucide-react';
 
 interface SnowTicket {
@@ -22,11 +23,7 @@ export function ServiceNowTickets() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchTickets();
-  }, []);
-
-  async function fetchTickets() {
+  const fetchTickets = useCallback(async () => {
     try {
       setLoading(true);
       const user = getUser();
@@ -40,7 +37,10 @@ export function ServiceNowTickets() {
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
+
+  useEffect(() => { fetchTickets(); }, [fetchTickets]);
+  useAutoRefresh(fetchTickets, 30_000);
 
   if (loading) {
     return (

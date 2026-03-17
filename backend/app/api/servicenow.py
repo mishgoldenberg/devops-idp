@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 import db
+import cache
 from security import AuthUser, get_current_user
 
 router = APIRouter()
@@ -276,7 +277,7 @@ def get_tickets(current_user: AuthUser = Depends(get_current_user)):
     if not sys_ids:
         return {"success": True, "data": [], "timestamp": _now_iso()}
 
-    try:
+    def _fetch():
         with _snow_client() as client:
             resp = client.get(
                 "/api/now/table/incident",
@@ -288,15 +289,14 @@ def get_tickets(current_user: AuthUser = Depends(get_current_user)):
                 },
             )
             resp.raise_for_status()
-            records = resp.json().get("result", [])
+            return [_map_ticket(r) for r in resp.json().get("result", [])]
+
+    try:
+        records = cache.get_cached(f"snow:tickets:{user_email}", ttl=30, producer=_fetch)
     except Exception as exc:
         _raise_snow_error(exc, "fetching tickets")
 
-    return {
-        "success": True,
-        "data": [_map_ticket(r) for r in records],
-        "timestamp": _now_iso(),
-    }
+    return {"success": True, "data": records, "timestamp": _now_iso()}
 
 
 # ── GET /tickets/{sys_id} ─────────────────────────────────────────────────────
@@ -314,7 +314,7 @@ def get_ticket_detail(sys_id: str, current_user: AuthUser = Depends(get_current_
             "timestamp": _now_iso(),
         }
 
-    try:
+    def _fetch():
         with _snow_client() as client:
             ticket_resp = client.get(
                 f"/api/now/table/incident/{sys_id}",
@@ -335,14 +335,17 @@ def get_ticket_detail(sys_id: str, current_user: AuthUser = Depends(get_current_
             journal_resp.raise_for_status()
             messages = journal_resp.json().get("result", [])
 
+            ticket = _map_ticket(raw)
+            ticket["description"] = raw.get("description", raw.get("short_description", ""))
+            ticket["conversation"] = [_map_message(m) for m in messages]
+            return ticket
+
+    try:
+        ticket_data = cache.get_cached(f"snow:detail:{sys_id}", ttl=10, producer=_fetch)
     except Exception as exc:
         _raise_snow_error(exc, "fetching ticket details")
 
-    ticket = _map_ticket(raw)
-    ticket["description"] = raw.get("description", raw.get("short_description", ""))
-    ticket["conversation"] = [_map_message(m) for m in messages]
-
-    return {"success": True, "data": ticket, "timestamp": _now_iso()}
+    return {"success": True, "data": ticket_data, "timestamp": _now_iso()}
 
 
 # ── POST /tickets/{sys_id}/reply ─────────────────────────────────────────────
@@ -376,6 +379,9 @@ def reply_to_ticket(
             resp.raise_for_status()
     except Exception as exc:
         _raise_snow_error(exc, "sending reply")
+
+    # Invalidate conversation cache so the next poll sees the new reply immediately
+    cache.invalidate(f"snow:detail:{sys_id}")
 
     new_message = {
         "sys_id": "",
@@ -478,6 +484,9 @@ def create_ticket(
         )
     except Exception:
         pass  # Non-fatal: the ticket was created in ServiceNow successfully
+
+    # Bust the ticket-list cache so the new ticket appears immediately
+    cache.invalidate(f"snow:tickets:{user_email}")
 
     return {"success": True, "data": ticket, "timestamp": _now_iso()}
 

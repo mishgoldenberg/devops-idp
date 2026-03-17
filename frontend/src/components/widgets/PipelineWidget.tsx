@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
+import { useAutoRefresh } from '@/hooks/useAutoRefresh';
 import { Card } from '@/components/common/Card';
 import { Badge } from '@/components/common/Badge';
 import { Skeleton } from '@/components/common/Skeleton';
@@ -27,13 +28,7 @@ export function PipelineWidget() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (connection.connected && !connection.checking) {
-      fetchLatestPipeline();
-    }
-  }, [connection.connected, connection.checking]);
-
-  async function fetchLatestPipeline() {
+  const fetchLatestPipeline = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -46,7 +41,12 @@ export function PipelineWidget() {
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    if (connection.connected && !connection.checking) fetchLatestPipeline();
+  }, [connection.connected, connection.checking, fetchLatestPipeline]);
+  useAutoRefresh(fetchLatestPipeline, 60_000, connection.connected);
 
   const header = (
     <div className="flex items-center gap-2">
