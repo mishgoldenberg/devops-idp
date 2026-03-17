@@ -134,6 +134,7 @@ def _snow_client() -> httpx.Client:
         auth=(user, password),
         headers={"Accept": "application/json", "Content-Type": "application/json"},
         timeout=15.0,
+        follow_redirects=True,
     )
 
 
@@ -213,13 +214,36 @@ def _raise_snow_error(exc: Exception, context: str) -> None:
 def get_status():
     instance = _resolve_instance()
     user = os.getenv("SERVICENOW_USERNAME") or os.getenv("SERVICENOW_USER", "")
-    return {
+    password = os.getenv("SERVICENOW_PASSWORD", "")
+
+    result = {
         "mock_mode": _use_mock(),
         "instance_url": instance or None,
-        "username_set": bool(user),
-        "password_set": bool(os.getenv("SERVICENOW_PASSWORD", "")),
+        "username": user or None,
+        "password_length": len(password),
         "ready": _use_mock() or (bool(instance) and bool(user)),
     }
+
+    if not _use_mock() and instance and user:
+        try:
+            with httpx.Client(
+                base_url=instance,
+                auth=(user, password),
+                headers={"Accept": "application/json"},
+                timeout=10.0,
+                follow_redirects=True,
+            ) as client:
+                resp = client.get("/api/now/table/incident", params={"sysparm_limit": "1"})
+                result["connection_test"] = {"status_code": resp.status_code, "ok": resp.status_code == 200}
+                if resp.status_code != 200:
+                    try:
+                        result["connection_test"]["snow_response"] = resp.json()
+                    except Exception:
+                        result["connection_test"]["snow_response"] = resp.text[:300]
+        except Exception as exc:
+            result["connection_test"] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+    return result
 
 
 # ── GET /tickets ─────────────────────────────────────────────────────────────
