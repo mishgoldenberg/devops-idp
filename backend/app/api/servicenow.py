@@ -6,6 +6,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
+import db
 from security import AuthUser, get_current_user
 
 router = APIRouter()
@@ -250,7 +251,7 @@ def get_status():
 
 @router.get("/tickets")
 def get_tickets(current_user: AuthUser = Depends(get_current_user)):
-    assigned_user = current_user.get("username", "admin")
+    user_email = current_user.get("username", "")
 
     if not _use_mock() and not _resolve_instance():
         raise HTTPException(
@@ -262,15 +263,25 @@ def get_tickets(current_user: AuthUser = Depends(get_current_user)):
         )
 
     if _use_mock():
-        tickets = [t for t in _MOCK_TICKETS if t["assigned_to"] == assigned_user]
+        tickets = [t for t in _MOCK_TICKETS if t["assigned_to"] == user_email]
         return {"success": True, "data": tickets, "timestamp": _now_iso()}
+
+    # Look up the sys_ids this user created via the portal
+    rows = db.query_all(
+        "SELECT sys_id FROM user_tickets WHERE user_email = %s ORDER BY created_at DESC",
+        [user_email],
+    )
+    sys_ids = [r["sys_id"] for r in rows]
+
+    if not sys_ids:
+        return {"success": True, "data": [], "timestamp": _now_iso()}
 
     try:
         with _snow_client() as client:
             resp = client.get(
                 "/api/now/table/incident",
                 params={
-                    "sysparm_query": f"assigned_to.user_name={assigned_user}^active=true",
+                    "sysparm_query": "sys_idIN" + ",".join(sys_ids),
                     "sysparm_fields": "sys_id,number,short_description,state,priority,assigned_to,opened_at",
                     "sysparm_limit": 50,
                     "sysparm_display_value": "true",
@@ -382,7 +393,7 @@ def create_ticket(
     body: CreateTicketRequest,
     current_user: AuthUser = Depends(get_current_user),
 ):
-    assigned_user = current_user.get("username", "admin")
+    user_email = current_user.get("username", "")
 
     _PRIORITY_LABELS = {
         "1": "1 - Critical",
@@ -402,7 +413,7 @@ def create_ticket(
             "short_description": body.title,
             "state": "New",
             "priority": priority_label,
-            "assigned_to": assigned_user,
+            "assigned_to": user_email,
             "opened_at": _now_iso(),
             "description": body.description,
         }
@@ -410,7 +421,7 @@ def create_ticket(
         _MOCK_CONVERSATIONS[new_sys_id] = [
             {
                 "sys_id": f"msg_init_{new_sys_id}",
-                "sys_created_by": assigned_user,
+                "sys_created_by": user_email,
                 "sys_created_on": _now_iso(),
                 "value": body.description,
             }
@@ -424,8 +435,6 @@ def create_ticket(
                 json={
                     "short_description": body.title,
                     "description": body.description,
-                    "assigned_to": assigned_user,
-                    "caller_id": assigned_user,
                     "priority": str(body.priority),
                 },
                 params={"sysparm_display_value": "true"},
@@ -438,6 +447,19 @@ def create_ticket(
     ticket = _map_ticket(raw)
     ticket["description"] = body.description
     ticket["conversation"] = []
+
+    # Record the ticket ownership in the local DB so "My Tickets" can find it
+    try:
+        db.execute(
+            """
+            INSERT INTO user_tickets (user_email, sys_id, ticket_number)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (user_email, sys_id) DO NOTHING
+            """,
+            [user_email, ticket["sys_id"], ticket["number"]],
+        )
+    except Exception:
+        pass  # Non-fatal: the ticket was created in ServiceNow successfully
 
     return {"success": True, "data": ticket, "timestamp": _now_iso()}
 

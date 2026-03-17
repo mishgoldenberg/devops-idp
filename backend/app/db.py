@@ -79,3 +79,19 @@ def health_check() -> bool:
         return False
 
 
+def ensure_tables() -> None:
+    """Create application tables if they do not already exist."""
+    execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_tickets (
+            id          SERIAL PRIMARY KEY,
+            user_email  VARCHAR(255) NOT NULL,
+            sys_id      VARCHAR(64)  NOT NULL,
+            ticket_number VARCHAR(32),
+            created_at  TIMESTAMP DEFAULT NOW(),
+            UNIQUE (user_email, sys_id)
+        )
+        """
+    )
+
+

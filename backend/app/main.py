@@ -49,6 +49,7 @@ from fastapi.responses import JSONResponse
 
 from api import api_router
 from config import get_settings
+import db
 
 
 def create_app() -> FastAPI:
@@ -116,9 +117,17 @@ def create_app() -> FastAPI:
             content={"status": "ready", "timestamp": _now_iso()}
         )
 
+    @app.on_event("startup")
+    def on_startup():
+        try:
+            db.ensure_tables()
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("ensure_tables() failed: %s", exc)
+
     # Include all API routers (azure_devops, auth, approvals, etc.)
     app.include_router(api_router)
-    
+
     return app
 
 
