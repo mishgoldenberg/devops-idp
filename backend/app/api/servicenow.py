@@ -13,13 +13,17 @@ router = APIRouter()
 def _use_mock() -> bool:
     return os.getenv("USE_MOCK_SERVICENOW", "true").lower() in ("true", "1")
 
-# Accept either SERVICENOW_URL (full URL already in .env) or construct from SERVICENOW_INSTANCE
+# Accept either SERVICENOW_URL (full URL already in .env) or construct from SERVICENOW_INSTANCE.
+# Also tolerates URLs stored without the https:// scheme.
 def _resolve_instance() -> str:
-    url = os.getenv("SERVICENOW_URL", "").rstrip("/")
-    if url and url.startswith("http"):
-        return url
-    instance = os.getenv("SERVICENOW_INSTANCE", "").rstrip("/")
-    if instance.startswith("http"):
+    url = os.getenv("SERVICENOW_URL", "").strip().rstrip("/")
+    if url:
+        if url.startswith("http://") or url.startswith("https://"):
+            return url
+        # Stored without scheme (e.g. "mycompany.service-now.com")
+        return f"https://{url}"
+    instance = os.getenv("SERVICENOW_INSTANCE", "").strip().rstrip("/")
+    if instance.startswith("http://") or instance.startswith("https://"):
         return instance
     if instance:
         return f"https://{instance}.service-now.com"
@@ -175,14 +179,26 @@ def _map_message(raw: dict) -> dict:
 
 
 def _raise_snow_error(exc: Exception, context: str) -> None:
+    instance = _resolve_instance()
+    if not instance:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=(
+                "ServiceNow is not configured: SERVICENOW_URL env var is missing or empty. "
+                "Set it to your instance URL (e.g. https://mycompany.service-now.com)."
+            ),
+        )
     if isinstance(exc, httpx.HTTPStatusError):
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"ServiceNow returned an error while {context}: {exc.response.status_code}",
+            detail=(
+                f"ServiceNow returned HTTP {exc.response.status_code} while {context} "
+                f"(instance: {instance}). Check credentials and permissions."
+            ),
         )
     raise HTTPException(
         status_code=status.HTTP_502_BAD_GATEWAY,
-        detail=f"ServiceNow is unreachable while {context}.",
+        detail=f"ServiceNow unreachable while {context} (instance: {instance}): {type(exc).__name__}: {exc}",
     )
 
 
@@ -191,6 +207,15 @@ def _raise_snow_error(exc: Exception, context: str) -> None:
 @router.get("/tickets")
 def get_tickets(current_user: AuthUser = Depends(get_current_user)):
     assigned_user = current_user.get("username", "admin")
+
+    if not _use_mock() and not _resolve_instance():
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=(
+                "ServiceNow is not configured: SERVICENOW_URL env var is missing or empty. "
+                "Set it to your instance URL (e.g. https://mycompany.service-now.com)."
+            ),
+        )
 
     if _use_mock():
         tickets = [t for t in _MOCK_TICKETS if t["assigned_to"] == assigned_user]
