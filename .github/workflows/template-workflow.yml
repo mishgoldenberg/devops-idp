@@ -129,20 +129,21 @@ jobs:
         run: |
           python3 - <<'EOF'
           import yaml, os
-          data = {
-            "secrets": {
-              "postgresPassword":    os.environ.get("POSTGRES_PASSWORD", ""),
-              "redisPassword":       os.environ.get("REDIS_PASSWORD", ""),
-              "oauthClientId":       os.environ.get("OAUTH_CLIENT_ID", ""),
-              "oauthClientSecret":   os.environ.get("OAUTH_CLIENT_SECRET", ""),
-              "jwtSecret":           os.environ.get("JWT_SECRET", ""),
-              "azureDevopsPat":      os.environ.get("AZURE_DEVOPS_PAT", ""),
-              "azureDevopsAdminPat": os.environ.get("AZURE_DEVOPS_ADMIN_PAT", ""),
-              "servicenowUrl":       os.environ.get("SERVICENOW_URL", ""),
-              "servicenowUsername":  os.environ.get("SERVICENOW_USERNAME", ""),
-              "servicenowPassword":  os.environ.get("SERVICENOW_PASSWORD", ""),
-            }
+          secrets = {
+            "postgresPassword":    os.environ.get("POSTGRES_PASSWORD", ""),
+            "redisPassword":       os.environ.get("REDIS_PASSWORD", ""),
+            "oauthClientId":       os.environ.get("OAUTH_CLIENT_ID", ""),
+            "oauthClientSecret":   os.environ.get("OAUTH_CLIENT_SECRET", ""),
+            "jwtSecret":           os.environ.get("JWT_SECRET", ""),
+            "azureDevopsPat":      os.environ.get("AZURE_DEVOPS_PAT", ""),
+            "azureDevopsAdminPat": os.environ.get("AZURE_DEVOPS_ADMIN_PAT", ""),
+            "servicenowUrl":       os.environ.get("SERVICENOW_URL", ""),
+            "servicenowUsername":  os.environ.get("SERVICENOW_USERNAME", ""),
+            "servicenowPassword":  os.environ.get("SERVICENOW_PASSWORD", ""),
           }
+          # Scope under "backend:" so the umbrella chart passes values to the
+          # backend subchart's .Values.secrets context (not the parent chart).
+          data = {"backend": {"secrets": secrets}}
           with open("/tmp/secrets-values.yaml", "w") as f:
             yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
           print("Secrets values file written (values redacted from logs)")
