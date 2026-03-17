@@ -4,6 +4,8 @@ on:
   push:
     paths:
       - "frontend/**"
+      - "deployment/**"
+      - ".github/workflows/**"
   workflow_dispatch:
 
 jobs:
