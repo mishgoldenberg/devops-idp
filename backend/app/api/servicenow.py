@@ -428,6 +428,18 @@ def create_ticket(
         ]
         return {"success": True, "data": new_ticket, "timestamp": _now_iso()}
 
+    # ServiceNow derives 'priority' from impact × urgency via a lookup matrix —
+    # setting 'priority' directly is ignored.  Map portal priorities to the
+    # impact/urgency pair that produces the matching calculated priority.
+    _PRIORITY_TO_IMPACT_URGENCY = {
+        "1": ("1", "1"),  # Critical  → impact 1 (High),    urgency 1 (High)
+        "2": ("1", "2"),  # High      → impact 1 (High),    urgency 2 (Medium)
+        "3": ("2", "2"),  # Moderate  → impact 2 (Medium),  urgency 2 (Medium)
+        "4": ("3", "2"),  # Low       → impact 3 (Low),     urgency 2 (Medium)
+        "5": ("3", "3"),  # Planning  → impact 3 (Low),     urgency 3 (Low)
+    }
+    impact, urgency = _PRIORITY_TO_IMPACT_URGENCY.get(str(body.priority), ("2", "2"))
+
     snow_user = os.getenv("SERVICENOW_USERNAME") or os.getenv("SERVICENOW_USER", "")
     try:
         with _snow_client() as client:
@@ -436,7 +448,8 @@ def create_ticket(
                 json={
                     "short_description": body.title,
                     "description": body.description,
-                    "priority": str(body.priority),
+                    "impact": impact,
+                    "urgency": urgency,
                     # Use the service account as caller so the field is never empty
                     "caller_id": snow_user,
                     # Record the portal user in work notes for visibility in ServiceNow
