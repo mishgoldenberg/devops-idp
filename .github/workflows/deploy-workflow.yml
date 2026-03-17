@@ -100,3 +100,27 @@ jobs:
             -n devops-control-center-prod --wait --timeout 10m \
             --cleanup-on-fail \
             -f /tmp/secrets-values.yaml
+
+      - name: Fetch crash logs on failure
+        if: failure()
+        run: |
+          echo "=== Pod list ==="
+          kubectl get pods -n devops-control-center-prod
+
+          echo ""
+          echo "=== Crash logs for any CrashLoopBackOff pods ==="
+          for pod in $(kubectl get pods -n devops-control-center-prod \
+            --field-selector=status.phase!=Running -o name 2>/dev/null); do
+            echo "--- $pod ---"
+            kubectl logs "$pod" -n devops-control-center-prod --previous 2>/dev/null \
+              || kubectl logs "$pod" -n devops-control-center-prod 2>/dev/null \
+              || echo "(no logs available)"
+          done
+
+          echo ""
+          echo "=== Describe crashing pods ==="
+          for pod in $(kubectl get pods -n devops-control-center-prod \
+            --field-selector=status.phase!=Running -o name 2>/dev/null); do
+            echo "--- $pod ---"
+            kubectl describe "$pod" -n devops-control-center-prod 2>/dev/null | tail -30
+          done

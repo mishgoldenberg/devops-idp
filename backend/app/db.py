@@ -6,24 +6,31 @@ from psycopg2 import pool
 from psycopg2.extras import RealDictCursor
 from config import get_settings
 
-# Initialize a connection pool globally (create once, reuse many times)
-settings = get_settings()
-db_pool = psycopg2.pool.SimpleConnectionPool(
-    1, 20, settings.database_url
-)
+# Lazily initialised so that the module can be imported without a live DB
+# (avoids CrashLoopBackOff when the pool creation fails at import time).
+_db_pool: "psycopg2.pool.SimpleConnectionPool | None" = None
+
+
+def _get_pool() -> "psycopg2.pool.SimpleConnectionPool":
+    global _db_pool
+    if _db_pool is None:
+        settings = get_settings()
+        _db_pool = psycopg2.pool.SimpleConnectionPool(1, 20, settings.database_url)
+    return _db_pool
 
 @contextmanager
 def get_connection():
     """Context manager yielding a PostgreSQL connection from the pool."""
-    conn = db_pool.getconn()
+    pool = _get_pool()
+    conn = pool.getconn()
     try:
         yield conn
-        conn.commit()  # Automatically commit if no errors occur
+        conn.commit()
     except Exception as e:
-        conn.rollback()  # Roll back if an error occurs
+        conn.rollback()
         raise e
     finally:
-        db_pool.putconn(conn) # Return connection to the pool
+        pool.putconn(conn)
 
 def query_all(sql: str, params: Optional[Sequence[Any]] = None) -> List[Dict[str, Any]]:
     """Run a SELECT query and return all rows as dictionaries."""
