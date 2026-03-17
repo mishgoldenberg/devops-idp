@@ -189,12 +189,17 @@ def _raise_snow_error(exc: Exception, context: str) -> None:
             ),
         )
     if isinstance(exc, httpx.HTTPStatusError):
+        try:
+            snow_body = exc.response.json()
+        except Exception:
+            snow_body = exc.response.text[:300]
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=(
-                f"ServiceNow returned HTTP {exc.response.status_code} while {context} "
-                f"(instance: {instance}). Check credentials and permissions."
-            ),
+            detail={
+                "message": f"ServiceNow returned HTTP {exc.response.status_code} while {context}",
+                "instance": instance,
+                "snow_response": snow_body,
+            },
         )
     raise HTTPException(
         status_code=status.HTTP_502_BAD_GATEWAY,
