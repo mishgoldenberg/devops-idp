@@ -31,6 +31,8 @@ spec:
               value: "8000"
             - name: USE_MOCK_AZURE_DEVOPS
               value: "false"
+            - name: USE_MOCK_SERVICENOW
+              value: "false"
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:

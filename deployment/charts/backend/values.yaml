@@ -31,6 +31,9 @@ secrets:
   jwtSecret: ""
   oauthClientSecret: ""
   oauthClientId: ""
+  servicenowUrl: ""
+  servicenowUsername: ""
+  servicenowPassword: ""
 
 ingress:
   enabled: true
