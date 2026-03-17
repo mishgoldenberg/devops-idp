@@ -10,7 +10,8 @@ from security import AuthUser, get_current_user
 
 router = APIRouter()
 
-USE_MOCK = os.getenv("USE_MOCK_SERVICENOW", "true").lower() in ("true", "1")
+def _use_mock() -> bool:
+    return os.getenv("USE_MOCK_SERVICENOW", "true").lower() in ("true", "1")
 
 # Accept either SERVICENOW_URL (full URL already in .env) or construct from SERVICENOW_INSTANCE
 def _resolve_instance() -> str:
@@ -23,11 +24,6 @@ def _resolve_instance() -> str:
     if instance:
         return f"https://{instance}.service-now.com"
     return ""
-
-_INSTANCE = _resolve_instance()
-# SERVICENOW_USERNAME is the primary env var name used in the project .env files
-_USER = os.getenv("SERVICENOW_USERNAME") or os.getenv("SERVICENOW_USER", "")
-_PASSWORD = os.getenv("SERVICENOW_PASSWORD", "")
 
 
 # ── Pydantic models ──────────────────────────────────────────────────────────
@@ -127,9 +123,11 @@ def _now_iso() -> str:
 
 
 def _snow_client() -> httpx.Client:
+    user = os.getenv("SERVICENOW_USERNAME") or os.getenv("SERVICENOW_USER", "")
+    password = os.getenv("SERVICENOW_PASSWORD", "")
     return httpx.Client(
-        base_url=_INSTANCE,
-        auth=(_USER, _PASSWORD),
+        base_url=_resolve_instance(),
+        auth=(user, password),
         headers={"Accept": "application/json", "Content-Type": "application/json"},
         timeout=15.0,
     )
@@ -194,7 +192,7 @@ def _raise_snow_error(exc: Exception, context: str) -> None:
 def get_tickets(current_user: AuthUser = Depends(get_current_user)):
     assigned_user = current_user.get("username", "admin")
 
-    if USE_MOCK:
+    if _use_mock():
         tickets = [t for t in _MOCK_TICKETS if t["assigned_to"] == assigned_user]
         return {"success": True, "data": tickets, "timestamp": _now_iso()}
 
@@ -225,7 +223,7 @@ def get_tickets(current_user: AuthUser = Depends(get_current_user)):
 
 @router.get("/tickets/{sys_id}")
 def get_ticket_detail(sys_id: str, current_user: AuthUser = Depends(get_current_user)):
-    if USE_MOCK:
+    if _use_mock():
         ticket = next((t for t in _MOCK_TICKETS if t["sys_id"] == sys_id), None)
         if ticket is None:
             raise HTTPException(status_code=404, detail="Ticket not found")
@@ -278,7 +276,7 @@ def reply_to_ticket(
     if not body.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
-    if USE_MOCK:
+    if _use_mock():
         new_message = {
             "sys_id": f"msg_{int(datetime.now(timezone.utc).timestamp())}",
             "sys_created_by": current_user.get("username", "admin"),
@@ -326,7 +324,7 @@ def create_ticket(
     }
     priority_label = _PRIORITY_LABELS.get(str(body.priority), "3 - Moderate")
 
-    if USE_MOCK:
+    if _use_mock():
         new_sys_id = f"new_{int(datetime.now(timezone.utc).timestamp())}"
         ticket_number = f"INC{int(datetime.now(timezone.utc).timestamp()) % 10_000_000:07d}"
         new_ticket = {
@@ -379,7 +377,7 @@ def create_ticket(
 
 @router.get("/stats")
 def get_stats(current_user: AuthUser = Depends(get_current_user)):
-    if USE_MOCK:
+    if _use_mock():
         return {
             "success": True,
             "data": {"open": 127, "in_progress": 43, "resolved": 892, "total": 1062},
