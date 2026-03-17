@@ -8,6 +8,11 @@ on:
       - ".github/workflows/**"
   workflow_dispatch:
 
+# Same group as the backend workflow — ensures only one Helm upgrade runs at a time.
+concurrency:
+  group: helm-deploy-prod
+  cancel-in-progress: false
+
 jobs:
   frontend:
     uses: ./.github/workflows/template-workflow.yml

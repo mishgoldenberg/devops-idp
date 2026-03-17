@@ -8,6 +8,12 @@ on:
       - ".github/workflows/**"
   workflow_dispatch:
 
+# Prevent concurrent Helm upgrades against the same release.
+# cancel-in-progress: false queues the second run instead of dropping it.
+concurrency:
+  group: helm-deploy-prod
+  cancel-in-progress: false
+
 jobs:
   backend:
     uses: ./.github/workflows/template-workflow.yml
