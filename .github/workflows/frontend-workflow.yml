@@ -4,11 +4,10 @@ on:
   push:
     paths:
       - "frontend/**"
-      - "deployment/**"
-      - ".github/workflows/**"
   workflow_dispatch:
 
-# Same group as the backend workflow — ensures only one Helm upgrade runs at a time.
+# Helm/config-only changes are handled by deploy-workflow.yml to avoid
+# two simultaneous helm upgrades when both service workflows trigger at once.
 concurrency:
   group: helm-deploy-prod
   cancel-in-progress: false

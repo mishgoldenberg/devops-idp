@@ -4,12 +4,10 @@ on:
   push:
     paths:
       - "backend/app/**"
-      - "deployment/**"
-      - ".github/workflows/**"
   workflow_dispatch:
 
-# Prevent concurrent Helm upgrades against the same release.
-# cancel-in-progress: false queues the second run instead of dropping it.
+# Helm/config-only changes are handled by deploy-workflow.yml to avoid
+# two simultaneous helm upgrades when both service workflows trigger at once.
 concurrency:
   group: helm-deploy-prod
   cancel-in-progress: false

@@ -153,5 +153,5 @@ jobs:
           helm upgrade --install devops-stack ./deployment \
             -n devops-control-center-prod --wait --timeout 10m \
             -f /tmp/secrets-values.yaml \
-            --set backend.image.tag="sha-$SHORT_SHA"
+            --set ${{ inputs.image_name }}.image.tag="sha-$SHORT_SHA"
 

@@ -1,0 +1,83 @@
+name: Deploy (Helm only)
+
+# Fires when Helm charts or CI configs change but no app code changed.
+# Skips the Docker build entirely — uses the :latest images already in the registry.
+on:
+  push:
+    paths:
+      - "deployment/**"
+      - ".github/workflows/**"
+  workflow_dispatch:
+
+concurrency:
+  group: helm-deploy-prod
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: devops-idp-489012
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: devops-idp-cluster
+          location: europe-west1
+          project_id: devops-idp-489012
+          use_gke_gcloud_auth_plugin: true
+
+      - name: Update Helm dependencies
+        run: helm dependency update ./deployment
+
+      - name: Write secrets values file
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
+          OAUTH_CLIENT_ID: ${{ secrets.OAUTH_CLIENT_ID }}
+          OAUTH_CLIENT_SECRET: ${{ secrets.OAUTH_CLIENT_SECRET }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          AZURE_DEVOPS_PAT: ${{ secrets.AZURE_DEVOPS_PAT }}
+          AZURE_DEVOPS_ADMIN_PAT: ${{ secrets.AZURE_DEVOPS_ADMIN_PAT }}
+          SERVICENOW_URL: ${{ secrets.SERVICENOW_URL }}
+          SERVICENOW_USERNAME: ${{ secrets.SERVICENOW_USERNAME }}
+          SERVICENOW_PASSWORD: ${{ secrets.SERVICENOW_PASSWORD }}
+        run: |
+          python3 - <<'EOF'
+          import yaml, os
+          data = {
+            "secrets": {
+              "postgresPassword":    os.environ.get("POSTGRES_PASSWORD", ""),
+              "redisPassword":       os.environ.get("REDIS_PASSWORD", ""),
+              "oauthClientId":       os.environ.get("OAUTH_CLIENT_ID", ""),
+              "oauthClientSecret":   os.environ.get("OAUTH_CLIENT_SECRET", ""),
+              "jwtSecret":           os.environ.get("JWT_SECRET", ""),
+              "azureDevopsPat":      os.environ.get("AZURE_DEVOPS_PAT", ""),
+              "azureDevopsAdminPat": os.environ.get("AZURE_DEVOPS_ADMIN_PAT", ""),
+              "servicenowUrl":       os.environ.get("SERVICENOW_URL", ""),
+              "servicenowUsername":  os.environ.get("SERVICENOW_USERNAME", ""),
+              "servicenowPassword":  os.environ.get("SERVICENOW_PASSWORD", ""),
+            }
+          }
+          with open("/tmp/secrets-values.yaml", "w") as f:
+            yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
+          print("Secrets values file written (values redacted from logs)")
+          EOF
+
+      # No --set image.tag here: uses :latest from values.yaml (already pushed by the service workflows)
+      - name: Deploy Helm chart
+        run: |
+          helm upgrade --install devops-stack ./deployment \
+            -n devops-control-center-prod --wait --timeout 10m \
+            -f /tmp/secrets-values.yaml
