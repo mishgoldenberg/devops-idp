@@ -202,6 +202,21 @@ def _raise_snow_error(exc: Exception, context: str) -> None:
     )
 
 
+# ── GET /status (config health-check, no auth required) ──────────────────────
+
+@router.get("/status")
+def get_status():
+    instance = _resolve_instance()
+    user = os.getenv("SERVICENOW_USERNAME") or os.getenv("SERVICENOW_USER", "")
+    return {
+        "mock_mode": _use_mock(),
+        "instance_url": instance or None,
+        "username_set": bool(user),
+        "password_set": bool(os.getenv("SERVICENOW_PASSWORD", "")),
+        "ready": _use_mock() or (bool(instance) and bool(user)),
+    }
+
+
 # ── GET /tickets ─────────────────────────────────────────────────────────────
 
 @router.get("/tickets")
