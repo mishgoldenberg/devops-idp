@@ -1,4 +1,4 @@
-# --- YOUR ORIGINAL STRUCTURE ---
+# Global Helm values for the devops-stack umbrella chart.
 postgres:
   enabled: true
   primary:
