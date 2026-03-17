@@ -75,9 +75,28 @@ jobs:
           print("Secrets values file written (values redacted from logs)")
           EOF
 
+      # If a previous run timed out it leaves the release in a pending-* state
+      # which blocks all future upgrades. Roll back to the last good revision first.
+      - name: Unlock stuck Helm release (if any)
+        run: |
+          STATUS=$(helm status devops-stack -n devops-control-center-prod --output json 2>/dev/null \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['info']['status'])" 2>/dev/null \
+            || echo "not-deployed")
+          echo "Helm release status: $STATUS"
+          case "$STATUS" in
+            pending-upgrade|pending-install|pending-rollback)
+              echo "Clearing stuck operation..."
+              helm rollback devops-stack -n devops-control-center-prod 2>/dev/null \
+                || kubectl delete secret -n devops-control-center-prod \
+                     -l "name=devops-stack,status=$STATUS" --ignore-not-found \
+                || true
+              ;;
+          esac
+
       # No --set image.tag here: uses :latest from values.yaml (already pushed by the service workflows)
       - name: Deploy Helm chart
         run: |
           helm upgrade --install devops-stack ./deployment \
             -n devops-control-center-prod --wait --timeout 10m \
+            --cleanup-on-fail \
             -f /tmp/secrets-values.yaml
