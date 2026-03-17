@@ -428,6 +428,7 @@ def create_ticket(
         ]
         return {"success": True, "data": new_ticket, "timestamp": _now_iso()}
 
+    snow_user = os.getenv("SERVICENOW_USERNAME") or os.getenv("SERVICENOW_USER", "")
     try:
         with _snow_client() as client:
             resp = client.post(
@@ -436,6 +437,10 @@ def create_ticket(
                     "short_description": body.title,
                     "description": body.description,
                     "priority": str(body.priority),
+                    # Use the service account as caller so the field is never empty
+                    "caller_id": snow_user,
+                    # Record the portal user in work notes for visibility in ServiceNow
+                    "work_notes": f"Submitted via DevOps Control Center by: {user_email}",
                 },
                 params={"sysparm_display_value": "true"},
             )
