@@ -93,12 +93,14 @@ jobs:
               ;;
           esac
 
-      # No --set image.tag here: uses :latest from values.yaml (already pushed by the service workflows)
+      # No --set image.tag here — uses :latest from values.yaml.
+      # No --wait: this workflow only applies config/infra changes (ConfigMaps,
+      # Secrets, Helm chart structure). Pod readiness is owned by the backend/
+      # frontend CI workflows which run on actual code changes.
       - name: Deploy Helm chart
         run: |
           helm upgrade --install devops-stack ./deployment \
-            -n devops-control-center-prod --wait --timeout 10m \
-            --cleanup-on-fail \
+            -n devops-control-center-prod \
             -f /tmp/secrets-values.yaml
 
       - name: Fetch crash logs on failure

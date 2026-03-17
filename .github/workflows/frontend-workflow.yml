@@ -20,5 +20,4 @@ jobs:
       image_name: frontend
       gcp_project: devops-idp-489012
       gcp_region: europe-west1
-    secrets:
-      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+    secrets: inherit
