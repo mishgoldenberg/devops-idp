@@ -22,18 +22,3 @@ def ui_index(request: Request):
             "now": datetime.utcnow().isoformat() + "Z",
         },
     )
-
-
-@ui_router.get("/ui/hello", response_class=HTMLResponse)
-def ui_hello(request: Request, name: str = "world"):
-    """Return a small HTML fragment that can be fetched via HTMX."""
-    templates = _get_templates(request)
-
-    return templates.TemplateResponse(
-        "partials/hello.html",
-        {
-            "request": request,
-            "name": name,
-            "now": datetime.utcnow().isoformat() + "Z",
-        },
-    )
