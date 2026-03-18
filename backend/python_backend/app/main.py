@@ -51,7 +51,7 @@ def create_app() -> FastAPI:
     )
 
     # Static and template directories (used by the HTMX-powered frontend)
-    base_dir = Path(__file__).resolve().parent
+    base_dir = Path(__file__).resolve().parent.parent.parent / "frontend"
     # Templates & static assets used by the HTMX-based UI.
     # Access templates from request.app.state.templates in route handlers.
     app.state.templates = Jinja2Templates(directory=base_dir / "templates")
