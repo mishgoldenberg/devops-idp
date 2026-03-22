@@ -22,3 +22,16 @@ def ui_index(request: Request):
             "now": datetime.utcnow().isoformat() + "Z",
         },
     )
+
+
+@ui_router.get("/ui/components/quick-links", response_class=HTMLResponse)
+def ui_quick_links_component(request: Request):
+    """Render the Quick Links dashboard component for HTMX partial loading."""
+    templates = _get_templates(request)
+    return templates.TemplateResponse(
+        "partials/components/quick-links.html",
+        {
+            "request": request,
+            "now": datetime.utcnow().isoformat() + "Z",
+        },
+    )
