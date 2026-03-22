@@ -16,7 +16,7 @@
 	<body class="h-screen bg-base-200 flex flex-col">
 		<!-- Header -->
 		<header
-			class="px-8 py-15 border-b border-base-300 bg-[url(../images/banner.svg)] flex items-center gap-3 bg-cover"
+			class="px-8 py-8 border-b border-base-300 bg-[url(../images/banner.svg)] flex items-center gap-3 bg-cover"
 		>
 			<img
 				src="../static/images/idp-icon.svg"
@@ -25,7 +25,7 @@
 			/>
 			<div>
 				<h1 class="font-bold text-3xl text-white">DevOps Portal</h1>
-				<p class="text-lg text-white/60">Internal Developer</p>
+				<p class="text-lg text-white/60">Internal Developer Portal</p>
 			</div>
 		</header>
 
@@ -333,7 +333,8 @@
 					</div>
 				</header>
 				<!-- Page Content -->
-				<div class="flex-1 overflow-y-auto p-6 bg-base-200">
+				<div class="flex-1 overflow-y-auto p-6 bg-base-200 flex flex-col gap-6">
+					<!-- Quick Links sits above the widget grid at its natural width -->
 					<div
 						id="quick-links-component"
 						hx-get="/ui/components/quick-links"
@@ -342,6 +343,111 @@
 					>
 						<div class="card w-fit bg-base-100 border border-base-300 shadow">
 							<div class="card-body p-6">
+								<span
+									class="loading loading-spinner loading-md text-base-content/40"
+								></span>
+							</div>
+						</div>
+					</div>
+					<!-- Dashboard widget grid — max 3 per row, each widget is 20rem tall -->
+					<div
+						class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 items-start"
+					>
+						<!-- Azure DevOps Tasks -->
+						<div
+							id="ado-tasks-component"
+							class="h-80"
+							hx-get="/ui/components/azure-devops-tasks"
+							hx-trigger="load"
+							hx-swap="innerHTML"
+						>
+							<div
+								class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+							>
+								<span
+									class="loading loading-spinner loading-md text-base-content/40"
+								></span>
+							</div>
+						</div>
+						<!-- ServiceNow Tickets (UI-only for now) -->
+						<div class="h-80">
+							{% include "partials/components/servicenow-tickets.html" %}
+						</div>
+						<!-- Pull Requests -->
+						<div
+							id="pull-requests-component"
+							class="h-80"
+							hx-get="/ui/components/pull-requests"
+							hx-trigger="load"
+							hx-swap="innerHTML"
+						>
+							<div
+								class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+							>
+								<span
+									class="loading loading-spinner loading-md text-base-content/40"
+								></span>
+							</div>
+						</div>
+						<!-- Pipelines -->
+						<div
+							id="pipelines-component"
+							class="h-80"
+							hx-get="/ui/components/pipelines"
+							hx-trigger="load"
+							hx-swap="innerHTML"
+						>
+							<div
+								class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+							>
+								<span
+									class="loading loading-spinner loading-md text-base-content/40"
+								></span>
+							</div>
+						</div>
+						<!-- SonarQube Code Quality -->
+						<div
+							id="sonarqube-quality-component"
+							class="h-80"
+							hx-get="/ui/components/sonarqube-quality"
+							hx-trigger="load"
+							hx-swap="innerHTML"
+						>
+							<div
+								class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+							>
+								<span
+									class="loading loading-spinner loading-md text-base-content/40"
+								></span>
+							</div>
+						</div>
+						<!-- Artifactory Storage -->
+						<div
+							id="artifactory-storage-component"
+							class="h-80"
+							hx-get="/ui/components/artifactory-storage"
+							hx-trigger="load"
+							hx-swap="innerHTML"
+						>
+							<div
+								class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+							>
+								<span
+									class="loading loading-spinner loading-md text-base-content/40"
+								></span>
+							</div>
+						</div>
+						<!-- Service Health -->
+						<div
+							id="service-health-component"
+							class="h-80"
+							hx-get="/ui/components/service-health"
+							hx-trigger="load"
+							hx-swap="innerHTML"
+						>
+							<div
+								class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+							>
 								<span
 									class="loading loading-spinner loading-md text-base-content/40"
 								></span>
