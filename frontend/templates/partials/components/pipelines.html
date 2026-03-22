@@ -1,0 +1,50 @@
+<div
+	class="card bg-base-100 border border-base-300 shadow h-full flex flex-col"
+>
+	<div class="card-body p-5 flex flex-col h-full gap-4">
+		<!-- Header -->
+		<div class="flex items-center gap-3">
+			<div
+				class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-accent/30 bg-accent/10"
+			>
+				<svg
+					viewBox="0 0 24 24"
+					class="h-5 w-5 fill-current text-accent"
+					aria-hidden="true"
+				>
+					<path d="M8 5v14l11-7z" />
+				</svg>
+			</div>
+			<h3
+				class="text-sm font-bold uppercase tracking-widest text-base-content/70"
+			>
+				Pipelines
+			</h3>
+		</div>
+		<!-- Pipeline run list -->
+		<ul
+			class="flex flex-col gap-2 flex-1 min-h-0 overflow-y-auto overscroll-contain"
+		>
+			{% for run in runs %}
+			<li
+				class="flex items-center gap-3 rounded-lg bg-base-200/60 border border-base-300 px-3 py-2.5"
+			>
+				<span
+					class="h-2.5 w-2.5 shrink-0 rounded-full {{ 'bg-success' if run.result == 'succeeded' else ('bg-error' if run.result == 'failed' else 'bg-warning animate-pulse') }}"
+				></span>
+				<div class="flex flex-col flex-1 min-w-0">
+					<span class="text-sm font-medium text-base-content truncate"
+						>{{ run.name }}</span
+					>
+					<span class="text-xs text-base-content/50">{{ run.project }}</span>
+				</div>
+				<span
+					class="text-xs font-semibold shrink-0 {{ 'text-success' if run.result == 'succeeded' else ('text-error' if run.result == 'failed' else 'text-warning') }}"
+					>{{ run.result }}</span
+				>
+				<span class="text-xs text-base-content/40 shrink-0">{{ run.age }}</span>
+			</li>
+			{% endfor %}
+		</ul>
+	</div>
+</div>
