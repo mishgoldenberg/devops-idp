@@ -2,5 +2,5 @@
 @plugin "daisyui" {
 	themes:
 		nord --default,
-		aqua --prefersdark;
+		night --prefersdark;
 }
