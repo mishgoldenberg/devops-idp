@@ -2,8 +2,12 @@ import os
 from datetime import datetime
 from typing import Dict
 
-from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
+
+from .api.auth import LoginRequest, login as auth_login
+from .db import query_one
+from .security import decode_access_token
 
 ui_router = APIRouter()
 
@@ -13,17 +17,126 @@ def _get_templates(request: Request):
     return request.app.state.templates  # type: ignore
 
 
+def _format_display_name(username: str) -> str:
+    """Convert a login name into a friendlier fallback display name."""
+    local_part = username.split("@", 1)[0].replace(".", " ").replace("_", " ")
+    return " ".join(part.capitalize() for part in local_part.split() if part) or username
+
+
+def _get_ui_user(token: str) -> Dict[str, str]:
+    """Resolve the authenticated user's display info for the UI layer."""
+    payload = decode_access_token(token)
+    username = str(payload.get("username", "User"))
+    display_name = _format_display_name(username)
+
+    user_id = payload.get("id")
+    if user_id:
+        try:
+            user_row = query_one(
+                "SELECT full_name FROM users WHERE id = %s",
+                [user_id],
+            )
+            if user_row and user_row.get("full_name"):
+                display_name = str(user_row["full_name"])
+        except Exception:
+            pass
+
+    return {
+        "username": username,
+        "display_name": display_name,
+    }
+
+
 @ui_router.get("/ui/", response_class=HTMLResponse)
 def ui_index(request: Request):
     """Render the HTMX-based UI landing page."""
+    token = request.cookies.get("auth_token")
+    if not token:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+
+    try:
+        user = _get_ui_user(token)
+    except HTTPException:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+
     templates = _get_templates(request)
     return templates.TemplateResponse(
         "index.html",
         {
             "request": request,
+            "user": user,
             "now": datetime.utcnow().isoformat() + "Z",
         },
     )
+
+
+@ui_router.get("/ui/auth", response_class=HTMLResponse)
+def ui_auth_page(request: Request):
+    """Render the login page for username-based authentication."""
+    templates = _get_templates(request)
+
+    token = request.cookies.get("auth_token")
+    if token:
+        try:
+            decode_access_token(token)
+            return RedirectResponse(url="/ui/", status_code=303)
+        except HTTPException:
+            pass
+
+    return templates.TemplateResponse(
+        "login.html",
+        {
+            "request": request,
+            "error": request.query_params.get("error", ""),
+            "username": request.query_params.get("username", ""),
+        },
+    )
+
+
+@ui_router.get("/ui/auth/login")
+def ui_auth_login(
+    username: str = "",
+    password: str = "",
+):
+    """Authenticate via existing auth script and redirect to dashboard."""
+    del password  # Password is currently unused by backend mock auth flow.
+
+    normalized_username = username.strip()
+    if not normalized_username:
+        return RedirectResponse(url="/ui/auth?error=missing_username", status_code=303)
+
+    try:
+        result = auth_login(LoginRequest(username=normalized_username))
+    except HTTPException:
+        return RedirectResponse(
+            url=f"/ui/auth?error=invalid_credentials&username={normalized_username}",
+            status_code=303,
+        )
+    except Exception:
+        return RedirectResponse(
+            url=f"/ui/auth?error=auth_unavailable&username={normalized_username}",
+            status_code=303,
+        )
+
+    token = result["data"]["token"]
+    response = RedirectResponse(url="/ui/", status_code=303)
+    response.set_cookie(
+        key="auth_token",
+        value=token,
+        httponly=True,
+        samesite="lax",
+        secure=False,
+        max_age=60 * 60 * 8,
+    )
+    return response
+
+
+@ui_router.post("/ui/auth/logout")
+def ui_auth_logout():
+    """Clear auth cookie and return user to login page."""
+    response = RedirectResponse(url="/ui/auth", status_code=303)
+    response.delete_cookie("auth_token")
+    return response
 
 
 @ui_router.get("/ui/components/quick-links", response_class=HTMLResponse)

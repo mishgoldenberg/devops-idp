@@ -98,7 +98,7 @@ def create_app() -> FastAPI:
     # Root endpoint (non-API) - Serves a small HTML landing page for HTMX-based UI.
     @app.get("/", include_in_schema=False)
     def root(request: Request):
-        return RedirectResponse(url="/ui/")
+        return RedirectResponse(url="/ui/auth")
 
     # Kubernetes PROBE ENDPOINTS
     # These are essential for Kubernetes orchestration:

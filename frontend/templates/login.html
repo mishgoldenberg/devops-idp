@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>DevOps Portal Sign In</title>
+		<link rel="stylesheet" href="/static/css/output.css" />
+		<link
+			rel="shortcut icon"
+			href="/static/images/idp-icon.svg"
+			type="image/x-icon"
+		/>
+	</head>
+	<body
+		class="min-h-screen bg-base-200 bg-[url('/static/images/hero-background.jpg')] bg-cover bg-center bg-no-repeat"
+	>
+		<main class="min-h-screen flex items-center justify-center px-4 py-8">
+			<section
+				class="card w-full max-w-md bg-base-100/95 border border-base-300 shadow-2xl backdrop-blur-sm"
+			>
+				<div class="card-body p-8 gap-5">
+					<div class="flex flex-col items-center gap-3">
+						<div
+							class="h-12 w-12 rounded-xl bg-primary flex items-center justify-center shadow"
+						>
+							<img
+								src="/static/images/idp-icon.svg"
+								alt="Portal icon"
+								class="h-6 w-6"
+							/>
+						</div>
+						<h1 class="text-3xl font-bold text-primary">Developer Portal</h1>
+					</div>
+
+					{% if error %}
+					<div role="alert" class="alert alert-error alert-soft text-sm">
+						{% if error == "invalid_credentials" %}
+						<span>Unable to sign in with this username.</span>
+						{% elif error == "missing_username" %}
+						<span>Please enter a username.</span>
+						{% elif error == "auth_unavailable" %}
+						<span
+							>Authentication service is unavailable. Check DB setup and try
+							again.</span
+						>
+						{% else %}
+						<span>Authentication failed. Try again.</span>
+						{% endif %}
+					</div>
+					{% endif %}
+
+					<form action="/ui/auth/login" method="get" class="space-y-4">
+						<label class="form-control w-full">
+							<div class="label pb-1">
+								<span
+									class="label-text text-xs font-bold uppercase tracking-wide"
+									>Username</span
+								>
+							</div>
+							<input
+								type="text"
+								name="username"
+								placeholder="engineering_id"
+								value="{{ username }}"
+								autocomplete="username"
+								required
+								class="input input-bordered w-full"
+							/>
+						</label>
+
+						<label class="form-control w-full">
+							<div class="label pb-1">
+								<span
+									class="label-text text-xs font-bold uppercase tracking-wide"
+									>Password</span
+								>
+							</div>
+							<input
+								type="password"
+								name="password"
+								placeholder="••••••••"
+								autocomplete="current-password"
+								class="input input-bordered w-full"
+							/>
+						</label>
+
+						<button type="submit" class="btn btn-primary w-full mt-2">
+							Sign In
+						</button>
+					</form>
+
+					<div
+						class="divider text-xs uppercase tracking-wide text-base-content/50"
+					>
+						or
+					</div>
+
+					<button
+						type="button"
+						class="btn btn-outline w-full"
+						aria-disabled="true"
+					>
+						Sign in with SSO
+					</button>
+
+					<p class="text-center text-xs text-base-content/60 pt-2">
+						Need access?
+						<a href="#" class="link link-primary">Contact Admin</a>
+					</p>
+				</div>
+			</section>
+		</main>
+	</body>
+</html>
