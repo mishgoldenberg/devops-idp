@@ -1,0 +1,232 @@
+<main class="flex-1 min-h-0 flex flex-col h-full overflow-hidden">
+	<!-- Header -->
+	<header
+		class="bg-base-100 shadow-sm border-b border-base-300 px-6 py-8 flex items-center justify-between"
+	>
+		<div>
+			<h2 class="text-3xl font-bold text-base-content">
+				Welcome back, {{ user.display_name }}!
+			</h2>
+			<p class="mt-1 text-sm text-base-content/50">
+				Summary of your connected systems status and tasks.
+			</p>
+		</div>
+		<div class="flex gap-2">
+			<button id="refresh-btn" class="btn btn-outline btn-sm">
+				&#8635; Refresh
+			</button>
+			<button class="btn btn-primary btn-sm">
+				<img
+					src="../static/images/customize.svg"
+					alt=""
+					class="w-5 h-5"
+				/>Customize Dashboard
+			</button>
+		</div>
+	</header>
+
+	<!-- Page Content (isolated scroll area) -->
+	<div
+		class="flex-1 min-h-0 overflow-y-auto p-6 bg-base-200 flex flex-col gap-6"
+	>
+		<!-- Quick Links sits above the widget grid at its natural width -->
+		<div
+			id="quick-links-component"
+			hx-get="/ui/components/quick-links"
+			hx-trigger="load"
+			hx-swap="innerHTML"
+		>
+			<div class="card w-fit bg-base-100 border border-base-300 shadow">
+				<div class="card-body p-6">
+					<span
+						class="loading loading-spinner loading-md text-base-content/40"
+					></span>
+				</div>
+			</div>
+		</div>
+
+		<!-- Dashboard widget grid -->
+		<div
+			class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 items-start"
+		>
+			<!-- Azure DevOps Tasks -->
+			<div
+				id="ado-tasks-component"
+				class="h-80 widget-shell"
+				hx-get="/ui/components/azure-devops-tasks"
+				hx-trigger="load, every 60s, click from:#refresh-btn"
+				hx-target="find .widget-content"
+				hx-swap="innerHTML"
+			>
+				<div class="widget-loading h-full">
+					<div
+						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+					>
+						<span
+							class="loading loading-spinner loading-md text-base-content/40"
+						></span>
+					</div>
+				</div>
+				<div class="widget-content h-full">
+					<div
+						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+					>
+						<span
+							class="loading loading-spinner loading-md text-base-content/40"
+						></span>
+					</div>
+				</div>
+			</div>
+
+			<!-- ServiceNow Tickets (UI-only for now) -->
+			<div class="h-80">
+				{% include "partials/components/servicenow-tickets.html" %}
+			</div>
+
+			<!-- Pull Requests -->
+			<div
+				id="pull-requests-component"
+				class="h-80 widget-shell"
+				hx-get="/ui/components/pull-requests"
+				hx-trigger="load, every 60s, click from:#refresh-btn"
+				hx-target="find .widget-content"
+				hx-swap="innerHTML"
+			>
+				<div class="widget-loading h-full">
+					<div
+						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+					>
+						<span
+							class="loading loading-spinner loading-md text-base-content/40"
+						></span>
+					</div>
+				</div>
+				<div class="widget-content h-full">
+					<div
+						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+					>
+						<span
+							class="loading loading-spinner loading-md text-base-content/40"
+						></span>
+					</div>
+				</div>
+			</div>
+
+			<!-- Pipelines -->
+			<div
+				id="pipelines-component"
+				class="h-80 widget-shell"
+				hx-get="/ui/components/pipelines"
+				hx-trigger="load, every 60s, click from:#refresh-btn"
+				hx-target="find .widget-content"
+				hx-swap="innerHTML"
+			>
+				<div class="widget-loading h-full">
+					<div
+						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+					>
+						<span
+							class="loading loading-spinner loading-md text-base-content/40"
+						></span>
+					</div>
+				</div>
+				<div class="widget-content h-full">
+					<div
+						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+					>
+						<span
+							class="loading loading-spinner loading-md text-base-content/40"
+						></span>
+					</div>
+				</div>
+			</div>
+
+			<!-- SonarQube Code Quality -->
+			<div
+				id="sonarqube-quality-component"
+				class="h-80 widget-shell"
+				hx-get="/ui/components/sonarqube-quality"
+				hx-trigger="load, every 60s, click from:#refresh-btn"
+				hx-target="find .widget-content"
+				hx-swap="innerHTML"
+			>
+				<div class="widget-loading h-full">
+					<div
+						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+					>
+						<span
+							class="loading loading-spinner loading-md text-base-content/40"
+						></span>
+					</div>
+				</div>
+				<div class="widget-content h-full">
+					<div
+						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+					>
+						<span
+							class="loading loading-spinner loading-md text-base-content/40"
+						></span>
+					</div>
+				</div>
+			</div>
+
+			<!-- Artifactory Storage -->
+			<div
+				id="artifactory-storage-component"
+				class="h-80 widget-shell"
+				hx-get="/ui/components/artifactory-storage"
+				hx-trigger="load, every 60s, click from:#refresh-btn"
+				hx-target="find .widget-content"
+				hx-swap="innerHTML"
+			>
+				<div class="widget-loading h-full">
+					<div
+						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+					>
+						<span
+							class="loading loading-spinner loading-md text-base-content/40"
+						></span>
+					</div>
+				</div>
+				<div class="widget-content h-full">
+					<div
+						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+					>
+						<span
+							class="loading loading-spinner loading-md text-base-content/40"
+						></span>
+					</div>
+				</div>
+			</div>
+
+			<!-- Service Health -->
+			<div
+				id="service-health-component"
+				class="h-80 widget-shell"
+				hx-get="/ui/components/service-health"
+				hx-trigger="load, every 60s, click from:#refresh-btn"
+				hx-target="find .widget-content"
+				hx-swap="innerHTML"
+			>
+				<div class="widget-loading h-full">
+					<div
+						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+					>
+						<span
+							class="loading loading-spinner loading-md text-base-content/40"
+						></span>
+					</div>
+				</div>
+				<div class="widget-content h-full">
+					<div
+						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+					>
+						<span
+							class="loading loading-spinner loading-md text-base-content/40"
+						></span>
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+</main>

@@ -33,9 +33,22 @@
 					class="h-2.5 w-2.5 shrink-0 rounded-full {{ 'bg-success' if run.result == 'succeeded' else ('bg-error' if run.result == 'failed' else 'bg-warning animate-pulse') }}"
 				></span>
 				<div class="flex flex-col flex-1 min-w-0">
+					{% set run_url = (run.url or '')|trim %} {% set run_url_valid =
+					run_url.startswith('https://dev.azure.com/') and '/_build/results' in
+					run_url and '${' not in run_url and 'org/project' not in run_url %} {%
+					if run_url_valid %}
+					<a
+						href="{{ run_url }}"
+						target="_blank"
+						rel="noopener noreferrer"
+						class="text-sm font-medium text-base-content hover:text-primary truncate"
+						>{{ run.name }}</a
+					>
+					{% else %}
 					<span class="text-sm font-medium text-base-content truncate"
 						>{{ run.name }}</span
 					>
+					{% endif %}
 					<span class="text-xs text-base-content/50">{{ run.project }}</span>
 				</div>
 				<span
