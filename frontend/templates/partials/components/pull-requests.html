@@ -34,9 +34,22 @@
 			<li
 				class="rounded-lg bg-base-200/60 border border-base-300 px-3 py-2.5 flex flex-col gap-1"
 			>
+				{% set pr_url = (pr.url or '')|trim %} {% set pr_url_valid =
+				pr_url.startswith('https://dev.azure.com/') and '/_git/' in pr_url and
+				'/pullrequest/' in pr_url and '${' not in pr_url and 'org/project' not
+				in pr_url %} {% if pr_url_valid %}
+				<a
+					href="{{ pr_url }}"
+					target="_blank"
+					rel="noopener noreferrer"
+					class="text-sm font-medium text-base-content hover:text-primary truncate"
+					>{{ pr.title }}</a
+				>
+				{% else %}
 				<span class="text-sm font-medium text-base-content truncate"
 					>{{ pr.title }}</span
 				>
+				{% endif %}
 				<div class="flex items-center gap-2 flex-wrap">
 					<span class="badge badge-outline badge-xs">{{ pr.repository }}</span>
 					<span class="text-xs text-base-content/60 truncate"

@@ -2642,3 +2642,15 @@
     }
   }
 }
+
+/* Widget Loading States */
+.widget-shell .widget-loading {
+  display: none;
+}
+
+.widget-shell.htmx-request .widget-content {
+  display: none;
+}
+
+.widget-shell.htmx-request .widget-loading {
+  display: block;
