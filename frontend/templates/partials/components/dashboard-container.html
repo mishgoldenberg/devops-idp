@@ -32,6 +32,7 @@
 		<!-- Quick Links sits above the widget grid at its natural width -->
 		<div
 			id="quick-links-component"
+			class="mx-auto w-fit max-w-full"
 			hx-get="/ui/components/quick-links"
 			hx-trigger="load"
 			hx-swap="innerHTML"
@@ -52,7 +53,7 @@
 			<!-- Azure DevOps Tasks -->
 			<div
 				id="ado-tasks-component"
-				class="h-80 widget-shell"
+				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
 				hx-get="/ui/components/azure-devops-tasks"
 				hx-trigger="load, every 60s, click from:#refresh-btn"
 				hx-target="find .widget-content"
@@ -86,7 +87,7 @@
 			<!-- Pull Requests -->
 			<div
 				id="pull-requests-component"
-				class="h-80 widget-shell"
+				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
 				hx-get="/ui/components/pull-requests"
 				hx-trigger="load, every 60s, click from:#refresh-btn"
 				hx-target="find .widget-content"
@@ -115,7 +116,7 @@
 			<!-- Pipelines -->
 			<div
 				id="pipelines-component"
-				class="h-80 widget-shell"
+				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
 				hx-get="/ui/components/pipelines"
 				hx-trigger="load, every 60s, click from:#refresh-btn"
 				hx-target="find .widget-content"
@@ -144,7 +145,7 @@
 			<!-- SonarQube Code Quality -->
 			<div
 				id="sonarqube-quality-component"
-				class="h-80 widget-shell"
+				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
 				hx-get="/ui/components/sonarqube-quality"
 				hx-trigger="load, every 60s, click from:#refresh-btn"
 				hx-target="find .widget-content"
@@ -173,7 +174,7 @@
 			<!-- Artifactory Storage -->
 			<div
 				id="artifactory-storage-component"
-				class="h-80 widget-shell"
+				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
 				hx-get="/ui/components/artifactory-storage"
 				hx-trigger="load, every 60s, click from:#refresh-btn"
 				hx-target="find .widget-content"
@@ -202,7 +203,7 @@
 			<!-- Service Health -->
 			<div
 				id="service-health-component"
-				class="h-80 widget-shell"
+				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
 				hx-get="/ui/components/service-health"
 				hx-trigger="load, every 60s, click from:#refresh-btn"
 				hx-target="find .widget-content"

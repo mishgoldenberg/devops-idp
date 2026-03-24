@@ -724,3 +724,13 @@ def ui_service_health_component(request: Request):
         "partials/components/service-health.html",
         {"request": request, "services": _get_service_health_data()},
     )
+
+
+@ui_router.get("/ui/components/servicenow-tickets", response_class=HTMLResponse)
+def ui_servicenow_tickets_component(request: Request):
+    """Render the ServiceNow Tickets dashboard widget for HTMX partial loading."""
+    templates = _get_templates(request)
+    return templates.TemplateResponse(
+        "partials/components/servicenow-tickets.html",
+        {"request": request, "now": datetime.utcnow().isoformat() + "Z"},
+    )
