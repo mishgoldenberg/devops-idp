@@ -1,0 +1,41 @@
+# n8n/values.yaml
+
+# n8n environment variables must go into 'extraEnvs' for this chart
+# extraEnvs:
+#   - name: N8N_ENCRYPTION_KEY
+#     value: "your-very-long-secure-random-string"
+#   - name: N8N_LISTEN_ADDRESS
+#     value: "0.0.0.0"
+
+# GKE Autopilot: Resources go directly at the root
+resources:
+  requests:
+    cpu: "500m"
+    memory: "2Gi"
+  limits:
+    cpu: "500m"
+    memory: "2Gi"
+
+# Database Configuration
+db:
+  type: postgresdb
+
+# This triggers the Bitnami PostgreSQL sub-chart
+postgresql:
+  enabled: true
+  auth:
+    database: n8n
+    username: n8n_user
+    password: "n8n_password_change_me"
+  primary:
+    persistence:
+      size: 10Gi
+    resources:
+      requests:
+        cpu: "250m"
+        memory: "1Gi"
+
+# # Persistence for the main n8n pod
+# persistence:
+#   enabled: true
+#   size: 10Gi
