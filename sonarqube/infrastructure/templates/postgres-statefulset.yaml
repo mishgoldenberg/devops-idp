@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-sonar
+  namespace: sonarqube  # Explicitly targeting your namespace
+spec:
+  serviceName: {{ .Values.postgres.serviceName }}
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-sonar
+  template:
+    metadata:
+      labels:
+        app: postgres-sonar
+    spec:
+      containers:
+        - name: postgres
+          image: {{ .Values.postgres.image | default "postgres:15" }}
+          resources:
+            # GKE Autopilot recommended minimums for small DBs
+            requests:
+              cpu: "500m"
+              memory: "2Gi"
+            limits:
+              cpu: "1"
+              memory: "2Gi"
+          ports:
+            - containerPort: {{ .Values.postgres.port}}
+          env:
+            - name: POSTGRES_USER
+              value: {{ .Values.postgres.postgresUser }}
+            - name: POSTGRES_PASSWORD
+              value: {{ .Values.postgres.postgresPassword }} 
+            - name: POSTGRES_DB
+              value: {{ .Values.postgres.postgresDB }}
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: postgres-storage
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-storage
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        # Autopilot uses 'standard-rwo' by default which works perfectly here
+        resources:
+          requests:
+            storage: {{ .Values.postgres.storageSize | default "10Gi" }}
