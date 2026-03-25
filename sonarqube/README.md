@@ -5,8 +5,8 @@ step 1: configure postgresql
 # 1. First, do a dry-run to see if the YAML renders correctly for Autopilot                                                                
 >> helm install sonar-infra ./sonarqube --namespace sonarqube --create-namespace --dry-run --debug
 >>
->> # 2. If it looks good, deploy it
->> helm upgrade --install sonar-infra ./sonarqube --namespace sonarqube
+>> # 2. Deploy postgres before sonarqube
+>> helm upgrade --install sonar-infra ./sonarqube/infrastructure --namespace sonarqube
 ```
 step 2: install sonarqube
 ```
