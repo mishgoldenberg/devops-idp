@@ -26,3 +26,10 @@ extra step, in order to delete helm installation:
 ```
 helm uninstall sonar-infra -n sonarqube                             
 ```
+to access the app localy:
+```
+1. Get the application URL by running these commands:
+  export POD_NAME=$(kubectl get pods --namespace sonarqube -l "app=sonarqube,release=sonarqube" -o jsonpath="{.items[0].metadata.name}")
+  echo "Visit http://127.0.0.1:8080 to use your application"
+  kubectl port-forward $POD_NAME 8080:9000 -n sonarqube
+```

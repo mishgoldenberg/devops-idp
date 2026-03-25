@@ -1,28 +1,23 @@
-# sonarqube-values.yaml
-
-# Enable the Community Build specifically
 community:
   enabled: true
 
-# sonarqube-values.yaml
+# New required field for chart validation
+monitoringPasscode: "Aa12345678" 
 
-tolerations:
-  - key: "cloud.google.com/compute-class"
-    operator: "Equal"
-    value: "sonarqube-node-config"
-    effect: "NoSchedule"
-
-monitoringPasscode: "Aa12345678"
-
-# Link to your existing StatefulSet database
-jdbcOverwrite:
-  enable: true
+jdbcOverwrite: 
+  enabled: true
   jdbcUrl: "jdbc:postgresql://postgres-sonar-service:5432/sonar"
   jdbcUsername: "sonar"
   jdbcPassword: "sonar"
 
+postgresql:
+  enabled: false 
+  postgresqlServer: "postgres-sonar-service"
+  postgresqlDatabase: "sonar"
+  postgresqlUsername: "sonar"
+  postgresqlPassword: "sonar"
+
 # GKE Autopilot Requirements
-# Autopilot blocks root/privileged init containers by default.
 initSysctl:
   enabled: false
 initFs:
@@ -30,21 +25,32 @@ initFs:
 
 sonarProperties:
   sonar.search.javaAdditionalOpts: "-Dnode.store.allow_mmap=false"
-# Autopilot requires explicit resource requests
-resources:
-  requests:
-    cpu: "2"
-    memory: "8Gi"  # Increased from 4Gi to meet the 1:4 ratio
-  limits:
-    cpu: "2"
-    memory: "8Gi"
 
-# Persistence for Search Indices (Elasticsearch)
 elasticsearch:
   persistence:
     enabled: true
     size: 5Gi
 
-# Service configuration
 service:
-  type: ClusterIP # Use this for internal backend communication
+  type: ClusterIP
+
+# Add this to your sonarqube-values.yaml
+
+livenessProbe:
+  initialDelaySeconds: 120 # Give it 2 minutes before checking
+  periodSeconds: 30
+  failureThreshold: 6
+
+readinessProbe:
+  initialDelaySeconds: 60  # Give it 1 minute before checking
+  periodSeconds: 30
+  failureThreshold: 6
+
+# Also, let's bump the memory slightly to ensure Elasticsearch doesn't crash
+resources:
+  requests:
+    cpu: "500m"
+    memory: "3Gi" # 3Gi is safer for the 8.19.8 Elasticsearch engine
+  limits:
+    cpu: "500m"
+    memory: "3Gi"

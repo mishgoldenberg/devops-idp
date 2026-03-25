@@ -2,18 +2,18 @@
 edition: community
 
 jdbcOverwrite:
-  enable: true
-  jdbcUrl: "jdbc:postgresql://<YOUR_CLOUD_SQL_PRIVATE_IP>:5432/sonar"
+  enabled: true
+  jdbcUrl: "jdbc:postgresql://postgres-sonar-service:5432/sonar"
   jdbcUsername: "sonar"
-  jdbcPassword: "your-password"
+  jdbcPassword: "sonar"
 
 # Autopilot requires explicit resource requests
 resources:
   requests:
-    cpu: "2"
+    cpu: "250m"
     memory: "4Gi"
   limits:
-    cpu: "2"
+    cpu: "250m"
     memory: "4Gi"
 
 # Use an Internal Load Balancer for your backend to connect
