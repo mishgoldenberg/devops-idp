@@ -16,33 +16,25 @@ spec:
       containers:
         - name: postgres
           image: {{ .Values.postgres.image }}
-          resources:
-            requests:
-              cpu: "250m"    # 0.25 CPU
-              memory: "512Mi" # 512 MB
-            limits:
-              cpu: "500m"
-              memory: "1Gi"
           ports:
             - containerPort: 5432
-          envFrom:
-            - secretRef:
-                name: all-secrets
           env:
             - name: POSTGRES_USER
-              value: {{ .Values.global.endpoints.postgresUser }}
+              value: {{ .Values.postgres.postgresUser }}
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.postgres.secretName }}, key: POSTGRES_PASSWORD } }
             - name: POSTGRES_DB
-              value: {{ .Values.global.endpoints.postgresDB }}
+              value: {{ .Values.postgres.postgresDB }}
             - name: POSTGRES_PORT
-              value: {{ .Values.global.endpoints.postgresPort | quote }}
+              value: {{ .Values.postgres.port | quote }}
             - name: POSTGRES_HOST
-              value: {{ .Values.global.endpoints.postgresServiceName }}
+              value: {{ .Values.postgres.serviceName }}
             # String interpolation for DATABASE_URL
             - name: DATABASE_URL
               value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)"
           volumeMounts:
             - name: postgres-storage
-              mountPath: /var/lib/postgresql/pgdata
+              mountPath: /var/lib/postgresql/data
             - name: postgres-init-scripts
               mountPath: /docker-entrypoint-initdb.d
       volumes:
