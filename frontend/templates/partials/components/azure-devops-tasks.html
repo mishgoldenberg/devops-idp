@@ -96,14 +96,20 @@
 			if (!pat) return;
 			btn.disabled = true;
 			try {
-				const res = await fetch("/api/azure-devops/pat", {
+				const res = await fetch("/ui/azure-devops/pat", {
 					method: "POST",
 					headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({ pat }),
 					credentials: "same-origin",
 				});
 				if (res.ok) {
-					document.getElementById("refresh-btn")?.click();
+					const statusRes = await fetch("/ui/azure-devops/pat", { credentials: "same-origin" });
+					const statusJson = await statusRes.json();
+					if (statusRes.ok && statusJson?.data?.configured) {
+						document.getElementById("refresh-btn")?.click();
+					} else {
+						alert("PAT did not persist. Please try again.");
+					}
 				} else {
 					alert("Failed to save PAT. Please verify token permissions and try again.");
 				}

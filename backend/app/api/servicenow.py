@@ -269,10 +269,6 @@ def get_status():
 @router.get("/tickets")
 def get_tickets(current_user: AuthUser = Depends(get_current_user)):
     user_email = current_user.get("username", "")
-    try:
-        _ensure_user_tickets_table()
-    except Exception:
-        pass
 
     if not _use_mock() and not _resolve_instance():
         raise HTTPException(
@@ -287,22 +283,24 @@ def get_tickets(current_user: AuthUser = Depends(get_current_user)):
         tickets = [t for t in _MOCK_TICKETS if t["assigned_to"] == user_email]
         return {"success": True, "data": tickets, "timestamp": _now_iso()}
 
-    # Look up the sys_ids this user created via the portal
-    rows = db.query_all(
-        "SELECT sys_id FROM user_tickets WHERE user_email = %s ORDER BY created_at DESC",
-        [user_email],
-    )
-    sys_ids = [r["sys_id"] for r in rows]
+    # Primary source of truth: ServiceNow itself, scoped to the configured
+    # portal account (secret variable) or the active user email fallback.
+    snow_user = (os.getenv("SERVICENOW_USERNAME") or os.getenv("SERVICENOW_USER") or "").strip()
+    if not snow_user:
+        snow_user = str(user_email)
 
-    if not sys_ids:
-        return {"success": True, "data": [], "timestamp": _now_iso()}
+    query = (
+        f"opened_by={snow_user}"
+        f"^ORcaller_id.user_name={snow_user}"
+        "^ORDERBYDESCsys_created_on"
+    )
 
     def _fetch():
         with _snow_client() as client:
             resp = client.get(
                 "/api/now/table/incident",
                 params={
-                    "sysparm_query": "sys_idIN" + ",".join(sys_ids),
+                    "sysparm_query": query,
                     "sysparm_fields": "sys_id,number,short_description,state,priority,assigned_to,opened_at",
                     "sysparm_limit": 50,
                     "sysparm_display_value": "true",
@@ -312,7 +310,7 @@ def get_tickets(current_user: AuthUser = Depends(get_current_user)):
             return [_map_ticket(r) for r in resp.json().get("result", [])]
 
     try:
-        records = cache.get_cached(f"snow:tickets:{user_email}", ttl=30, producer=_fetch)
+        records = cache.get_cached(f"snow:tickets:{snow_user}", ttl=30, producer=_fetch)
     except Exception as exc:
         _raise_snow_error(exc, "fetching tickets")
 

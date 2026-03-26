@@ -62,7 +62,13 @@
 
 		async function loadTickets() {
 			const res = await fetch("/api/support/tickets", { credentials: "same-origin" });
-			const json = await res.json();
+			let json = null;
+			try {
+				json = await res.json();
+			} catch {
+				const raw = await res.text();
+				json = { detail: raw || "Internal Server Error" };
+			}
 			if (!res.ok) {
 				errorEl.textContent = json?.detail || "Failed to load tickets";
 				errorEl.classList.remove("hidden");
@@ -88,7 +94,13 @@
 		async function openTicket(id) {
 			selectedId = id;
 			const res = await fetch("/api/support/tickets/" + encodeURIComponent(id), { credentials: "same-origin" });
-			const json = await res.json();
+			let json = null;
+			try {
+				json = await res.json();
+			} catch {
+				const raw = await res.text();
+				json = { detail: raw || "Internal Server Error" };
+			}
 			if (!res.ok) {
 				convEl.innerHTML = '<div class="text-sm text-error">Failed to load ticket details.</div>';
 				return;
@@ -137,7 +149,13 @@
 				body: JSON.stringify({ title: title.trim(), description: description.trim(), priority }),
 				credentials: "same-origin",
 			});
-			const json = await res.json();
+			let json = null;
+			try {
+				json = await res.json();
+			} catch {
+				const raw = await res.text();
+				json = { detail: raw || "Internal Server Error" };
+			}
 			if (!res.ok) {
 				errorEl.textContent = json?.detail || "Failed to create ticket";
 				errorEl.classList.remove("hidden");
