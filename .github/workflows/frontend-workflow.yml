@@ -6,10 +6,8 @@ on:
       - "frontend/**"
   workflow_dispatch:
 
-# Helm/config-only changes are handled by deploy-workflow.yml to avoid
-# two simultaneous helm upgrades when both service workflows trigger at once.
 concurrency:
-  group: helm-deploy-prod
+  group: service-frontend-ci-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
