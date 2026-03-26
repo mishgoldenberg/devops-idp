@@ -26,6 +26,14 @@
 				{{ prs|length }} open
 			</div>
 		</div>
+		{% if error %}
+		<div
+			class="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-base-content/80"
+		>
+			<p class="font-semibold text-warning">Azure DevOps unavailable</p>
+			<p class="mt-1">{{ error }}</p>
+		</div>
+		{% else %}
 		<!-- PR list -->
 		<ul
 			class="flex flex-col gap-2 flex-1 min-h-0 overflow-y-auto overscroll-contain"
@@ -62,5 +70,6 @@
 			</li>
 			{% endfor %}
 		</ul>
+		{% endif %}
 	</div>
 </div>

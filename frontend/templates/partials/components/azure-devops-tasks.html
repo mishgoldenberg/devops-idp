@@ -23,6 +23,14 @@
 				Azure DevOps Tasks
 			</h3>
 		</div>
+		{% if error %}
+		<div
+			class="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-base-content/80"
+		>
+			<p class="font-semibold text-warning">Azure DevOps unavailable</p>
+			<p class="mt-1">{{ error }}</p>
+		</div>
+		{% else %}
 		<!-- 2×2 stat grid -->
 		<div class="grid grid-cols-2 gap-3 flex-1 min-h-0">
 			<!-- To Do -->
@@ -68,5 +76,6 @@
 				<span class="text-4xl font-bold text-success">{{ counts.done }}</span>
 			</div>
 		</div>
+		{% endif %}
 	</div>
 </div>

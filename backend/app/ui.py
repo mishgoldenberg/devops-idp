@@ -5,14 +5,13 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from .api.artifactory import get_storage as _art_get_storage
-from .api.auth import LoginRequest, login as auth_login
-from .api.azure_devops import get_pipelines as _ado_pipelines
-from .api.azure_devops import get_pull_requests as _ado_pull_requests
-from .api.azure_devops import get_work_items as _ado_work_items
-from .api.sonarqube import get_projects as _sonar_get_projects
-from .db import query_one
-from .security import AuthUser, decode_access_token
+from api.artifactory import get_storage as _art_get_storage
+from api.azure_devops import get_pipelines as _ado_pipelines
+from api.azure_devops import get_pull_requests as _ado_pull_requests
+from api.azure_devops import get_work_items as _ado_work_items
+from api.sonarqube import get_projects as _sonar_get_projects
+from db import query_one
+from security import AuthUser, decode_access_token
 
 ui_router = APIRouter()
 
@@ -372,37 +371,10 @@ def ui_auth_login(
     username: str = "",
     password: str = "",
 ):
-    """Authenticate via existing auth script and redirect to dashboard."""
-    del password  # Password is currently unused by backend mock auth flow.
-
-    normalized_username = username.strip()
-    if not normalized_username:
-        return RedirectResponse(url="/ui/auth?error=missing_username", status_code=303)
-
-    try:
-        result = auth_login(LoginRequest(username=normalized_username))
-    except HTTPException:
-        return RedirectResponse(
-            url=f"/ui/auth?error=invalid_credentials&username={normalized_username}",
-            status_code=303,
-        )
-    except Exception:
-        return RedirectResponse(
-            url=f"/ui/auth?error=auth_unavailable&username={normalized_username}",
-            status_code=303,
-        )
-
-    token = result["data"]["token"]
-    response = RedirectResponse(url="/ui/", status_code=303)
-    response.set_cookie(
-        key="auth_token",
-        value=token,
-        httponly=True,
-        samesite="lax",
-        secure=False,
-        max_age=60 * 60 * 8,
-    )
-    return response
+    """Redirect login requests to the API OAuth login endpoint."""
+    del username
+    del password
+    return RedirectResponse(url="/api/auth/login", status_code=303)
 
 
 @ui_router.post("/ui/auth/logout")
@@ -450,9 +422,18 @@ def _mock_ado_task_counts() -> Dict[str, int]:
     return {"todo": 12, "in_progress": 4, "blocked": 2, "done": 7}
 
 
-def _get_ado_task_counts(current_user: Optional[AuthUser]) -> Dict[str, int]:
+def _describe_ado_error(exc: Exception) -> str:
+    if isinstance(exc, HTTPException):
+        detail = exc.detail
+        if isinstance(detail, str) and detail.strip():
+            return detail
+    return "Unable to load Azure DevOps data right now."
+
+
+def _get_ado_task_counts(current_user: Optional[AuthUser]) -> Dict[str, Any]:
+    empty_counts: Dict[str, int] = {"todo": 0, "in_progress": 0, "blocked": 0, "done": 0}
     if not current_user:
-        return _mock_ado_task_counts()
+        return {"counts": empty_counts, "error": "Sign in to load your Azure DevOps tasks."}
     try:
         result = _ado_work_items(username=None, current_user=current_user)
         items = result.get("data", []) if isinstance(result, dict) else []
@@ -475,9 +456,9 @@ def _get_ado_task_counts(current_user: Optional[AuthUser]) -> Dict[str, int]:
         for item in items:
             bucket = state_map.get((item.get("state") or "").lower(), "todo")
             counts[bucket] += 1
-        return counts
-    except Exception:
-        return _mock_ado_task_counts()
+        return {"counts": counts, "error": ""}
+    except Exception as exc:
+        return {"counts": empty_counts, "error": _describe_ado_error(exc)}
 
 
 @ui_router.get("/ui/components/azure-devops-tasks", response_class=HTMLResponse)
@@ -485,12 +466,13 @@ def ui_azure_devops_tasks_component(request: Request):
     """Render the Azure DevOps Tasks dashboard widget for HTMX partial loading."""
     templates = _get_templates(request)
     current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
-    counts = _get_ado_task_counts(current_user)
+    widget_state = _get_ado_task_counts(current_user)
     return templates.TemplateResponse(
         "partials/components/azure-devops-tasks.html",
         {
             "request": request,
-            "counts": counts,
+            "counts": widget_state["counts"],
+            "error": widget_state["error"],
             "now": datetime.utcnow().isoformat() + "Z",
         },
     )
@@ -505,26 +487,29 @@ def _mock_pr_data() -> list:
     ]
 
 
-def _get_pr_data(current_user: Optional[AuthUser]) -> list:
+def _get_pr_data(current_user: Optional[AuthUser]) -> Dict[str, Any]:
     if not current_user:
-        return _mock_pr_data()
+        return {"prs": [], "error": "Sign in to load your Azure DevOps pull requests."}
     try:
         result = _ado_pull_requests(username=None, current_user=current_user)
         rows = result.get("data", []) if isinstance(result, dict) else []
-        return [
-            {
-                "id": pr.get("id"),
-                "title": pr.get("title"),
-                "repository": pr.get("repository"),
-                "source_branch": pr.get("source_branch"),
-                "target_branch": pr.get("target_branch"),
-                "age": _time_ago(pr.get("created_date", "")),
-                "url": pr.get("url", ""),
-            }
-            for pr in rows
-        ]
-    except Exception:
-        return _mock_pr_data()
+        return {
+            "prs": [
+                {
+                    "id": pr.get("id"),
+                    "title": pr.get("title"),
+                    "repository": pr.get("repository"),
+                    "source_branch": pr.get("source_branch"),
+                    "target_branch": pr.get("target_branch"),
+                    "age": _time_ago(pr.get("created_date", "")),
+                    "url": pr.get("url", ""),
+                }
+                for pr in rows
+            ],
+            "error": "",
+        }
+    except Exception as exc:
+        return {"prs": [], "error": _describe_ado_error(exc)}
 
 
 def _mock_pipeline_data() -> list:
@@ -537,24 +522,27 @@ def _mock_pipeline_data() -> list:
     ]
 
 
-def _get_pipeline_data(current_user: Optional[AuthUser]) -> list:
+def _get_pipeline_data(current_user: Optional[AuthUser]) -> Dict[str, Any]:
     if not current_user:
-        return _mock_pipeline_data()
+        return {"runs": [], "error": "Sign in to load your Azure DevOps pipelines."}
     try:
         result = _ado_pipelines(project=None, current_user=current_user)
         rows = result.get("data", []) if isinstance(result, dict) else []
-        return [
-            {
-                "name": run.get("name", ""),
-                "project": run.get("project", ""),
-                "result": run.get("result", "in progress"),
-                "age": _time_ago(run.get("created_date", "")),
-                "url": run.get("url", ""),
-            }
-            for run in rows
-        ]
-    except Exception:
-        return _mock_pipeline_data()
+        return {
+            "runs": [
+                {
+                    "name": run.get("name", ""),
+                    "project": run.get("project", ""),
+                    "result": run.get("result", "in progress"),
+                    "age": _time_ago(run.get("created_date", "")),
+                    "url": run.get("url", ""),
+                }
+                for run in rows
+            ],
+            "error": "",
+        }
+    except Exception as exc:
+        return {"runs": [], "error": _describe_ado_error(exc)}
 
 
 def _mock_sonar_data() -> list:
@@ -677,9 +665,10 @@ def ui_pull_requests_component(request: Request):
     """Render the Pull Requests dashboard widget for HTMX partial loading."""
     templates = _get_templates(request)
     current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
+    widget_state = _get_pr_data(current_user)
     return templates.TemplateResponse(
         "partials/components/pull-requests.html",
-        {"request": request, "prs": _get_pr_data(current_user)},
+        {"request": request, "prs": widget_state["prs"], "error": widget_state["error"]},
     )
 
 
@@ -688,9 +677,10 @@ def ui_pipelines_component(request: Request):
     """Render the Pipelines dashboard widget for HTMX partial loading."""
     templates = _get_templates(request)
     current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
+    widget_state = _get_pipeline_data(current_user)
     return templates.TemplateResponse(
         "partials/components/pipelines.html",
-        {"request": request, "runs": _get_pipeline_data(current_user)},
+        {"request": request, "runs": widget_state["runs"], "error": widget_state["error"]},
     )
 
 

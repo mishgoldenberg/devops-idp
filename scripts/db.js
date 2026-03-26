@@ -47,12 +47,13 @@ const dbUserCandidates = Array.from(
 );
 let detectedDbUser = null;
 
+const schemaFile = "deployment/charts/infrastructure/database/00_schema.sql";
 const seedFiles = [
-	"backend/database/seeds/01_roles.sql",
-	"backend/database/seeds/02_users.sql",
-	"backend/database/seeds/03_widget_types.sql",
-	"backend/database/seeds/04_approval_rules.sql",
-	"backend/database/seeds/05_service_health.sql",
+	"deployment/charts/infrastructure/database/01_roles.sql",
+	"deployment/charts/infrastructure/database/02_users.sql",
+	"deployment/charts/infrastructure/database/03_widget_types.sql",
+	"deployment/charts/infrastructure/database/04_approval_rules.sql",
+	"deployment/charts/infrastructure/database/05_service_health.sql",
 ];
 
 function sleep(ms) {
@@ -131,7 +132,19 @@ function runSqlFile(sqlFilePath) {
 	const dbUser = resolveDbUser();
 	run(
 		"docker",
-		["compose", "exec", "-T", "postgres", "psql", "-U", dbUser, "-d", dbName],
+		[
+			"compose",
+			"exec",
+			"-T",
+			"postgres",
+			"psql",
+			"-v",
+			"ON_ERROR_STOP=1",
+			"-U",
+			dbUser,
+			"-d",
+			dbName,
+		],
 		{
 			input: sqlContent,
 		},
@@ -139,16 +152,33 @@ function runSqlFile(sqlFilePath) {
 }
 
 function migrateWithRetry() {
-	const schema = "backend/database/schema.sql";
 	const attempts = 20;
 
 	for (let i = 1; i <= attempts; i += 1) {
 		try {
-			console.log(`Running migration (attempt ${i}/${attempts})...`);
-			runSqlFile(schema);
+			console.log(
+				`Checking database connectivity (attempt ${i}/${attempts})...`,
+			);
+			resolveDbUser();
+			console.log("Database is ready. Running migration...");
+			runSqlFile(schemaFile);
 			console.log("Migration completed.");
 			return;
 		} catch (error) {
+			if ((error?.message || "").includes("SQL file not found")) {
+				throw error;
+			}
+
+			if (
+				(error?.message || "").includes(
+					"Command failed: docker compose exec -T postgres psql -v ON_ERROR_STOP=1",
+				)
+			) {
+				throw new Error(
+					"Migration failed due to SQL errors in schema file. If your DB already has tables/types, use a clean DB (npm run db:reset) or make schema idempotent.",
+				);
+			}
+
 			if (i === attempts) {
 				throw error;
 			}

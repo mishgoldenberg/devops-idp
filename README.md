@@ -308,8 +308,8 @@ git --version
 
 The easiest way to get started is using our automated setup scripts. They handle all the configuration, building, and database setup for you.
 
-<<<<<<< HEAD
-=======
+# <<<<<<< HEAD
+
 **Windows (PowerShell):**
 
 ```powershell
@@ -330,8 +330,8 @@ chmod +x setup.sh restart.sh
 ./setup.sh
 ```
 
->>>>>>> 035ffb8 (Remove old frontend code and replace it with a starter htmx template)
-The setup script will:
+> > > > > > > 035ffb8 (Remove old frontend code and replace it with a starter htmx template)
+> > > > > > > The setup script will:
 
 1. ✅ Check prerequisites (Docker)
 2. ✅ Copy `env.example` to `.env` if it doesn't exist
@@ -490,22 +490,23 @@ Once the database is ready:
 Authentication uses **Google OAuth 2.0 / OpenID Connect**. Users sign in with their Google (Gmail) accounts; the backend creates or looks up users by email and issues an internal JWT (8-hour session by default).
 
 <<<<<<< HEAD
+
 - **Login:** Frontend “Continue with Google” → backend redirects to Google consent → callback at `/api/auth/callback` → backend issues JWT and returns token/user to frontend (popup or redirect).
 - **Config:** Backend needs `OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET`, `OAUTH_REDIRECT_URI` (e.g. `https://devops.internal.company/api/auth/callback`), plus `JWT_SECRET` and `CORS_ORIGINS`. Frontend needs `NEXT_PUBLIC_API_BASE_URL` pointing at the same host.
-- **Full setup, env vars, GCP checklist, and troubleshooting:** [docs/SSO_GOOGLE_OAUTH.md](docs/SSO_GOOGLE_OAUTH.md).
-=======
-| Username                | Role            | Description                                                  |
-| ----------------------- | --------------- | ------------------------------------------------------------ |
-| `admin@internal`        | Platform Admin  | Full system access, can approve requests, view observability |
-| `commander@internal`    | Unit Commander  | Cross-branch visibility, strategic metrics                   |
-| `branch.head@internal`  | Branch Head     | Branch-level aggregation                                     |
-| `section.head@internal` | Head of Section | Section metrics, observability access                        |
-| `pm@internal`           | Project Manager | Project-level visibility                                     |
-| `lead@internal`         | Team Lead       | Team metrics, observability access                           |
-| `user@internal`         | Regular User    | Personal dashboard, basic self-service                       |
+- # **Full setup, env vars, GCP checklist, and troubleshooting:** [docs/SSO_GOOGLE_OAUTH.md](docs/SSO_GOOGLE_OAUTH.md).
+  | Username                | Role            | Description                                                  |
+  | ----------------------- | --------------- | ------------------------------------------------------------ |
+  | `admin@internal`        | Platform Admin  | Full system access, can approve requests, view observability |
+  | `commander@internal`    | Unit Commander  | Cross-branch visibility, strategic metrics                   |
+  | `branch.head@internal`  | Branch Head     | Branch-level aggregation                                     |
+  | `section.head@internal` | Head of Section | Section metrics, observability access                        |
+  | `pm@internal`           | Project Manager | Project-level visibility                                     |
+  | `lead@internal`         | Team Lead       | Team metrics, observability access                           |
+  | `user@internal`         | Regular User    | Personal dashboard, basic self-service                       |
 
 **Note:** In local development, authentication uses mock SSO. Any username ending in `@internal` will be accepted and mapped to a role based on the seeded users.
->>>>>>> 035ffb8 (Remove old frontend code and replace it with a starter htmx template)
+
+> > > > > > > 035ffb8 (Remove old frontend code and replace it with a starter htmx template)
 
 ### Common Commands
 
@@ -714,14 +715,18 @@ spec:
     metadata:
       annotations:
         # Forces a fresh pod restart when the secret contents change
-        checksum/secrets: {{ include (print $.Template.BasePath "/secrets.yaml") . | sha256sum }}
+        checksum/secrets:
+          {
+            {
+              include (print $.Template.BasePath "/secrets.yaml") . | sha256sum,
+            },
+          }
     spec:
       containers:
         - name: backend
           envFrom:
             - secretRef:
                 name: all-secrets
-
 ```
 
 ### 2. The Secrets Pattern (`deployment/templates/secrets.yaml`)
@@ -735,10 +740,9 @@ metadata:
   name: all-secrets
 type: Opaque
 stringData:
-  POSTGRES_PASSWORD: {{ .Values.secrets.postgresPassword | quote }}
-  OAUTH_CLIENT_ID: {{ .Values.secrets.oauthClientId | quote }}
-  OAUTH_CLIENT_SECRET: {{ .Values.secrets.oauthClientSecret | quote }}
-
+  POSTGRES_PASSWORD: { { .Values.secrets.postgresPassword | quote } }
+  OAUTH_CLIENT_ID: { { .Values.secrets.oauthClientId | quote } }
+  OAUTH_CLIENT_SECRET: { { .Values.secrets.oauthClientSecret | quote } }
 ```
 
 ### 3. CI/CD Workflow (`template-workflow.yml`)
@@ -750,7 +754,7 @@ The workflow acts as an atomic delivery vehicle. It never patches the cluster ma
   run: |
     # 1. Clean up any stuck locks before attempting an upgrade
     helm rollback devops-stack 0 -n devops-control-center-prod --force || true
-    
+
     # 2. Deploy using Helm (injecting secrets via --set)
     helm upgrade --install devops-stack ./deployment \
       -n devops-control-center-prod \
@@ -758,7 +762,6 @@ The workflow acts as an atomic delivery vehicle. It never patches the cluster ma
       --set secrets.postgresPassword="${{ secrets.POSTGRES_PASSWORD }}" \
       --set secrets.oauthClientId="${{ secrets.OAUTH_CLIENT_ID }}" \
       --set secrets.oauthClientSecret="${{ secrets.OAUTH_CLIENT_SECRET }}"
-
 ```
 
 ### 4. Adding New Secrets
@@ -767,16 +770,16 @@ Whenever you introduce a new dependency, follow this process to maintain a clean
 
 1. **Add to GitHub Actions:** Add the new secret to **Settings > Secrets and variables > Actions**.
 2. **Pass to Workflow:** Update your caller workflow (`deploy.yml`) to pass the variable:
+
 ```yaml
 secrets:
   NEW_SECRET: ${{ secrets.NEW_SECRET }}
-
-``` 
+```
 
 3. **Update Deployment:**
-* Add `--set secrets.newSecret="${{ secrets.NEW_SECRET }}"` to your `template-workflow.yml`.
-* Add `NEW_SECRET: {{ .Values.secrets.newSecret | quote }}` to your `secrets.yaml` template.
 
+- Add `--set secrets.newSecret="${{ secrets.NEW_SECRET }}"` to your `template-workflow.yml`.
+- Add `NEW_SECRET: {{ .Values.secrets.newSecret | quote }}` to your `secrets.yaml` template.
 
 To ensure your team can access the platform at `devops.internal.company` immediately after deployment, you need to account for local DNS resolution, as this is an internal-only environment.
 
@@ -798,7 +801,7 @@ kubectl get svc -n ingress-nginx
 
 ```
 
-*(If you are running in a local environment like Minikube or Kind, run `minikube tunnel` or `kind load` to expose the IP.)*
+_(If you are running in a local environment like Minikube or Kind, run `minikube tunnel` or `kind load` to expose the IP.)_
 
 #### 2. Configure Local DNS (Hosts File)
 
@@ -808,6 +811,7 @@ You must point the domain to your Ingress controller's IP by editing your local 
 
 1. Open the file: `sudo nano /etc/hosts`
 2. Add the following line:
+
 ```text
 <EXTERNAL-IP-FROM-STEP-1>  devops.internal.company
 
@@ -819,10 +823,12 @@ You must point the domain to your Ingress controller's IP by editing your local 
 
 1. Run: `notepad C:\Windows\System32\drivers\etc\hosts`
 2. Add the same line:
+
 ```text
 <EXTERNAL-IP-FROM-STEP-1>  devops.internal.company
 
 ```
+
 3. Save the file.
 
 #### 3. Verify Connectivity
@@ -830,7 +836,7 @@ You must point the domain to your Ingress controller's IP by editing your local 
 Once saved, you should be able to reach the platform via your browser:
 `https://devops.internal.company`
 
-*Note: If you are using a self-signed certificate, your browser will show a "Not Secure" warning on the first visit. You can click "Advanced" and "Proceed" to continue to the site.*
+_Note: If you are using a self-signed certificate, your browser will show a "Not Secure" warning on the first visit. You can click "Advanced" and "Proceed" to continue to the site._
 
 ---
 
@@ -903,6 +909,7 @@ Full schema: `backend/database/schema.sql`
 ## 📦 Project Structure
 
 <<<<<<< HEAD
+
 ```
 devops-idp/
 ├── backend/
@@ -984,23 +991,25 @@ devops-idp/
 │       ├── templates/
 │       └── tests/
 =======
-````
+```
+
 devops-control-center/
 ├── backend/
-│   ├── python_backend/           # Python FastAPI backend (serves API + HTMX UI)
-│   │   ├── app/                  # FastAPI application code
-│   │   ├── database/             # DB schema, migrations, seeds
-│   │   └── requirements.txt
-├── infrastructure/              # Docker & Kubernetes manifests
-│   ├── docker/
-│   │   └── Dockerfile.python-backend
-│   └── k8s/
-├── docker-compose.yml           # Local dev environment
-├── setup.sh                     # Setup helper (build + migrate + seed)
-├── restart.sh                   # Restart helper script
+│ ├── python_backend/ # Python FastAPI backend (serves API + HTMX UI)
+│ │ ├── app/ # FastAPI application code
+│ │ ├── database/ # DB schema, migrations, seeds
+│ │ └── requirements.txt
+├── infrastructure/ # Docker & Kubernetes manifests
+│ ├── docker/
+│ │ └── Dockerfile
+│ └── k8s/
+├── docker-compose.yml # Local dev environment
+├── setup.sh # Setup helper (build + migrate + seed)
+├── restart.sh # Restart helper script
 ├── README.md
 └── env.example
-```│   │   ├── app/
+
+```│ │   ├── app/
 │   │   │   ├── api/             # Routers (auth, dashboards, metrics, integrations, approvals)
 │   │   │   ├── db.py            # Postgres helper
 │   │   │   ├── redis_client.py  # Redis helper
@@ -1016,7 +1025,7 @@ devops-control-center/
 ├── infrastructure/
 │   ├── docker/
 │   │   ├── Dockerfile.frontend
-│   │   ├── Dockerfile.python-backend
+│   │   ├── Dockerfile
 │   │   └── nginx.conf
 │   │
 │   ├── k8s/                      # Kubernetes manifests
@@ -1093,13 +1102,15 @@ devops-control-center/
         ├── frontend-workflow.yml
         └── template-workflow.yml
 ```
+
 =======
-│   └── INTEGRATION_GUIDE.md
+│ └── INTEGRATION_GUIDE.md
 │
 ├── docker-compose.yml
 ├── .env.example
 ├── package.json
 └── README.md
+
 ````
 >>>>>>> 035ffb8 (Remove old frontend code and replace it with a starter htmx template)
 
@@ -1287,3 +1298,4 @@ Slack: #devops-control-center
 ---
 
 **This platform is designed for years of maintenance and evolution. Every decision prioritizes clean architecture over quick hacks.**
+````

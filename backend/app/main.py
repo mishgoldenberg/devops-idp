@@ -29,7 +29,6 @@ STARTUP:
   uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 """
 
-<<<<<<< HEAD:backend/app/main.py
 # Load .env files when present (local dev).  Earlier files take precedence;
 # dotenv's load_dotenv() does NOT overwrite already-set env vars by default.
 try:
@@ -44,26 +43,16 @@ try:
 except ImportError:
     pass
 
-from fastapi import FastAPI, status
-=======
-from pathlib import Path
-
 from fastapi import FastAPI, Request, status
->>>>>>> 035ffb8 (Remove old frontend code and replace it with a starter htmx template):backend/python_backend/app/main.py
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-<<<<<<< HEAD:backend/app/main.py
 from api import api_router
 from config import get_settings
 import db
-=======
-from .api import api_router
-from .config import get_settings
-from .ui import ui_router
->>>>>>> 035ffb8 (Remove old frontend code and replace it with a starter htmx template):backend/python_backend/app/main.py
+from ui import ui_router
 
 
 def create_app() -> FastAPI:
@@ -75,7 +64,14 @@ def create_app() -> FastAPI:
     )
 
     # Static and template directories (used by the HTMX-powered frontend)
-    base_dir = Path(__file__).resolve().parent.parent.parent / "frontend"
+    # Support both local layout (repo/backend/app/main.py) and container layout (/app/main.py).
+    app_dir = Path(__file__).resolve().parent
+    frontend_candidates = [
+        app_dir / "frontend",
+        app_dir.parent.parent / "frontend",
+        app_dir.parent.parent.parent / "frontend",
+    ]
+    base_dir = next((p for p in frontend_candidates if p.exists()), frontend_candidates[0])
     # Templates & static assets used by the HTMX-based UI.
     # Access templates from request.app.state.templates in route handlers.
     app.state.templates = Jinja2Templates(directory=base_dir / "templates")
@@ -147,12 +143,8 @@ def create_app() -> FastAPI:
     # Include all API routers (azure_devops, auth, approvals, etc.)
     app.include_router(api_router)
 
-<<<<<<< HEAD:backend/app/main.py
-=======
     # UI router (HTMX-powered HTML endpoints)
     app.include_router(ui_router)
-
->>>>>>> 035ffb8 (Remove old frontend code and replace it with a starter htmx template):backend/python_backend/app/main.py
     return app
 
 

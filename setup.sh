@@ -177,7 +177,7 @@ export DATABASE_URL="postgresql://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${
 
 # Run migrations
 echo -e "${YELLOW}📊 Running database migrations...${NC}"
-if docker compose exec -T postgres psql -U "${DB_USER}" -d "${DB_NAME}" -f backend/database/schema.sql; then
+if docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "${DB_USER}" -d "${DB_NAME}" -f deployment/charts/infrastructure/database/00_schema.sql; then
     echo -e "  ${GREEN}✅ Migrations completed successfully${NC}"
 else
     echo -e "  ${RED}❌ Failed to run migrations${NC}"
@@ -189,10 +189,10 @@ echo ""
 
 # Run seeds
 echo -e "${YELLOW}🌱 Seeding database with initial data...${NC}"
-SEED_FILES=(backend/database/seeds/*.sql)
+SEED_FILES=(deployment/charts/infrastructure/database/0[1-9]_*.sql)
 for seed_file in "${SEED_FILES[@]}"; do
     echo -e "  ${CYAN}Applying seed: ${seed_file}${NC}"
-    if ! docker compose exec -T postgres psql -U "${DB_USER}" -d "${DB_NAME}" -f "${seed_file}"; then
+    if ! docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "${DB_USER}" -d "${DB_NAME}" -f "${seed_file}"; then
         echo -e "  ${RED}❌ Failed to apply seed: ${seed_file}${NC}"
         exit 1
     fi

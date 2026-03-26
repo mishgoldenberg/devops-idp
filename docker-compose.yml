@@ -86,7 +86,7 @@ services:
   api-gateway:
     build:
       context: .
-      dockerfile: infrastructure/docker/Dockerfile.python-backend
+      dockerfile: backend/app/Dockerfile
     container_name: devops-api-gateway
     environment:
       NODE_ENV: ${NODE_ENV:-development}

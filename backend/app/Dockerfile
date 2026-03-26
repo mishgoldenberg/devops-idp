@@ -2,7 +2,7 @@
 #
 # This Dockerfile builds the FastAPI backend application.
 # 
-# BUILD CONTEXT: Repository root (. from docker build -f infrastructure/docker/Dockerfile.python-backend .)
+# BUILD CONTEXT: Repository root (. from docker build -f backend/app/Dockerfile .)
 # OUTPUT IMAGE: Contains FastAPI + Uvicorn running on port 8000
 # 
 # LAYERS:
