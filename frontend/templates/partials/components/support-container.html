@@ -1,0 +1,128 @@
+<div class="flex-1 min-h-0 flex flex-col overflow-hidden bg-base-200">
+	<header class="bg-base-100 border-b border-base-300 px-8 py-8 flex items-center justify-between">
+		<div>
+			<h1 class="text-3xl font-bold text-base-content">Support</h1>
+			<p class="text-base-content/60">View, open and reply to your ServiceNow tickets</p>
+		</div>
+		<button id="support-new-ticket-btn" class="btn btn-primary btn-sm">New Ticket</button>
+	</header>
+
+	<div class="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-5 gap-6 p-6">
+		<div class="lg:col-span-2 card bg-base-100 border border-base-300 shadow min-h-0">
+			<div class="card-body p-0 min-h-0 flex flex-col">
+				<div class="px-4 py-3 border-b border-base-300 font-semibold">My Tickets</div>
+				<ul id="support-ticket-list" class="flex-1 min-h-0 overflow-y-auto divide-y divide-base-300"></ul>
+			</div>
+		</div>
+		<div class="lg:col-span-3 card bg-base-100 border border-base-300 shadow min-h-0">
+			<div class="card-body min-h-0 flex flex-col gap-3">
+				<div id="support-ticket-title" class="font-semibold text-lg">Select a ticket</div>
+				<div id="support-conversation" class="flex-1 min-h-0 overflow-y-auto border border-base-300 rounded p-3 space-y-2"></div>
+				<div class="flex gap-2">
+					<textarea id="support-reply" class="textarea textarea-bordered flex-1" rows="2" placeholder="Write a reply..."></textarea>
+					<button id="support-send-reply" class="btn btn-primary self-end">Send</button>
+				</div>
+			</div>
+		</div>
+	</div>
+</div>
+
+<dialog id="support-new-ticket-modal" class="modal">
+	<div class="modal-box">
+		<h3 class="font-bold text-lg">Create Ticket</h3>
+		<div class="py-4 space-y-3">
+			<input id="support-new-title" class="input input-bordered w-full" placeholder="Title" />
+			<textarea id="support-new-description" class="textarea textarea-bordered w-full" rows="4" placeholder="Description"></textarea>
+			<select id="support-new-priority" class="select select-bordered w-full">
+				<option value="1">1 - Critical</option>
+				<option value="2">2 - High</option>
+				<option value="3" selected>3 - Moderate</option>
+				<option value="4">4 - Low</option>
+				<option value="5">5 - Planning</option>
+			</select>
+		</div>
+		<div class="modal-action">
+			<form method="dialog">
+				<button class="btn">Cancel</button>
+			</form>
+			<button id="support-create-ticket" class="btn btn-primary">Create</button>
+		</div>
+	</div>
+</dialog>
+
+<script>
+	(function () {
+		let selectedId = null;
+		const listEl = document.getElementById("support-ticket-list");
+		const titleEl = document.getElementById("support-ticket-title");
+		const convEl = document.getElementById("support-conversation");
+		const replyEl = document.getElementById("support-reply");
+
+		async function loadTickets() {
+			const res = await fetch("/api/support/tickets", { credentials: "same-origin" });
+			const json = await res.json();
+			const tickets = json?.data || [];
+			listEl.innerHTML = tickets.map((t) => `
+				<li>
+					<button class="w-full text-left px-4 py-3 hover:bg-base-200" data-id="${t.sys_id}">
+						<div class="text-xs text-primary font-semibold">${t.number}</div>
+						<div class="text-sm">${t.short_description}</div>
+						<div class="text-xs opacity-60">${t.state}</div>
+					</button>
+				</li>
+			`).join("");
+			listEl.querySelectorAll("button[data-id]").forEach((btn) => {
+				btn.addEventListener("click", () => openTicket(btn.dataset.id));
+			});
+		}
+
+		async function openTicket(id) {
+			selectedId = id;
+			const res = await fetch("/api/support/tickets/" + encodeURIComponent(id), { credentials: "same-origin" });
+			const json = await res.json();
+			const t = json?.data || {};
+			titleEl.textContent = `${t.number || ""} ${t.short_description || ""}`.trim() || "Ticket";
+			const convo = t.conversation || [];
+			convEl.innerHTML = convo.map((m) => `
+				<div class="rounded border border-base-300 p-2">
+					<div class="text-xs opacity-60">${m.sys_created_by || "user"} • ${m.sys_created_on || ""}</div>
+					<div class="text-sm whitespace-pre-wrap">${m.value || ""}</div>
+				</div>
+			`).join("");
+			convEl.scrollTop = convEl.scrollHeight;
+		}
+
+		document.getElementById("support-send-reply")?.addEventListener("click", async () => {
+			if (!selectedId || !replyEl.value.trim()) return;
+			await fetch("/api/support/tickets/" + encodeURIComponent(selectedId) + "/reply", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ message: replyEl.value.trim() }),
+				credentials: "same-origin",
+			});
+			replyEl.value = "";
+			openTicket(selectedId);
+		});
+
+		const modal = document.getElementById("support-new-ticket-modal");
+		document.getElementById("support-new-ticket-btn")?.addEventListener("click", () => modal?.showModal());
+		document.getElementById("support-create-ticket")?.addEventListener("click", async () => {
+			const title = document.getElementById("support-new-title")?.value || "";
+			const description = document.getElementById("support-new-description")?.value || "";
+			const priority = document.getElementById("support-new-priority")?.value || "3";
+			if (!title.trim() || !description.trim()) return;
+			const res = await fetch("/api/support/tickets", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ title: title.trim(), description: description.trim(), priority }),
+				credentials: "same-origin",
+			});
+			const json = await res.json();
+			modal?.close();
+			await loadTickets();
+			if (json?.data?.sys_id) openTicket(json.data.sys_id);
+		});
+
+		loadTickets();
+	})();
+</script>

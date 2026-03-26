@@ -122,6 +122,36 @@
 				</div>
 			</div>
 
+			<!-- Pull Requests To Review -->
+			<div
+				id="pull-requests-review-component"
+				data-widget-key="ado_prs_for_review"
+				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
+				hx-get="/ui/components/pull-requests-review"
+				hx-trigger="load, every 60s, click from:#refresh-btn"
+				hx-target="find .widget-content"
+				hx-swap="innerHTML"
+			>
+				<div class="widget-loading h-full">
+					<div
+						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+					>
+						<span
+							class="loading loading-spinner loading-md text-base-content/40"
+						></span>
+					</div>
+				</div>
+				<div class="widget-content h-full">
+					<div
+						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+					>
+						<span
+							class="loading loading-spinner loading-md text-base-content/40"
+						></span>
+					</div>
+				</div>
+			</div>
+
 			<!-- Pipelines -->
 			<div
 				id="pipelines-component"
@@ -285,7 +315,11 @@
 					</label>
 					<label class="label cursor-pointer justify-start gap-3 py-2">
 						<input type="checkbox" checked class="checkbox checkbox-primary dashboard-widget-toggle" data-widget-key="ado_my_pull_requests" />
-						<span class="font-medium text-base-content">Pull Requests</span>
+						<span class="font-medium text-base-content">Pull Requests (Opened by me)</span>
+					</label>
+					<label class="label cursor-pointer justify-start gap-3 py-2">
+						<input type="checkbox" checked class="checkbox checkbox-primary dashboard-widget-toggle" data-widget-key="ado_prs_for_review" />
+						<span class="font-medium text-base-content">Pull Requests (Need my review)</span>
 					</label>
 					<label class="label cursor-pointer justify-start gap-3 py-2">
 						<input type="checkbox" checked class="checkbox checkbox-primary dashboard-widget-toggle" data-widget-key="ado_pipeline_status" />
@@ -320,6 +354,7 @@
 			ado_my_work_items: "ado-tasks-component",
 			snow_my_tickets: "servicenow-tickets-component",
 			ado_my_pull_requests: "pull-requests-component",
+			ado_prs_for_review: "pull-requests-review-component",
 			ado_pipeline_status: "pipelines-component",
 			sonar_quality_gate: "sonarqube-quality-component",
 			artifactory_storage: "artifactory-storage-component",

@@ -87,7 +87,10 @@ def _get_pat_for_user(current_user: AuthUser) -> str:
     The PAT is never returned to the frontend or written to logs.
     """
     user_id = str(current_user.get("id"))
-    pat = get_user_azure_devops_pat(user_id)
+    try:
+        pat = get_user_azure_devops_pat(user_id)
+    except Exception:
+        pat = None
     if pat:
         return pat
     raise HTTPException(
@@ -417,10 +420,12 @@ def get_pull_requests(
                                 "title": pr.get("title"),
                                 "status": pr.get("status", "").lower(),
                                 "created_by": created_by,
+                                "created_by_email": created_by_email,
                                 "created_date": pr.get("creationDate"),
                                 "repository": repo_name,
                                 "source_branch": pr.get("sourceRefName", "").replace("refs/heads/", ""),
                                 "target_branch": pr.get("targetRefName", "").replace("refs/heads/", ""),
+                                "is_reviewer": is_reviewer,
                                 "url": portal_url,
                             })
 
@@ -493,7 +498,12 @@ def get_pipelines(
                     continue
                 builds = r_builds.json().get("value", [])
 
+                query_user_lower = (ADO_QUERY_USER or current_user.get("username", "")).lower()
                 for build in builds:
+                    requested_for = build.get("requestedFor", {}) or {}
+                    requested_for_email = str(requested_for.get("uniqueName", "")).lower()
+                    if query_user_lower and requested_for_email != query_user_lower:
+                        continue
                     # Extract org and construct portal URL
                     org = ADO_BASE.split("/")[-1]
                     build_id = build.get("id")
@@ -507,6 +517,7 @@ def get_pipelines(
                         "run_id": build_id,
                         "status": build.get("status", "").lower(),
                         "result": build.get("result", "").lower() if build.get("result") else "in progress",
+                        "requested_for": requested_for.get("displayName") or requested_for.get("uniqueName") or "",
                         "created_date": build.get("startTime"),
                         "finished_date": build.get("finishTime"),
                         "url": portal_url,

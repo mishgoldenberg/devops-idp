@@ -26,6 +26,7 @@ HOME_WIDGET_KEYS = {
     "ado_my_work_items": "ado-tasks-component",
     "snow_my_tickets": "servicenow-tickets-component",
     "ado_my_pull_requests": "pull-requests-component",
+    "ado_prs_for_review": "pull-requests-review-component",
     "ado_pipeline_status": "pipelines-component",
     "sonar_quality_gate": "sonarqube-quality-component",
     "artifactory_storage": "artifactory-storage-component",
@@ -211,6 +212,30 @@ def ui_servicenow_page(request: Request):
             "request": request,
             "user": user,
             "current_page": "servicenow",
+            "now": datetime.utcnow().isoformat() + "Z",
+        },
+    )
+
+
+@ui_router.get("/ui/support", response_class=HTMLResponse)
+def ui_support_page(request: Request):
+    """Render the Support page (ServiceNow tickets and conversation)."""
+    token = request.cookies.get("auth_token")
+    if not token:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+
+    try:
+        user = _get_ui_user(token)
+    except HTTPException:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+
+    templates = _get_templates(request)
+    return templates.TemplateResponse(
+        "support.html",
+        {
+            "request": request,
+            "user": user,
+            "current_page": "support",
             "now": datetime.utcnow().isoformat() + "Z",
         },
     )
@@ -671,6 +696,8 @@ def _get_pr_data(current_user: Optional[AuthUser]) -> Dict[str, Any]:
                     "target_branch": pr.get("target_branch"),
                     "age": _time_ago(pr.get("created_date", "")),
                     "url": pr.get("url", ""),
+                    "created_by_email": pr.get("created_by_email", ""),
+                    "is_reviewer": bool(pr.get("is_reviewer")),
                 }
                 for pr in rows
             ],
@@ -678,6 +705,27 @@ def _get_pr_data(current_user: Optional[AuthUser]) -> Dict[str, Any]:
         }
     except Exception as exc:
         return {"prs": [], "error": _describe_ado_error(exc)}
+
+
+def _get_pr_created_data(current_user: Optional[AuthUser]) -> Dict[str, Any]:
+    state = _get_pr_data(current_user)
+    if state.get("error"):
+        return state
+    username = (current_user or {}).get("username", "").lower() if current_user else ""
+    prs = state.get("prs", [])
+    created = [
+        pr for pr in prs
+        if (pr.get("created_by_email", "").lower() == username)
+    ]
+    return {"prs": created, "error": ""}
+
+
+def _get_pr_review_data(current_user: Optional[AuthUser]) -> Dict[str, Any]:
+    state = _get_pr_data(current_user)
+    if state.get("error"):
+        return state
+    review = [pr for pr in state.get("prs", []) if pr.get("is_reviewer")]
+    return {"prs": review, "error": ""}
 
 
 def _mock_pipeline_data() -> list:
@@ -696,8 +744,7 @@ def _get_pipeline_data(current_user: Optional[AuthUser]) -> Dict[str, Any]:
     try:
         result = _ado_pipelines(project=None, current_user=current_user)
         rows = result.get("data", []) if isinstance(result, dict) else []
-        return {
-            "runs": [
+        mapped = [
                 {
                     "name": run.get("name", ""),
                     "project": run.get("project", ""),
@@ -706,7 +753,9 @@ def _get_pipeline_data(current_user: Optional[AuthUser]) -> Dict[str, Any]:
                     "url": run.get("url", ""),
                 }
                 for run in rows
-            ],
+            ]
+        return {
+            "runs": mapped[:1],
             "error": "",
         }
     except Exception as exc:
@@ -833,9 +882,21 @@ def ui_pull_requests_component(request: Request):
     """Render the Pull Requests dashboard widget for HTMX partial loading."""
     templates = _get_templates(request)
     current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
-    widget_state = _get_pr_data(current_user)
+    widget_state = _get_pr_created_data(current_user)
     return templates.TemplateResponse(
         "partials/components/pull-requests.html",
+        {"request": request, "prs": widget_state["prs"], "error": widget_state["error"]},
+    )
+
+
+@ui_router.get("/ui/components/pull-requests-review", response_class=HTMLResponse)
+def ui_pull_requests_review_component(request: Request):
+    """Render the PRs-to-review dashboard widget."""
+    templates = _get_templates(request)
+    current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
+    widget_state = _get_pr_review_data(current_user)
+    return templates.TemplateResponse(
+        "partials/components/pull-requests-review.html",
         {"request": request, "prs": widget_state["prs"], "error": widget_state["error"]},
     )
 

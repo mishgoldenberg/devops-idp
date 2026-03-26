@@ -85,10 +85,15 @@ def get_user_azure_devops_pat(user_id: str) -> Optional[str]:
         return str(pat) if pat else None
 
     key = f"user:{user_id}:azure_devops_pat"
-    row = query_one(
-        "SELECT value FROM system_config WHERE key = %s AND is_sensitive = true",
-        [key],
-    )
+    try:
+        row = query_one(
+            "SELECT value FROM system_config WHERE key = %s AND is_sensitive = true",
+            [key],
+        )
+    except Exception:
+        # During transient DB issues we should degrade gracefully so callers can
+        # present a "connect PAT" prompt instead of crashing widget requests.
+        return None
     if not row:
         return None
     try:
