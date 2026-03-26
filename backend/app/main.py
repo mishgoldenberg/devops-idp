@@ -48,6 +48,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 
 from api import api_router
 from config import get_settings
@@ -91,6 +94,10 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    # Root endpoint (non-API) - Serves a small HTML landing page for HTMX-based UI.
+    @app.get("/", include_in_schema=False)
+    def root(request: Request):
+        return RedirectResponse(url="/ui/auth")
     # Root endpoint (non-API) - Serves a small HTML landing page for HTMX-based UI.
     @app.get("/", include_in_schema=False)
     def root(request: Request):

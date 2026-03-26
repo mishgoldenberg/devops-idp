@@ -217,6 +217,8 @@ echo ""
 echo -e "${CYAN}🌐 Access the application:${NC}"
 echo -e "  ${NC}UI:  http://localhost:8000/ui/${NC}"
 echo -e "  ${NC}API: http://localhost:8000/api/${NC}"
+echo -e "  ${NC}UI:  http://localhost:8000/ui/${NC}"
+echo -e "  ${NC}API: http://localhost:8000/api/${NC}"
 echo ""
 echo -e "${CYAN}👤 Test users (login with any @internal username):${NC}"
 echo -e "  ${NC}- admin@internal (Platform Admin)${NC}"
@@ -224,6 +226,7 @@ echo -e "  ${NC}- lead@internal (Team Lead)${NC}"
 echo -e "  ${NC}- user@internal (Regular User)${NC}"
 echo ""
 echo -e "${CYAN}📚 Useful commands:${NC}"
+echo -e "  ${NC}Quick restart: ./restart.sh (after backend code changes)${NC}"
 echo -e "  ${NC}Quick restart: ./restart.sh (after backend code changes)${NC}"
 echo -e "  ${NC}View logs:    docker compose logs -f${NC}"
 echo -e "  ${NC}Stop services: docker compose down${NC}"
@@ -236,6 +239,7 @@ if command -v xdg-open &> /dev/null; then
     echo
     if [[ ! $REPLY =~ ^[Nn]$ ]]; then
         xdg-open "http://localhost:8000/ui/" 2>/dev/null || true
+        xdg-open "http://localhost:8000/ui/" 2>/dev/null || true
         echo -e "  ${GREEN}✅ Opened browser${NC}"
     fi
 elif command -v open &> /dev/null; then
@@ -243,6 +247,7 @@ elif command -v open &> /dev/null; then
     read -p "Open application in browser? (Y/n) " -n 1 -r
     echo
     if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+        open "http://localhost:8000/ui/" 2>/dev/null || true
         open "http://localhost:8000/ui/" 2>/dev/null || true
         echo -e "  ${GREEN}✅ Opened browser${NC}"
     fi

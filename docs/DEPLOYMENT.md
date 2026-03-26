@@ -59,9 +59,8 @@ docker compose exec postgres psql -U devops_user -d devops_control_center -c "\d
 
 ### Authentication (Google SSO)
 
-<<<<<<< HEAD
-The app uses **Google OAuth (SSO)** for sign-in. There are no seeded usernames/passwords; users sign in with their Google accounts and are created on first login. See [SSO_GOOGLE_OAUTH.md](SSO_GOOGLE_OAUTH.md) for configuration, environment variables, and GCP setup.
-=======
+# The app uses **Google OAuth (SSO)** for sign-in. There are no seeded usernames/passwords; users sign in with their Google accounts and are created on first login. See [SSO_GOOGLE_OAUTH.md](SSO_GOOGLE_OAUTH.md) for configuration, environment variables, and GCP setup.
+
 Use these seeded accounts:
 
 - **Platform Admin**: `admin@internal`
@@ -69,7 +68,6 @@ Use these seeded accounts:
 - **Regular User**: `user@internal`
 
 (No passwords required in dev mode with `DEV_MODE_BYPASS_AUTH=true`)
->>>>>>> 035ffb8 (Remove old frontend code and replace it with a starter htmx template)
 
 ### Viewing Logs
 
@@ -528,7 +526,6 @@ kubectl run -it --rm tf-test \
 - [ ] External system integrations tested
 - [ ] Performance testing completed
 - [ ] Security scan passed
-<<<<<<< HEAD
 - [ ] `devops-terraform-sa` K8s ServiceAccount created with Workload Identity annotation
 - [ ] GCP Workload Identity binding configured for `devops-terraform-sa`
 - [ ] `devops-control-center-tfstate` GCS bucket exists and SA has `objectAdmin`
@@ -537,4 +534,3 @@ kubectl run -it --rm tf-test \
 - [ ] Self-service project creation tested end-to-end (mock mode off)
 
 =======
->>>>>>> 035ffb8 (Remove old frontend code and replace it with a starter htmx template)
