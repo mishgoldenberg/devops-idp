@@ -1,3 +1,4 @@
+import logging
 from typing import Any, Dict, Optional
 
 import secrets
@@ -13,6 +14,7 @@ from security import create_access_token, decode_access_token
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _now_iso() -> str:
@@ -201,16 +203,29 @@ async def oauth_callback(request: Request, code: Optional[str] = None, state: Op
             detail="Email not present in ID token",
         )
 
-    user_row = _get_or_create_user_by_email(email, full_name)
-    auth_user: Dict[str, Any] = {
-        "id": str(user_row["id"]),
-        "username": user_row["username"],
-        "email": user_row["email"],
-        # Expose simplified role for frontend & RBAC helpers
-        "role": _map_role_to_effective(str(user_row["role_name"]), email),
-        "hierarchy_level": int(user_row["hierarchy_level"]),
-        "permissions": user_row.get("permissions") or [],
-    }
+    try:
+        user_row = _get_or_create_user_by_email(email, full_name)
+        auth_user: Dict[str, Any] = {
+            "id": str(user_row["id"]),
+            "username": user_row["username"],
+            "email": user_row["email"],
+            # Expose simplified role for frontend & RBAC helpers
+            "role": _map_role_to_effective(str(user_row["role_name"]), email),
+            "hierarchy_level": int(user_row["hierarchy_level"]),
+            "permissions": user_row.get("permissions") or [],
+        }
+    except Exception as exc:
+        # Temporary resilience for schema drift during integration:
+        # allow login even if DB provisioning fails.
+        logger.exception("SSO user provisioning failed for %s: %s", email, exc)
+        auth_user = {
+            "id": email,
+            "username": email,
+            "email": email,
+            "role": "User",
+            "hierarchy_level": 7,
+            "permissions": [],
+        }
     token = create_access_token(auth_user)
     response = RedirectResponse(url="/ui/", status_code=status.HTTP_303_SEE_OTHER)
     response.set_cookie(
