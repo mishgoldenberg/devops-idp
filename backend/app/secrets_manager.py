@@ -99,7 +99,7 @@ def get_user_azure_devops_pat(user_id: str) -> Optional[str]:
     except Exception:
         # During transient DB issues we should degrade gracefully so callers can
         # present a "connect PAT" prompt instead of crashing widget requests.
-        return None
+        return _MEMORY_PATS.get(user_id)
     if not row:
         return _MEMORY_PATS.get(user_id)
     try:

@@ -295,7 +295,7 @@ def get_tickets(current_user: AuthUser = Depends(get_current_user)):
         "^ORDERBYDESCsys_created_on"
     )
 
-    def _fetch():
+    try:
         with _snow_client() as client:
             resp = client.get(
                 "/api/now/table/incident",
@@ -307,10 +307,7 @@ def get_tickets(current_user: AuthUser = Depends(get_current_user)):
                 },
             )
             resp.raise_for_status()
-            return [_map_ticket(r) for r in resp.json().get("result", [])]
-
-    try:
-        records = cache.get_cached(f"snow:tickets:{snow_user}", ttl=30, producer=_fetch)
+            records = [_map_ticket(r) for r in resp.json().get("result", [])]
     except Exception as exc:
         _raise_snow_error(exc, "fetching tickets")
 
