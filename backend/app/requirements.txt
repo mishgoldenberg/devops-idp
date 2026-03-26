@@ -49,6 +49,7 @@ httpx==0.24.1
 # Template rendering + static files (for htmx-based frontend)
 jinja2==3.1.2
 aiofiles==23.2.1
+python-multipart
 
 # Optional: load .env file when running locally
 python-dotenv==1.0.0
