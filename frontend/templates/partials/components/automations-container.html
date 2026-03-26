@@ -14,48 +14,45 @@
 
 	<!-- Scrollable Content Area -->
 	<div class="flex-1 min-h-0 overflow-y-auto p-8">
-		<div class="max-w-3xl">
-			<div class="card bg-base-100 border border-base-300 shadow">
-				<div class="card-body gap-5">
+		<div class="max-w-4xl grid grid-cols-1 md:grid-cols-2 gap-6">
+			<button id="ado-self-service-card" class="card bg-base-100 border border-base-300 shadow hover:border-primary transition text-left">
+				<div class="card-body">
 					<h3 class="card-title">Azure DevOps Project Creation</h3>
-					<p class="text-sm text-base-content/60">
-						Create a new Azure DevOps project using the existing backend automation job.
-					</p>
-					<form id="ado-create-form" class="grid grid-cols-1 md:grid-cols-3 gap-3">
-						<input
-							class="input input-bordered"
-							type="text"
-							name="project_name"
-							placeholder="Project name"
-							required
-						/>
-						<select class="select select-bordered" name="process_type">
-							<option>Scrum</option>
-							<option>Agile</option>
-							<option>CMMI</option>
-							<option>Basic</option>
-						</select>
-						<input
-							class="input input-bordered"
-							type="text"
-							name="admin_username"
-							placeholder="Admin email"
-							required
-						/>
-						<div class="md:col-span-3 flex justify-end">
-							<button type="submit" class="btn btn-primary">Create Project</button>
-						</div>
-					</form>
-					<div id="ado-create-status" class="text-sm"></div>
+					<p class="text-sm text-base-content/60">Self-service flow with prompt and confirmation before execution.</p>
 				</div>
-			</div>
+			</button>
 		</div>
+		<div id="ado-create-status" class="text-sm mt-5"></div>
 	</div>
 </div>
+
+<dialog id="ado-create-modal" class="modal">
+	<div class="modal-box">
+		<h3 class="font-bold text-lg">Azure DevOps Project Creation</h3>
+		<form id="ado-create-form" class="grid grid-cols-1 gap-3 mt-3">
+			<input class="input input-bordered" type="text" name="project_name" placeholder="Project name" required />
+			<select class="select select-bordered" name="process_type">
+				<option>Scrum</option>
+				<option>Agile</option>
+				<option>CMMI</option>
+				<option>Basic</option>
+			</select>
+			<input class="input input-bordered" type="text" name="admin_username" placeholder="Admin email" required />
+			<div class="modal-action">
+				<button type="button" id="ado-create-cancel" class="btn">Cancel</button>
+				<button type="submit" class="btn btn-primary">Continue</button>
+			</div>
+		</form>
+	</div>
+</dialog>
+
 <script>
 	(function () {
 		const form = document.getElementById("ado-create-form");
 		const statusBox = document.getElementById("ado-create-status");
+		const card = document.getElementById("ado-self-service-card");
+		const modal = document.getElementById("ado-create-modal");
+		const cancelBtn = document.getElementById("ado-create-cancel");
 
 		async function poll(jobId) {
 			while (true) {
@@ -75,8 +72,12 @@
 			}
 		}
 
+		card?.addEventListener("click", () => modal?.showModal());
+		cancelBtn?.addEventListener("click", () => modal?.close());
+
 		form?.addEventListener("submit", async function (e) {
 			e.preventDefault();
+			if (!confirm("Confirm starting the Azure DevOps self-service process?")) return;
 			statusBox.textContent = "Submitting automation job...";
 			const body = new FormData(form);
 			const res = await fetch("/ui/automations/azure-devops/create", { method: "POST", body });
@@ -85,6 +86,7 @@
 				statusBox.textContent = "Submission failed.";
 				return;
 			}
+			if (modal?.close) modal.close();
 			const jobId = json?.data?.job_id;
 			if (!jobId) {
 				statusBox.textContent = "No job id returned.";

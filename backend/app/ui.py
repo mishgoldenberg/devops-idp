@@ -18,6 +18,7 @@ from api.dashboards import update_dashboard as _dash_update
 from api.servicenow import get_stats as _snow_get_stats
 from api.sonarqube import get_projects as _sonar_get_projects
 from db import query_one
+from secrets_manager import delete_user_azure_devops_pat, get_user_azure_devops_pat, store_user_azure_devops_pat
 from security import AuthUser, decode_access_token
 
 ui_router = APIRouter()
@@ -505,6 +506,38 @@ def ui_dashboard_preferences_save(
         current_user=current_user,
     )
     return {"success": True, "data": {"enabled": enabled_keys}}
+
+
+@ui_router.get("/ui/azure-devops/pat")
+def ui_get_ado_pat_status(request: Request):
+    """Cookie-auth endpoint for PAT status used by HTMX templates."""
+    current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
+    if not current_user:
+        return JSONResponse(status_code=401, content={"success": False, "detail": "Not authenticated"})
+    has_pat = bool(get_user_azure_devops_pat(str(current_user.get("id"))))
+    return {"success": True, "data": {"configured": has_pat, "has_personal_pat": has_pat}}
+
+
+@ui_router.post("/ui/azure-devops/pat")
+def ui_save_ado_pat(request: Request, payload: Dict[str, Any] = Body(default={})):
+    """Cookie-auth endpoint to save PAT from template widgets."""
+    current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
+    if not current_user:
+        return JSONResponse(status_code=401, content={"success": False, "detail": "Not authenticated"})
+    pat = str(payload.get("pat", "")).strip()
+    if len(pat) < 10:
+        raise HTTPException(status_code=400, detail="PAT is too short")
+    store_user_azure_devops_pat(str(current_user.get("id")), pat)
+    return {"success": True}
+
+
+@ui_router.delete("/ui/azure-devops/pat")
+def ui_delete_ado_pat(request: Request):
+    current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
+    if not current_user:
+        return JSONResponse(status_code=401, content={"success": False, "detail": "Not authenticated"})
+    delete_user_azure_devops_pat(str(current_user.get("id")))
+    return {"success": True}
 
 
 @ui_router.post("/ui/automations/azure-devops/create")

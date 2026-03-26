@@ -14,19 +14,6 @@
 
 	<!-- Scrollable Content Area -->
 	<div class="flex-1 min-h-0 overflow-y-auto">
-		<div class="px-8 pt-6">
-			<div class="card bg-base-100 border border-base-300 shadow">
-				<div class="card-body p-4">
-					<div class="flex items-center justify-between gap-4 flex-wrap">
-						<div>
-							<div class="font-semibold">Personal Access Token</div>
-							<div class="text-sm text-base-content/60">Connect your own PAT to load only your work items, PRs and pipelines.</div>
-						</div>
-						<button class="btn btn-sm btn-primary" onclick="document.getElementById('ado-pat-modal').showModal()">Connect / Update PAT</button>
-					</div>
-				</div>
-			</div>
-		</div>
 		<!-- Widget Grid -->
 		<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 p-8">
 			<!-- Azure DevOps Tasks Widget -->
@@ -115,38 +102,3 @@
 		</div>
 	</div>
 </div>
-
-<dialog id="ado-pat-modal" class="modal">
-	<div class="modal-box">
-		<h3 class="font-bold text-lg">Connect Azure DevOps PAT</h3>
-		<p class="text-sm text-base-content/60 mt-1">This PAT is saved per-user and used only for your widgets.</p>
-		<div class="py-4 space-y-3">
-			<input id="ado-pat-input" type="password" class="input input-bordered w-full" placeholder="Paste PAT" />
-			<div class="flex justify-end gap-2">
-				<form method="dialog"><button class="btn">Cancel</button></form>
-				<button id="ado-pat-save" class="btn btn-primary">Save PAT</button>
-			</div>
-		</div>
-	</div>
-</dialog>
-
-<script>
-	(function () {
-		const save = document.getElementById("ado-pat-save");
-		const input = document.getElementById("ado-pat-input");
-		const modal = document.getElementById("ado-pat-modal");
-		save?.addEventListener("click", async () => {
-			const pat = (input?.value || "").trim();
-			if (!pat) return;
-			const res = await fetch("/api/azure-devops/pat", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ pat }),
-				credentials: "same-origin",
-			});
-			if (!res.ok) return;
-			if (modal?.close) modal.close();
-			document.getElementById("refresh-btn")?.click();
-		});
-	})();
-</script>
