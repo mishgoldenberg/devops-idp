@@ -44,10 +44,6 @@ COPY backend/app ./
 # frontend/ becomes /app/frontend/
 COPY frontend ./frontend
 
-# Copy frontend assets into the container so the HTMX UI can be served
-# frontend/ becomes /app/frontend/
-COPY frontend ./frontend
-
 # Set Python path so imports work correctly
 ENV PYTHONPATH=/app
 
