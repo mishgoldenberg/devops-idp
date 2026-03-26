@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - "backend/app/**"
+      - "frontend/**"
   workflow_dispatch:
 
 concurrency:
