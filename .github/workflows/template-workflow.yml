@@ -168,8 +168,39 @@ jobs:
       - name: Deploy Helm Chart
         run: |
           helm upgrade --install devops-stack ./deployment \
-            -n devops-control-center-prod --wait --timeout 10m \
+            -n devops-control-center-prod \
             --cleanup-on-fail \
             -f /tmp/secrets-values.yaml \
             --set ${{ inputs.image_name }}.image.tag="sha-$SHORT_SHA"
+
+      # Wait only for the service we are deploying; waiting for the entire
+      # umbrella release causes unrelated components to fail this workflow.
+      - name: Wait for target deployment rollout
+        run: |
+          kubectl rollout status deployment/${{ inputs.image_name }} \
+            -n devops-control-center-prod --timeout=5m
+
+      - name: Fetch deployment diagnostics on failure
+        if: failure()
+        run: |
+          DEPLOYMENT="${{ inputs.image_name }}"
+          NAMESPACE="devops-control-center-prod"
+
+          echo "=== Deployment status ==="
+          kubectl get deployment "$DEPLOYMENT" -n "$NAMESPACE" -o wide || true
+
+          echo ""
+          echo "=== Pods for deployment ==="
+          kubectl get pods -n "$NAMESPACE" -l app="$DEPLOYMENT" -o wide || true
+
+          echo ""
+          echo "=== Describe deployment ==="
+          kubectl describe deployment "$DEPLOYMENT" -n "$NAMESPACE" || true
+
+          echo ""
+          echo "=== Recent pod logs ==="
+          for pod in $(kubectl get pods -n "$NAMESPACE" -l app="$DEPLOYMENT" -o name 2>/dev/null); do
+            echo "--- $pod ---"
+            kubectl logs "$pod" -n "$NAMESPACE" --tail=200 2>/dev/null || true
+          done
 
