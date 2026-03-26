@@ -1,3 +1,4 @@
+{% set stats_data = stats | default({}) %}
 <div
 	class="card bg-base-100 border border-base-300 shadow h-full flex flex-col"
 >
@@ -38,7 +39,7 @@
 					class="text-xs font-semibold uppercase tracking-wider text-accent/80"
 					>Open</span
 				>
-				<span class="text-4xl font-bold text-accent">{{ stats.open or 0 }}</span>
+				<span class="text-4xl font-bold text-accent">{{ stats_data.open or 0 }}</span>
 			</div>
 
 			<div
@@ -48,7 +49,7 @@
 					class="text-xs font-semibold uppercase tracking-wider text-primary/80"
 					>In Progress</span
 				>
-				<span class="text-4xl font-bold text-primary">{{ stats.in_progress or 0 }}</span>
+				<span class="text-4xl font-bold text-primary">{{ stats_data.in_progress or 0 }}</span>
 			</div>
 
 			<div
@@ -58,7 +59,7 @@
 					class="text-xs font-semibold uppercase tracking-wider text-warning/80"
 					>Resolved</span
 				>
-				<span class="text-4xl font-bold text-warning">{{ stats.resolved or 0 }}</span>
+				<span class="text-4xl font-bold text-warning">{{ stats_data.resolved or 0 }}</span>
 			</div>
 
 			<div
@@ -68,7 +69,7 @@
 					class="text-xs font-semibold uppercase tracking-wider text-success/80"
 					>Total</span
 				>
-				<span class="text-4xl font-bold text-success">{{ stats.total or 0 }}</span>
+				<span class="text-4xl font-bold text-success">{{ stats_data.total or 0 }}</span>
 			</div>
 		</div>
 	</div>
