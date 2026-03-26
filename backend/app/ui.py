@@ -15,7 +15,7 @@ from api.azure_devops import get_work_items as _ado_work_items
 from api.dashboards import DashboardUpdateRequest
 from api.dashboards import get_default_dashboard as _dash_get_default
 from api.dashboards import update_dashboard as _dash_update
-from api.servicenow import get_stats as _snow_get_stats
+from api.servicenow import get_tickets as _snow_get_tickets
 from api.sonarqube import get_projects as _sonar_get_projects
 from db import query_one
 from secrets_manager import delete_user_azure_devops_pat, get_user_azure_devops_pat, store_user_azure_devops_pat
@@ -987,8 +987,17 @@ def ui_servicenow_tickets_component(request: Request):
     error = ""
     if current_user:
         try:
-            res = _snow_get_stats(current_user=current_user)
-            stats = (res.get("data") or stats) if isinstance(res, dict) else stats
+            res = _snow_get_tickets(current_user=current_user)
+            tickets = (res.get("data") or []) if isinstance(res, dict) else []
+            for t in tickets:
+                state = str(t.get("state", "")).lower()
+                stats["total"] += 1
+                if state == "new":
+                    stats["open"] += 1
+                elif state == "in progress":
+                    stats["in_progress"] += 1
+                elif state in {"resolved", "closed"}:
+                    stats["resolved"] += 1
         except Exception as exc:
             if isinstance(exc, HTTPException):
                 detail = exc.detail

@@ -29,8 +29,8 @@
 		>
 			<p class="font-semibold text-warning">Azure DevOps unavailable</p>
 			<p class="mt-1">{{ error }}</p>
-			<div class="mt-2 flex items-center gap-2">
-				<input type="password" placeholder="Paste PAT" class="input input-bordered input-xs flex-1 ado-pat-input" />
+			<div class="mt-3 grid grid-cols-1 gap-2">
+				<input type="password" placeholder="Paste Personal Access Token" class="input input-bordered input-sm w-full ado-pat-input" />
 				<button type="button" class="btn btn-xs btn-primary ado-pat-save-btn">Save PAT</button>
 			</div>
 		</div>
@@ -96,7 +96,7 @@
 			if (!pat) return;
 			btn.disabled = true;
 			try {
-				const res = await fetch("/ui/azure-devops/pat", {
+				const res = await fetch("/api/azure-devops/pat", {
 					method: "POST",
 					headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({ pat }),
@@ -104,6 +104,8 @@
 				});
 				if (res.ok) {
 					document.getElementById("refresh-btn")?.click();
+				} else {
+					alert("Failed to save PAT. Please verify token permissions and try again.");
 				}
 			} finally {
 				btn.disabled = false;
