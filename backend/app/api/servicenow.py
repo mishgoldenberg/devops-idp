@@ -12,6 +12,22 @@ from security import AuthUser, get_current_user
 
 router = APIRouter()
 
+
+def _ensure_user_tickets_table() -> None:
+    # Keep ownership mapping available even when startup table creation was skipped.
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_tickets (
+            id          SERIAL PRIMARY KEY,
+            user_email  VARCHAR(255) NOT NULL,
+            sys_id      VARCHAR(64)  NOT NULL,
+            ticket_number VARCHAR(32),
+            created_at  TIMESTAMP DEFAULT NOW(),
+            UNIQUE (user_email, sys_id)
+        )
+        """
+    )
+
 def _use_mock() -> bool:
     return os.getenv("USE_MOCK_SERVICENOW", "true").lower() in ("true", "1")
 
@@ -253,6 +269,10 @@ def get_status():
 @router.get("/tickets")
 def get_tickets(current_user: AuthUser = Depends(get_current_user)):
     user_email = current_user.get("username", "")
+    try:
+        _ensure_user_tickets_table()
+    except Exception:
+        pass
 
     if not _use_mock() and not _resolve_instance():
         raise HTTPException(
@@ -400,6 +420,10 @@ def create_ticket(
     current_user: AuthUser = Depends(get_current_user),
 ):
     user_email = current_user.get("username", "")
+    try:
+        _ensure_user_tickets_table()
+    except Exception:
+        pass
 
     _PRIORITY_LABELS = {
         "1": "1 - Critical",

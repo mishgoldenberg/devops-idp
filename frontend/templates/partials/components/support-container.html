@@ -11,6 +11,7 @@
 		<div class="lg:col-span-2 card bg-base-100 border border-base-300 shadow min-h-0">
 			<div class="card-body p-0 min-h-0 flex flex-col">
 				<div class="px-4 py-3 border-b border-base-300 font-semibold">My Tickets</div>
+				<div id="support-ticket-error" class="hidden mx-3 mt-3 alert alert-warning alert-soft text-xs"></div>
 				<ul id="support-ticket-list" class="flex-1 min-h-0 overflow-y-auto divide-y divide-base-300"></ul>
 			</div>
 		</div>
@@ -54,6 +55,7 @@
 	(function () {
 		let selectedId = null;
 		const listEl = document.getElementById("support-ticket-list");
+		const errorEl = document.getElementById("support-ticket-error");
 		const titleEl = document.getElementById("support-ticket-title");
 		const convEl = document.getElementById("support-conversation");
 		const replyEl = document.getElementById("support-reply");
@@ -61,6 +63,13 @@
 		async function loadTickets() {
 			const res = await fetch("/api/support/tickets", { credentials: "same-origin" });
 			const json = await res.json();
+			if (!res.ok) {
+				errorEl.textContent = json?.detail || "Failed to load tickets";
+				errorEl.classList.remove("hidden");
+				listEl.innerHTML = "";
+				return;
+			}
+			errorEl.classList.add("hidden");
 			const tickets = json?.data || [];
 			listEl.innerHTML = tickets.map((t) => `
 				<li>
@@ -80,6 +89,10 @@
 			selectedId = id;
 			const res = await fetch("/api/support/tickets/" + encodeURIComponent(id), { credentials: "same-origin" });
 			const json = await res.json();
+			if (!res.ok) {
+				convEl.innerHTML = '<div class="text-sm text-error">Failed to load ticket details.</div>';
+				return;
+			}
 			const t = json?.data || {};
 			titleEl.textContent = `${t.number || ""} ${t.short_description || ""}`.trim() || "Ticket";
 			const convo = t.conversation || [];
@@ -125,6 +138,11 @@
 				credentials: "same-origin",
 			});
 			const json = await res.json();
+			if (!res.ok) {
+				errorEl.textContent = json?.detail || "Failed to create ticket";
+				errorEl.classList.remove("hidden");
+				return;
+			}
 			modal?.classList.add("hidden");
 			modal?.classList.remove("flex");
 			await loadTickets();
