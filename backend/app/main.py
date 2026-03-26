@@ -43,12 +43,19 @@ try:
 except ImportError:
     pass
 
-from fastapi import FastAPI, status
+from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 
 from api import api_router
 from config import get_settings
+import db
+from ui import ui_router
 
 
 def create_app() -> FastAPI:
@@ -58,6 +65,23 @@ def create_app() -> FastAPI:
         title=settings.app_name,
         version="1.0.0",
     )
+
+    # Static and template directories (used by the HTMX-powered frontend)
+    # Support both local layout (repo/backend/app/main.py) and container layout (/app/main.py).
+    app_dir = Path(__file__).resolve().parent
+    frontend_candidates = [
+        app_dir / "frontend",
+        app_dir.parent.parent / "frontend",
+        app_dir.parent.parent.parent / "frontend",
+    ]
+    base_dir = next((p for p in frontend_candidates if p.exists()), frontend_candidates[0])
+    # Templates & static assets used by the HTMX-based UI.
+    # Access templates from request.app.state.templates in route handlers.
+    app.state.templates = Jinja2Templates(directory=base_dir / "templates")
+    static_dir = base_dir / "static"
+
+    # Make static assets available at /static
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
     # CORS Middleware
     # Use configured CORS_ORIGINS (comma-separated) or "*" as a fallback.
@@ -70,15 +94,10 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Root endpoint (non-API, for basic connectivity check)
-    @app.get("/")
-    def root():
-        return {
-            "name": "DevOps Control Center API (Python)",
-            "version": "1.0.0",
-            "status": "running",
-            "timestamp": _now_iso(),
-        }
+    # Root endpoint (non-API) - Serves a small HTML landing page for HTMX-based UI.
+    @app.get("/", include_in_schema=False)
+    def root(request: Request):
+        return RedirectResponse(url="/ui/auth")
 
     # Kubernetes PROBE ENDPOINTS
     # These are essential for Kubernetes orchestration:
@@ -116,9 +135,19 @@ def create_app() -> FastAPI:
             content={"status": "ready", "timestamp": _now_iso()}
         )
 
+    @app.on_event("startup")
+    def on_startup():
+        try:
+            db.ensure_tables()
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("ensure_tables() failed: %s", exc)
+
     # Include all API routers (azure_devops, auth, approvals, etc.)
     app.include_router(api_router)
-    
+
+    # UI router (HTMX-powered HTML endpoints)
+    app.include_router(ui_router)
     return app
 
 

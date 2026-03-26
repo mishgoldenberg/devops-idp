@@ -6,6 +6,12 @@ on:
       - "frontend/**"
   workflow_dispatch:
 
+# Helm/config-only changes are handled by deploy-workflow.yml to avoid
+# two simultaneous helm upgrades when both service workflows trigger at once.
+concurrency:
+  group: helm-deploy-prod
+  cancel-in-progress: false
+
 jobs:
   frontend:
     uses: ./.github/workflows/template-workflow.yml
@@ -14,5 +20,4 @@ jobs:
       image_name: frontend
       gcp_project: devops-idp-489012
       gcp_region: europe-west1
-    secrets:
-      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+    secrets: inherit

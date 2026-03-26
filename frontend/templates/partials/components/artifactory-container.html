@@ -1,0 +1,41 @@
+<div class="flex-1 min-h-0 flex flex-col overflow-hidden bg-base-200">
+	<!-- Page Header -->
+	<header
+		class="bg-base-100 border-b border-base-300 px-8 py-8 flex items-center justify-between"
+	>
+		<div>
+			<h1 class="text-3xl font-bold text-base-content">Artifactory</h1>
+			<p class="text-base-content/60">Repository and storage management</p>
+		</div>
+		<button id="refresh-btn" class="btn btn-outline btn-sm">
+			&#8635; Refresh
+		</button>
+	</header>
+
+	<!-- Scrollable Content Area -->
+	<div class="flex-1 min-h-0 overflow-y-auto">
+		<!-- Widget Grid -->
+		<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 p-8">
+			<!-- Artifactory Storage Widget -->
+			<div
+				id="artifactory-storage-component"
+				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
+				hx-get="/ui/components/artifactory-storage"
+				hx-trigger="load, every 60s, click from:#refresh-btn"
+				hx-target="find .widget-content"
+				hx-swap="innerHTML"
+			>
+				<div class="widget-loading h-full">
+					<div
+						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+					>
+						<span
+							class="loading loading-spinner loading-md text-base-content/40"
+						></span>
+					</div>
+				</div>
+				<div class="widget-content h-full"></div>
+			</div>
+		</div>
+	</div>
+</div>

@@ -1,46 +1,18 @@
 {
   "name": "devops-control-center",
   "version": "1.0.0",
-  "description": "Production-grade internal DevOps platform for ~500 users",
   "private": true,
-  "workspaces": [
-    "frontend"
-  ],
+  "description": "DevOps Control Center (FastAPI + HTMX)",
   "scripts": {
-    "install:all": "npm install && npm run install:frontend",
-    "install:frontend": "cd frontend && npm install",
-    "dev": "docker compose up -d postgres redis api-gateway frontend",
-    "dev:frontend": "cd frontend && npm run dev",
-    "build": "npm run build:frontend",
-    "build:frontend": "cd frontend && npm run build",
-    "migrate": "Get-Content backend/database/schema.sql | docker compose exec -T postgres psql -U devops -d devops_control_center",
-    "seed": "Get-Content backend/database/seeds/01_roles.sql | docker compose exec -T postgres psql -U devops -d devops_control_center && Get-Content backend/database/seeds/02_users.sql | docker compose exec -T postgres psql -U devops -d devops_control_center && Get-Content backend/database/seeds/03_widget_types.sql | docker compose exec -T postgres psql -U devops -d devops_control_center && Get-Content backend/database/seeds/04_approval_rules.sql | docker compose exec -T postgres psql -U devops -d devops_control_center && Get-Content backend/database/seeds/05_service_health.sql | docker compose exec -T postgres psql -U devops -d devops_control_center",
-    "db:reset": "docker compose down -v && docker compose up -d postgres redis && sleep 5 && npm run migrate && npm run seed",
-    "docker:build": "docker compose build",
-    "docker:up": "docker compose up -d",
-    "docker:down": "docker compose down",
-    "docker:logs": "docker compose logs -f",
-    "test": "npm run test:frontend",
-    "test:frontend": "cd frontend && npm run test",
-    "lint": "npm run lint:frontend && npm run lint:backend",
-    "lint:frontend": "cd frontend && npm run lint",
-    "lint:backend": "echo 'Python backend linting is configured separately'"
-  },
-  "keywords": [
-    "devops",
-    "platform",
-    "internal",
-    "dashboard",
-    "microservices"
-  ],
-  "author": "DevOps Platform Team",
-  "license": "UNLICENSED",
-  "engines": {
-    "node": ">=20.0.0",
-    "npm": ">=10.0.0"
-  },
-  "dependencies": {
-    "dotenv": "^17.3.1",
-    "pg": "^8.16.3"
+    "dev": "docker compose up -d postgres redis api-gateway",
+    "build": "docker compose build",
+    "up": "docker compose up -d",
+    "down": "docker compose down",
+    "logs": "docker compose logs -f",
+    "setup": "bash setup.sh",
+    "restart": "bash restart.sh",
+    "migrate": "node scripts/db.js migrate",
+    "seed": "node scripts/db.js seed",
+    "db:reset": "node scripts/db.js reset"
   }
 }

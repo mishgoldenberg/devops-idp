@@ -41,6 +41,12 @@ on:
         required: false
       AZURE_DEVOPS_ADMIN_PAT:
         required: false
+      SERVICENOW_URL:
+        required: false
+      SERVICENOW_USERNAME:
+        required: false
+      SERVICENOW_PASSWORD:
+        required: false
 
 jobs:
   build:
@@ -104,19 +110,66 @@ jobs:
           use_gke_gcloud_auth_plugin: true
           
       - name: Update Helm Dependencies
+        run: helm dependency update ./deployment
+
+      # Write all secrets to a temp YAML file so special characters in values
+      # (e.g. $, {, }, comma) are handled safely — Helm --set breaks on these.
+      - name: Write secrets values file
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
+          OAUTH_CLIENT_ID: ${{ secrets.OAUTH_CLIENT_ID }}
+          OAUTH_CLIENT_SECRET: ${{ secrets.OAUTH_CLIENT_SECRET }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          AZURE_DEVOPS_PAT: ${{ secrets.AZURE_DEVOPS_PAT }}
+          AZURE_DEVOPS_ADMIN_PAT: ${{ secrets.AZURE_DEVOPS_ADMIN_PAT }}
+          SERVICENOW_URL: ${{ secrets.SERVICENOW_URL }}
+          SERVICENOW_USERNAME: ${{ secrets.SERVICENOW_USERNAME }}
+          SERVICENOW_PASSWORD: ${{ secrets.SERVICENOW_PASSWORD }}
         run: |
-          helm dependency update ./deployment
-      # 2. Deploy your Helm chart
+          python3 - <<'EOF'
+          import yaml, os
+          secrets = {
+            "postgresPassword":    os.environ.get("POSTGRES_PASSWORD", ""),
+            "redisPassword":       os.environ.get("REDIS_PASSWORD", ""),
+            "oauthClientId":       os.environ.get("OAUTH_CLIENT_ID", ""),
+            "oauthClientSecret":   os.environ.get("OAUTH_CLIENT_SECRET", ""),
+            "jwtSecret":           os.environ.get("JWT_SECRET", ""),
+            "azureDevopsPat":      os.environ.get("AZURE_DEVOPS_PAT", ""),
+            "azureDevopsAdminPat": os.environ.get("AZURE_DEVOPS_ADMIN_PAT", ""),
+            "servicenowUrl":       os.environ.get("SERVICENOW_URL", ""),
+            "servicenowUsername":  os.environ.get("SERVICENOW_USERNAME", ""),
+            "servicenowPassword":  os.environ.get("SERVICENOW_PASSWORD", ""),
+          }
+          # Scope under "backend:" so the umbrella chart passes values to the
+          # backend subchart's .Values.secrets context (not the parent chart).
+          data = {"backend": {"secrets": secrets}}
+          with open("/tmp/secrets-values.yaml", "w") as f:
+            yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
+          print("Secrets values file written (values redacted from logs)")
+          EOF
+
+      - name: Unlock stuck Helm release (if any)
+        run: |
+          STATUS=$(helm status devops-stack -n devops-control-center-prod --output json 2>/dev/null \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['info']['status'])" 2>/dev/null \
+            || echo "not-deployed")
+          echo "Helm release status: $STATUS"
+          case "$STATUS" in
+            pending-upgrade|pending-install|pending-rollback)
+              echo "Clearing stuck operation..."
+              helm rollback devops-stack -n devops-control-center-prod 2>/dev/null \
+                || kubectl delete secret -n devops-control-center-prod \
+                     -l "name=devops-stack,status=$STATUS" --ignore-not-found \
+                || true
+              ;;
+          esac
+
       - name: Deploy Helm Chart
         run: |
-
           helm upgrade --install devops-stack ./deployment \
-          -n devops-control-center-prod --wait --timeout 10m \
-          --set secrets.postgresPassword="${{ secrets.POSTGRES_PASSWORD }}" \
-          --set secrets.redisPassword="${{ secrets.REDIS_PASSWORD }}" \
-          --set secrets.oauthClientId="${{ secrets.OAUTH_CLIENT_ID }}" \
-          --set secrets.oauthClientSecret="${{ secrets.OAUTH_CLIENT_SECRET }}" \
-          --set secrets.jwtSecret="${{ secrets.JWT_SECRET }}" \
-          --set secrets.azureDevopsPat="${{ secrets.AZURE_DEVOPS_PAT }}" \
-          --set secrets.azureDevopsAdminPat="${{ secrets.AZURE_DEVOPS_ADMIN_PAT }}" \
+            -n devops-control-center-prod --wait --timeout 10m \
+            --cleanup-on-fail \
+            -f /tmp/secrets-values.yaml \
+            --set ${{ inputs.image_name }}.image.tag="sha-$SHORT_SHA"
 

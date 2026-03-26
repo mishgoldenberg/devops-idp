@@ -1,0 +1,138 @@
+name: Deploy (Helm only)
+
+# Fires when Helm charts or CI configs change but no app code changed.
+# Skips the Docker build entirely — uses the :latest images already in the registry.
+on:
+  push:
+    paths:
+      - "deployment/**"
+      - ".github/workflows/**"
+  workflow_dispatch:
+
+concurrency:
+  group: helm-deploy-prod
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: devops-idp-489012
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: devops-idp-cluster
+          location: europe-west1
+          project_id: devops-idp-489012
+          use_gke_gcloud_auth_plugin: true
+
+      - name: Update Helm dependencies
+        run: helm dependency update ./deployment
+
+      - name: Write secrets values file
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
+          OAUTH_CLIENT_ID: ${{ secrets.OAUTH_CLIENT_ID }}
+          OAUTH_CLIENT_SECRET: ${{ secrets.OAUTH_CLIENT_SECRET }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          AZURE_DEVOPS_PAT: ${{ secrets.AZURE_DEVOPS_PAT }}
+          AZURE_DEVOPS_ADMIN_PAT: ${{ secrets.AZURE_DEVOPS_ADMIN_PAT }}
+          SERVICENOW_URL: ${{ secrets.SERVICENOW_URL }}
+          SERVICENOW_USERNAME: ${{ secrets.SERVICENOW_USERNAME }}
+          SERVICENOW_PASSWORD: ${{ secrets.SERVICENOW_PASSWORD }}
+        run: |
+          python3 - <<'EOF'
+          import yaml, os
+          secrets = {
+            "postgresPassword":    os.environ.get("POSTGRES_PASSWORD", ""),
+            "redisPassword":       os.environ.get("REDIS_PASSWORD", ""),
+            "oauthClientId":       os.environ.get("OAUTH_CLIENT_ID", ""),
+            "oauthClientSecret":   os.environ.get("OAUTH_CLIENT_SECRET", ""),
+            "jwtSecret":           os.environ.get("JWT_SECRET", ""),
+            "azureDevopsPat":      os.environ.get("AZURE_DEVOPS_PAT", ""),
+            "azureDevopsAdminPat": os.environ.get("AZURE_DEVOPS_ADMIN_PAT", ""),
+            "servicenowUrl":       os.environ.get("SERVICENOW_URL", ""),
+            "servicenowUsername":  os.environ.get("SERVICENOW_USERNAME", ""),
+            "servicenowPassword":  os.environ.get("SERVICENOW_PASSWORD", ""),
+          }
+          # Scope under "backend:" so the umbrella chart passes values to the
+          # backend subchart's .Values.secrets context (not the parent chart).
+          data = {"backend": {"secrets": secrets}}
+          with open("/tmp/secrets-values.yaml", "w") as f:
+            yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
+          print("Secrets values file written (values redacted from logs)")
+          EOF
+
+      # If a previous run timed out it leaves the release in a pending-* state
+      # which blocks all future upgrades. Roll back to the last good revision first.
+      - name: Unlock stuck Helm release (if any)
+        run: |
+          STATUS=$(helm status devops-stack -n devops-control-center-prod --output json 2>/dev/null \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['info']['status'])" 2>/dev/null \
+            || echo "not-deployed")
+          echo "Helm release status: $STATUS"
+          case "$STATUS" in
+            pending-upgrade|pending-install|pending-rollback)
+              echo "Clearing stuck operation..."
+              helm rollback devops-stack -n devops-control-center-prod 2>/dev/null \
+                || kubectl delete secret -n devops-control-center-prod \
+                     -l "name=devops-stack,status=$STATUS" --ignore-not-found \
+                || true
+              ;;
+          esac
+
+      # No --set image.tag here — uses :latest from values.yaml.
+      # No --wait: this workflow only applies config/infra changes (ConfigMaps,
+      # Secrets, Helm chart structure). Pod readiness is owned by the backend/
+      # frontend CI workflows which run on actual code changes.
+      - name: Deploy Helm chart
+        run: |
+          helm upgrade --install devops-stack ./deployment \
+            -n devops-control-center-prod \
+            -f /tmp/secrets-values.yaml
+
+      # Secrets are env vars baked into pods at creation time — existing pods
+      # won't see updated Secret values until restarted.
+      - name: Restart pods to pick up updated secrets
+        run: |
+          kubectl rollout restart deployment/backend  -n devops-control-center-prod
+          kubectl rollout restart deployment/frontend -n devops-control-center-prod
+          kubectl rollout status  deployment/backend  -n devops-control-center-prod --timeout=5m
+          kubectl rollout status  deployment/frontend -n devops-control-center-prod --timeout=5m
+
+      - name: Fetch crash logs on failure
+        if: failure()
+        run: |
+          echo "=== Pod list ==="
+          kubectl get pods -n devops-control-center-prod
+
+          echo ""
+          echo "=== Crash logs for any CrashLoopBackOff pods ==="
+          for pod in $(kubectl get pods -n devops-control-center-prod \
+            --field-selector=status.phase!=Running -o name 2>/dev/null); do
+            echo "--- $pod ---"
+            kubectl logs "$pod" -n devops-control-center-prod --previous 2>/dev/null \
+              || kubectl logs "$pod" -n devops-control-center-prod 2>/dev/null \
+              || echo "(no logs available)"
+          done
+
+          echo ""
+          echo "=== Describe crashing pods ==="
+          for pod in $(kubectl get pods -n devops-control-center-prod \
+            --field-selector=status.phase!=Running -o name 2>/dev/null); do
+            echo "--- $pod ---"
+            kubectl describe "$pod" -n devops-control-center-prod 2>/dev/null | tail -30
+          done

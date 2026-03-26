@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useAutoRefresh } from '@/hooks/useAutoRefresh';
 import { useRouter } from 'next/navigation';
 import { isAuthenticated, getUser } from '@/lib/auth';
 import { apiClient } from '@/lib/api-client';
@@ -128,6 +129,24 @@ export default function SupportPage() {
 
   // eslint-disable-next-line react-hooks/rules-of-hooks
   useEffect(() => { fetchTickets(); }, [fetchTickets]);
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  useAutoRefresh(fetchTickets, 30_000);
+
+  // Poll the open ticket's conversation every 10 s so new replies appear automatically.
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const refreshConversation = useCallback(async () => {
+    if (!selectedTicket) return;
+    try {
+      const res = await apiClient.getTicketDetail(selectedTicket.sys_id);
+      if (res.success) {
+        setSelectedTicket(prev =>
+          prev ? { ...prev, conversation: res.data.conversation, state: res.data.state } : prev
+        );
+      }
+    } catch { /* silent — don't show error on background refresh */ }
+  }, [selectedTicket?.sys_id]);  // eslint-disable-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  useAutoRefresh(refreshConversation, 10_000, !!selectedTicket);
 
   // eslint-disable-next-line react-hooks/rules-of-hooks
   useEffect(() => {

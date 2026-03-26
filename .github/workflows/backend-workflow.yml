@@ -6,6 +6,12 @@ on:
       - "backend/app/**"
   workflow_dispatch:
 
+# Helm/config-only changes are handled by deploy-workflow.yml to avoid
+# two simultaneous helm upgrades when both service workflows trigger at once.
+concurrency:
+  group: helm-deploy-prod
+  cancel-in-progress: false
+
 jobs:
   backend:
     uses: ./.github/workflows/template-workflow.yml
@@ -14,12 +20,4 @@ jobs:
       image_name: backend
       gcp_project: devops-idp-489012
       gcp_region: europe-west1
-    secrets:
-      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
-      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
-      REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
-      JWT_SECRET: ${{ secrets.JWT_SECRET }}
-      OAUTH_CLIENT_SECRET: ${{ secrets.OAUTH_CLIENT_SECRET }}
-      OAUTH_CLIENT_ID: ${{ secrets.OAUTH_CLIENT_ID }}
-      AZURE_DEVOPS_PAT: ${{ secrets.AZURE_DEVOPS_PAT }}
-      AZURE_DEVOPS_ADMIN_PAT: ${{ secrets.AZURE_DEVOPS_ADMIN_PAT }}
+    secrets: inherit

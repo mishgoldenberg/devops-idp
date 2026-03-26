@@ -6,28 +6,30 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
+import db
+import cache
 from security import AuthUser, get_current_user
 
 router = APIRouter()
 
-USE_MOCK = os.getenv("USE_MOCK_SERVICENOW", "true").lower() in ("true", "1")
+def _use_mock() -> bool:
+    return os.getenv("USE_MOCK_SERVICENOW", "true").lower() in ("true", "1")
 
-# Accept either SERVICENOW_URL (full URL already in .env) or construct from SERVICENOW_INSTANCE
+# Accept either SERVICENOW_URL (full URL already in .env) or construct from SERVICENOW_INSTANCE.
+# Also tolerates URLs stored without the https:// scheme.
 def _resolve_instance() -> str:
-    url = os.getenv("SERVICENOW_URL", "").rstrip("/")
-    if url and url.startswith("http"):
-        return url
-    instance = os.getenv("SERVICENOW_INSTANCE", "").rstrip("/")
-    if instance.startswith("http"):
+    url = os.getenv("SERVICENOW_URL", "").strip().rstrip("/")
+    if url:
+        if url.startswith("http://") or url.startswith("https://"):
+            return url
+        # Stored without scheme (e.g. "mycompany.service-now.com")
+        return f"https://{url}"
+    instance = os.getenv("SERVICENOW_INSTANCE", "").strip().rstrip("/")
+    if instance.startswith("http://") or instance.startswith("https://"):
         return instance
     if instance:
         return f"https://{instance}.service-now.com"
     return ""
-
-_INSTANCE = _resolve_instance()
-# SERVICENOW_USERNAME is the primary env var name used in the project .env files
-_USER = os.getenv("SERVICENOW_USERNAME") or os.getenv("SERVICENOW_USER", "")
-_PASSWORD = os.getenv("SERVICENOW_PASSWORD", "")
 
 
 # ── Pydantic models ──────────────────────────────────────────────────────────
@@ -127,11 +129,14 @@ def _now_iso() -> str:
 
 
 def _snow_client() -> httpx.Client:
+    user = os.getenv("SERVICENOW_USERNAME") or os.getenv("SERVICENOW_USER", "")
+    password = os.getenv("SERVICENOW_PASSWORD", "")
     return httpx.Client(
-        base_url=_INSTANCE,
-        auth=(_USER, _PASSWORD),
+        base_url=_resolve_instance(),
+        auth=(user, password),
         headers={"Accept": "application/json", "Content-Type": "application/json"},
         timeout=15.0,
+        follow_redirects=True,
     )
 
 
@@ -177,55 +182,128 @@ def _map_message(raw: dict) -> dict:
 
 
 def _raise_snow_error(exc: Exception, context: str) -> None:
-    if isinstance(exc, httpx.HTTPStatusError):
+    instance = _resolve_instance()
+    if not instance:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"ServiceNow returned an error while {context}: {exc.response.status_code}",
+            detail=(
+                "ServiceNow is not configured: SERVICENOW_URL env var is missing or empty. "
+                "Set it to your instance URL (e.g. https://mycompany.service-now.com)."
+            ),
+        )
+    if isinstance(exc, httpx.HTTPStatusError):
+        try:
+            snow_body = exc.response.json()
+        except Exception:
+            snow_body = exc.response.text[:300]
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={
+                "message": f"ServiceNow returned HTTP {exc.response.status_code} while {context}",
+                "instance": instance,
+                "snow_response": snow_body,
+            },
         )
     raise HTTPException(
         status_code=status.HTTP_502_BAD_GATEWAY,
-        detail=f"ServiceNow is unreachable while {context}.",
+        detail=f"ServiceNow unreachable while {context} (instance: {instance}): {type(exc).__name__}: {exc}",
     )
+
+
+# ── GET /status (config health-check, no auth required) ──────────────────────
+
+@router.get("/status")
+def get_status():
+    instance = _resolve_instance()
+    user = os.getenv("SERVICENOW_USERNAME") or os.getenv("SERVICENOW_USER", "")
+    password = os.getenv("SERVICENOW_PASSWORD", "")
+
+    result = {
+        "mock_mode": _use_mock(),
+        "instance_url": instance or None,
+        "username": user or None,
+        "password_length": len(password),
+        "ready": _use_mock() or (bool(instance) and bool(user)),
+    }
+
+    if not _use_mock() and instance and user:
+        try:
+            with httpx.Client(
+                base_url=instance,
+                auth=(user, password),
+                headers={"Accept": "application/json"},
+                timeout=10.0,
+                follow_redirects=True,
+            ) as client:
+                resp = client.get("/api/now/table/incident", params={"sysparm_limit": "1"})
+                result["connection_test"] = {"status_code": resp.status_code, "ok": resp.status_code == 200}
+                if resp.status_code != 200:
+                    try:
+                        result["connection_test"]["snow_response"] = resp.json()
+                    except Exception:
+                        result["connection_test"]["snow_response"] = resp.text[:300]
+        except Exception as exc:
+            result["connection_test"] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+    return result
 
 
 # ── GET /tickets ─────────────────────────────────────────────────────────────
 
 @router.get("/tickets")
 def get_tickets(current_user: AuthUser = Depends(get_current_user)):
-    assigned_user = current_user.get("username", "admin")
+    user_email = current_user.get("username", "")
 
-    if USE_MOCK:
-        tickets = [t for t in _MOCK_TICKETS if t["assigned_to"] == assigned_user]
+    if not _use_mock() and not _resolve_instance():
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=(
+                "ServiceNow is not configured: SERVICENOW_URL env var is missing or empty. "
+                "Set it to your instance URL (e.g. https://mycompany.service-now.com)."
+            ),
+        )
+
+    if _use_mock():
+        tickets = [t for t in _MOCK_TICKETS if t["assigned_to"] == user_email]
         return {"success": True, "data": tickets, "timestamp": _now_iso()}
 
-    try:
+    # Look up the sys_ids this user created via the portal
+    rows = db.query_all(
+        "SELECT sys_id FROM user_tickets WHERE user_email = %s ORDER BY created_at DESC",
+        [user_email],
+    )
+    sys_ids = [r["sys_id"] for r in rows]
+
+    if not sys_ids:
+        return {"success": True, "data": [], "timestamp": _now_iso()}
+
+    def _fetch():
         with _snow_client() as client:
             resp = client.get(
                 "/api/now/table/incident",
                 params={
-                    "sysparm_query": f"assigned_to.user_name={assigned_user}^active=true",
+                    "sysparm_query": "sys_idIN" + ",".join(sys_ids),
                     "sysparm_fields": "sys_id,number,short_description,state,priority,assigned_to,opened_at",
                     "sysparm_limit": 50,
                     "sysparm_display_value": "true",
                 },
             )
             resp.raise_for_status()
-            records = resp.json().get("result", [])
+            return [_map_ticket(r) for r in resp.json().get("result", [])]
+
+    try:
+        records = cache.get_cached(f"snow:tickets:{user_email}", ttl=30, producer=_fetch)
     except Exception as exc:
         _raise_snow_error(exc, "fetching tickets")
 
-    return {
-        "success": True,
-        "data": [_map_ticket(r) for r in records],
-        "timestamp": _now_iso(),
-    }
+    return {"success": True, "data": records, "timestamp": _now_iso()}
 
 
 # ── GET /tickets/{sys_id} ─────────────────────────────────────────────────────
 
 @router.get("/tickets/{sys_id}")
 def get_ticket_detail(sys_id: str, current_user: AuthUser = Depends(get_current_user)):
-    if USE_MOCK:
+    if _use_mock():
         ticket = next((t for t in _MOCK_TICKETS if t["sys_id"] == sys_id), None)
         if ticket is None:
             raise HTTPException(status_code=404, detail="Ticket not found")
@@ -236,7 +314,7 @@ def get_ticket_detail(sys_id: str, current_user: AuthUser = Depends(get_current_
             "timestamp": _now_iso(),
         }
 
-    try:
+    def _fetch():
         with _snow_client() as client:
             ticket_resp = client.get(
                 f"/api/now/table/incident/{sys_id}",
@@ -257,14 +335,17 @@ def get_ticket_detail(sys_id: str, current_user: AuthUser = Depends(get_current_
             journal_resp.raise_for_status()
             messages = journal_resp.json().get("result", [])
 
+            ticket = _map_ticket(raw)
+            ticket["description"] = raw.get("description", raw.get("short_description", ""))
+            ticket["conversation"] = [_map_message(m) for m in messages]
+            return ticket
+
+    try:
+        ticket_data = cache.get_cached(f"snow:detail:{sys_id}", ttl=10, producer=_fetch)
     except Exception as exc:
         _raise_snow_error(exc, "fetching ticket details")
 
-    ticket = _map_ticket(raw)
-    ticket["description"] = raw.get("description", raw.get("short_description", ""))
-    ticket["conversation"] = [_map_message(m) for m in messages]
-
-    return {"success": True, "data": ticket, "timestamp": _now_iso()}
+    return {"success": True, "data": ticket_data, "timestamp": _now_iso()}
 
 
 # ── POST /tickets/{sys_id}/reply ─────────────────────────────────────────────
@@ -278,7 +359,7 @@ def reply_to_ticket(
     if not body.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
-    if USE_MOCK:
+    if _use_mock():
         new_message = {
             "sys_id": f"msg_{int(datetime.now(timezone.utc).timestamp())}",
             "sys_created_by": current_user.get("username", "admin"),
@@ -299,6 +380,9 @@ def reply_to_ticket(
     except Exception as exc:
         _raise_snow_error(exc, "sending reply")
 
+    # Invalidate conversation cache so the next poll sees the new reply immediately
+    cache.invalidate(f"snow:detail:{sys_id}")
+
     new_message = {
         "sys_id": "",
         "sys_created_by": current_user.get("username", "admin"),
@@ -315,7 +399,7 @@ def create_ticket(
     body: CreateTicketRequest,
     current_user: AuthUser = Depends(get_current_user),
 ):
-    assigned_user = current_user.get("username", "admin")
+    user_email = current_user.get("username", "")
 
     _PRIORITY_LABELS = {
         "1": "1 - Critical",
@@ -326,7 +410,7 @@ def create_ticket(
     }
     priority_label = _PRIORITY_LABELS.get(str(body.priority), "3 - Moderate")
 
-    if USE_MOCK:
+    if _use_mock():
         new_sys_id = f"new_{int(datetime.now(timezone.utc).timestamp())}"
         ticket_number = f"INC{int(datetime.now(timezone.utc).timestamp()) % 10_000_000:07d}"
         new_ticket = {
@@ -335,7 +419,7 @@ def create_ticket(
             "short_description": body.title,
             "state": "New",
             "priority": priority_label,
-            "assigned_to": assigned_user,
+            "assigned_to": user_email,
             "opened_at": _now_iso(),
             "description": body.description,
         }
@@ -343,13 +427,26 @@ def create_ticket(
         _MOCK_CONVERSATIONS[new_sys_id] = [
             {
                 "sys_id": f"msg_init_{new_sys_id}",
-                "sys_created_by": assigned_user,
+                "sys_created_by": user_email,
                 "sys_created_on": _now_iso(),
                 "value": body.description,
             }
         ]
         return {"success": True, "data": new_ticket, "timestamp": _now_iso()}
 
+    # ServiceNow derives 'priority' from impact × urgency via a lookup matrix —
+    # setting 'priority' directly is ignored.  Map portal priorities to the
+    # impact/urgency pair that produces the matching calculated priority.
+    _PRIORITY_TO_IMPACT_URGENCY = {
+        "1": ("1", "1"),  # Critical  → impact 1 (High),    urgency 1 (High)
+        "2": ("1", "2"),  # High      → impact 1 (High),    urgency 2 (Medium)
+        "3": ("2", "2"),  # Moderate  → impact 2 (Medium),  urgency 2 (Medium)
+        "4": ("3", "2"),  # Low       → impact 3 (Low),     urgency 2 (Medium)
+        "5": ("3", "3"),  # Planning  → impact 3 (Low),     urgency 3 (Low)
+    }
+    impact, urgency = _PRIORITY_TO_IMPACT_URGENCY.get(str(body.priority), ("2", "2"))
+
+    snow_user = os.getenv("SERVICENOW_USERNAME") or os.getenv("SERVICENOW_USER", "")
     try:
         with _snow_client() as client:
             resp = client.post(
@@ -357,9 +454,12 @@ def create_ticket(
                 json={
                     "short_description": body.title,
                     "description": body.description,
-                    "assigned_to": assigned_user,
-                    "caller_id": assigned_user,
-                    "priority": str(body.priority),
+                    "impact": impact,
+                    "urgency": urgency,
+                    # Use the service account as caller so the field is never empty
+                    "caller_id": snow_user,
+                    # Record the portal user in work notes for visibility in ServiceNow
+                    "work_notes": f"Submitted via DevOps Control Center by: {user_email}",
                 },
                 params={"sysparm_display_value": "true"},
             )
@@ -372,6 +472,22 @@ def create_ticket(
     ticket["description"] = body.description
     ticket["conversation"] = []
 
+    # Record the ticket ownership in the local DB so "My Tickets" can find it
+    try:
+        db.execute(
+            """
+            INSERT INTO user_tickets (user_email, sys_id, ticket_number)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (user_email, sys_id) DO NOTHING
+            """,
+            [user_email, ticket["sys_id"], ticket["number"]],
+        )
+    except Exception:
+        pass  # Non-fatal: the ticket was created in ServiceNow successfully
+
+    # Bust the ticket-list cache so the new ticket appears immediately
+    cache.invalidate(f"snow:tickets:{user_email}")
+
     return {"success": True, "data": ticket, "timestamp": _now_iso()}
 
 
@@ -379,7 +495,7 @@ def create_ticket(
 
 @router.get("/stats")
 def get_stats(current_user: AuthUser = Depends(get_current_user)):
-    if USE_MOCK:
+    if _use_mock():
         return {
             "success": True,
             "data": {"open": 127, "in_progress": 43, "resolved": 892, "total": 1062},

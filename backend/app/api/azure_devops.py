@@ -79,10 +79,10 @@ def _get_pat_for_user(current_user: AuthUser) -> str:
     """
     Resolve the Azure DevOps PAT for the requesting user.
 
-    Priority:
-      1. Per-user PAT stored in Vault / system_config (set via UI).
-      2. Server-level env PAT (AZURE_DEVOPS_PAT) – admin fallback so golden.mihel@gmail.com
-         works out-of-the-box without pasting a token in the dashboard.
+    Only the per-user PAT stored in Vault / system_config (set via the dashboard
+    UI) is accepted for widget/read endpoints.  The server-level env PATs
+    (_ENV_PAT, _ENV_ADMIN_PAT) are intentionally NOT used here — they are
+    reserved for self-service write operations (project creation).
 
     The PAT is never returned to the frontend or written to logs.
     """
@@ -90,9 +90,6 @@ def _get_pat_for_user(current_user: AuthUser) -> str:
     pat = get_user_azure_devops_pat(user_id)
     if pat:
         return pat
-    # Fallback: use the server env PAT if present (convenient for admin)
-    if _ENV_PAT:
-        return _ENV_PAT
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail="Azure DevOps is not connected. Please add your Personal Access Token.",
@@ -107,14 +104,12 @@ class _PatPayload(BaseModel):
 
 @router.get("/pat")
 def get_pat_status(current_user: AuthUser = Depends(get_current_user)):
-    """Return whether this user has a PAT configured. Value is never returned."""
+    """Return whether this user has a personal PAT configured. Value is never returned."""
     user_id = str(current_user.get("id"))
     has_user_pat = bool(get_user_azure_devops_pat(user_id))
-    # Admin fallback: if the env PAT is set the connection effectively works
-    effective = has_user_pat or bool(_ENV_PAT)
     return {
         "success": True,
-        "data": {"configured": effective, "has_personal_pat": has_user_pat},
+        "data": {"configured": has_user_pat, "has_personal_pat": has_user_pat},
         "timestamp": _now_iso(),
     }
 

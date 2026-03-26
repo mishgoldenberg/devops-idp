@@ -1,4 +1,4 @@
-# --- YOUR ORIGINAL STRUCTURE ---
+# Global Helm values for the devops-stack umbrella chart.
 postgres:
   enabled: true
   primary:
@@ -51,16 +51,18 @@ ingress-prod:
       requests:
         cpu: 100m
         memory: 128Mi
+    # Disabled: the admission webhook runs a Job on every Helm upgrade which
+    # triggers GKE Autopilot node provisioning and stalls deploys for 10+ min.
+    # Not needed for an internal cluster where Ingress resources are controlled.
     admissionWebhooks:
-      image:
-        repository: "registry.k8s.io/ingress-nginx/kube-webhook-certgen"
-        tag: "v1.15.0"  
-      patch:
+      enabled: false
+      # Correct key names (createSecretJob / patchWebhookJob) for re-enabling:
+      createSecretJob:
         resources:
           requests:
             cpu: 100m
             memory: 128Mi
-      create:
+      patchWebhookJob:
         resources:
           requests:
             cpu: 100m

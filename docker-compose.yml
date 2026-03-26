@@ -1,0 +1,139 @@
+# DevOps Control Center - Docker Compose Configuration
+#
+# Local Development Environment Setup
+#
+# This file orchestrates all services needed for local development:
+# - PostgreSQL database
+# - Redis cache & session store
+# - Python/FastAPI backend API gateway (serves API + HTMX UI)
+#
+# USAGE:
+#   docker compose up -d                    # Start all services
+#   docker compose logs -f                  # View all logs
+#   docker compose logs api-gateway         # View backend logs
+#   docker compose down                     # Stop all services
+#   docker compose down -v                  # Stop and remove volumes (clean slate)
+#
+# NETWORKING:
+#   - All services connected via 'devops-network' bridge
+#   - Services can reach each other by hostname (postgres, redis, api-gateway)
+#   - UI accessible at http://localhost:8000/ui/
+#   - API accessible at http://localhost:8000/api/
+#
+# VOLUMES:
+#   - postgres-data: Persists database between container restarts
+#   - redis-data: Persists cache between container restarts
+#
+# HEALTH CHECKS:
+#   - PostgreSQL: pg_isready command
+#   - Redis: Redis ping command
+#   - Backend: /api/health/ready HTTP endpoint (for K8s readiness probe compatibility)
+#
+# ENVIRONMENT:
+#   - Configured via .env file (copy from env.example)
+#   - All services use docker-compose network DNS for inter-service communication
+#   - Mock Azure DevOps by default (USE_MOCK_AZURE_DEVOPS=true)
+#
+
+version: "3.9"
+
+services:
+  # ============================================
+  # DATABASES
+  # ============================================
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: devops-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-devops_control_center}
+      POSTGRES_USER: ${POSTGRES_USER:-devops_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devops_secure_password}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./backend/database/init:/docker-entrypoint-initdb.d
+    networks:
+      - devops-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-devops_user}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: devops-redis
+    command: redis-server --requirepass ${REDIS_PASSWORD:-redis_secure_password}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - devops-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================
+  # BACKEND SERVICE (Python)
+  # ============================================
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: backend/app/Dockerfile
+    container_name: devops-api-gateway
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: ${API_GATEWAY_PORT:-8000}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-devops_user}:${POSTGRES_PASSWORD:-devops_secure_password}@postgres:5432/${POSTGRES_DB:-devops_control_center}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_secure_password}
+      JWT_SECRET: ${JWT_SECRET}
+      # External integrations (passed from host .env)
+      USE_MOCK_AZURE_DEVOPS: ${USE_MOCK_AZURE_DEVOPS:-true}
+      AZURE_DEVOPS_API_URL: ${AZURE_DEVOPS_API_URL:-https://dev.azure.com}
+      AZURE_DEVOPS_PAT: ${AZURE_DEVOPS_PAT:-}
+      AZURE_DEVOPS_QUERY_USER: ${AZURE_DEVOPS_QUERY_USER:-}
+      USE_MOCK_SONARQUBE: ${USE_MOCK_SONARQUBE:-true}
+      SONARQUBE_URL: ${SONARQUBE_URL:-https://sonarqube.internal.company}
+      SONARQUBE_TOKEN: ${SONARQUBE_TOKEN:-}
+      USE_MOCK_ARTIFACTORY: ${USE_MOCK_ARTIFACTORY:-true}
+      ARTIFACTORY_URL: ${ARTIFACTORY_URL:-https://artifactory.internal.company}
+      ARTIFACTORY_API_KEY: ${ARTIFACTORY_API_KEY:-}
+      USE_MOCK_SERVICENOW: ${USE_MOCK_SERVICENOW:-true}
+      SERVICENOW_URL: ${SERVICENOW_URL:-}
+      USE_MOCK_AI_CHATBOT: ${USE_MOCK_AI_CHATBOT:-true}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - devops-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+networks:
+  devops-network:
+    driver: bridge
+    name: devops-network
+
+volumes:
+  postgres-data:
+    name: devops-postgres-data
+  redis-data:
+    name: devops-redis-data

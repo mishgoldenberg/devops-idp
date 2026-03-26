@@ -2,7 +2,7 @@
 #
 # This Dockerfile builds the FastAPI backend application.
 # 
-# BUILD CONTEXT: Repository root (. from docker build -f infrastructure/docker/Dockerfile.python-backend .)
+# BUILD CONTEXT: Repository root (. from docker build -f backend/app/Dockerfile .)
 # OUTPUT IMAGE: Contains FastAPI + Uvicorn running on port 8000
 # 
 # LAYERS:
@@ -39,6 +39,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code into the container
 # backend/app/ becomes /app/backend_app/
 COPY backend/app ./
+
+# Copy frontend assets into the container so the HTMX UI can be served
+# frontend/ becomes /app/frontend/
+COPY frontend ./frontend
 
 # Set Python path so imports work correctly
 ENV PYTHONPATH=/app
