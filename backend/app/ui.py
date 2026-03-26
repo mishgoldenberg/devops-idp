@@ -2,18 +2,35 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import APIRouter, Body, Form, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from api.artifactory import get_storage as _art_get_storage
+from api.azure_devops import ProjectCreationPayload
+from api.azure_devops import create_ado_project as _ado_create_project
+from api.azure_devops import get_project_creation_status as _ado_project_status
 from api.azure_devops import get_pipelines as _ado_pipelines
 from api.azure_devops import get_pull_requests as _ado_pull_requests
 from api.azure_devops import get_work_items as _ado_work_items
+from api.dashboards import DashboardUpdateRequest
+from api.dashboards import get_default_dashboard as _dash_get_default
+from api.dashboards import update_dashboard as _dash_update
+from api.servicenow import get_stats as _snow_get_stats
 from api.sonarqube import get_projects as _sonar_get_projects
 from db import query_one
 from security import AuthUser, decode_access_token
 
 ui_router = APIRouter()
+
+HOME_WIDGET_KEYS = {
+    "ado_my_work_items": "ado-tasks-component",
+    "snow_my_tickets": "servicenow-tickets-component",
+    "ado_my_pull_requests": "pull-requests-component",
+    "ado_pipeline_status": "pipelines-component",
+    "sonar_quality_gate": "sonarqube-quality-component",
+    "artifactory_storage": "artifactory-storage-component",
+    "service_health": "service-health-component",
+}
 
 
 def _get_templates(request: Request):
@@ -341,6 +358,157 @@ def ui_approvals_page(request: Request):
             "now": datetime.utcnow().isoformat() + "Z",
         },
     )
+
+
+@ui_router.get("/ui/profile", response_class=HTMLResponse)
+def ui_profile_page(request: Request):
+    """Render the user profile page."""
+    token = request.cookies.get("auth_token")
+    if not token:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+    try:
+        user = _get_ui_user(token)
+        payload = decode_access_token(token)
+    except HTTPException:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+
+    templates = _get_templates(request)
+    return templates.TemplateResponse(
+        "profile.html",
+        {
+            "request": request,
+            "user": user,
+            "current_page": "profile",
+            "email": payload.get("email", ""),
+            "saved": request.query_params.get("saved", ""),
+        },
+    )
+
+
+@ui_router.post("/ui/profile")
+def ui_profile_update(request: Request, display_name: str = Form("")):
+    """Update the authenticated user's display name."""
+    token = request.cookies.get("auth_token")
+    if not token:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+    try:
+        payload = decode_access_token(token)
+    except HTTPException:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+
+    user_id = payload.get("id")
+    if user_id:
+        try:
+            query_one(
+                "UPDATE users SET full_name = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s RETURNING id",
+                [display_name.strip() or None, user_id],
+            )
+        except Exception:
+            pass
+    return RedirectResponse(url="/ui/profile?saved=1", status_code=303)
+
+
+@ui_router.get("/ui/settings", response_class=HTMLResponse)
+def ui_settings_page(request: Request):
+    """Render placeholder settings page."""
+    token = request.cookies.get("auth_token")
+    if not token:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+    try:
+        user = _get_ui_user(token)
+    except HTTPException:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+
+    templates = _get_templates(request)
+    return templates.TemplateResponse(
+        "settings.html",
+        {"request": request, "user": user, "current_page": "settings"},
+    )
+
+
+@ui_router.get("/ui/dashboard/preferences")
+def ui_dashboard_preferences(request: Request):
+    """Get enabled home widgets for the current user."""
+    current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
+    if not current_user:
+        return JSONResponse(status_code=401, content={"success": False, "detail": "Not authenticated"})
+
+    dash = _dash_get_default(current_user=current_user)
+    widgets = (dash.get("data") or {}).get("widgets") or []
+    enabled = [w.get("widget_key") for w in widgets if w.get("widget_key") in HOME_WIDGET_KEYS]
+    if not enabled:
+        enabled = list(HOME_WIDGET_KEYS.keys())
+
+    return {"success": True, "data": {"enabled": enabled}}
+
+
+@ui_router.post("/ui/dashboard/preferences")
+def ui_dashboard_preferences_save(
+    request: Request,
+    payload: Dict[str, Any] = Body(default={}),
+):
+    """Persist enabled home widgets to the default dashboard."""
+    current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
+    if not current_user:
+        return JSONResponse(status_code=401, content={"success": False, "detail": "Not authenticated"})
+
+    requested = payload.get("enabled") or []
+    if not isinstance(requested, list):
+        raise HTTPException(status_code=400, detail="'enabled' must be a list")
+
+    enabled_keys = [k for k in requested if isinstance(k, str) and k in HOME_WIDGET_KEYS]
+    dash = _dash_get_default(current_user=current_user)
+    dash_data = dash.get("data") or {}
+    dashboard_id = dash_data.get("id")
+    existing_widgets = dash_data.get("widgets") or []
+    existing_by_key = {w.get("widget_key"): w for w in existing_widgets if w.get("widget_key")}
+
+    new_widgets = []
+    for key in enabled_keys:
+        existing = existing_by_key.get(key, {})
+        new_widgets.append(
+            {
+                "id": existing.get("id") or f"{key}-home",
+                "widget_key": key,
+                "config": existing.get("config") or {},
+            }
+        )
+
+    _dash_update(
+        dashboard_id=dashboard_id,
+        body=DashboardUpdateRequest(widgets=new_widgets),
+        current_user=current_user,
+    )
+    return {"success": True, "data": {"enabled": enabled_keys}}
+
+
+@ui_router.post("/ui/automations/azure-devops/create")
+def ui_create_ado_project(
+    request: Request,
+    project_name: str = Form(""),
+    process_type: str = Form("Scrum"),
+    admin_username: str = Form(""),
+):
+    """Submit an Azure DevOps project creation automation from the UI."""
+    current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
+    if not current_user:
+        return JSONResponse(status_code=401, content={"success": False, "detail": "Not authenticated"})
+
+    payload = ProjectCreationPayload(
+        project_name=project_name,
+        process_type=process_type,
+        admin_username=admin_username,
+    )
+    return _ado_create_project(payload=payload, current_user=current_user)
+
+
+@ui_router.get("/ui/automations/azure-devops/status/{job_id}")
+def ui_ado_project_status(request: Request, job_id: str):
+    """Poll Azure DevOps automation job status."""
+    current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
+    if not current_user:
+        return JSONResponse(status_code=401, content={"success": False, "detail": "Not authenticated"})
+    return _ado_project_status(job_id=job_id, current_user=current_user)
 
 
 @ui_router.get("/ui/auth", response_class=HTMLResponse)
@@ -720,7 +888,25 @@ def ui_service_health_component(request: Request):
 def ui_servicenow_tickets_component(request: Request):
     """Render the ServiceNow Tickets dashboard widget for HTMX partial loading."""
     templates = _get_templates(request)
+    current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
+    stats = {"open": 0, "in_progress": 0, "resolved": 0, "total": 0}
+    error = ""
+    if current_user:
+        try:
+            res = _snow_get_stats(current_user=current_user)
+            stats = (res.get("data") or stats) if isinstance(res, dict) else stats
+        except Exception as exc:
+            if isinstance(exc, HTTPException):
+                detail = exc.detail
+                error = detail if isinstance(detail, str) else "ServiceNow unavailable"
+            else:
+                error = "ServiceNow unavailable"
     return templates.TemplateResponse(
         "partials/components/servicenow-tickets.html",
-        {"request": request, "now": datetime.utcnow().isoformat() + "Z"},
+        {
+            "request": request,
+            "now": datetime.utcnow().isoformat() + "Z",
+            "stats": stats,
+            "error": error,
+        },
     )

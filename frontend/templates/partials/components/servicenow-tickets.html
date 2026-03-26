@@ -24,7 +24,12 @@
 			</h3>
 		</div>
 
-		<!-- UI-only placeholder counts; replace with backend data later -->
+		{% if error %}
+		<div class="alert alert-warning alert-soft text-xs">
+			<span>{{ error }}</span>
+		</div>
+		{% endif %}
+
 		<div class="grid grid-cols-2 gap-3 flex-1 min-h-0">
 			<div
 				class="bg-accent/15 border border-accent/25 rounded-xl flex flex-col items-center justify-center gap-1"
@@ -33,7 +38,7 @@
 					class="text-xs font-semibold uppercase tracking-wider text-accent/80"
 					>Open</span
 				>
-				<span class="text-4xl font-bold text-accent">18</span>
+				<span class="text-4xl font-bold text-accent">{{ stats.open or 0 }}</span>
 			</div>
 
 			<div
@@ -43,7 +48,7 @@
 					class="text-xs font-semibold uppercase tracking-wider text-primary/80"
 					>In Progress</span
 				>
-				<span class="text-4xl font-bold text-primary">6</span>
+				<span class="text-4xl font-bold text-primary">{{ stats.in_progress or 0 }}</span>
 			</div>
 
 			<div
@@ -51,9 +56,9 @@
 			>
 				<span
 					class="text-xs font-semibold uppercase tracking-wider text-warning/80"
-					>Awaiting Caller</span
+					>Resolved</span
 				>
-				<span class="text-4xl font-bold text-warning">3</span>
+				<span class="text-4xl font-bold text-warning">{{ stats.resolved or 0 }}</span>
 			</div>
 
 			<div
@@ -61,9 +66,9 @@
 			>
 				<span
 					class="text-xs font-semibold uppercase tracking-wider text-success/80"
-					>Done</span
+					>Total</span
 				>
-				<span class="text-4xl font-bold text-success">24</span>
+				<span class="text-4xl font-bold text-success">{{ stats.total or 0 }}</span>
 			</div>
 		</div>
 	</div>
