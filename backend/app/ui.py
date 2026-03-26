@@ -661,7 +661,8 @@ def _get_ado_task_counts(current_user: Optional[AuthUser]) -> Dict[str, Any]:
     if not current_user:
         return {"counts": empty_counts, "error": "Sign in to load your Azure DevOps tasks."}
     try:
-        result = _ado_work_items(username=None, current_user=current_user)
+        # Work-items endpoint accepts optional project filter (not username).
+        result = _ado_work_items(project=None, current_user=current_user)
         items = result.get("data", []) if isinstance(result, dict) else []
         counts: Dict[str, int] = {"todo": 0, "in_progress": 0, "blocked": 0, "done": 0}
         state_map = {
