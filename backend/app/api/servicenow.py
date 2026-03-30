@@ -12,6 +12,22 @@ from security import AuthUser, get_current_user
 
 router = APIRouter()
 
+
+def _ensure_user_tickets_table() -> None:
+    # Keep ownership mapping available even when startup table creation was skipped.
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_tickets (
+            id          SERIAL PRIMARY KEY,
+            user_email  VARCHAR(255) NOT NULL,
+            sys_id      VARCHAR(64)  NOT NULL,
+            ticket_number VARCHAR(32),
+            created_at  TIMESTAMP DEFAULT NOW(),
+            UNIQUE (user_email, sys_id)
+        )
+        """
+    )
+
 def _use_mock() -> bool:
     return os.getenv("USE_MOCK_SERVICENOW", "true").lower() in ("true", "1")
 
@@ -267,32 +283,31 @@ def get_tickets(current_user: AuthUser = Depends(get_current_user)):
         tickets = [t for t in _MOCK_TICKETS if t["assigned_to"] == user_email]
         return {"success": True, "data": tickets, "timestamp": _now_iso()}
 
-    # Look up the sys_ids this user created via the portal
-    rows = db.query_all(
-        "SELECT sys_id FROM user_tickets WHERE user_email = %s ORDER BY created_at DESC",
-        [user_email],
+    # Primary source of truth: ServiceNow itself, scoped to the configured
+    # portal account (secret variable) or the active user email fallback.
+    snow_user = (os.getenv("SERVICENOW_USERNAME") or os.getenv("SERVICENOW_USER") or "").strip()
+    if not snow_user:
+        snow_user = str(user_email)
+
+    query = (
+        f"opened_by={snow_user}"
+        f"^ORcaller_id.user_name={snow_user}"
+        "^ORDERBYDESCsys_created_on"
     )
-    sys_ids = [r["sys_id"] for r in rows]
 
-    if not sys_ids:
-        return {"success": True, "data": [], "timestamp": _now_iso()}
-
-    def _fetch():
+    try:
         with _snow_client() as client:
             resp = client.get(
                 "/api/now/table/incident",
                 params={
-                    "sysparm_query": "sys_idIN" + ",".join(sys_ids),
+                    "sysparm_query": query,
                     "sysparm_fields": "sys_id,number,short_description,state,priority,assigned_to,opened_at",
                     "sysparm_limit": 50,
                     "sysparm_display_value": "true",
                 },
             )
             resp.raise_for_status()
-            return [_map_ticket(r) for r in resp.json().get("result", [])]
-
-    try:
-        records = cache.get_cached(f"snow:tickets:{user_email}", ttl=30, producer=_fetch)
+            records = [_map_ticket(r) for r in resp.json().get("result", [])]
     except Exception as exc:
         _raise_snow_error(exc, "fetching tickets")
 
@@ -400,6 +415,10 @@ def create_ticket(
     current_user: AuthUser = Depends(get_current_user),
 ):
     user_email = current_user.get("username", "")
+    try:
+        _ensure_user_tickets_table()
+    except Exception:
+        pass
 
     _PRIORITY_LABELS = {
         "1": "1 - Critical",

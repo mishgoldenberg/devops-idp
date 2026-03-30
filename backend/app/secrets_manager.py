@@ -4,6 +4,8 @@ from typing import Optional
 
 from db import query_one
 
+_MEMORY_PATS: dict[str, str] = {}
+
 
 def _use_vault() -> bool:
     return os.getenv("USE_VAULT", "false").lower() in {"true", "1", "yes"}
@@ -53,17 +55,21 @@ def store_user_azure_devops_pat(user_id: str, pat: str) -> None:
     # Fallback: encrypted configuration table (per-user key)
     key = f"user:{user_id}:azure_devops_pat"
     value = json.dumps({"pat": pat})
-    query_one(
-        """
-        INSERT INTO system_config (key, value, description, is_sensitive)
-        VALUES (%s, %s::jsonb, %s, true)
-        ON CONFLICT (key) DO UPDATE
-        SET value = EXCLUDED.value,
-            updated_at = CURRENT_TIMESTAMP
-        RETURNING key
-        """,
-        [key, value, "Per-user Azure DevOps PAT"],
-    )
+    try:
+        query_one(
+            """
+            INSERT INTO system_config (key, value, description, is_sensitive)
+            VALUES (%s, %s::jsonb, %s, true)
+            ON CONFLICT (key) DO UPDATE
+            SET value = EXCLUDED.value,
+                updated_at = CURRENT_TIMESTAMP
+            RETURNING key
+            """,
+            [key, value, "Per-user Azure DevOps PAT"],
+        )
+    except Exception:
+        # Fallback for transient DB problems: keep PAT in-process so widgets can still work.
+        _MEMORY_PATS[user_id] = pat
 
 
 def get_user_azure_devops_pat(user_id: str) -> Optional[str]:
@@ -85,20 +91,25 @@ def get_user_azure_devops_pat(user_id: str) -> Optional[str]:
         return str(pat) if pat else None
 
     key = f"user:{user_id}:azure_devops_pat"
-    row = query_one(
-        "SELECT value FROM system_config WHERE key = %s AND is_sensitive = true",
-        [key],
-    )
+    try:
+        row = query_one(
+            "SELECT value FROM system_config WHERE key = %s AND is_sensitive = true",
+            [key],
+        )
+    except Exception:
+        # During transient DB issues we should degrade gracefully so callers can
+        # present a "connect PAT" prompt instead of crashing widget requests.
+        return _MEMORY_PATS.get(user_id)
     if not row:
-        return None
+        return _MEMORY_PATS.get(user_id)
     try:
         payload = row.get("value") or {}
         if isinstance(payload, str):
             payload = json.loads(payload)
         pat = payload.get("pat")
-        return str(pat) if pat else None
+        return str(pat) if pat else _MEMORY_PATS.get(user_id)
     except Exception:
-        return None
+        return _MEMORY_PATS.get(user_id)
 
 
 def delete_user_azure_devops_pat(user_id: str) -> None:
@@ -116,5 +127,9 @@ def delete_user_azure_devops_pat(user_id: str) -> None:
         return
 
     key = f"user:{user_id}:azure_devops_pat"
-    query_one("DELETE FROM system_config WHERE key = %s RETURNING key", [key])
+    try:
+        query_one("DELETE FROM system_config WHERE key = %s RETURNING key", [key])
+    except Exception:
+        pass
+    _MEMORY_PATS.pop(user_id, None)
 

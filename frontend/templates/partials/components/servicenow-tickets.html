@@ -1,3 +1,4 @@
+{% set stats_data = stats | default({}) %}
 <div
 	class="card bg-base-100 border border-base-300 shadow h-full flex flex-col"
 >
@@ -24,7 +25,12 @@
 			</h3>
 		</div>
 
-		<!-- UI-only placeholder counts; replace with backend data later -->
+		{% if error %}
+		<div class="alert alert-warning alert-soft text-xs">
+			<span>{{ error }}</span>
+		</div>
+		{% endif %}
+
 		<div class="grid grid-cols-2 gap-3 flex-1 min-h-0">
 			<div
 				class="bg-accent/15 border border-accent/25 rounded-xl flex flex-col items-center justify-center gap-1"
@@ -33,7 +39,7 @@
 					class="text-xs font-semibold uppercase tracking-wider text-accent/80"
 					>Open</span
 				>
-				<span class="text-4xl font-bold text-accent">18</span>
+				<span class="text-4xl font-bold text-accent">{{ stats_data.open or 0 }}</span>
 			</div>
 
 			<div
@@ -43,7 +49,7 @@
 					class="text-xs font-semibold uppercase tracking-wider text-primary/80"
 					>In Progress</span
 				>
-				<span class="text-4xl font-bold text-primary">6</span>
+				<span class="text-4xl font-bold text-primary">{{ stats_data.in_progress or 0 }}</span>
 			</div>
 
 			<div
@@ -51,9 +57,9 @@
 			>
 				<span
 					class="text-xs font-semibold uppercase tracking-wider text-warning/80"
-					>Awaiting Caller</span
+					>Resolved</span
 				>
-				<span class="text-4xl font-bold text-warning">3</span>
+				<span class="text-4xl font-bold text-warning">{{ stats_data.resolved or 0 }}</span>
 			</div>
 
 			<div
@@ -61,10 +67,13 @@
 			>
 				<span
 					class="text-xs font-semibold uppercase tracking-wider text-success/80"
-					>Done</span
+					>Total</span
 				>
-				<span class="text-4xl font-bold text-success">24</span>
+				<span class="text-4xl font-bold text-success">{{ stats_data.total or 0 }}</span>
 			</div>
+		</div>
+		<div class="pt-1">
+			<a href="/ui/support" class="btn btn-xs btn-outline w-full">Open Support</a>
 		</div>
 	</div>
 </div>

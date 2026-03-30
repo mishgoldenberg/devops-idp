@@ -4,11 +4,12 @@ on:
   push:
     paths:
       - "backend/app/**"
+      - "frontend/**"
   workflow_dispatch:
 
 concurrency:
   group: service-backend-ci-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   backend:

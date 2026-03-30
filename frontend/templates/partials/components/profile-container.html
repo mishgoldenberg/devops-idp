@@ -1,0 +1,30 @@
+<div class="flex-1 min-h-0 flex flex-col overflow-hidden bg-base-200">
+	<header class="bg-base-100 border-b border-base-300 px-8 py-8">
+		<h1 class="text-3xl font-bold text-base-content">Profile</h1>
+		<p class="text-base-content/60">Update your appearance name.</p>
+	</header>
+	<div class="flex-1 min-h-0 overflow-y-auto p-8">
+		<div class="max-w-2xl card bg-base-100 border border-base-300 shadow">
+			<div class="card-body gap-4">
+				{% if saved %}
+				<div class="alert alert-success alert-soft text-sm">
+					<span>Profile updated.</span>
+				</div>
+				{% endif %}
+				<form action="/ui/profile" method="post" class="space-y-4">
+					<div>
+						<label class="label"><span class="label-text">Appearance name</span></label>
+						<input class="input input-bordered w-full" name="display_name" value="{{ user.display_name }}" />
+					</div>
+					<div>
+						<label class="label"><span class="label-text">Gmail</span></label>
+						<input class="input input-bordered w-full" value="{{ email }}" readonly />
+					</div>
+					<div class="flex justify-end">
+						<button class="btn btn-primary" type="submit">Save</button>
+					</div>
+				</form>
+			</div>
+		</div>
+	</div>
+</div>

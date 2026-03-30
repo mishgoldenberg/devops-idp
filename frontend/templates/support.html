@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Support - DevOps Portal</title>
+		<link rel="stylesheet" href="../static/css/output.css" />
+		<script src="https://unpkg.com/htmx.org/dist/htmx.min.js"></script>
+	</head>
+	<body class="h-screen bg-base-200 flex flex-col">
+		<div id="banner-component" hx-get="/ui/components/banner" hx-trigger="load" hx-swap="outerHTML"></div>
+		<div class="flex flex-1 min-h-0 overflow-hidden">
+			{% include "partials/components/sidebar.html" with context %} {% include "partials/components/support-container.html" %}
+		</div>
+	</body>
+</html>

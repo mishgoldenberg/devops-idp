@@ -58,6 +58,27 @@
 				<div class="widget-content h-full"></div>
 			</div>
 
+			<!-- Pull Requests To Review Widget -->
+			<div
+				id="pr-review-component"
+				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
+				hx-get="/ui/components/pull-requests-review"
+				hx-trigger="load, every 60s, click from:#refresh-btn"
+				hx-target="find .widget-content"
+				hx-swap="innerHTML"
+			>
+				<div class="widget-loading h-full">
+					<div
+						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+					>
+						<span
+							class="loading loading-spinner loading-md text-base-content/40"
+						></span>
+					</div>
+				</div>
+				<div class="widget-content h-full"></div>
+			</div>
+
 			<!-- Pipelines Widget -->
 			<div
 				id="pipelines-component"

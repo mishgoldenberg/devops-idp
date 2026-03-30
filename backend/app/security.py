@@ -2,7 +2,7 @@ import datetime as dt
 from typing import Any, Dict, List, Optional
 
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from config import get_settings
@@ -66,15 +66,17 @@ def decode_access_token(token: str) -> Dict[str, Any]:
 
 
 def get_current_user(
+    request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme),
 ) -> AuthUser:
     """FastAPI dependency that returns the authenticated user from JWT."""
-    if credentials is None or not credentials.scheme.lower() == "bearer":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authorization header missing",
-        )
-    token = credentials.credentials
+    token: Optional[str] = None
+    if credentials is not None and credentials.scheme.lower() == "bearer":
+        token = credentials.credentials
+    else:
+        token = request.cookies.get("auth_token")
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authorization missing")
     payload = decode_access_token(token)
     # Minimal validation
     required_keys = {"id", "username", "email", "role", "hierarchy_level", "permissions"}
