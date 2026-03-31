@@ -150,6 +150,34 @@ def ensure_tables() -> None:
 BOOTSTRAP_ADMIN_EMAIL = "golden.mihel@gmail.com"
 
 
+def sync_bootstrap_admin_role_for_email(email: str) -> None:
+    """
+    If ``email`` is the bootstrap admin identity, set DB role to Platform Admin.
+    Uses case-insensitive match so SSO email casing cannot strand the account
+    on a non-admin role. Idempotent.
+    """
+    e = (email or "").strip().lower()
+    if e != BOOTSTRAP_ADMIN_EMAIL.lower():
+        return
+    try:
+        role = query_one(
+            "SELECT id FROM roles WHERE LOWER(TRIM(name)) = %s LIMIT 1",
+            ["platform admin"],
+        )
+        if not role:
+            return
+        execute(
+            """
+            UPDATE users
+            SET role_id = %s, updated_at = CURRENT_TIMESTAMP
+            WHERE LOWER(TRIM(email)) = %s
+            """,
+            [role["id"], e],
+        )
+    except Exception:
+        pass
+
+
 def ensure_bootstrap_platform_admin() -> None:
     """
     Ensure the bootstrap user exists and has Platform Admin (app role Admin).

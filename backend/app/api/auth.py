@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 
 from config import get_settings
-from db import query_one
+from db import query_one, sync_bootstrap_admin_role_for_email
 from security import create_access_token, decode_access_token
 
 
@@ -48,13 +48,23 @@ def _map_role_to_effective(role_name: str, _email: Optional[str] = None) -> str:
 def _get_or_create_user_by_email(email: str, full_name: Optional[str]) -> Dict[str, Any]:
     """
     Look up a user by email; if not found, create a regular user with lowest role.
+
+    Email is normalized to lowercase for lookup and storage so SSO casing matches
+    the bootstrap admin row and RBAC stays consistent.
     """
+    email = (email or "").strip().lower()
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email is required",
+        )
+
     user_row = query_one(
         """
         SELECT u.*, r.name as role_name, r.hierarchy_level, r.permissions
         FROM users u
         JOIN roles r ON u.role_id = r.id
-        WHERE u.email = %s AND u.is_active = true
+        WHERE LOWER(TRIM(u.email)) = %s AND u.is_active = true
         """,
         [email],
     )
@@ -107,7 +117,17 @@ def _get_or_create_user_by_email(email: str, full_name: Optional[str]) -> Dict[s
             )
 
     query_one("UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = %s RETURNING id", [user_row["id"]])
-    return user_row
+    sync_bootstrap_admin_role_for_email(email)
+    refreshed = query_one(
+        """
+        SELECT u.*, r.name as role_name, r.hierarchy_level, r.permissions
+        FROM users u
+        JOIN roles r ON u.role_id = r.id
+        WHERE u.id = %s AND u.is_active = true
+        """,
+        [user_row["id"]],
+    )
+    return refreshed or user_row
 
 
 @router.get("/login")
@@ -193,7 +213,8 @@ async def oauth_callback(request: Request, code: Optional[str] = None, state: Op
             detail="Invalid ID token",
         )
 
-    email: Optional[str] = payload.get("email")
+    email_raw: Optional[str] = payload.get("email")
+    email = (email_raw or "").strip().lower()
     full_name: Optional[str] = payload.get("name")
 
     if not email:
