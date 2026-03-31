@@ -23,7 +23,7 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _map_role_to_effective(role_name: str, email: Optional[str]) -> str:
+def _map_role_to_effective(role_name: str, _email: Optional[str] = None) -> str:
     """
     Map detailed platform roles into simplified app roles:
       - Admin
@@ -32,11 +32,10 @@ def _map_role_to_effective(role_name: str, email: Optional[str]) -> str:
 
     For now we only expose three roles in the app. TeamLead and User share
     the same permissions; Admin has access to admin-only features.
-    """
-    # Hard-code a primary admin account for initial testing
-    if email and email.lower() == "golden.mihel@gmail.com":
-        return "Admin"
 
+    Platform Admin in the database maps to Admin; the primary bootstrap admin
+    is ensured at startup via ``db.ensure_bootstrap_platform_admin``.
+    """
     normalized = (role_name or "").strip().lower()
     if normalized == "platform admin":
         return "Admin"

@@ -69,3 +69,21 @@ def test_observability_api_denied_for_non_admin():
   resp = client.get("/api/observability/widgets", headers=headers)
   assert resp.status_code == 403
 
+
+def test_admin_grant_role_denied_for_non_admin():
+  user = {
+      "id": "user-3",
+      "username": "user3@example.com",
+      "email": "user3@example.com",
+      "role": "User",
+      "hierarchy_level": 7,
+      "permissions": [],
+  }
+  headers = _auth_headers(user)
+  resp = client.post(
+      "/api/admin/grant-role",
+      headers={**headers, "Content-Type": "application/json"},
+      json={"email": "someone@gmail.com", "role": "Admin"},
+  )
+  assert resp.status_code == 403
+

@@ -426,6 +426,32 @@ def ui_observability_page(request: Request):
     )
 
 
+@ui_router.get("/ui/platform-managing", response_class=HTMLResponse)
+def ui_platform_managing_page(request: Request):
+    """Admin-only platform management (e.g. grant Admin to other users)."""
+    token = request.cookies.get("auth_token")
+    if not token:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+    try:
+        user = _get_ui_user(token)
+        payload = decode_access_token(token)
+    except HTTPException:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+    if str(payload.get("role", "")) != "Admin":
+        return RedirectResponse(url="/ui/", status_code=303)
+
+    templates = _get_templates(request)
+    return templates.TemplateResponse(
+        "platform-managing.html",
+        {
+            "request": request,
+            "user": user,
+            "current_page": "platform-managing",
+            "now": datetime.utcnow().isoformat() + "Z",
+        },
+    )
+
+
 @ui_router.get("/ui/profile", response_class=HTMLResponse)
 def ui_profile_page(request: Request):
     """Render the user profile page."""

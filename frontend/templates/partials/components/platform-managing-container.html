@@ -1,0 +1,104 @@
+<div class="flex-1 min-h-0 flex flex-col overflow-hidden bg-base-200">
+	<header
+		class="bg-base-100 border-b border-base-300 px-8 py-8 flex items-center justify-between shrink-0"
+	>
+		<div>
+			<h1 class="text-3xl font-bold text-base-content">Platform Managing</h1>
+			<p class="text-base-content/60">Administrative controls for the portal</p>
+		</div>
+	</header>
+
+	<div class="flex-1 min-h-0 overflow-y-auto p-8">
+		<section class="card bg-base-100 border border-base-300 shadow max-w-xl">
+			<div class="card-body gap-4">
+				<div>
+					<h2 class="card-title text-lg">User Role Management</h2>
+					<p class="text-sm text-base-content/60">
+						Grant Admin access to a user who has already signed in at least once (account
+						must exist). They must sign out and sign in again for the new role to apply.
+					</p>
+				</div>
+				<div class="form-control w-full">
+					<label class="label pt-0" for="grant-admin-email">
+						<span class="label-text">Email</span>
+					</label>
+					<input
+						id="grant-admin-email"
+						type="email"
+						autocomplete="email"
+						placeholder="user@gmail.com"
+						class="input input-bordered w-full"
+					/>
+				</div>
+				<div class="flex flex-wrap items-center gap-3">
+					<button id="grant-admin-btn" type="button" class="btn btn-primary">
+						Grant Admin Access
+					</button>
+				</div>
+				<div
+					id="grant-admin-alert"
+					class="hidden alert text-sm"
+					role="status"
+				></div>
+			</div>
+		</section>
+	</div>
+</div>
+
+<script>
+	(function () {
+		const input = document.getElementById("grant-admin-email");
+		const btn = document.getElementById("grant-admin-btn");
+		const alertEl = document.getElementById("grant-admin-alert");
+
+		function showAlert(kind, text) {
+			alertEl.classList.remove("hidden", "alert-success", "alert-error", "alert-info");
+			alertEl.classList.add(
+				kind === "ok" ? "alert-success" : kind === "err" ? "alert-error" : "alert-info"
+			);
+			alertEl.textContent = text;
+		}
+
+		function detailFromBody(json, res) {
+			if (json && typeof json.detail === "string") return json.detail;
+			if (Array.isArray(json?.detail)) {
+				return json.detail.map((e) => e.msg || e).join("; ");
+			}
+			return res.statusText || "Request failed";
+		}
+
+		btn?.addEventListener("click", async () => {
+			const email = (input?.value || "").trim();
+			alertEl.classList.add("hidden");
+			if (!email) {
+				showAlert("err", "Enter an email address.");
+				return;
+			}
+			btn.disabled = true;
+			try {
+				const res = await fetch("/api/admin/grant-role", {
+					method: "POST",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ email, role: "Admin" }),
+				});
+				let json = null;
+				try {
+					json = await res.json();
+				} catch {
+					json = {};
+				}
+				if (res.ok) {
+					showAlert("ok", json?.message || "User granted Admin permissions");
+					if (input) input.value = "";
+					return;
+				}
+				showAlert("err", detailFromBody(json, res));
+			} catch (e) {
+				showAlert("err", e?.message || "Network error");
+			} finally {
+				btn.disabled = false;
+			}
+		});
+	})();
+</script>

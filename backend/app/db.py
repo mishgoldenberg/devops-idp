@@ -146,3 +146,44 @@ def ensure_tables() -> None:
     )
 
 
+# Primary bootstrap admin (DB role Platform Admin). Single allowed hard-coded identity.
+BOOTSTRAP_ADMIN_EMAIL = "golden.mihel@gmail.com"
+
+
+def ensure_bootstrap_platform_admin() -> None:
+    """
+    Ensure the bootstrap user exists and has Platform Admin (app role Admin).
+    Safe to run on every startup; no-ops if core tables or role seed are missing.
+    """
+    import logging
+
+    log = logging.getLogger(__name__)
+    try:
+        role = query_one(
+            "SELECT id FROM roles WHERE LOWER(TRIM(name)) = %s LIMIT 1",
+            ["platform admin"],
+        )
+        if not role:
+            log.warning("ensure_bootstrap_platform_admin: Platform Admin role not found")
+            return
+        rid = role["id"]
+        execute(
+            """
+            INSERT INTO users (username, email, full_name, role_id)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (email) DO UPDATE SET
+              role_id = EXCLUDED.role_id,
+              is_active = true,
+              updated_at = CURRENT_TIMESTAMP
+            """,
+            [
+                BOOTSTRAP_ADMIN_EMAIL,
+                BOOTSTRAP_ADMIN_EMAIL,
+                "Golden Mihel",
+                rid,
+            ],
+        )
+    except Exception as exc:
+        log.warning("ensure_bootstrap_platform_admin failed: %s", exc)
+
+

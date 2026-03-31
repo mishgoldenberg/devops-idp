@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from . import auth, dashboards, health, metrics, observability, azure_devops, sonarqube, artifactory, servicenow, ai_chatbot, approvals
+from . import admin, auth, dashboards, health, metrics, observability, azure_devops, sonarqube, artifactory, servicenow, ai_chatbot, approvals
 
 
 api_router = APIRouter(prefix="/api")
@@ -19,6 +19,9 @@ api_router.include_router(metrics.router, prefix="/metrics", tags=["metrics"])
 
 # Observability (Admin-only usage & integration analytics)
 api_router.include_router(observability.router, prefix="/observability", tags=["observability"])
+
+# Admin operations (grant roles, etc.)
+api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 
 # External integrations (mocked behavior, similar to Node services)
 api_router.include_router(azure_devops.router, prefix="/azure-devops", tags=["azure-devops"])

@@ -157,6 +157,11 @@ def create_app() -> FastAPI:
         except Exception as exc:
             import logging
             logging.getLogger(__name__).warning("ensure_tables() failed: %s", exc)
+        try:
+            db.ensure_bootstrap_platform_admin()
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("ensure_bootstrap_platform_admin() failed: %s", exc)
 
     # Include all API routers (azure_devops, auth, approvals, etc.)
     app.include_router(api_router)
