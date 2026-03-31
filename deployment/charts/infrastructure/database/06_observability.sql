@@ -35,3 +35,18 @@ CREATE TABLE IF NOT EXISTS servicenow_tickets (
 
 CREATE INDEX IF NOT EXISTS idx_servicenow_tickets_created ON servicenow_tickets (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_azure_projects_completed ON azure_projects (completed_at DESC);
+
+-- If this file was run as a superuser, ensure the portal app role (default: devops) can read/write.
+-- Replace devops in your fork if DATABASE_URL uses another user.
+DO $obsgrant$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'devops') THEN
+    GRANT SELECT, INSERT, UPDATE, DELETE ON widget_usage TO devops;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON self_service_usage TO devops;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON azure_projects TO devops;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON servicenow_tickets TO devops;
+    GRANT USAGE, SELECT ON SEQUENCE azure_projects_id_seq TO devops;
+    GRANT USAGE, SELECT ON SEQUENCE servicenow_tickets_id_seq TO devops;
+  END IF;
+END;
+$obsgrant$;

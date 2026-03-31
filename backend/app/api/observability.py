@@ -10,10 +10,10 @@ from security import AuthUser, can_view_observability, get_current_user
 router = APIRouter()
 
 _OBS_SCHEMA_NOTICE = (
-    "Observability data could not be loaded (missing tables, denied SELECT/CREATE, or DB error). "
-    "Apply deployment/charts/infrastructure/database/06_observability.sql as a database admin, "
-    "and ensure the app database user can SELECT those tables. "
-    "An async migrate Job may also apply DDL on deploy (Helm values)."
+    "The observability tables are not available to the app yet. "
+    "As a database admin, run the SQL file deployment/charts/infrastructure/database/06_observability.sql "
+    "on the portal database (it creates tables and GRANTs for user devops). "
+    "Then click Refresh. This is not a portal crash — metrics will appear after the schema exists."
 )
 
 
