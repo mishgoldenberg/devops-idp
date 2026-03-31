@@ -104,7 +104,9 @@ def create_app() -> FastAPI:
                 from security import decode_access_token
 
                 payload = decode_access_token(token)
-                request.state.portal_is_admin = str(payload.get("role") or "") == "Admin"
+                from security import AuthUser, has_effective_admin_access
+
+                request.state.portal_is_admin = has_effective_admin_access(AuthUser(payload))
             except Exception:
                 pass
         return await call_next(request)

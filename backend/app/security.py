@@ -117,6 +117,31 @@ def has_permission(user: AuthUser, permission: str) -> bool:
     return False
 
 
+def has_effective_admin_access(user: AuthUser) -> bool:
+    """
+    True for portal / API admin-only features.
+
+    Accepts either JWT ``role == "Admin"``, DB top-of-hierarchy (``hierarchy_level == 1``),
+    or the single bootstrap admin email (matches DB bootstrap; JWT may lag after role fixes).
+    """
+    if str(user.get("role") or "") == "Admin":
+        return True
+    try:
+        if int(user.get("hierarchy_level", 99)) == 1:
+            return True
+    except (TypeError, ValueError):
+        pass
+    try:
+        from db import BOOTSTRAP_ADMIN_EMAIL
+
+        em = str(user.get("email") or "").strip().lower()
+        if em and em == BOOTSTRAP_ADMIN_EMAIL.strip().lower():
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def can_view_observability(user: AuthUser) -> bool:
     """
     Observability and monitoring are restricted to Admins only.
@@ -128,7 +153,7 @@ def can_view_observability(user: AuthUser) -> bool:
 
     The underlying database roles are mapped to these effective roles in the auth payload.
     """
-    return str(user.get("role")) == "Admin"
+    return has_effective_admin_access(user)
 
 
 def can_view_aggregated_metrics(user: AuthUser) -> bool:

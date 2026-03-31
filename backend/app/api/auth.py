@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 
 from config import get_settings
-from db import query_one, sync_bootstrap_admin_role_for_email
+from db import BOOTSTRAP_ADMIN_EMAIL, query_one, sync_bootstrap_admin_role_for_email
 from security import create_access_token, decode_access_token
 
 
@@ -23,7 +23,22 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _map_role_to_effective(role_name: str, _email: Optional[str] = None) -> str:
+def _normalize_permissions(perms: Any) -> list:
+    """JSONB / JWT-safe list for the token payload."""
+    if perms is None:
+        return []
+    if isinstance(perms, list):
+        return perms
+    if isinstance(perms, str):
+        return [perms]
+    return []
+
+
+def _map_role_to_effective(
+    role_name: str,
+    _email: Optional[str] = None,
+    hierarchy_level: Optional[int] = None,
+) -> str:
     """
     Map detailed platform roles into simplified app roles:
       - Admin
@@ -33,9 +48,15 @@ def _map_role_to_effective(role_name: str, _email: Optional[str] = None) -> str:
     For now we only expose three roles in the app. TeamLead and User share
     the same permissions; Admin has access to admin-only features.
 
-    Platform Admin in the database maps to Admin; the primary bootstrap admin
-    is ensured at startup via ``db.ensure_bootstrap_platform_admin``.
+    ``hierarchy_level == 1`` always maps to Admin (Platform Admin in seed data)
+    so production DB role *names* can differ slightly without breaking RBAC.
     """
+    if hierarchy_level is not None:
+        try:
+            if int(hierarchy_level) == 1:
+                return "Admin"
+        except (TypeError, ValueError):
+            pass
     normalized = (role_name or "").strip().lower()
     if normalized == "platform admin":
         return "Admin"
@@ -225,14 +246,34 @@ async def oauth_callback(request: Request, code: Optional[str] = None, state: Op
 
     try:
         user_row = _get_or_create_user_by_email(email, full_name)
+        hl = int(user_row["hierarchy_level"])
+        perms = _normalize_permissions(user_row.get("permissions"))
+        role_eff = _map_role_to_effective(str(user_row["role_name"]), None, hl)
+
+        # Bootstrap account: always issue full Platform Admin claims (JWT + APIs),
+        # even if role name text or a stale role_id in DB disagrees.
+        if email.strip().lower() == BOOTSTRAP_ADMIN_EMAIL.strip().lower():
+            pa = query_one(
+                """
+                SELECT hierarchy_level, permissions
+                FROM roles
+                WHERE LOWER(TRIM(name)) = %s
+                LIMIT 1
+                """,
+                ["platform admin"],
+            )
+            if pa:
+                role_eff = "Admin"
+                hl = int(pa["hierarchy_level"])
+                perms = _normalize_permissions(pa.get("permissions"))
+
         auth_user: Dict[str, Any] = {
             "id": str(user_row["id"]),
             "username": user_row["username"],
             "email": user_row["email"],
-            # Expose simplified role for frontend & RBAC helpers
-            "role": _map_role_to_effective(str(user_row["role_name"]), email),
-            "hierarchy_level": int(user_row["hierarchy_level"]),
-            "permissions": user_row.get("permissions") or [],
+            "role": role_eff,
+            "hierarchy_level": hl,
+            "permissions": perms,
         }
     except Exception as exc:
         # Temporary resilience for schema drift during integration:

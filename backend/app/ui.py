@@ -19,7 +19,7 @@ from api.servicenow import get_tickets as _snow_get_tickets
 from api.sonarqube import get_projects as _sonar_get_projects
 from db import query_one
 from secrets_manager import delete_user_azure_devops_pat, get_user_azure_devops_pat, store_user_azure_devops_pat
-from security import AuthUser, decode_access_token
+from security import AuthUser, decode_access_token, has_effective_admin_access
 
 ui_router = APIRouter()
 
@@ -385,7 +385,7 @@ def ui_approvals_page(request: Request):
     except HTTPException:
         return RedirectResponse(url="/ui/auth", status_code=303)
 
-    if str(payload.get("role", "")) != "Admin":
+    if not has_effective_admin_access(AuthUser(payload)):
         return RedirectResponse(url="/ui/", status_code=303)
 
     templates = _get_templates(request)
@@ -411,7 +411,7 @@ def ui_observability_page(request: Request):
         payload = decode_access_token(token)
     except HTTPException:
         return RedirectResponse(url="/ui/auth", status_code=303)
-    if str(payload.get("role", "")) != "Admin":
+    if not has_effective_admin_access(AuthUser(payload)):
         return RedirectResponse(url="/ui/", status_code=303)
 
     templates = _get_templates(request)
@@ -437,7 +437,7 @@ def ui_platform_managing_page(request: Request):
         payload = decode_access_token(token)
     except HTTPException:
         return RedirectResponse(url="/ui/auth", status_code=303)
-    if str(payload.get("role", "")) != "Admin":
+    if not has_effective_admin_access(AuthUser(payload)):
         return RedirectResponse(url="/ui/", status_code=303)
 
     templates = _get_templates(request)
