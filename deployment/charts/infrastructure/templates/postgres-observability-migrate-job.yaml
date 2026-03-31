@@ -1,0 +1,66 @@
+{{- if .Values.postgres.observabilityMigrateHook }}
+# Applies 06_observability.sql on every install/upgrade. Postgres docker-entrypoint-initdb.d
+# only runs on an empty data volume, so existing clusters never picked up new SQL files.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-postgres-observability-r{{ .Release.Revision | default 1 }}
+  labels:
+    app.kubernetes.io/component: observability-migrate
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  ttlSecondsAfterFinished: 600
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: observability-migrate
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: apply-observability-sql
+          image: {{ .Values.postgres.image | quote }}
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgres.secretName }}
+                  key: POSTGRES_PASSWORD
+            - name: PGHOST
+              value: {{ .Values.postgres.serviceName | quote }}
+            - name: PGPORT
+              value: {{ .Values.postgres.port | toString | quote }}
+            - name: PGUSER
+              value: {{ .Values.postgres.postgresUser | quote }}
+            - name: PGDATABASE
+              value: {{ .Values.postgres.postgresDB | quote }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              echo "Waiting for PostgreSQL..."
+              for i in $(seq 1 60); do
+                if psql -c 'SELECT 1' >/dev/null 2>&1; then
+                  echo "PostgreSQL is up."
+                  break
+                fi
+                sleep 2
+              done
+              psql -v ON_ERROR_STOP=1 -f /scripts/06_observability.sql
+              echo "Observability DDL applied."
+          volumeMounts:
+            - name: sql
+              mountPath: /scripts
+              readOnly: true
+      volumes:
+        - name: sql
+          configMap:
+            name: postgres-init-scripts
+            items:
+              - key: "06_observability.sql"
+                path: "06_observability.sql"
+{{- end }}

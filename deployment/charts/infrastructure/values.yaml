@@ -6,6 +6,8 @@ postgres:
   secretName: "all-secrets"
   serviceName: "postgres-service"
   port: 5432
+  # Helm hook Job: apply 06_observability.sql on every upgrade (initdb only runs on empty PVC).
+  observabilityMigrateHook: true
 
 redis:
   image: "redis:7-alpine"
