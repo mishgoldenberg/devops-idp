@@ -13,8 +13,8 @@ metadata:
     helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
 spec:
   ttlSecondsAfterFinished: 600
-  backoffLimit: 1
-  activeDeadlineSeconds: 240
+  # Single attempt: retries can double runtime and hit activeDeadlineSeconds / Helm wait.
+  backoffLimit: 0
   template:
     metadata:
       labels:
@@ -65,7 +65,7 @@ spec:
             - |
               set -eu
               echo "Waiting for PostgreSQL at ${PGHOST}:${PGPORT} as ${PGUSER}..."
-              end=$(( $(date +%s) + 180 ))
+              end=$(( $(date +%s) + 120 ))
               ok=0
               while [ "$(date +%s)" -lt "$end" ]; do
                 if psql -c 'SELECT 1' >/dev/null 2>&1; then
@@ -75,7 +75,7 @@ spec:
                 sleep 2
               done
               if [ "$ok" != "1" ]; then
-                echo "ERROR: PostgreSQL not reachable within 180s (check service ${PGHOST}, secret ${PGUSER})."
+                echo "ERROR: PostgreSQL not reachable within 120s (check service ${PGHOST}, secret, NetworkPolicy)."
                 exit 1
               fi
               echo "PostgreSQL is up; applying observability DDL..."
