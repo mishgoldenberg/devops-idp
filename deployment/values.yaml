@@ -67,3 +67,9 @@ ingress-prod:
           requests:
             cpu: 100m
             memory: 128Mi
+
+# Infrastructure subchart (Postgres / Redis). Override when needed, e.g. disable the
+# observability SQL hook if the app uses an external DB only (apply 06_observability.sql there).
+infrastructure:
+  postgres:
+    observabilityMigrateHook: true

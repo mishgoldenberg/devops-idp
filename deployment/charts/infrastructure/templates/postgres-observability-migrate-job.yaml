@@ -13,13 +13,17 @@ metadata:
     helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
 spec:
   ttlSecondsAfterFinished: 600
-  backoffLimit: 2
+  backoffLimit: 1
+  activeDeadlineSeconds: 240
   template:
     metadata:
       labels:
         app.kubernetes.io/component: observability-migrate
     spec:
       restartPolicy: Never
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: apply-observability-sql
           image: {{ .Values.postgres.image | quote }}
@@ -37,25 +41,52 @@ spec:
               value: {{ .Values.postgres.postgresUser | quote }}
             - name: PGDATABASE
               value: {{ .Values.postgres.postgresDB | quote }}
+            # Without this, psql can hang for a long time when Postgres is not reachable (Helm hook timeout).
+            - name: PGCONNECT_TIMEOUT
+              value: "10"
+            - name: PGSSLMODE
+              value: "disable"
+            - name: HOME
+              value: /tmp
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
           command:
             - /bin/sh
             - -c
             - |
-              set -e
-              echo "Waiting for PostgreSQL..."
-              for i in $(seq 1 60); do
+              set -eu
+              echo "Waiting for PostgreSQL at ${PGHOST}:${PGPORT} as ${PGUSER}..."
+              end=$(( $(date +%s) + 180 ))
+              ok=0
+              while [ "$(date +%s)" -lt "$end" ]; do
                 if psql -c 'SELECT 1' >/dev/null 2>&1; then
-                  echo "PostgreSQL is up."
+                  ok=1
                   break
                 fi
                 sleep 2
               done
+              if [ "$ok" != "1" ]; then
+                echo "ERROR: PostgreSQL not reachable within 180s (check service ${PGHOST}, secret ${PGUSER})."
+                exit 1
+              fi
+              echo "PostgreSQL is up; applying observability DDL..."
               psql -v ON_ERROR_STOP=1 -f /scripts/06_observability.sql
               echo "Observability DDL applied."
           volumeMounts:
             - name: sql
               mountPath: /scripts
               readOnly: true
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: sql
           configMap:
@@ -63,4 +94,6 @@ spec:
             items:
               - key: "06_observability.sql"
                 path: "06_observability.sql"
+        - name: tmp
+          emptyDir: {}
 {{- end }}
