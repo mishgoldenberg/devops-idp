@@ -4,7 +4,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.encoders import jsonable_encoder
 
-from db import query_all_obs
+from db import ensure_observability_tables_once, query_all_obs
 from security import AuthUser, can_view_observability, get_current_user
 
 router = APIRouter()
@@ -14,17 +14,21 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _require_observability(user: AuthUser) -> None:
-    if not can_view_observability(user):
+def get_observability_user(
+    current_user: AuthUser = Depends(get_current_user),
+) -> AuthUser:
+    """Require observability permission and ensure analytics tables exist (startup DDL may have been skipped)."""
+    if not can_view_observability(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Insufficient permissions",
         )
+    ensure_observability_tables_once()
+    return current_user
 
 
 @router.get("/widgets")
-def list_widget_usage(current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]:
-    _require_observability(current_user)
+def list_widget_usage(current_user: AuthUser = Depends(get_observability_user)) -> Dict[str, Any]:
     rows = query_all_obs(
         """
         SELECT widget_name AS name, usage_count AS count, widget_key, last_used_at
@@ -40,8 +44,8 @@ def list_widget_usage(current_user: AuthUser = Depends(get_current_user)) -> Dic
 
 
 @router.get("/self-services")
-def list_self_service_usage(current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]:
-    _require_observability(current_user)
+@router.get("/self_services", include_in_schema=False)
+def list_self_service_usage(current_user: AuthUser = Depends(get_observability_user)) -> Dict[str, Any]:
     rows = query_all_obs(
         """
         SELECT service_name AS name, execution_count AS count, service_key, last_executed_at
@@ -57,8 +61,8 @@ def list_self_service_usage(current_user: AuthUser = Depends(get_current_user)) 
 
 
 @router.get("/azure-projects")
-def list_azure_projects(current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]:
-    _require_observability(current_user)
+@router.get("/azure_projects", include_in_schema=False)
+def list_azure_projects(current_user: AuthUser = Depends(get_observability_user)) -> Dict[str, Any]:
     rows = query_all_obs(
         """
         SELECT project_name, created_by, process_type, completed_at AS creation_date
@@ -76,8 +80,7 @@ def list_azure_projects(current_user: AuthUser = Depends(get_current_user)) -> D
 
 
 @router.get("/tickets")
-def list_portal_tickets(current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]:
-    _require_observability(current_user)
+def list_portal_tickets(current_user: AuthUser = Depends(get_observability_user)) -> Dict[str, Any]:
     total_row = query_all_obs(
         "SELECT COUNT(*)::bigint AS n FROM servicenow_tickets"
     )

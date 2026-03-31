@@ -1,3 +1,4 @@
+import threading
 from contextlib import contextmanager
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -80,17 +81,51 @@ def health_check() -> bool:
 
 
 def _pg_exception_chain(exc: BaseException):
-    e: Optional[BaseException] = exc
-    while e is not None:
+    """Walk psycopg2 / wrapper chain (__cause__, .orig)."""
+    seen: set[int] = set()
+    stack: List[Optional[BaseException]] = [exc]
+    while stack:
+        e = stack.pop()
+        if e is None or id(e) in seen:
+            continue
+        seen.add(id(e))
         yield e
-        e = getattr(e, "__cause__", None)
+        stack.append(getattr(e, "__cause__", None))
+        stack.append(getattr(e, "orig", None))
 
 
 def _is_undefined_table(exc: BaseException) -> bool:
     for e in _pg_exception_chain(exc):
-        if getattr(e, "pgcode", None) == errorcodes.UNDEFINED_TABLE:
+        code = getattr(e, "pgcode", None)
+        if code == errorcodes.UNDEFINED_TABLE or code == "42P01":
             return True
+        diag = getattr(e, "diag", None)
+        st = getattr(diag, "sqlstate", None) if diag is not None else None
+        if st == "42P01":
+            return True
+    msg = str(exc).lower()
+    if "does not exist" in msg and "relation" in msg:
+        return True
     return False
+
+
+_obs_tables_lock = threading.Lock()
+_obs_tables_ensured = False
+
+
+def ensure_observability_tables_once() -> None:
+    """
+    Run observability DDL at most once per process (thread-safe).
+    Startup may skip failed ensure_tables(); this repairs schema on first admin API use.
+    """
+    global _obs_tables_ensured
+    if _obs_tables_ensured:
+        return
+    with _obs_tables_lock:
+        if _obs_tables_ensured:
+            return
+        ensure_observability_tables()
+        _obs_tables_ensured = True
 
 
 def ensure_observability_tables() -> None:
@@ -177,6 +212,9 @@ def query_all_obs(sql: str, params: Optional[Sequence[Any]] = None) -> List[Dict
         if not _is_undefined_table(exc):
             raise
         ensure_observability_tables()
+        global _obs_tables_ensured
+        with _obs_tables_lock:
+            _obs_tables_ensured = True
         return query_all(sql, params)
 
 
