@@ -95,7 +95,13 @@ def _pg_exception_chain(exc: BaseException):
 
 
 def _is_undefined_table(exc: BaseException) -> bool:
+    try:
+        from psycopg2 import errors as pg_errors
+    except ImportError:
+        pg_errors = None  # type: ignore
     for e in _pg_exception_chain(exc):
+        if pg_errors is not None and isinstance(e, pg_errors.UndefinedTable):
+            return True
         code = getattr(e, "pgcode", None)
         if code == errorcodes.UNDEFINED_TABLE or code == "42P01":
             return True
@@ -105,6 +111,9 @@ def _is_undefined_table(exc: BaseException) -> bool:
             return True
     msg = str(exc).lower()
     if "does not exist" in msg and "relation" in msg:
+        return True
+    # Localized server messages (e.g. Russian PostgreSQL)
+    if "не существует" in msg:
         return True
     return False
 
@@ -116,7 +125,7 @@ _observability_ddl_unavailable = False
 
 
 def observability_schema_unavailable() -> bool:
-    """True if this process already tried and failed to create observability tables."""
+    """True if observability reads are degraded (missing tables, denied access, or DDL failed) in this process."""
     return _observability_ddl_unavailable
 
 
@@ -212,7 +221,24 @@ def ensure_observability_tables() -> None:
 
 
 def query_all_obs(sql: str, params: Optional[Sequence[Any]] = None) -> List[Dict[str, Any]]:
-    """SELECT for observability tables; create schema on missing relation when possible."""
+    """
+    SELECT for observability tables. Never raises: returns [] on any failure so the UI stays 200.
+    Attempts CREATE when the relation is missing; clears the degraded flag on success.
+    """
+    import logging
+
+    global _observability_ddl_unavailable
+
+    log = logging.getLogger(__name__)
+    try:
+        return _query_all_obs_try_schema(sql, params)
+    except Exception as exc:
+        log.warning("query_all_obs: returning no rows after error: %s", exc)
+        _observability_ddl_unavailable = True
+        return []
+
+
+def _query_all_obs_try_schema(sql: str, params: Optional[Sequence[Any]] = None) -> List[Dict[str, Any]]:
     import logging
 
     global _obs_tables_ensured, _observability_ddl_unavailable
