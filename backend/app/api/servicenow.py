@@ -451,6 +451,20 @@ def create_ticket(
                 "value": body.description,
             }
         ]
+        try:
+            from observability_tracking import (
+                priority_to_severity_band,
+                record_servicenow_portal_ticket,
+            )
+
+            record_servicenow_portal_ticket(
+                ticket_number or new_sys_id,
+                user_email,
+                priority_to_severity_band(str(body.priority)),
+                body.title or "",
+            )
+        except Exception:
+            pass
         return {"success": True, "data": new_ticket, "timestamp": _now_iso()}
 
     # ServiceNow derives 'priority' from impact × urgency via a lookup matrix —
@@ -506,6 +520,21 @@ def create_ticket(
 
     # Bust the ticket-list cache so the new ticket appears immediately
     cache.invalidate(f"snow:tickets:{user_email}")
+
+    try:
+        from observability_tracking import (
+            priority_to_severity_band,
+            record_servicenow_portal_ticket,
+        )
+
+        record_servicenow_portal_ticket(
+            str(ticket.get("number") or ticket.get("sys_id") or ""),
+            user_email,
+            priority_to_severity_band(str(body.priority)),
+            body.title or "",
+        )
+    except Exception:
+        pass
 
     return {"success": True, "data": ticket, "timestamp": _now_iso()}
 

@@ -573,6 +573,29 @@ from terraform_runner import (
 # A simple in-memory set is sufficient for single-replica deployments.
 _admin_assigned_jobs: set = set()
 
+
+def _observe_ado_project_job_started(
+    job_id: str,
+    project_name: str,
+    process_type: str,
+    current_user: AuthUser,
+) -> None:
+    try:
+        from observability_tracking import (
+            record_self_service_execution,
+            register_azure_provision_job,
+        )
+
+        who = str(current_user.get("email") or current_user.get("username") or "").strip()
+        record_self_service_execution(
+            "azure_devops.create_project",
+            "Azure DevOps project creation",
+        )
+        register_azure_provision_job(job_id, project_name, who, process_type)
+    except Exception:
+        pass
+
+
 VALID_PROCESS_TYPES = {"scrum", "agile", "cmmi", "basic"}
 
 
@@ -629,6 +652,7 @@ def create_ado_project(
             admin_username=admin_username,
             use_mock=True,
         )
+        _observe_ado_project_job_started(job_id, project_name, process_type, current_user)
         return {
             "success": True,
             "data": {"job_id": job_id, "status": "pending"},
@@ -837,6 +861,7 @@ def create_ado_project(
             ),
         )
 
+    _observe_ado_project_job_started(job_id, project_name, process_type, current_user)
     return {
         "success": True,
         "data": {"job_id": job_id, "status": "pending"},
@@ -866,6 +891,12 @@ def get_project_creation_status(
 
     if result["status"] == "succeeded" and job_id not in _admin_assigned_jobs:
         _admin_assigned_jobs.add(job_id)
+        try:
+            from observability_tracking import finalize_azure_provision_job
+
+            finalize_azure_provision_job(job_id)
+        except Exception:
+            pass
         # Best-effort admin assignment; never fails the response
         try:
             _assign_admin_post_terraform(job_id, current_user)

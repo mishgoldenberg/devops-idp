@@ -1,0 +1,283 @@
+<div class="flex-1 min-h-0 flex flex-col overflow-hidden bg-base-200">
+	<header
+		class="bg-base-100 border-b border-base-300 px-8 py-8 flex items-center justify-between shrink-0"
+	>
+		<div>
+			<h1 class="text-3xl font-bold text-base-content">Observability</h1>
+			<p class="text-base-content/60">
+				Portal usage and integration activity (Admin only)
+			</p>
+		</div>
+		<button id="obs-refresh-btn" type="button" class="btn btn-outline btn-sm">
+			&#8635; Refresh
+		</button>
+	</header>
+
+	<div class="flex-1 min-h-0 overflow-y-auto p-8 space-y-8">
+		<div id="obs-error" class="hidden alert alert-error text-sm"></div>
+
+		<!-- Widget usage -->
+		<section class="card bg-base-100 border border-base-300 shadow">
+			<div class="card-body">
+				<h2 class="card-title text-lg">Widget usage</h2>
+				<p class="text-sm text-base-content/60 mb-4">Most viewed dashboard widgets</p>
+				<div class="overflow-x-auto">
+					<table class="table table-sm">
+						<thead>
+							<tr>
+								<th>Widget</th>
+								<th class="text-right">Usage count</th>
+							</tr>
+						</thead>
+						<tbody id="obs-widgets-body">
+							<tr>
+								<td colspan="2" class="text-base-content/50">Loading…</td>
+							</tr>
+						</tbody>
+					</table>
+				</div>
+			</div>
+		</section>
+
+		<!-- Self-service usage -->
+		<section class="card bg-base-100 border border-base-300 shadow">
+			<div class="card-body">
+				<h2 class="card-title text-lg">Self-service usage</h2>
+				<p class="text-sm text-base-content/60 mb-4">Automation executions by service key</p>
+				<div class="overflow-x-auto">
+					<table class="table table-sm">
+						<thead>
+							<tr>
+								<th>Service</th>
+								<th class="text-right">Executions</th>
+							</tr>
+						</thead>
+						<tbody id="obs-self-body">
+							<tr>
+								<td colspan="2" class="text-base-content/50">Loading…</td>
+							</tr>
+						</tbody>
+					</table>
+				</div>
+			</div>
+		</section>
+
+		<!-- Azure DevOps projects -->
+		<section class="card bg-base-100 border border-base-300 shadow">
+			<div class="card-body">
+				<h2 class="card-title text-lg">Azure DevOps projects (self-service)</h2>
+				<p class="text-sm text-base-content/60 mb-4">
+					Projects after successful Terraform provisioning
+				</p>
+				<div class="overflow-x-auto">
+					<table class="table table-sm">
+						<thead>
+							<tr>
+								<th>Project</th>
+								<th>Created by</th>
+								<th>Process</th>
+								<th>Creation date</th>
+							</tr>
+						</thead>
+						<tbody id="obs-ado-body">
+							<tr>
+								<td colspan="4" class="text-base-content/50">Loading…</td>
+							</tr>
+						</tbody>
+					</table>
+				</div>
+			</div>
+		</section>
+
+		<!-- ServiceNow -->
+		<section class="card bg-base-100 border border-base-300 shadow">
+			<div class="card-body space-y-4">
+				<div>
+					<h2 class="card-title text-lg">ServiceNow tickets (portal)</h2>
+					<p class="text-sm text-base-content/60">
+						Tickets opened from the DevOps Control Center
+					</p>
+				</div>
+				<div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+					<div class="stat bg-base-200 rounded-box border border-base-300">
+						<div class="stat-title text-xs uppercase">Total</div>
+						<div class="stat-value text-2xl" id="obs-sn-total">—</div>
+					</div>
+					<div class="stat bg-base-200 rounded-box border border-base-300">
+						<div class="stat-title text-xs uppercase">High</div>
+						<div class="stat-value text-2xl text-error" id="obs-sn-high">—</div>
+					</div>
+					<div class="stat bg-base-200 rounded-box border border-base-300">
+						<div class="stat-title text-xs uppercase">Medium</div>
+						<div class="stat-value text-2xl text-warning" id="obs-sn-medium">—</div>
+					</div>
+					<div class="stat bg-base-200 rounded-box border border-base-300">
+						<div class="stat-title text-xs uppercase">Low</div>
+						<div class="stat-value text-2xl text-success" id="obs-sn-low">—</div>
+					</div>
+				</div>
+				<div class="overflow-x-auto">
+					<table class="table table-sm">
+						<thead>
+							<tr>
+								<th>Ticket</th>
+								<th>Description</th>
+								<th>Severity</th>
+								<th>Created by</th>
+								<th>Created</th>
+							</tr>
+						</thead>
+						<tbody id="obs-sn-body">
+							<tr>
+								<td colspan="5" class="text-base-content/50">Loading…</td>
+							</tr>
+						</tbody>
+					</table>
+				</div>
+			</div>
+		</section>
+	</div>
+</div>
+
+<script>
+	(function () {
+		const errEl = document.getElementById("obs-error");
+		const widgetsBody = document.getElementById("obs-widgets-body");
+		const selfBody = document.getElementById("obs-self-body");
+		const adoBody = document.getElementById("obs-ado-body");
+		const snBody = document.getElementById("obs-sn-body");
+		const snTotal = document.getElementById("obs-sn-total");
+		const snHigh = document.getElementById("obs-sn-high");
+		const snMedium = document.getElementById("obs-sn-medium");
+		const snLow = document.getElementById("obs-sn-low");
+
+		function showError(msg) {
+			if (!errEl) return;
+			errEl.textContent = msg;
+			errEl.classList.remove("hidden");
+		}
+
+		function clearError() {
+			if (!errEl) return;
+			errEl.classList.add("hidden");
+			errEl.textContent = "";
+		}
+
+		function esc(s) {
+			if (s == null) return "";
+			return String(s)
+				.replace(/&/g, "&amp;")
+				.replace(/</g, "&lt;")
+				.replace(/"/g, "&quot;");
+		}
+
+		function fmtDt(iso) {
+			if (!iso) return "—";
+			try {
+				const d = new Date(iso);
+				return isNaN(d.getTime()) ? iso : d.toLocaleString();
+			} catch {
+				return iso;
+			}
+		}
+
+		async function loadJson(path) {
+			const res = await fetch(path, { credentials: "same-origin" });
+			let json = null;
+			try {
+				json = await res.json();
+			} catch {
+				json = {};
+			}
+			if (res.status === 403) {
+				throw new Error("You do not have access to observability data.");
+			}
+			if (!res.ok) {
+				throw new Error(json?.detail || "Request failed");
+			}
+			return json;
+		}
+
+		async function loadAll() {
+			clearError();
+			try {
+				const [w, s, a, t] = await Promise.all([
+					loadJson("/api/observability/widgets"),
+					loadJson("/api/observability/self-services"),
+					loadJson("/api/observability/azure-projects"),
+					loadJson("/api/observability/tickets"),
+				]);
+
+				const wRows = w?.data || [];
+				widgetsBody.innerHTML =
+					wRows.length === 0
+						? '<tr><td colspan="2" class="text-base-content/50">No data yet</td></tr>'
+						: wRows
+								.map(
+									(r) =>
+										`<tr><td>${esc(r.name)}</td><td class="text-right font-mono">${esc(
+											r.count
+										)}</td></tr>`
+								)
+								.join("");
+
+				const sRows = s?.data || [];
+				selfBody.innerHTML =
+					sRows.length === 0
+						? '<tr><td colspan="2" class="text-base-content/50">No data yet</td></tr>'
+						: sRows
+								.map(
+									(r) =>
+										`<tr><td>${esc(r.name)}</td><td class="text-right font-mono">${esc(
+											r.count
+										)}</td></tr>`
+								)
+								.join("");
+
+				const aRows = a?.data || [];
+				adoBody.innerHTML =
+					aRows.length === 0
+						? '<tr><td colspan="4" class="text-base-content/50">No completed projects yet</td></tr>'
+						: aRows
+								.map(
+									(r) =>
+										`<tr><td>${esc(r.project_name)}</td><td>${esc(
+											r.created_by
+										)}</td><td>${esc(r.process_type)}</td><td>${esc(
+											fmtDt(r.creation_date)
+										)}</td></tr>`
+								)
+								.join("");
+
+				const td = t?.data || {};
+				const by = td.bySeverity || {};
+				snTotal.textContent = String(td.total ?? 0);
+				snHigh.textContent = String(by.High ?? 0);
+				snMedium.textContent = String(by.Medium ?? 0);
+				snLow.textContent = String(by.Low ?? 0);
+
+				const recent = td.recent || [];
+				snBody.innerHTML =
+					recent.length === 0
+						? '<tr><td colspan="5" class="text-base-content/50">No tickets yet</td></tr>'
+						: recent
+								.map(
+									(r) =>
+										`<tr><td class="font-mono text-xs">${esc(
+											r.ticket_id
+										)}</td><td>${esc(r.short_description)}</td><td>${esc(
+											r.severity
+										)}</td><td>${esc(r.created_by)}</td><td>${esc(
+											fmtDt(r.created_at)
+										)}</td></tr>`
+								)
+								.join("");
+			} catch (e) {
+				showError(e?.message || String(e));
+			}
+		}
+
+		document.getElementById("obs-refresh-btn")?.addEventListener("click", loadAll);
+		loadAll();
+	})();
+</script>

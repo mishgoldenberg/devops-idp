@@ -54,6 +54,7 @@ const seedFiles = [
 	"deployment/charts/infrastructure/database/03_widget_types.sql",
 	"deployment/charts/infrastructure/database/04_approval_rules.sql",
 	"deployment/charts/infrastructure/database/05_service_health.sql",
+	"deployment/charts/infrastructure/database/06_observability.sql",
 ];
 
 function sleep(ms) {
