@@ -2,7 +2,7 @@ from contextlib import contextmanager
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import psycopg2
-from psycopg2 import pool
+from psycopg2 import errorcodes, pool
 from psycopg2.extras import RealDictCursor
 from config import get_settings
 
@@ -79,6 +79,107 @@ def health_check() -> bool:
         return False
 
 
+def _pg_exception_chain(exc: BaseException):
+    e: Optional[BaseException] = exc
+    while e is not None:
+        yield e
+        e = getattr(e, "__cause__", None)
+
+
+def _is_undefined_table(exc: BaseException) -> bool:
+    for e in _pg_exception_chain(exc):
+        if getattr(e, "pgcode", None) == errorcodes.UNDEFINED_TABLE:
+            return True
+    return False
+
+
+def ensure_observability_tables() -> None:
+    """
+    Create observability analytics tables (idempotent).
+    Separate from ensure_tables so API routes can repair schema if startup DDL was skipped.
+    """
+    import logging
+
+    log = logging.getLogger(__name__)
+    stmts = [
+        (
+            "widget_usage",
+            """
+        CREATE TABLE IF NOT EXISTS widget_usage (
+            widget_key   VARCHAR(255) PRIMARY KEY,
+            widget_name  VARCHAR(255) NOT NULL,
+            usage_count  BIGINT NOT NULL DEFAULT 0,
+            last_used_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        ),
+        (
+            "self_service_usage",
+            """
+        CREATE TABLE IF NOT EXISTS self_service_usage (
+            service_key      VARCHAR(255) PRIMARY KEY,
+            service_name     VARCHAR(255) NOT NULL,
+            execution_count  BIGINT NOT NULL DEFAULT 0,
+            last_executed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        ),
+        (
+            "azure_projects",
+            """
+        CREATE TABLE IF NOT EXISTS azure_projects (
+            id            SERIAL PRIMARY KEY,
+            job_id        VARCHAR(128) UNIQUE NOT NULL,
+            project_name  VARCHAR(255) NOT NULL,
+            created_by    VARCHAR(255) NOT NULL,
+            process_type  VARCHAR(64) NOT NULL,
+            created_at    TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            completed_at  TIMESTAMP WITH TIME ZONE
+        )
+        """,
+        ),
+        (
+            "servicenow_tickets",
+            """
+        CREATE TABLE IF NOT EXISTS servicenow_tickets (
+            id                 SERIAL PRIMARY KEY,
+            ticket_id          VARCHAR(128) NOT NULL,
+            created_by         VARCHAR(255) NOT NULL,
+            severity           VARCHAR(32) NOT NULL,
+            short_description  VARCHAR(512) DEFAULT '',
+            created_at         TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        ),
+    ]
+    for label, sql in stmts:
+        try:
+            execute(sql)
+        except Exception as exc:
+            log.warning("ensure_observability_tables: %s failed: %s", label, exc)
+            raise
+    for sql in (
+        "CREATE INDEX IF NOT EXISTS idx_servicenow_tickets_created ON servicenow_tickets (created_at DESC)",
+        # Avoid NULLS LAST — some PostgreSQL versions reject it and abort startup DDL.
+        "CREATE INDEX IF NOT EXISTS idx_azure_projects_completed ON azure_projects (completed_at DESC)",
+    ):
+        try:
+            execute(sql)
+        except Exception as exc:
+            log.warning("ensure_observability_tables: index failed (non-fatal): %s", exc)
+
+
+def query_all_obs(sql: str, params: Optional[Sequence[Any]] = None) -> List[Dict[str, Any]]:
+    """SELECT for observability tables; create them once if missing (undefined_table)."""
+    try:
+        return query_all(sql, params)
+    except Exception as exc:
+        if not _is_undefined_table(exc):
+            raise
+        ensure_observability_tables()
+        return query_all(sql, params)
+
+
 def ensure_tables() -> None:
     """Create application tables if they do not already exist."""
     execute(
@@ -93,57 +194,7 @@ def ensure_tables() -> None:
         )
         """
     )
-    execute(
-        """
-        CREATE TABLE IF NOT EXISTS widget_usage (
-            widget_key   VARCHAR(255) PRIMARY KEY,
-            widget_name  VARCHAR(255) NOT NULL,
-            usage_count  BIGINT NOT NULL DEFAULT 0,
-            last_used_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        )
-        """
-    )
-    execute(
-        """
-        CREATE TABLE IF NOT EXISTS self_service_usage (
-            service_key      VARCHAR(255) PRIMARY KEY,
-            service_name     VARCHAR(255) NOT NULL,
-            execution_count  BIGINT NOT NULL DEFAULT 0,
-            last_executed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        )
-        """
-    )
-    execute(
-        """
-        CREATE TABLE IF NOT EXISTS azure_projects (
-            id            SERIAL PRIMARY KEY,
-            job_id        VARCHAR(128) UNIQUE NOT NULL,
-            project_name  VARCHAR(255) NOT NULL,
-            created_by    VARCHAR(255) NOT NULL,
-            process_type  VARCHAR(64) NOT NULL,
-            created_at    TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-            completed_at  TIMESTAMP WITH TIME ZONE
-        )
-        """
-    )
-    execute(
-        """
-        CREATE TABLE IF NOT EXISTS servicenow_tickets (
-            id                 SERIAL PRIMARY KEY,
-            ticket_id          VARCHAR(128) NOT NULL,
-            created_by         VARCHAR(255) NOT NULL,
-            severity           VARCHAR(32) NOT NULL,
-            short_description  VARCHAR(512) DEFAULT '',
-            created_at         TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        )
-        """
-    )
-    execute(
-        "CREATE INDEX IF NOT EXISTS idx_servicenow_tickets_created ON servicenow_tickets (created_at DESC)"
-    )
-    execute(
-        "CREATE INDEX IF NOT EXISTS idx_azure_projects_completed ON azure_projects (completed_at DESC NULLS LAST)"
-    )
+    ensure_observability_tables()
 
 
 # Primary bootstrap admin (DB role Platform Admin). Single allowed hard-coded identity.

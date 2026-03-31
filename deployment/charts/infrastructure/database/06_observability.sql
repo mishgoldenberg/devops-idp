@@ -34,4 +34,4 @@ CREATE TABLE IF NOT EXISTS servicenow_tickets (
 );
 
 CREATE INDEX IF NOT EXISTS idx_servicenow_tickets_created ON servicenow_tickets (created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_azure_projects_completed ON azure_projects (completed_at DESC NULLS LAST);
+CREATE INDEX IF NOT EXISTS idx_azure_projects_completed ON azure_projects (completed_at DESC);
