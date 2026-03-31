@@ -6,13 +6,20 @@ from typing import Any, Callable, Dict, TypeVar
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.encoders import jsonable_encoder
 
-from db import ensure_observability_tables_once, query_all_obs
+from db import observability_schema_unavailable, query_all_obs
 from security import AuthUser, can_view_observability, get_current_user
 
 router = APIRouter()
 log = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+_OBS_SCHEMA_NOTICE = (
+    "Observability tables are missing and could not be created with the app database user. "
+    "Apply deployment/charts/infrastructure/database/06_observability.sql as a database admin, "
+    "or grant CREATE on the portal database to the application user. "
+    "A non-blocking migrate Job also runs on each deploy when enabled in Helm values."
+)
 
 
 def _observability_safe(fn: Callable[..., T]) -> Callable[..., T]:
@@ -29,10 +36,8 @@ def _observability_safe(fn: Callable[..., T]) -> Callable[..., T]:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=(
-                    "Observability could not read the database. Redeploy so the Helm "
-                    "observability migration Job runs, or run "
-                    "deployment/charts/infrastructure/database/06_observability.sql "
-                    "against the portal database."
+                    "Observability could not read the database. Check backend logs; "
+                    "ensure 06_observability.sql has been applied if tables are missing."
                 ),
             )
 
@@ -43,26 +48,21 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _obs_ok(**fields: Any) -> Dict[str, Any]:
+    body: Dict[str, Any] = {"success": True, "timestamp": _now_iso(), **fields}
+    if observability_schema_unavailable():
+        body["notice"] = _OBS_SCHEMA_NOTICE
+    return body
+
+
 def get_observability_user(
     current_user: AuthUser = Depends(get_current_user),
 ) -> AuthUser:
-    """Require observability permission and ensure analytics tables exist (startup DDL may have been skipped)."""
+    """Require observability permission (schema is ensured lazily via query_all_obs)."""
     if not can_view_observability(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Insufficient permissions",
-        )
-    try:
-        ensure_observability_tables_once()
-    except Exception:
-        log.exception("ensure_observability_tables_once failed")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "Could not prepare observability tables. Redeploy so the Helm observability "
-                "migration Job runs, or run "
-                "deployment/charts/infrastructure/database/06_observability.sql manually."
-            ),
         )
     return current_user
 
@@ -77,11 +77,7 @@ def list_widget_usage(current_user: AuthUser = Depends(get_observability_user)) 
         ORDER BY usage_count DESC, widget_name ASC
         """
     )
-    return {
-        "success": True,
-        "data": jsonable_encoder(rows),
-        "timestamp": _now_iso(),
-    }
+    return _obs_ok(data=jsonable_encoder(rows))
 
 
 @router.get("/self-services")
@@ -95,11 +91,7 @@ def list_self_service_usage(current_user: AuthUser = Depends(get_observability_u
         ORDER BY execution_count DESC, service_name ASC
         """
     )
-    return {
-        "success": True,
-        "data": jsonable_encoder(rows),
-        "timestamp": _now_iso(),
-    }
+    return _obs_ok(data=jsonable_encoder(rows))
 
 
 @router.get("/azure-projects")
@@ -115,11 +107,7 @@ def list_azure_projects(current_user: AuthUser = Depends(get_observability_user)
         LIMIT 500
         """
     )
-    return {
-        "success": True,
-        "data": jsonable_encoder(rows),
-        "timestamp": _now_iso(),
-    }
+    return _obs_ok(data=jsonable_encoder(rows))
 
 
 @router.get("/tickets")
@@ -155,14 +143,12 @@ def list_portal_tickets(current_user: AuthUser = Depends(get_observability_user)
         LIMIT 100
         """
     )
-    return {
-        "success": True,
-        "data": jsonable_encoder(
+    return _obs_ok(
+        data=jsonable_encoder(
             {
                 "total": total,
                 "bySeverity": severity_breakdown,
                 "recent": recent,
             }
-        ),
-        "timestamp": _now_iso(),
-    }
+        )
+    )

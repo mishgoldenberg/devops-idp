@@ -6,11 +6,10 @@ postgres:
   secretName: "all-secrets"
   serviceName: "postgres-service"
   port: 5432
-  # Helm hook Job (post-upgrade): applies 06_observability.sql. Default off — it can fail with
-  # DeadlineExceeded on GKE Autopilot if the Job cannot reach postgres-service during the hook.
-  # Rely on app startup DDL (ensure_tables) or run 06_observability.sql manually once. Set true only
-  # after verifying connectivity from an ephemeral pod in the release namespace.
+  # Helm hook Job (post-upgrade): applies 06_observability.sql. Default off (blocks upgrade if Job fails).
   observabilityMigrateHook: false
+  # Fire-and-forget Job each upgrade — Helm does not wait; applies 06_observability.sql in cluster.
+  observabilityMigrateAsyncJob: true
 
 redis:
   image: "redis:7-alpine"

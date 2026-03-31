@@ -71,5 +71,5 @@ ingress-prod:
 # Infrastructure subchart (Postgres / Redis).
 infrastructure:
   postgres:
-    # Keep false unless hook Job→postgres-service is verified (see infrastructure chart values comment).
     observabilityMigrateHook: false
+    observabilityMigrateAsyncJob: true

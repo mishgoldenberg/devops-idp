@@ -111,6 +111,13 @@ def _is_undefined_table(exc: BaseException) -> bool:
 
 _obs_tables_lock = threading.Lock()
 _obs_tables_ensured = False
+# Set when CREATE TABLE for observability failed (e.g. DB user lacks privilege); cleared on any successful obs SELECT.
+_observability_ddl_unavailable = False
+
+
+def observability_schema_unavailable() -> bool:
+    """True if this process already tried and failed to create observability tables."""
+    return _observability_ddl_unavailable
 
 
 def ensure_observability_tables_once() -> None:
@@ -205,17 +212,42 @@ def ensure_observability_tables() -> None:
 
 
 def query_all_obs(sql: str, params: Optional[Sequence[Any]] = None) -> List[Dict[str, Any]]:
-    """SELECT for observability tables; create them once if missing (undefined_table)."""
+    """SELECT for observability tables; create schema on missing relation when possible."""
+    import logging
+
+    global _obs_tables_ensured, _observability_ddl_unavailable
+
+    log = logging.getLogger(__name__)
     try:
-        return query_all(sql, params)
+        rows = query_all(sql, params)
+        _observability_ddl_unavailable = False
+        return rows
     except Exception as exc:
         if not _is_undefined_table(exc):
             raise
-        ensure_observability_tables()
-        global _obs_tables_ensured
+        if _observability_ddl_unavailable:
+            return []
         with _obs_tables_lock:
+            if _observability_ddl_unavailable:
+                return []
+            try:
+                ensure_observability_tables()
+            except Exception as ddl_exc:
+                log.warning(
+                    "query_all_obs: observability DDL failed (grant CREATE or apply 06_observability.sql): %s",
+                    ddl_exc,
+                )
+                _observability_ddl_unavailable = True
+                return []
             _obs_tables_ensured = True
-        return query_all(sql, params)
+        try:
+            rows = query_all(sql, params)
+            _observability_ddl_unavailable = False
+            return rows
+        except Exception as exc2:
+            if _is_undefined_table(exc2):
+                return []
+            raise
 
 
 def ensure_tables() -> None:
