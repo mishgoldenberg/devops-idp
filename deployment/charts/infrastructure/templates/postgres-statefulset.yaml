@@ -18,6 +18,10 @@ spec:
           image: {{ .Values.postgres.image }}
           ports:
             - containerPort: 5432
+          resources:
+            requests:
+              memory: {{ .Values.postgres.memoryLimit }}
+              cpu: {{ .Values.postgres.cpuLimit }}
           env:
             - name: POSTGRES_USER
               value: {{ .Values.postgres.postgresUser }}
@@ -48,5 +52,3 @@ spec:
         resources:
           requests:
             storage: {{ .Values.postgres.storageSize }}
-            memory: {{ .Values.postgres.memoryLimit }}
-            cpu: {{ .Values.postgres.cpuLimit }}

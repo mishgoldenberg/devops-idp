@@ -4,7 +4,7 @@ postgres:
   postgresDB: "devops_control_center"
   storageSize: 1Gi
   memoryLimit: "1Gi"
-  cpuLimit: "250Mi"
+  cpuLimit: "250m"
   secretName: "all-secrets"
   serviceName: "postgres-service"
   port: 5432
