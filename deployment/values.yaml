@@ -67,3 +67,9 @@ ingress-prod:
           requests:
             cpu: 100m
             memory: 128Mi
+
+# Infrastructure subchart (Postgres / Redis).
+infrastructure:
+  postgres:
+    observabilityMigrateHook: false
+    observabilityMigrateAsyncJob: true

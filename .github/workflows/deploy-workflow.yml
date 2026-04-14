@@ -102,6 +102,7 @@ jobs:
         run: |
           helm upgrade --install devops-stack ./deployment \
             -n devops-control-center-prod \
+            --timeout 20m \
             -f /tmp/secrets-values.yaml
 
       # Secrets are env vars baked into pods at creation time — existing pods
@@ -135,4 +136,16 @@ jobs:
             --field-selector=status.phase!=Running -o name 2>/dev/null); do
             echo "--- $pod ---"
             kubectl describe "$pod" -n devops-control-center-prod 2>/dev/null | tail -30
+          done
+
+          echo ""
+          echo "=== Observability Helm hook (postgres migrate Job) ==="
+          kubectl get jobs -n devops-control-center-prod -l app.kubernetes.io/component=observability-migrate -o wide 2>/dev/null || true
+          for j in $(kubectl get jobs -n devops-control-center-prod -o name 2>/dev/null | grep postgres-observability || true); do
+            echo "--- describe $j ---"
+            kubectl describe "$j" -n devops-control-center-prod 2>/dev/null || true
+          done
+          for p in $(kubectl get pods -n devops-control-center-prod -l app.kubernetes.io/component=observability-migrate -o name 2>/dev/null); do
+            echo "--- logs $p ---"
+            kubectl logs "$p" -n devops-control-center-prod --tail=100 2>/dev/null || true
           done

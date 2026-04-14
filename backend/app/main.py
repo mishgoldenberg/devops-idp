@@ -94,6 +94,23 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    @app.middleware("http")
+    async def portal_admin_nav_context(request: Request, call_next):
+        """Expose Admin menu visibility to Jinja (sidebar) without per-route boilerplate."""
+        request.state.portal_is_admin = False
+        token = request.cookies.get("auth_token")
+        if token:
+            try:
+                from security import decode_access_token
+
+                payload = decode_access_token(token)
+                from security import AuthUser, has_effective_admin_access
+
+                request.state.portal_is_admin = has_effective_admin_access(AuthUser(payload))
+            except Exception:
+                pass
+        return await call_next(request)
+
     # Root endpoint (non-API) - Serves a small HTML landing page for HTMX-based UI.
     @app.get("/", include_in_schema=False)
     def root(request: Request):
@@ -142,6 +159,11 @@ def create_app() -> FastAPI:
         except Exception as exc:
             import logging
             logging.getLogger(__name__).warning("ensure_tables() failed: %s", exc)
+        try:
+            db.ensure_bootstrap_platform_admin()
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("ensure_bootstrap_platform_admin() failed: %s", exc)
 
     # Include all API routers (azure_devops, auth, approvals, etc.)
     app.include_router(api_router)

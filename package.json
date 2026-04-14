@@ -13,6 +13,8 @@
     "restart": "bash restart.sh",
     "migrate": "node scripts/db.js migrate",
     "seed": "node scripts/db.js seed",
+    "db:observability": "node scripts/db.js observability",
+    "db:observability:k8s": "node scripts/apply-observability-k8s.js",
     "db:reset": "node scripts/db.js reset"
   }
 }

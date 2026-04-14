@@ -52,3 +52,38 @@ def test_observability_allowed_for_admin(monkeypatch):
   resp = client.get("/api/metrics/usage", headers=headers)
   assert resp.status_code in (200, 500)
 
+  resp_obs = client.get("/api/observability/widgets", headers=headers)
+  assert resp_obs.status_code in (200, 500)
+
+
+def test_observability_api_denied_for_non_admin():
+  user = {
+      "id": "user-2",
+      "username": "user2@example.com",
+      "email": "user2@example.com",
+      "role": "User",
+      "hierarchy_level": 7,
+      "permissions": [],
+  }
+  headers = _auth_headers(user)
+  resp = client.get("/api/observability/widgets", headers=headers)
+  assert resp.status_code == 403
+
+
+def test_admin_grant_role_denied_for_non_admin():
+  user = {
+      "id": "user-3",
+      "username": "user3@example.com",
+      "email": "user3@example.com",
+      "role": "User",
+      "hierarchy_level": 7,
+      "permissions": [],
+  }
+  headers = _auth_headers(user)
+  resp = client.post(
+      "/api/admin/grant-role",
+      headers={**headers, "Content-Type": "application/json"},
+      json={"email": "someone@gmail.com", "role": "Admin"},
+  )
+  assert resp.status_code == 403
+

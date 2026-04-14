@@ -54,6 +54,7 @@ const seedFiles = [
 	"deployment/charts/infrastructure/database/03_widget_types.sql",
 	"deployment/charts/infrastructure/database/04_approval_rules.sql",
 	"deployment/charts/infrastructure/database/05_service_health.sql",
+	"deployment/charts/infrastructure/database/06_observability.sql",
 ];
 
 function sleep(ms) {
@@ -217,12 +218,23 @@ function main() {
 			return;
 		}
 
+		if (command === "observability") {
+			console.log("Applying observability DDL (06_observability.sql)...");
+			runSqlFile(
+				"deployment/charts/infrastructure/database/06_observability.sql",
+			);
+			console.log("Observability tables and grants applied.");
+			return;
+		}
+
 		if (command === "reset") {
 			reset();
 			return;
 		}
 
-		console.error("Usage: node scripts/db.js <migrate|seed|reset>");
+		console.error(
+			"Usage: node scripts/db.js <migrate|seed|observability|reset>",
+		);
 		process.exit(1);
 	} catch (error) {
 		console.error(error.message || error);
