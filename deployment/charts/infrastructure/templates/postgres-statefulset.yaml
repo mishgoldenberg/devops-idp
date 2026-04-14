@@ -33,12 +33,15 @@ spec:
               value: {{ .Values.postgres.port | quote }}
             - name: POSTGRES_HOST
               value: {{ .Values.postgres.serviceName }}
+            - name: PGDATA
+              value: {{ .Values.postgres.pgData }}
             # String interpolation for DATABASE_URL
             - name: DATABASE_URL
               value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)"
           volumeMounts:
             - name: postgres-storage
               mountPath: /var/lib/postgresql/data
+              subPath: pgdata
             - name: postgres-init-scripts
               mountPath: /docker-entrypoint-initdb.d
       volumes:

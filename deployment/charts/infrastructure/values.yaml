@@ -8,6 +8,7 @@ postgres:
   secretName: "all-secrets"
   serviceName: "postgres-service"
   port: 5432
+  pgData: "/var/lib/postgresql/data"
 
 redis:
   image: "redis:7-alpine"
