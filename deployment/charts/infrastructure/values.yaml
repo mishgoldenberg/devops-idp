@@ -3,6 +3,8 @@ postgres:
   postgresUser: "devops"
   postgresDB: "devops_control_center"
   storageSize: 1Gi
+  memoryLimit: "1Gi"
+  cpuLimit: "250Mi"
   secretName: "all-secrets"
   serviceName: "postgres-service"
   port: 5432

@@ -48,3 +48,5 @@ spec:
         resources:
           requests:
             storage: {{ .Values.postgres.storageSize }}
+            memory: {{ .Values.postgres.memoryLimit }}
+            cpu: {{ .Values.postgres.cpuLimit }}
