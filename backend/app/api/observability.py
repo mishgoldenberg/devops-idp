@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.encoders import jsonable_encoder
 
 from db import observability_schema_unavailable, query_all_obs
-from security import AuthUser, can_view_observability, get_current_user
+from security import AuthUser, get_current_user, has_effective_admin_access_live
 
 router = APIRouter()
 
@@ -32,10 +32,10 @@ def get_observability_user(
     current_user: AuthUser = Depends(get_current_user),
 ) -> AuthUser:
     """Require observability permission (schema is ensured lazily via query_all_obs)."""
-    if not can_view_observability(current_user):
+    if not has_effective_admin_access_live(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Insufficient permissions",
+            detail="You do not have access to observability data.",
         )
     return current_user
 

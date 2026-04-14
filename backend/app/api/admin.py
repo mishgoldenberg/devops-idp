@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, field_validator
 
 from db import execute_returning, query_all, query_one
-from security import AuthUser, get_current_user, has_effective_admin_access
+from security import AuthUser, get_current_user, has_effective_admin_access_live
 
 router = APIRouter()
 
@@ -27,7 +27,7 @@ class GrantRoleRequest(BaseModel):
 
 
 def _require_app_admin(current_user: AuthUser) -> None:
-    if not has_effective_admin_access(current_user):
+    if not has_effective_admin_access_live(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Insufficient permissions",
