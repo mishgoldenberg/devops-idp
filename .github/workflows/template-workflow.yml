@@ -1,0 +1,219 @@
+name: Service Template
+
+on:
+  workflow_call:
+    inputs:
+      service_path:
+        required: true
+        type: string
+      image_name:
+        required: true
+        type: string
+      gcp_project:
+        required: true
+        type: string
+      gcp_region:
+        required: true
+        type: string
+      # GKE cluster details for automatic rollout
+      gke_cluster:
+        required: false
+        type: string
+        default: devops-idp-cluster
+      k8s_namespace:
+        required: false
+        type: string
+        default: devops-control-center-dev
+    secrets:
+      GCP_SA_KEY:
+        required: true
+      POSTGRES_PASSWORD:
+        required: false
+      REDIS_PASSWORD:
+        required: false
+      JWT_SECRET:
+        required: false
+      OAUTH_CLIENT_SECRET:
+        required: false
+      OAUTH_CLIENT_ID:
+        required: false
+      AZURE_DEVOPS_PAT:
+        required: false
+      AZURE_DEVOPS_ADMIN_PAT:
+        required: false
+      SERVICENOW_URL:
+        required: false
+      SERVICENOW_USERNAME:
+        required: false
+      SERVICENOW_PASSWORD:
+        required: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # 🔐 Authenticate using JSON key
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ inputs.gcp_project }}
+
+      - name: Configure Docker for Artifact Registry
+        run: |
+          gcloud auth configure-docker ${{ inputs.gcp_region }}-docker.pkg.dev --quiet
+
+      # Short commit SHA used as immutable image tag so Kubernetes always detects a change
+      - name: Set image tag
+        run: echo "SHORT_SHA=${GITHUB_SHA::7}" >> $GITHUB_ENV
+
+      - name: Build Docker image
+        run: |
+          REGISTRY="${{ inputs.gcp_region }}-docker.pkg.dev/${{ inputs.gcp_project }}/devops-idp"
+          IMAGE_NAME="${{ inputs.image_name }}"
+          IMAGE_LATEST="$REGISTRY/$IMAGE_NAME:latest"
+          IMAGE_SHA="$REGISTRY/$IMAGE_NAME:sha-$SHORT_SHA"
+
+          echo "Building $IMAGE_SHA"
+          docker build \
+            --build-arg NEXT_PUBLIC_API_GATEWAY_URL=https://devops.internal.company/api \
+            --build-arg NEXT_PUBLIC_APP_NAME="DevOps Control Center" \
+            -f ${{ inputs.service_path }}/Dockerfile \
+            -t "$IMAGE_LATEST" \
+            -t "$IMAGE_SHA" \
+            .
+
+          echo "IMAGE_LATEST=$IMAGE_LATEST" >> $GITHUB_ENV
+          echo "IMAGE_SHA=$IMAGE_SHA" >> $GITHUB_ENV
+
+      - name: Push Docker images
+        run: |
+          docker push "$IMAGE_LATEST"
+          docker push "$IMAGE_SHA"
+
+      # ── Deploy ────────────────────────────────────────────────────────────────
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ inputs.gke_cluster }}
+          location: ${{ inputs.gcp_region }}
+          project_id: ${{ inputs.gcp_project }}
+          # Force the use of the auth plugin
+          use_gke_gcloud_auth_plugin: true
+          
+      - name: Update Helm Dependencies
+        run: helm dependency update ./deployment
+
+      # Write all secrets to a temp YAML file so special characters in values
+      # (e.g. $, {, }, comma) are handled safely — Helm --set breaks on these.
+      - name: Write secrets values file
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
+          OAUTH_CLIENT_ID: ${{ secrets.OAUTH_CLIENT_ID }}
+          OAUTH_CLIENT_SECRET: ${{ secrets.OAUTH_CLIENT_SECRET }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          AZURE_DEVOPS_PAT: ${{ secrets.AZURE_DEVOPS_PAT }}
+          AZURE_DEVOPS_ADMIN_PAT: ${{ secrets.AZURE_DEVOPS_ADMIN_PAT }}
+          SERVICENOW_URL: ${{ secrets.SERVICENOW_URL }}
+          SERVICENOW_USERNAME: ${{ secrets.SERVICENOW_USERNAME }}
+          SERVICENOW_PASSWORD: ${{ secrets.SERVICENOW_PASSWORD }}
+        run: |
+          python3 - <<'EOF'
+          import yaml, os
+          secrets = {
+            "postgresPassword":    os.environ.get("POSTGRES_PASSWORD", ""),
+            "redisPassword":       os.environ.get("REDIS_PASSWORD", ""),
+            "oauthClientId":       os.environ.get("OAUTH_CLIENT_ID", ""),
+            "oauthClientSecret":   os.environ.get("OAUTH_CLIENT_SECRET", ""),
+            "jwtSecret":           os.environ.get("JWT_SECRET", ""),
+            "azureDevopsPat":      os.environ.get("AZURE_DEVOPS_PAT", ""),
+            "azureDevopsAdminPat": os.environ.get("AZURE_DEVOPS_ADMIN_PAT", ""),
+            "servicenowUrl":       os.environ.get("SERVICENOW_URL", ""),
+            "servicenowUsername":  os.environ.get("SERVICENOW_USERNAME", ""),
+            "servicenowPassword":  os.environ.get("SERVICENOW_PASSWORD", ""),
+          }
+          # Scope under "backend:" so the umbrella chart passes values to the
+          # backend subchart's .Values.secrets context (not the parent chart).
+          data = {"backend": {"secrets": secrets}}
+          with open("/tmp/secrets-values.yaml", "w") as f:
+            yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
+          print("Secrets values file written (values redacted from logs)")
+          EOF
+
+      - name: Unlock stuck Helm release (if any)
+        run: |
+          STATUS=$(helm status devops-stack -n devops-control-center-prod --output json 2>/dev/null \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['info']['status'])" 2>/dev/null \
+            || echo "not-deployed")
+          echo "Helm release status: $STATUS"
+          case "$STATUS" in
+            pending-upgrade|pending-install|pending-rollback)
+              echo "Clearing stuck operation..."
+              helm rollback devops-stack -n devops-control-center-prod 2>/dev/null \
+                || kubectl delete secret -n devops-control-center-prod \
+                     -l "name=devops-stack,status=$STATUS" --ignore-not-found \
+                || true
+              ;;
+          esac
+
+      - name: Deploy Helm Chart
+        run: |
+          helm upgrade --install devops-stack ./deployment \
+            -n devops-control-center-prod \
+            --cleanup-on-fail \
+            --timeout 20m \
+            -f /tmp/secrets-values.yaml \
+            --set ${{ inputs.image_name }}.image.tag="sha-$SHORT_SHA"
+
+      # Wait only for the service we are deploying; waiting for the entire
+      # umbrella release causes unrelated components to fail this workflow.
+      - name: Wait for target deployment rollout
+        run: |
+          kubectl rollout status deployment/${{ inputs.image_name }} \
+            -n devops-control-center-prod --timeout=5m
+
+      - name: Fetch deployment diagnostics on failure
+        if: failure()
+        run: |
+          DEPLOYMENT="${{ inputs.image_name }}"
+          NAMESPACE="devops-control-center-prod"
+
+          echo "=== Deployment status ==="
+          kubectl get deployment "$DEPLOYMENT" -n "$NAMESPACE" -o wide || true
+
+          echo ""
+          echo "=== Pods for deployment ==="
+          kubectl get pods -n "$NAMESPACE" -l app="$DEPLOYMENT" -o wide || true
+
+          echo ""
+          echo "=== Describe deployment ==="
+          kubectl describe deployment "$DEPLOYMENT" -n "$NAMESPACE" || true
+
+          echo ""
+          echo "=== Recent pod logs ==="
+          for pod in $(kubectl get pods -n "$NAMESPACE" -l app="$DEPLOYMENT" -o name 2>/dev/null); do
+            echo "--- $pod ---"
+            kubectl logs "$pod" -n "$NAMESPACE" --tail=200 2>/dev/null || true
+          done
+
+          echo ""
+          echo "=== Observability Helm hook (postgres migrate Job) ==="
+          kubectl get jobs -n "$NAMESPACE" -l app.kubernetes.io/component=observability-migrate -o wide 2>/dev/null || true
+          for j in $(kubectl get jobs -n "$NAMESPACE" -o name 2>/dev/null | grep postgres-observability || true); do
+            echo "--- describe $j ---"
+            kubectl describe "$j" -n "$NAMESPACE" 2>/dev/null || true
+          done
+          for p in $(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/component=observability-migrate -o name 2>/dev/null); do
+            echo "--- logs $p ---"
+            kubectl logs "$p" -n "$NAMESPACE" --tail=100 2>/dev/null || true
+          done
+

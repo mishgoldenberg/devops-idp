@@ -6,10 +6,10 @@
 
 - Docker Desktop installed
 - Docker Compose installed
-- Node.js 20+ (for local development without Docker)
 - 8GB RAM minimum
+- PostgreSQL client tools (optional, for direct DB access)
 
-### Quick Start
+### Quick Start with Docker Compose
 
 ```bash
 # 1. Clone repository
@@ -18,34 +18,79 @@ cd devops-control-center
 
 # 2. Create environment file
 cp .env.example .env
-# Edit .env with your configuration
+# Edit .env with your configuration (Azure DevOps PAT, etc.)
 
 # 3. Start all services with Docker Compose
-docker-compose up -d
+docker compose up -d
 
-# 4. Wait for services to be healthy
-docker-compose ps
+# 4. Wait for all services to be healthy (usually 30-60 seconds)
+docker compose ps
+# Expected: postgres (healthy), redis (healthy),
+#           api-gateway (healthy)
 
-# 5. Run database migrations
-docker-compose exec api-gateway npm run migrate
-
-# 6. Seed initial data
-docker-compose exec api-gateway npm run seed
-
-# 7. Access the application
-# Frontend: http://localhost:3000
-# API Gateway: http://localhost:8000
-# API Docs: http://localhost:8000/api-docs
+# 5. Access the application
+# UI: http://localhost:8000/ui/
+# Backend API: http://localhost:8000/api/
+# Health checks:
+#   - Liveness:  http://localhost:8000/api/health/live
+#   - Readiness: http://localhost:8000/api/health/ready
 ```
 
-### Test Login
+### Services in Docker Compose
+
+| Service     | Port | Language         | Purpose               |
+| ----------- | ---- | ---------------- | --------------------- |
+| postgres    | 5432 | SQL              | Primary database      |
+| redis       | 6379 | -                | Cache & session store |
+| api-gateway | 8000 | Python (FastAPI) | Backend API + HTMX UI |
+
+### Database Initialization
+
+Database migrations and seeds are automatically applied when postgres starts. The `init/` and `migrations/` scripts execute on container startup:
+
+```bash
+# View migration logs
+docker compose logs postgres
+docker compose logs api-gateway
+
+# Manually verify database (if needed)
+docker compose exec postgres psql -U devops_user -d devops_control_center -c "\dt"
+```
+
+### Authentication (Google SSO)
+
+# The app uses **Google OAuth (SSO)** for sign-in. There are no seeded usernames/passwords; users sign in with their Google accounts and are created on first login. See [SSO_GOOGLE_OAUTH.md](SSO_GOOGLE_OAUTH.md) for configuration, environment variables, and GCP setup.
 
 Use these seeded accounts:
+
 - **Platform Admin**: `admin@internal`
 - **Team Lead**: `lead@internal`
 - **Regular User**: `user@internal`
 
 (No passwords required in dev mode with `DEV_MODE_BYPASS_AUTH=true`)
+
+### Viewing Logs
+
+```bash
+# All services
+docker compose logs -f
+
+# Specific service
+docker compose logs -f api-gateway
+
+# Stop following logs
+# Press Ctrl+C
+```
+
+### Stopping Services
+
+```bash
+# Stop all containers (preserves data)
+docker compose down
+
+# Stop all containers and remove volumes (clean slate)
+docker compose down -v
+```
 
 ---
 
@@ -58,28 +103,19 @@ Use these seeded accounts:
 - Internal container registry
 - Ingress controller (nginx recommended)
 
-### Step 1: Build Container Images
+### Step 1: Build & Push Container Images
 
 ```bash
-# Build backend services
+# Build Python backend (FastAPI + Uvicorn)
 docker build \
-  --build-arg SERVICE_PATH=backend/services/api-gateway \
-  -f infrastructure/docker/Dockerfile.backend \
+  -f infrastructure/docker/Dockerfile.python-backend \
   -t your-registry/devops-control-center/api-gateway:v1.0.0 \
   .
 
-# Repeat for other services (auth, azure-devops, sonarqube, etc.)
-
-# Build frontend
-docker build \
-  --build-arg NEXT_PUBLIC_API_GATEWAY_URL=http://api-gateway:8000 \
-  -f infrastructure/docker/Dockerfile.frontend \
-  -t your-registry/devops-control-center/frontend:v1.0.0 \
-  .
-
-# Push to registry
+# Push to your container registry
 docker push your-registry/devops-control-center/api-gateway:v1.0.0
-docker push your-registry/devops-control-center/frontend:v1.0.0
+
+# Update image references in K8s manifests before deployment
 ```
 
 ### Step 2: Create Secrets
@@ -158,20 +194,31 @@ kubectl get ingress -n devops-control-center
 
 # View logs
 kubectl logs -f deployment/api-gateway -n devops-control-center
-kubectl logs -f deployment/frontend -n devops-control-center
+kubectl logs -f deployment/api-gateway -n devops-control-center
 ```
 
-### Step 5: Run Database Migrations
+### Step 5: Verify Health Checks & Database
 
 ```bash
-# Get API Gateway pod name
-POD=$(kubectl get pods -n devops-control-center -l app=api-gateway -o jsonpath='{.items[0].metadata.name}')
+# Wait for all pods to be Running and Ready
+kubectl get pods -n devops-control-center -w
 
-# Run migrations
-kubectl exec -it $POD -n devops-control-center -- npm run migrate
+# Once api-gateway is ready, verify health endpoints
+# This confirms the pod is healthy and Kubernetes probes are working
+kubectl exec -it deployment/api-gateway -n devops-control-center -- \
+  curl http://localhost:8000/api/health/live
+# Should see: {"status": "alive", "timestamp": "2024-01-XX..."}
 
-# Seed initial data
-kubectl exec -it $POD -n devops-control-center -- npm run seed
+# Check readiness endpoint (used for traffic routing)
+kubectl exec -it deployment/api-gateway -n devops-control-center -- \
+  curl http://localhost:8000/api/health/ready
+# Should see: {"status": "ready", "timestamp": "2024-01-XX..."}
+
+# Monitor initialization logs (database migrations, data seeds)
+kubectl logs -f deployment/api-gateway -n devops-control-center | grep -E "migrat|seed|health|ready"
+
+# All database operations run automatically inside the api-gateway container
+# No separate migration pods needed
 ```
 
 ### Step 6: Access Application
@@ -204,21 +251,22 @@ spec:
   minReplicas: 2
   maxReplicas: 10
   metrics:
-  - type: Resource
-    resource:
-      name: cpu
-      target:
-        type: Utilization
-        averageUtilization: 70
-  - type: Resource
-    resource:
-      name: memory
-      target:
-        type: Utilization
-        averageUtilization: 80
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
 ```
 
 Apply:
+
 ```bash
 kubectl apply -f hpa.yaml
 ```
@@ -276,11 +324,24 @@ kubectl get all,configmap,secret,ingress -n devops-control-center -o yaml > k8s-
 ### Pod Crashes
 
 ```bash
-# View pod logs
+# View recent pod logs to see startup/runtime errors
+kubectl logs <pod-name> -n devops-control-center
+
+# View previous pod logs if the container restarted
 kubectl logs <pod-name> -n devops-control-center --previous
 
-# Describe pod
+# Get detailed pod information including events and resource usage
 kubectl describe pod <pod-name> -n devops-control-center
+
+# Common Python/FastAPI issues:
+# - ModuleNotFoundError: Missing dependency (check requirements.txt installed)
+# - psycopg2 ImportError: PostgreSQL client library issue (use psycopg2-binary)
+# - Database connection timeout: Verify postgres pod is running and healthy
+# - OOMKilled: Pod exceeded memory limits (increase K8s resource limits)
+# - CrashLoopBackOff: Check logs for exceptions during startup
+
+# Example: Check logs for specific error patterns
+kubectl logs deployment/api-gateway -n devops-control-center | grep -i "error\|exception\|traceback"
 ```
 
 ### Database Connection Issues
@@ -294,9 +355,20 @@ kubectl run -it --rm debug --image=postgres:16-alpine --restart=Never -- \
 ### Service Communication Issues
 
 ```bash
-# Test service connectivity
+# Test API gateway liveness probe (Kubernetes restart trigger)
 kubectl run -it --rm debug --image=curlimages/curl --restart=Never -- \
-  curl http://api-gateway:8000/api/health
+  curl http://api-gateway:8000/api/health/live
+
+# Test API gateway readiness probe (Kubernetes traffic routing)
+kubectl run -it --rm debug --image=curlimages/curl --restart=Never -- \
+  curl http://api-gateway:8000/api/health/ready
+
+# Test full API connectivity
+kubectl run -it --rm debug --image=curlimages/curl --restart=Never -- \
+  curl http://api-gateway:8000/api/auth/info
+
+# Debug from inside api-gateway container
+kubectl exec -it deployment/api-gateway -n devops-control-center -- sh
 ```
 
 ---
@@ -341,6 +413,102 @@ kubectl rollout undo deployment/api-gateway --to-revision=2 -n devops-control-ce
 
 ---
 
+## Terraform Self-Service Prerequisites
+
+The self-service project creation feature requires several one-time cluster and GCP resources. Apply these **before** deploying the application to a new cluster.
+
+### 1. Kubernetes ServiceAccount & Workload Identity
+
+```bash
+# Create the K8s SA in the correct namespace
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: devops-terraform-sa
+  namespace: devops-control-center
+  annotations:
+    iam.gke.io/gcp-service-account: devops-terraform-sa@devops-idp-489012.iam.gserviceaccount.com
+EOF
+
+# Bind the K8s SA to the GCP SA via Workload Identity
+gcloud iam service-accounts add-iam-policy-binding \
+  devops-terraform-sa@devops-idp-489012.iam.gserviceaccount.com \
+  --role roles/iam.workloadIdentityUser \
+  --member "serviceAccount:devops-idp-489012.svc.id.goog[devops-control-center/devops-terraform-sa]"
+```
+
+### 2. GCS Bucket Access
+
+```bash
+# Grant the Terraform SA write access to the tfstate bucket
+gcloud storage buckets add-iam-policy-binding \
+  gs://devops-control-center-tfstate \
+  --member="serviceAccount:devops-terraform-sa@devops-idp-489012.iam.gserviceaccount.com" \
+  --role="roles/storage.objectAdmin"
+```
+
+### 3. Backend Pod RBAC (Job/ConfigMap/Pod management)
+
+The API pod needs permission to create Kubernetes Jobs and ConfigMaps (for the Terraform workspace) and to read pod logs (for status polling and GCS log upload).
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: terraform-job-manager
+  namespace: devops-control-center
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "get", "delete"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: terraform-job-manager
+  namespace: devops-control-center
+subjects:
+  - kind: ServiceAccount
+    name: api-gateway
+    namespace: devops-control-center
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: terraform-job-manager
+EOF
+```
+
+### 4. Verify
+
+```bash
+# K8s SA exists and has WI annotation
+kubectl get sa devops-terraform-sa -n devops-control-center -o yaml
+
+# Backend RBAC is in place
+kubectl auth can-i create jobs \
+  --as=system:serviceaccount:devops-control-center:api-gateway \
+  -n devops-control-center
+# Expected: yes
+
+# GCS bucket accessible via WI (run from a test pod using the devops-terraform-sa SA)
+kubectl run -it --rm tf-test \
+  --image=gcr.io/google.com/cloudsdktool/cloud-sdk:alpine \
+  --serviceaccount=devops-terraform-sa \
+  --restart=Never \
+  -n devops-control-center \
+  -- gsutil ls gs://devops-control-center-tfstate
+```
+
+---
+
 ## Production Checklist
 
 - [ ] All secrets created and stored securely
@@ -358,4 +526,11 @@ kubectl rollout undo deployment/api-gateway --to-revision=2 -n devops-control-ce
 - [ ] External system integrations tested
 - [ ] Performance testing completed
 - [ ] Security scan passed
+- [ ] `devops-terraform-sa` K8s ServiceAccount created with Workload Identity annotation
+- [ ] GCP Workload Identity binding configured for `devops-terraform-sa`
+- [ ] `devops-control-center-tfstate` GCS bucket exists and SA has `objectAdmin`
+- [ ] `terraform-job-manager` Role and RoleBinding applied
+- [ ] `AZURE_DEVOPS_PAT` present in `all-secrets` K8s Secret (required by Terraform runner)
+- [ ] Self-service project creation tested end-to-end (mock mode off)
 
+=======

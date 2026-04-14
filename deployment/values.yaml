@@ -1,0 +1,75 @@
+# Global Helm values for the devops-stack umbrella chart.
+postgres:
+  enabled: true
+  primary:
+    service:
+      ports:
+        postgres: 5432
+      type: ClusterIP
+  postgresUser: "devops"
+  postgresDB: "devops_control_center"
+  storageSize: 1Gi
+  secretName: "all-secrets"
+  serviceName: "postgres-service"
+
+redis:
+  enabled: true
+  master:
+    service:
+      ports:
+        redis: 6379
+      type: ClusterIP
+  serviceName: "redis-service"
+
+# --- REFACTORED GLOBAL BLOCK (Added for cross-chart communication) ---
+global:
+  # This makes your image repo available to everyone
+  customImage:
+    repository: "europe-west1-docker.pkg.dev/devops-idp-489012/devops-idp"
+    pullPolicy: "Always"
+  replicaCount: 1
+  
+  # This makes DB connection details available to backend/frontend
+  endpoints:
+    postgresHost: "postgres-service"
+    postgresPort: 5432
+    postgresUser: "devops"
+    postgresDB: "devops_control_center"
+    databaseUrl: "postgresql://devops:$(POSTGRES_PASSWORD)@postgres-service:5432/devops_control_center"
+    redisHost: "redis-service"
+    redisPort: 6379
+
+
+ingress-prod:
+  controller:
+    ingressClassResource:
+      name: nginx-prod
+    scope:
+      enabled: true
+      namespace: devops-control-center-prod
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    # Disabled: the admission webhook runs a Job on every Helm upgrade which
+    # triggers GKE Autopilot node provisioning and stalls deploys for 10+ min.
+    # Not needed for an internal cluster where Ingress resources are controlled.
+    admissionWebhooks:
+      enabled: false
+      # Correct key names (createSecretJob / patchWebhookJob) for re-enabling:
+      createSecretJob:
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+      patchWebhookJob:
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+
+# Infrastructure subchart (Postgres / Redis).
+infrastructure:
+  postgres:
+    observabilityMigrateHook: false
+    observabilityMigrateAsyncJob: true

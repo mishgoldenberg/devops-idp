@@ -1,0 +1,281 @@
+<div class="flex-1 min-h-0 flex flex-col overflow-hidden bg-base-200">
+	<header
+		class="bg-base-100 border-b border-base-300 px-8 py-8 flex items-center justify-between shrink-0"
+	>
+		<div>
+			<h1 class="text-3xl font-bold text-base-content">Platform Managing</h1>
+			<p class="text-base-content/60">Administrative controls for the portal</p>
+		</div>
+	</header>
+
+	<div class="flex-1 min-h-0 overflow-y-auto p-8">
+		<section class="card bg-base-100 border border-base-300 shadow max-w-xl">
+			<div class="card-body gap-4">
+				<div>
+					<h2 class="card-title text-lg">User Role Management</h2>
+					<p class="text-sm text-base-content/60">
+						Grant Admin access to a user who has already signed in at least once (account
+						must exist). They must sign out and sign in again for the new role to apply.
+					</p>
+				</div>
+
+				<div class="form-control w-full">
+					<label class="label pt-0" for="grant-admin-select">
+						<span class="label-text">Select User</span>
+						<span id="users-loading-badge" class="label-text-alt text-base-content/40 text-xs">Loading…</span>
+					</label>
+
+					<!-- Searchable select wrapper -->
+					<div class="relative" id="user-dropdown-wrapper">
+						<!-- Search input (acts as a combobox trigger) -->
+						<input
+							id="grant-admin-search"
+							type="text"
+							autocomplete="off"
+							placeholder="Search by email or name…"
+							class="input input-bordered w-full pr-10"
+						/>
+						<!-- Caret icon -->
+						<span class="pointer-events-none absolute inset-y-0 right-3 flex items-center text-base-content/40">
+							<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+							</svg>
+						</span>
+						<!-- Dropdown list -->
+						<ul
+							id="grant-admin-list"
+							class="hidden absolute z-50 mt-1 w-full max-h-56 overflow-y-auto rounded-box border border-base-300 bg-base-100 shadow-lg"
+							role="listbox"
+						></ul>
+					</div>
+
+					<!-- Hidden field holding the selected email -->
+					<input id="grant-admin-email" type="hidden" value="" />
+
+					<!-- Selected user chip -->
+					<div id="selected-user-chip" class="hidden mt-2 flex items-center gap-2 rounded-lg bg-base-200 px-3 py-1.5 text-sm w-fit">
+						<span id="selected-user-label" class="font-medium"></span>
+						<button id="clear-selection-btn" type="button" class="text-base-content/50 hover:text-error transition ml-1" title="Clear selection">
+							<svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/>
+							</svg>
+						</button>
+					</div>
+
+					<!-- No users message -->
+					<p id="no-users-msg" class="hidden mt-2 text-sm text-warning">
+						No other users have signed in yet. Share the portal URL so teammates can log in first.
+					</p>
+				</div>
+
+				<div class="flex flex-wrap items-center gap-3">
+					<button id="grant-admin-btn" type="button" class="btn btn-primary" disabled>
+						Grant Admin Access
+					</button>
+				</div>
+				<div
+					id="grant-admin-alert"
+					class="hidden alert text-sm"
+					role="status"
+				></div>
+			</div>
+		</section>
+	</div>
+</div>
+
+<script>
+	(function () {
+		const searchInput  = document.getElementById("grant-admin-search");
+		const hiddenInput  = document.getElementById("grant-admin-email");
+		const list         = document.getElementById("grant-admin-list");
+		const chip         = document.getElementById("selected-user-chip");
+		const chipLabel    = document.getElementById("selected-user-label");
+		const clearBtn     = document.getElementById("clear-selection-btn");
+		const btn          = document.getElementById("grant-admin-btn");
+		const alertEl      = document.getElementById("grant-admin-alert");
+		const loadingBadge = document.getElementById("users-loading-badge");
+		const noUsersMsg   = document.getElementById("no-users-msg");
+
+		let allUsers   = [];   // [{email, display_name, role_name}, …]
+		let listOpen   = false;
+
+		// ── Helpers ──────────────────────────────────────────────────────────
+
+		function showAlert(kind, text) {
+			alertEl.classList.remove("hidden", "alert-success", "alert-error", "alert-info");
+			alertEl.classList.add(
+				kind === "ok" ? "alert-success" : kind === "err" ? "alert-error" : "alert-info"
+			);
+			alertEl.textContent = text;
+		}
+
+		function detailFromBody(json, res) {
+			if (json && typeof json.detail === "string") return json.detail;
+			if (Array.isArray(json?.detail)) return json.detail.map((e) => e.msg || e).join("; ");
+			return res.statusText || "Request failed";
+		}
+
+		function setSelection(email, label) {
+			hiddenInput.value  = email;
+			chipLabel.textContent = label;
+			chip.classList.remove("hidden");
+			searchInput.value  = "";
+			searchInput.placeholder = "Change selection…";
+			btn.disabled = false;
+			alertEl.classList.add("hidden");
+			closeList();
+		}
+
+		function clearSelection() {
+			hiddenInput.value  = "";
+			chip.classList.add("hidden");
+			searchInput.value  = "";
+			searchInput.placeholder = "Search by email or name…";
+			btn.disabled = true;
+			alertEl.classList.add("hidden");
+		}
+
+		// ── Dropdown list rendering ───────────────────────────────────────────
+
+		function renderList(query) {
+			const q = (query || "").trim().toLowerCase();
+			const filtered = q
+				? allUsers.filter(
+						(u) =>
+							u.email.toLowerCase().includes(q) ||
+							u.display_name.toLowerCase().includes(q)
+					)
+				: allUsers;
+
+			list.innerHTML = "";
+
+			if (filtered.length === 0) {
+				const li = document.createElement("li");
+				li.className = "px-4 py-3 text-sm text-base-content/50 italic";
+				li.textContent = q ? "No matching users" : "No users available";
+				list.appendChild(li);
+				return;
+			}
+
+			filtered.forEach((u) => {
+				const li = document.createElement("li");
+				li.className =
+					"flex items-center justify-between gap-3 px-4 py-2.5 cursor-pointer hover:bg-base-200 transition select-none";
+				li.setAttribute("role", "option");
+				li.dataset.email = u.email;
+
+				const isAdmin = u.role_name.toLowerCase() === "platform admin";
+
+				li.innerHTML = `
+					<span class="flex flex-col min-w-0">
+						<span class="font-medium text-sm truncate">${escHtml(u.display_name)}</span>
+						<span class="text-xs text-base-content/50 truncate">${escHtml(u.email)}</span>
+					</span>
+					<span class="badge badge-sm shrink-0 ${isAdmin ? "badge-success" : "badge-ghost"}">${escHtml(u.role_name)}</span>
+				`;
+
+				li.addEventListener("mousedown", (e) => {
+					e.preventDefault();
+					if (isAdmin) {
+						showAlert("info", `${u.email} already has Admin access.`);
+						closeList();
+						return;
+					}
+					setSelection(u.email, `${u.display_name} <${u.email}>`);
+				});
+
+				list.appendChild(li);
+			});
+		}
+
+		function openList() {
+			renderList(searchInput.value);
+			list.classList.remove("hidden");
+			listOpen = true;
+		}
+
+		function closeList() {
+			list.classList.add("hidden");
+			listOpen = false;
+		}
+
+		function escHtml(str) {
+			return String(str)
+				.replace(/&/g, "&amp;")
+				.replace(/</g, "&lt;")
+				.replace(/>/g, "&gt;")
+				.replace(/"/g, "&quot;");
+		}
+
+		// ── Load users ────────────────────────────────────────────────────────
+
+		async function loadUsers() {
+			try {
+				const res = await fetch("/api/admin/users", { credentials: "same-origin" });
+				const json = await res.json();
+				if (!res.ok) throw new Error(detailFromBody(json, res));
+				allUsers = json.data || [];
+				loadingBadge.textContent = allUsers.length > 0 ? `${allUsers.length} user(s)` : "";
+				if (allUsers.length === 0) {
+					noUsersMsg.classList.remove("hidden");
+					searchInput.disabled = true;
+				}
+			} catch (e) {
+				loadingBadge.textContent = "Failed to load";
+				loadingBadge.classList.add("text-error");
+			}
+		}
+
+		// ── Event wiring ──────────────────────────────────────────────────────
+
+		searchInput.addEventListener("focus", () => openList());
+		searchInput.addEventListener("input", () => {
+			clearSelection();
+			renderList(searchInput.value);
+			if (!listOpen) openList();
+		});
+
+		document.addEventListener("click", (e) => {
+			if (listOpen && !document.getElementById("user-dropdown-wrapper").contains(e.target)) {
+				closeList();
+			}
+		});
+
+		clearBtn.addEventListener("click", () => clearSelection());
+
+		btn.addEventListener("click", async () => {
+			const email = (hiddenInput.value || "").trim();
+			alertEl.classList.add("hidden");
+			if (!email) {
+				showAlert("err", "Select a user first.");
+				return;
+			}
+			btn.disabled = true;
+			try {
+				const res = await fetch("/api/admin/grant-role", {
+					method: "POST",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ email, role: "Admin" }),
+				});
+				let json = null;
+				try { json = await res.json(); } catch { json = {}; }
+				if (res.ok) {
+					showAlert("ok", json?.message || "User granted Admin permissions");
+					clearSelection();
+					// Refresh the user list so the newly promoted user shows the Admin badge
+					await loadUsers();
+					return;
+				}
+				showAlert("err", detailFromBody(json, res));
+			} catch (e) {
+				showAlert("err", e?.message || "Network error");
+			} finally {
+				btn.disabled = !hiddenInput.value;
+			}
+		});
+
+		// ── Init ──────────────────────────────────────────────────────────────
+		loadUsers();
+	})();
+</script>

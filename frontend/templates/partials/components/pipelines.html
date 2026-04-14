@@ -1,0 +1,76 @@
+<div
+	class="card bg-base-100 border border-base-300 shadow h-full flex flex-col"
+>
+	<div class="card-body p-5 flex flex-col h-full gap-4">
+		<!-- Header -->
+		<div class="flex items-center gap-3">
+			<div
+				class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-accent/30 bg-accent/10"
+			>
+				<svg
+					viewBox="0 0 24 24"
+					class="h-5 w-5 fill-current text-accent"
+					aria-hidden="true"
+				>
+					<path d="M8 5v14l11-7z" />
+				</svg>
+			</div>
+			<h3
+				class="text-sm font-bold uppercase tracking-widest text-base-content/70"
+			>
+				Latest My Pipeline Run
+			</h3>
+		</div>
+		{% if error %}
+		<div
+			class="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-base-content/80"
+		>
+			<p class="font-semibold text-warning">Azure DevOps unavailable</p>
+			<p class="mt-1">{{ error }}</p>
+			<div class="mt-3 grid grid-cols-1 gap-2">
+				<input type="password" placeholder="Paste Personal Access Token" class="input input-bordered input-sm w-full ado-pat-input" />
+				<button type="button" class="btn btn-xs btn-primary ado-pat-save-btn">Save PAT</button>
+			</div>
+		</div>
+		{% else %}
+		<!-- Pipeline run list -->
+		<ul
+			class="flex flex-col gap-2 flex-1 min-h-0 overflow-y-auto overscroll-contain"
+		>
+			{% for run in runs %}
+			<li
+				class="flex items-center gap-3 rounded-lg bg-base-200/60 border border-base-300 px-3 py-2.5"
+			>
+				<span
+					class="h-2.5 w-2.5 shrink-0 rounded-full {{ 'bg-success' if run.result == 'succeeded' else ('bg-error' if run.result == 'failed' else 'bg-warning animate-pulse') }}"
+				></span>
+				<div class="flex flex-col flex-1 min-w-0">
+					{% set run_url = (run.url or '')|trim %} {% set run_url_valid =
+					run_url.startswith('https://dev.azure.com/') and '/_build/results' in
+					run_url and '${' not in run_url and 'org/project' not in run_url %} {%
+					if run_url_valid %}
+					<a
+						href="{{ run_url }}"
+						target="_blank"
+						rel="noopener noreferrer"
+						class="text-sm font-medium text-base-content hover:text-primary truncate"
+						>{{ run.name }}</a
+					>
+					{% else %}
+					<span class="text-sm font-medium text-base-content truncate"
+						>{{ run.name }}</span
+					>
+					{% endif %}
+					<span class="text-xs text-base-content/50">{{ run.project }}</span>
+				</div>
+				<span
+					class="text-xs font-semibold shrink-0 {{ 'text-success' if run.result == 'succeeded' else ('text-error' if run.result == 'failed' else 'text-warning') }}"
+					>{{ run.result }}</span
+				>
+				<span class="text-xs text-base-content/40 shrink-0">{{ run.age }}</span>
+			</li>
+			{% endfor %}
+		</ul>
+		{% endif %}
+	</div>
+</div>

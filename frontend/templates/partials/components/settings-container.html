@@ -1,0 +1,35 @@
+<div class="flex-1 min-h-0 flex flex-col overflow-hidden bg-base-200">
+	<header class="bg-base-100 border-b border-base-300 px-8 py-8">
+		<h1 class="text-3xl font-bold text-base-content">Settings</h1>
+		<p class="text-base-content/60">Portal preferences and account session</p>
+	</header>
+	<div class="flex-1 min-h-0 overflow-y-auto p-8 space-y-6">
+		<section class="max-w-2xl card bg-base-100 border border-base-300 shadow">
+			<div class="card-body gap-4">
+				<h2 class="card-title text-lg">Session</h2>
+				<p class="text-sm text-base-content/60">
+					You are signed in as
+					<span class="font-medium text-base-content">{{ user.display_name }}</span>
+					{% if user.username %}
+					<span class="text-base-content/50">({{ user.username }})</span>
+					{% endif %}
+				</p>
+				<p class="text-sm text-base-content/60">
+					<strong>Sign out</strong> clears your session and sends you to the sign-in page. To
+					<strong>sign in</strong> again, use the same options shown there (e.g.
+					<em>Sign in with SSO</em>).
+				</p>
+				<div class="pt-2">
+					<form method="post" action="/ui/auth/logout">
+						<button type="submit" class="btn btn-outline btn-error">Sign out</button>
+					</form>
+				</div>
+			</div>
+		</section>
+		<section class="max-w-2xl card bg-base-100 border border-base-300 shadow">
+			<div class="card-body">
+				<p class="text-base-content/70">More settings will appear here later.</p>
+			</div>
+		</section>
+	</div>
+</div>

@@ -4,7 +4,6 @@
 # Quick script to restart services after code changes
 
 REBUILD=false
-REBUILD_FRONTEND=false
 FULL=false
 SERVICE=""
 
@@ -22,10 +21,6 @@ while [[ $# -gt 0 ]]; do
             REBUILD=true
             shift
             ;;
-        --rebuild-frontend)
-            REBUILD_FRONTEND=true
-            shift
-            ;;
         --full)
             FULL=true
             shift
@@ -36,7 +31,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         *)
             echo -e "${RED}Unknown option: $1${NC}"
-            echo "Usage: ./restart.sh [--rebuild] [--rebuild-frontend] [--full] [--service SERVICE_NAME]"
+            echo "Usage: ./restart.sh [--rebuild] [--full] [--service SERVICE_NAME]"
             exit 1
             ;;
     esac
@@ -76,20 +71,6 @@ if [ "$FULL" = true ]; then
         exit 1
     fi
     echo -e "  ${GREEN}✅ All services restarted${NC}"
-elif [ "$REBUILD_FRONTEND" = true ]; then
-    echo -e "${YELLOW}🔨 Rebuilding frontend...${NC}"
-    if ! docker compose build frontend; then
-        echo -e "  ${RED}❌ Failed to rebuild frontend${NC}"
-        exit 1
-    fi
-    echo -e "  ${GREEN}✅ Frontend rebuilt${NC}"
-    echo ""
-    echo -e "${YELLOW}🔄 Restarting frontend...${NC}"
-    if ! docker compose up -d frontend; then
-        echo -e "  ${RED}❌ Failed to restart frontend${NC}"
-        exit 1
-    fi
-    echo -e "  ${GREEN}✅ Frontend restarted${NC}"
 elif [ "$REBUILD" = true ]; then
     echo -e "${YELLOW}🔨 Rebuilding services...${NC}"
     if ! docker compose build; then
@@ -106,7 +87,7 @@ elif [ "$REBUILD" = true ]; then
     echo -e "  ${GREEN}✅ Services restarted${NC}"
 else
     echo -e "${YELLOW}🔄 Restarting all services...${NC}"
-    echo -e "  ${CYAN}(Use --rebuild-frontend for frontend changes, --rebuild for all services, --full for clean rebuild)${NC}"
+    echo -e "  ${CYAN}(Use --rebuild for all services, --full for clean rebuild)${NC}"
     if ! docker compose restart; then
         echo -e "  ${RED}❌ Failed to restart services${NC}"
         exit 1

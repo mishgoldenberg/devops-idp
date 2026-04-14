@@ -1,0 +1,22 @@
+name: Service Backend CI
+
+on:
+  push:
+    paths:
+      - "backend/app/**"
+      - "frontend/**"
+  workflow_dispatch:
+
+concurrency:
+  group: service-backend-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    uses: ./.github/workflows/template-workflow.yml
+    with:
+      service_path: backend/app
+      image_name: backend
+      gcp_project: devops-idp-489012
+      gcp_region: europe-west1
+    secrets: inherit

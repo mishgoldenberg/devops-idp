@@ -1,0 +1,92 @@
+{{- if .Values.postgres.observabilityMigrateAsyncJob }}
+# Same DDL as the hook Job, but not a Helm hook — upgrade succeeds immediately; this Job runs in the background.
+# Uses the same DB credentials as the backend (typically can CREATE in dev; prod may still need manual SQL as superuser).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-obsddl-async-r{{ .Release.Revision }}
+  labels:
+    app.kubernetes.io/component: observability-migrate-async
+spec:
+  ttlSecondsAfterFinished: 86400
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: observability-migrate-async
+    spec:
+      restartPolicy: Never
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: apply-observability-sql
+          image: {{ .Values.postgres.image | quote }}
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgres.secretName }}
+                  key: POSTGRES_PASSWORD
+            - name: PGHOST
+              value: {{ .Values.postgres.serviceName | quote }}
+            - name: PGPORT
+              value: {{ .Values.postgres.port | toString | quote }}
+            - name: PGUSER
+              value: {{ .Values.postgres.postgresUser | quote }}
+            - name: PGDATABASE
+              value: {{ .Values.postgres.postgresDB | quote }}
+            - name: PGCONNECT_TIMEOUT
+              value: "10"
+            - name: PGSSLMODE
+              value: "disable"
+            - name: HOME
+              value: /tmp
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              echo "Waiting for PostgreSQL at ${PGHOST}:${PGPORT}..."
+              end=$(( $(date +%s) + 300 ))
+              ok=0
+              while [ "$(date +%s)" -lt "$end" ]; do
+                if psql -c 'SELECT 1' >/dev/null 2>&1; then
+                  ok=1
+                  break
+                fi
+                sleep 3
+              done
+              if [ "$ok" != "1" ]; then
+                echo "ERROR: PostgreSQL not reachable; exiting."
+                exit 1
+              fi
+              psql -v ON_ERROR_STOP=1 -f /scripts/06_observability.sql
+              echo "Observability DDL applied (async job)."
+          volumeMounts:
+            - name: sql
+              mountPath: /scripts
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: sql
+          configMap:
+            name: postgres-init-scripts
+            items:
+              - key: "06_observability.sql"
+                path: "06_observability.sql"
+        - name: tmp
+          emptyDir: {}
+{{- end }}

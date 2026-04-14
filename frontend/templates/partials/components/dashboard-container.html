@@ -1,0 +1,433 @@
+<div class="drawer drawer-end flex-1 min-h-0">
+	<input id="dashboard-customize-drawer" type="checkbox" class="drawer-toggle" />
+
+	<main class="drawer-content flex-1 min-h-0 flex flex-col h-full overflow-hidden">
+		<!-- Header -->
+		<header
+			class="bg-base-100 shadow-sm border-b border-base-300 px-6 py-8 flex items-center justify-between"
+		>
+			<div>
+				<h2 class="text-3xl font-bold text-base-content">
+					Welcome back, {{ user.display_name }}!
+				</h2>
+				<p class="mt-1 text-sm text-base-content/50">
+					Summary of your connected systems status and tasks.
+				</p>
+			</div>
+			<div class="flex gap-2">
+				<button id="refresh-btn" class="btn btn-outline btn-sm">
+					&#8635; Refresh
+				</button>
+				<label
+					for="dashboard-customize-drawer"
+					class="btn btn-primary btn-sm drawer-button"
+				>
+					<img
+						src="../static/images/customize.svg"
+						alt=""
+						class="w-5 h-5"
+					/>Customize Dashboard
+				</label>
+			</div>
+		</header>
+
+		<!-- Page Content (isolated scroll area) -->
+		<div
+			class="flex-1 min-h-0 overflow-y-auto p-6 bg-base-200 flex flex-col gap-6"
+		>
+		<!-- Quick Links sits above the widget grid at its natural width -->
+		<div
+			id="quick-links-component"
+			data-widget-key="quick_links"
+			class="w-full max-w-full"
+			hx-get="/ui/components/quick-links"
+			hx-trigger="load"
+			hx-swap="innerHTML"
+		>
+			<div class="card w-full bg-base-100 border border-base-300 shadow">
+				<div class="card-body p-6">
+					<span
+						class="loading loading-spinner loading-md text-base-content/40"
+					></span>
+				</div>
+			</div>
+		</div>
+
+		<!-- Dashboard widget grid -->
+		<div
+			class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 items-start"
+		>
+			<!-- Azure DevOps Tasks -->
+			<div
+				id="ado-tasks-component"
+				data-widget-key="ado_my_work_items"
+				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
+				hx-get="/ui/components/azure-devops-tasks"
+				hx-trigger="load, every 60s, click from:#refresh-btn"
+				hx-target="find .widget-content"
+				hx-swap="innerHTML"
+			>
+				<div class="widget-loading h-full">
+					<div
+						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+					>
+						<span
+							class="loading loading-spinner loading-md text-base-content/40"
+						></span>
+					</div>
+				</div>
+				<div class="widget-content h-full">
+					<div
+						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+					>
+						<span
+							class="loading loading-spinner loading-md text-base-content/40"
+						></span>
+					</div>
+				</div>
+			</div>
+
+			<!-- ServiceNow Tickets -->
+			<div
+				id="servicenow-tickets-component"
+				data-widget-key="snow_my_tickets"
+				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
+				hx-get="/ui/components/servicenow-tickets"
+				hx-trigger="load, every 60s, click from:#refresh-btn"
+				hx-target="find .widget-content"
+				hx-swap="innerHTML"
+			>
+				<div class="widget-loading h-full">
+					<div
+						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+					>
+						<span
+							class="loading loading-spinner loading-md text-base-content/40"
+						></span>
+					</div>
+				</div>
+				<div class="widget-content h-full">
+					<div
+						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+					>
+						<span
+							class="loading loading-spinner loading-md text-base-content/40"
+						></span>
+					</div>
+				</div>
+			</div>
+
+			<!-- Pull Requests -->
+			<div
+				id="pull-requests-component"
+				data-widget-key="ado_my_pull_requests"
+				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
+				hx-get="/ui/components/pull-requests"
+				hx-trigger="load, every 60s, click from:#refresh-btn"
+				hx-target="find .widget-content"
+				hx-swap="innerHTML"
+			>
+				<div class="widget-loading h-full">
+					<div
+						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+					>
+						<span
+							class="loading loading-spinner loading-md text-base-content/40"
+						></span>
+					</div>
+				</div>
+				<div class="widget-content h-full">
+					<div
+						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+					>
+						<span
+							class="loading loading-spinner loading-md text-base-content/40"
+						></span>
+					</div>
+				</div>
+			</div>
+
+			<!-- Pull Requests To Review -->
+			<div
+				id="pull-requests-review-component"
+				data-widget-key="ado_prs_for_review"
+				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
+				hx-get="/ui/components/pull-requests-review"
+				hx-trigger="load, every 60s, click from:#refresh-btn"
+				hx-target="find .widget-content"
+				hx-swap="innerHTML"
+			>
+				<div class="widget-loading h-full">
+					<div
+						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+					>
+						<span
+							class="loading loading-spinner loading-md text-base-content/40"
+						></span>
+					</div>
+				</div>
+				<div class="widget-content h-full">
+					<div
+						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+					>
+						<span
+							class="loading loading-spinner loading-md text-base-content/40"
+						></span>
+					</div>
+				</div>
+			</div>
+
+			<!-- Pipelines -->
+			<div
+				id="pipelines-component"
+				data-widget-key="ado_pipeline_status"
+				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
+				hx-get="/ui/components/pipelines"
+				hx-trigger="load, every 60s, click from:#refresh-btn"
+				hx-target="find .widget-content"
+				hx-swap="innerHTML"
+			>
+				<div class="widget-loading h-full">
+					<div
+						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+					>
+						<span
+							class="loading loading-spinner loading-md text-base-content/40"
+						></span>
+					</div>
+				</div>
+				<div class="widget-content h-full">
+					<div
+						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+					>
+						<span
+							class="loading loading-spinner loading-md text-base-content/40"
+						></span>
+					</div>
+				</div>
+			</div>
+
+			<!-- SonarQube Code Quality -->
+			<div
+				id="sonarqube-quality-component"
+				data-widget-key="sonar_quality_gate"
+				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
+				hx-get="/ui/components/sonarqube-quality"
+				hx-trigger="load, every 60s, click from:#refresh-btn"
+				hx-target="find .widget-content"
+				hx-swap="innerHTML"
+			>
+				<div class="widget-loading h-full">
+					<div
+						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+					>
+						<span
+							class="loading loading-spinner loading-md text-base-content/40"
+						></span>
+					</div>
+				</div>
+				<div class="widget-content h-full">
+					<div
+						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+					>
+						<span
+							class="loading loading-spinner loading-md text-base-content/40"
+						></span>
+					</div>
+				</div>
+			</div>
+
+			<!-- Artifactory Storage -->
+			<div
+				id="artifactory-storage-component"
+				data-widget-key="artifactory_storage"
+				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
+				hx-get="/ui/components/artifactory-storage"
+				hx-trigger="load, every 60s, click from:#refresh-btn"
+				hx-target="find .widget-content"
+				hx-swap="innerHTML"
+			>
+				<div class="widget-loading h-full">
+					<div
+						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+					>
+						<span
+							class="loading loading-spinner loading-md text-base-content/40"
+						></span>
+					</div>
+				</div>
+				<div class="widget-content h-full">
+					<div
+						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+					>
+						<span
+							class="loading loading-spinner loading-md text-base-content/40"
+						></span>
+					</div>
+				</div>
+			</div>
+
+			<!-- Service Health -->
+			<div
+				id="service-health-component"
+				data-widget-key="service_health"
+				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
+				hx-get="/ui/components/service-health"
+				hx-trigger="load, every 60s, click from:#refresh-btn"
+				hx-target="find .widget-content"
+				hx-swap="innerHTML"
+			>
+				<div class="widget-loading h-full">
+					<div
+						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+					>
+						<span
+							class="loading loading-spinner loading-md text-base-content/40"
+						></span>
+					</div>
+				</div>
+				<div class="widget-content h-full">
+					<div
+						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+					>
+						<span
+							class="loading loading-spinner loading-md text-base-content/40"
+						></span>
+					</div>
+				</div>
+			</div>
+		</div>
+	</main>
+
+	<div class="drawer-side z-40">
+		<label
+			for="dashboard-customize-drawer"
+			aria-label="close customization panel"
+			class="drawer-overlay"
+		></label>
+		<aside
+			class="min-h-full w-full max-w-md bg-base-100 border-l border-base-300 shadow-xl flex flex-col"
+		>
+			<div class="px-6 py-5 border-b border-base-300 flex items-center justify-between">
+				<div>
+					<h3 class="text-lg font-bold text-base-content">Customize Dashboard</h3>
+					<p class="text-sm text-base-content/60">Choose which components to display</p>
+				</div>
+				<label
+					for="dashboard-customize-drawer"
+					class="btn btn-ghost btn-sm btn-circle"
+					aria-label="Close panel"
+				>
+					✕
+				</label>
+			</div>
+
+			<div class="flex-1 overflow-y-auto p-6 space-y-4">
+				<fieldset class="fieldset bg-base-200 border border-base-300 rounded-box p-4">
+					<legend class="fieldset-legend text-base-content/80">Available Components</legend>
+
+					<label class="label cursor-pointer justify-start gap-3 py-2">
+						<input type="checkbox" checked class="checkbox checkbox-primary dashboard-widget-toggle" data-widget-key="quick_links" />
+						<span class="font-medium text-base-content">Quick Links</span>
+					</label>
+					<label class="label cursor-pointer justify-start gap-3 py-2">
+						<input type="checkbox" checked class="checkbox checkbox-primary dashboard-widget-toggle" data-widget-key="ado_my_work_items" />
+						<span class="font-medium text-base-content">Azure DevOps Tasks</span>
+					</label>
+					<label class="label cursor-pointer justify-start gap-3 py-2">
+						<input type="checkbox" checked class="checkbox checkbox-primary dashboard-widget-toggle" data-widget-key="snow_my_tickets" />
+						<span class="font-medium text-base-content">ServiceNow Tickets</span>
+					</label>
+					<label class="label cursor-pointer justify-start gap-3 py-2">
+						<input type="checkbox" checked class="checkbox checkbox-primary dashboard-widget-toggle" data-widget-key="ado_my_pull_requests" />
+						<span class="font-medium text-base-content">Pull Requests (Opened by me)</span>
+					</label>
+					<label class="label cursor-pointer justify-start gap-3 py-2">
+						<input type="checkbox" checked class="checkbox checkbox-primary dashboard-widget-toggle" data-widget-key="ado_prs_for_review" />
+						<span class="font-medium text-base-content">Pull Requests (Need my review)</span>
+					</label>
+					<label class="label cursor-pointer justify-start gap-3 py-2">
+						<input type="checkbox" checked class="checkbox checkbox-primary dashboard-widget-toggle" data-widget-key="ado_pipeline_status" />
+						<span class="font-medium text-base-content">Pipelines</span>
+					</label>
+					<label class="label cursor-pointer justify-start gap-3 py-2">
+						<input type="checkbox" checked class="checkbox checkbox-primary dashboard-widget-toggle" data-widget-key="sonar_quality_gate" />
+						<span class="font-medium text-base-content">SonarQube Code Quality</span>
+					</label>
+					<label class="label cursor-pointer justify-start gap-3 py-2">
+						<input type="checkbox" checked class="checkbox checkbox-primary dashboard-widget-toggle" data-widget-key="artifactory_storage" />
+						<span class="font-medium text-base-content">Artifactory Storage</span>
+					</label>
+					<label class="label cursor-pointer justify-start gap-3 py-2">
+						<input type="checkbox" checked class="checkbox checkbox-primary dashboard-widget-toggle" data-widget-key="service_health" />
+						<span class="font-medium text-base-content">Service Health</span>
+					</label>
+				</fieldset>
+			</div>
+
+			<div class="p-4 border-t border-base-300 bg-base-100 flex items-center justify-end gap-2">
+				<label for="dashboard-customize-drawer" class="btn btn-ghost btn-sm">Cancel</label>
+				<button id="dashboard-save-btn" type="button" class="btn btn-primary btn-sm">Save</button>
+			</div>
+		</aside>
+	</div>
+</div>
+<script>
+	(function () {
+		const widgetKeys = {
+			quick_links: "quick-links-component",
+			ado_my_work_items: "ado-tasks-component",
+			snow_my_tickets: "servicenow-tickets-component",
+			ado_my_pull_requests: "pull-requests-component",
+			ado_prs_for_review: "pull-requests-review-component",
+			ado_pipeline_status: "pipelines-component",
+			sonar_quality_gate: "sonarqube-quality-component",
+			artifactory_storage: "artifactory-storage-component",
+			service_health: "service-health-component",
+		};
+		const toggles = Array.from(document.querySelectorAll(".dashboard-widget-toggle"));
+		const drawer = document.getElementById("dashboard-customize-drawer");
+		const saveBtn = document.getElementById("dashboard-save-btn");
+
+		function apply(enabled) {
+			Object.entries(widgetKeys).forEach(([key, id]) => {
+				const el = document.getElementById(id);
+				if (!el) return;
+				el.style.display = enabled.includes(key) ? "" : "none";
+			});
+			toggles.forEach((cb) => {
+				cb.checked = enabled.includes(cb.dataset.widgetKey);
+			});
+		}
+
+		async function loadPrefs() {
+			try {
+				const res = await fetch("/ui/dashboard/preferences");
+				const data = await res.json();
+				const enabled = data?.data?.enabled || Object.keys(widgetKeys);
+				apply(enabled);
+			} catch {
+				apply(Object.keys(widgetKeys));
+			}
+		}
+
+		toggles.forEach((cb) =>
+			cb.addEventListener("change", () => {
+				const enabled = toggles.filter((x) => x.checked).map((x) => x.dataset.widgetKey);
+				apply(enabled);
+			})
+		);
+
+		saveBtn?.addEventListener("click", async () => {
+			const enabled = toggles.filter((x) => x.checked).map((x) => x.dataset.widgetKey);
+			await fetch("/ui/dashboard/preferences", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ enabled }),
+			});
+			if (drawer) drawer.checked = false;
+		});
+
+		loadPrefs();
+	})();
+</script>
