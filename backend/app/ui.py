@@ -116,6 +116,14 @@ def ui_index(request: Request):
     saved = _get_home_widget_prefs_from_cookie(request)
     enabled_widgets: list = saved if saved else list(HOME_WIDGET_KEYS.keys())
 
+    # Sync observability tracking to exactly match the current enabled list.
+    try:
+        cu = _current_user_from_token(token)
+        if cu:
+            _sync_widget_tracking(str(cu.get("id", "")), enabled_widgets)
+    except Exception:
+        pass
+
     templates = _get_templates(request)
     return templates.TemplateResponse(
         "index.html",
@@ -519,6 +527,32 @@ _HOME_WIDGETS_COOKIE = "home_widgets"
 _HOME_WIDGETS_COOKIE_MAX_AGE = 365 * 24 * 3600  # 1 year
 
 
+def _sync_widget_tracking(user_id: str, enabled_keys: list) -> None:
+    """
+    Keep widget_user_views in sync with the user's actual enabled widget list.
+    Removes rows for widgets no longer enabled, upserts rows for enabled ones.
+    This ensures observability always reflects the current dashboard state.
+    """
+    if not user_id:
+        return
+    try:
+        from observability_tracking import record_widget_view
+        # Delete rows for widgets the user has disabled.
+        if enabled_keys:
+            placeholders = ",".join(["%s"] * len(enabled_keys))
+            execute(
+                f"DELETE FROM widget_user_views WHERE user_id = %s AND widget_key NOT IN ({placeholders})",
+                [user_id] + list(enabled_keys),
+            )
+        else:
+            execute("DELETE FROM widget_user_views WHERE user_id = %s", [user_id])
+        # Upsert rows for currently enabled widgets.
+        for key in enabled_keys:
+            record_widget_view(key, user_id=user_id)
+    except Exception:
+        pass
+
+
 def _get_home_widget_prefs_from_cookie(request: Request) -> list:
     """
     Read home widget preferences from the browser cookie.
@@ -546,16 +580,6 @@ def ui_dashboard_preferences(request: Request):
 
     saved = _get_home_widget_prefs_from_cookie(request)
     enabled = saved if saved else list(HOME_WIDGET_KEYS.keys())
-
-    # Observability tracking — record which widgets this user has enabled.
-    try:
-        from observability_tracking import record_widget_view
-        uid = str(current_user.get("id", ""))
-        for key in enabled:
-            record_widget_view(key, user_id=uid)
-    except Exception:
-        pass
-
     return {"success": True, "data": {"enabled": enabled}}
 
 
@@ -576,6 +600,13 @@ def ui_dashboard_preferences_save(
         raise HTTPException(status_code=400, detail="'enabled' must be a list")
 
     enabled_keys = [k for k in requested if isinstance(k, str) and k in HOME_WIDGET_KEYS]
+
+    # Immediately sync observability so the count updates without waiting for next page load.
+    try:
+        uid = str(current_user.get("id", ""))
+        _sync_widget_tracking(uid, enabled_keys)
+    except Exception:
+        pass
 
     response = JSONResponse({"success": True, "data": {"enabled": enabled_keys}})
     response.set_cookie(
