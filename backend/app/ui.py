@@ -116,14 +116,6 @@ def ui_index(request: Request):
     saved = _get_home_widget_prefs_from_cookie(request)
     enabled_widgets: list = saved if saved else list(HOME_WIDGET_KEYS.keys())
 
-    # Sync observability tracking to exactly match the current enabled list.
-    try:
-        cu = _current_user_from_token(token)
-        if cu:
-            _sync_widget_tracking(str(cu.get("id", "")), enabled_widgets)
-    except Exception:
-        pass
-
     templates = _get_templates(request)
     return templates.TemplateResponse(
         "index.html",
@@ -527,28 +519,31 @@ _HOME_WIDGETS_COOKIE = "home_widgets"
 _HOME_WIDGETS_COOKIE_MAX_AGE = 365 * 24 * 3600  # 1 year
 
 
-def _sync_widget_tracking(user_id: str, enabled_keys: list) -> None:
+def _save_widget_prefs_to_db(user_id: str, enabled_keys: list) -> None:
     """
-    Keep widget_user_views in sync with the user's actual enabled widget list.
-    Removes rows for widgets no longer enabled, upserts rows for enabled ones.
-    This ensures observability always reflects the current dashboard state.
+    Persist widget preferences to home_widget_prefs using plain VARCHAR rows.
+    No JSONB — simple DELETE-then-INSERT so there are zero serialisation issues.
+    The table is auto-created by ensure_observability_tables() on first access.
     """
     if not user_id:
         return
     try:
-        from observability_tracking import record_widget_view
-        # Delete rows for widgets the user has disabled.
-        if enabled_keys:
-            placeholders = ",".join(["%s"] * len(enabled_keys))
-            execute(
-                f"DELETE FROM widget_user_views WHERE user_id = %s AND widget_key NOT IN ({placeholders})",
-                [user_id] + list(enabled_keys),
-            )
-        else:
-            execute("DELETE FROM widget_user_views WHERE user_id = %s", [user_id])
-        # Upsert rows for currently enabled widgets.
+        # Ensure the table exists before writing.
+        from db import ensure_observability_tables_once
+        ensure_observability_tables_once()
+    except Exception:
+        pass
+    try:
+        execute("DELETE FROM home_widget_prefs WHERE user_id = %s", [user_id])
         for key in enabled_keys:
-            record_widget_view(key, user_id=user_id)
+            execute(
+                """
+                INSERT INTO home_widget_prefs (user_id, widget_key, updated_at)
+                VALUES (%s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (user_id, widget_key) DO UPDATE SET updated_at = CURRENT_TIMESTAMP
+                """,
+                [user_id, key],
+            )
     except Exception:
         pass
 
@@ -601,12 +596,9 @@ def ui_dashboard_preferences_save(
 
     enabled_keys = [k for k in requested if isinstance(k, str) and k in HOME_WIDGET_KEYS]
 
-    # Immediately sync observability so the count updates without waiting for next page load.
-    try:
-        uid = str(current_user.get("id", ""))
-        _sync_widget_tracking(uid, enabled_keys)
-    except Exception:
-        pass
+    # Persist to DB so observability can aggregate across all users.
+    uid = str(current_user.get("id", ""))
+    _save_widget_prefs_to_db(uid, enabled_keys)
 
     response = JSONResponse({"success": True, "data": {"enabled": enabled_keys}})
     response.set_cookie(

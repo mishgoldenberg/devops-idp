@@ -177,6 +177,17 @@ def ensure_observability_tables() -> None:
         """,
         ),
         (
+            "home_widget_prefs",
+            """
+        CREATE TABLE IF NOT EXISTS home_widget_prefs (
+            user_id    VARCHAR(255) NOT NULL,
+            widget_key VARCHAR(255) NOT NULL,
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, widget_key)
+        )
+        """,
+        ),
+        (
             "self_service_usage",
             """
         CREATE TABLE IF NOT EXISTS self_service_usage (

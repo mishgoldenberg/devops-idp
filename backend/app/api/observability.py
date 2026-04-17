@@ -43,21 +43,30 @@ def get_observability_user(
 @router.get("/widgets")
 def list_widget_usage(current_user: AuthUser = Depends(get_observability_user)) -> Dict[str, Any]:
     """
-    Count distinct users who have loaded each widget at least once.
-    Reads from widget_user_views which is upserted on each HTMX component load.
+    Count distinct users who have each widget enabled on their home dashboard.
+    Reads from home_widget_prefs which is updated every time a user saves
+    their Customize Dashboard selection (plain VARCHAR rows, no JSONB).
     """
+    from observability_tracking import WIDGET_LABELS
     rows = query_all_obs(
         """
         SELECT
             widget_key,
-            widget_name                          AS name,
-            COUNT(DISTINCT user_id)::bigint      AS count
-        FROM widget_user_views
-        GROUP BY widget_key, widget_name
-        ORDER BY count DESC, widget_name ASC
+            COUNT(DISTINCT user_id)::bigint AS count
+        FROM home_widget_prefs
+        GROUP BY widget_key
+        ORDER BY count DESC, widget_key ASC
         """
     )
-    return _obs_ok(data=jsonable_encoder(rows))
+    labelled = [
+        {
+            "widget_key": r["widget_key"],
+            "name": WIDGET_LABELS.get(r["widget_key"], str(r["widget_key"]).replace("_", " ").title()),
+            "count": int(r["count"]),
+        }
+        for r in rows
+    ]
+    return _obs_ok(data=jsonable_encoder(labelled))
 
 
 @router.get("/self-services")

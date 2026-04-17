@@ -17,6 +17,15 @@ CREATE TABLE IF NOT EXISTS widget_user_views (
     PRIMARY KEY (user_id, widget_key)
 );
 
+-- Simple per-user widget preference rows. Pure VARCHAR — no JSONB serialisation
+-- issues. Written on every Save in Customize Dashboard. Used by observability.
+CREATE TABLE IF NOT EXISTS home_widget_prefs (
+    user_id    VARCHAR(255) NOT NULL,
+    widget_key VARCHAR(255) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, widget_key)
+);
+
 CREATE TABLE IF NOT EXISTS self_service_usage (
     service_key      VARCHAR(255) PRIMARY KEY,
     service_name     VARCHAR(255) NOT NULL,
@@ -53,6 +62,7 @@ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'devops') THEN
     GRANT SELECT, INSERT, UPDATE, DELETE ON widget_usage TO devops;
     GRANT SELECT, INSERT, UPDATE, DELETE ON widget_user_views TO devops;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON home_widget_prefs TO devops;
     GRANT SELECT, INSERT, UPDATE, DELETE ON self_service_usage TO devops;
     GRANT SELECT, INSERT, UPDATE, DELETE ON azure_projects TO devops;
     GRANT SELECT, INSERT, UPDATE, DELETE ON servicenow_tickets TO devops;
