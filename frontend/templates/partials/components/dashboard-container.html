@@ -426,11 +426,17 @@
 
 		saveBtn?.addEventListener("click", async () => {
 			const enabled = toggles.filter((x) => x.checked).map((x) => x.dataset.widgetKey);
-			await fetch("/ui/dashboard/preferences", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ enabled }),
-			});
+			try {
+				const res = await fetch("/ui/dashboard/preferences", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ enabled }),
+				});
+				if (!res.ok) throw new Error("Save failed: " + res.status);
+			} catch (e) {
+				alert("Could not save preferences: " + (e?.message || e));
+				return;
+			}
 			if (drawer) drawer.checked = false;
 		});
 	})();

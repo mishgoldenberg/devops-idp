@@ -118,11 +118,9 @@ def ui_index(request: Request):
     try:
         current_user = _current_user_from_token(token)
         if current_user:
-            dash = _dash_get_default(current_user=current_user)
-            saved = (dash.get("data") or {}).get("widgets") or []
-            prefs = [w.get("widget_key") for w in saved if w.get("widget_key") in HOME_WIDGET_KEYS]
-            if prefs:
-                enabled_widgets = prefs
+            saved = _get_home_widget_prefs(str(current_user.get("id", "")))
+            if saved:
+                enabled_widgets = saved
     except Exception:
         pass
 
@@ -525,6 +523,54 @@ def ui_settings_page(request: Request):
     )
 
 
+def _get_home_widget_prefs(user_id: str) -> list:
+    """
+    Read saved home widget preferences from users.metadata.
+    Returns the saved list, or [] if none saved yet (caller handles the default).
+    """
+    import json as _json
+    try:
+        row = query_one(
+            "SELECT metadata FROM users WHERE id = %s::uuid",
+            [user_id],
+        )
+        if not row:
+            return []
+        meta = row.get("metadata") or {}
+        if isinstance(meta, str):
+            meta = _json.loads(meta)
+        prefs = meta.get("home_widgets")
+        if isinstance(prefs, list):
+            return [k for k in prefs if k in HOME_WIDGET_KEYS]
+    except Exception:
+        pass
+    return []
+
+
+def _set_home_widget_prefs(user_id: str, enabled_keys: list) -> None:
+    """
+    Persist home widget preferences into users.metadata using an explicit
+    JSON cast so psycopg2 doesn't misinterpret the list as a PG array.
+    """
+    import json as _json
+    try:
+        execute(
+            """
+            UPDATE users
+            SET metadata = jsonb_set(
+                COALESCE(metadata, '{}'),
+                '{home_widgets}',
+                %s::jsonb,
+                true
+            )
+            WHERE id = %s::uuid
+            """,
+            [_json.dumps(enabled_keys), user_id],
+        )
+    except Exception:
+        pass
+
+
 @ui_router.get("/ui/dashboard/preferences")
 def ui_dashboard_preferences(request: Request):
     """Get enabled home widgets for the current user."""
@@ -532,18 +578,13 @@ def ui_dashboard_preferences(request: Request):
     if not current_user:
         return JSONResponse(status_code=401, content={"success": False, "detail": "Not authenticated"})
 
-    dash = _dash_get_default(current_user=current_user)
-    widgets = (dash.get("data") or {}).get("widgets") or []
-    enabled = [w.get("widget_key") for w in widgets if w.get("widget_key") in HOME_WIDGET_KEYS]
-    if not enabled:
-        enabled = list(HOME_WIDGET_KEYS.keys())
+    uid = str(current_user.get("id", ""))
+    saved = _get_home_widget_prefs(uid)
+    enabled = saved if saved else list(HOME_WIDGET_KEYS.keys())
 
-    # Track which widgets this user actually has on their dashboard.
-    # Done here (once per page load) rather than in individual HTMX component
-    # endpoints, which all fire immediately on load before JS hides disabled widgets.
+    # Track which widgets this user actually has on their dashboard (once per page load).
     try:
         from observability_tracking import record_widget_view
-        uid = str(current_user.get("id", ""))
         for key in enabled:
             record_widget_view(key, user_id=uid)
     except Exception:
@@ -557,7 +598,7 @@ def ui_dashboard_preferences_save(
     request: Request,
     payload: Dict[str, Any] = Body(default={}),
 ):
-    """Persist enabled home widgets to the default dashboard."""
+    """Persist enabled home widgets into users.metadata."""
     current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
     if not current_user:
         return JSONResponse(status_code=401, content={"success": False, "detail": "Not authenticated"})
@@ -567,35 +608,9 @@ def ui_dashboard_preferences_save(
         raise HTTPException(status_code=400, detail="'enabled' must be a list")
 
     enabled_keys = [k for k in requested if isinstance(k, str) and k in HOME_WIDGET_KEYS]
-    dash = _dash_get_default(current_user=current_user)
-    dash_data = dash.get("data") or {}
-    dashboard_id = dash_data.get("id")
-    existing_widgets = dash_data.get("widgets") or []
-    existing_by_key = {w.get("widget_key"): w for w in existing_widgets if w.get("widget_key")}
+    uid = str(current_user.get("id", ""))
+    _set_home_widget_prefs(uid, enabled_keys)
 
-    new_widgets = []
-    for key in enabled_keys:
-        existing = existing_by_key.get(key, {})
-        new_widgets.append(
-            {
-                "id": existing.get("id") or f"{key}-home",
-                "widget_key": key,
-                "config": existing.get("config") or {},
-            }
-        )
-
-    _dash_update(
-        dashboard_id=dashboard_id,
-        body=DashboardUpdateRequest(widgets=new_widgets),
-        current_user=current_user,
-    )
-    try:
-        from observability_tracking import record_widget_add
-
-        for key in enabled_keys:
-            record_widget_add(key)
-    except Exception:
-        pass
     return {"success": True, "data": {"enabled": enabled_keys}}
 
 
