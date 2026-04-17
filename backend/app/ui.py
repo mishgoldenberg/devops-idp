@@ -81,6 +81,16 @@ def _current_user_from_token(token: str) -> Optional[AuthUser]:
         return None
 
 
+def _track_widget_view(widget_key: str, user: Any) -> None:
+    """Record a distinct-user view for observability. Non-fatal."""
+    try:
+        uid = (user or {}).get("id") if isinstance(user, dict) else None
+        if uid:
+            from observability_tracking import record_widget_view
+            record_widget_view(widget_key, user_id=str(uid))
+    except Exception:
+        pass
+
 
 def _time_ago(iso_str: str) -> str:
     """Convert an ISO-8601 datetime string to a human-readable relative time."""
@@ -699,6 +709,8 @@ def ui_sidebar_component(request: Request):
 @ui_router.get("/ui/components/quick-links", response_class=HTMLResponse)
 def ui_quick_links_component(request: Request):
     """Render the Quick Links dashboard component for HTMX partial loading."""
+    _user = _current_user_from_token(request.cookies.get("auth_token", ""))
+    _track_widget_view("quick_links", _user)
     templates = _get_templates(request)
     return templates.TemplateResponse(
         "partials/components/quick-links.html",
@@ -756,8 +768,9 @@ def _get_ado_task_counts(current_user: Optional[AuthUser]) -> Dict[str, Any]:
 @ui_router.get("/ui/components/azure-devops-tasks", response_class=HTMLResponse)
 def ui_azure_devops_tasks_component(request: Request):
     """Render the Azure DevOps Tasks dashboard widget for HTMX partial loading."""
-    templates = _get_templates(request)
     current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
+    _track_widget_view("ado_my_work_items", current_user)
+    templates = _get_templates(request)
     widget_state = _get_ado_task_counts(current_user)
     return templates.TemplateResponse(
         "partials/components/azure-devops-tasks.html",
@@ -979,8 +992,9 @@ def _get_service_health_data() -> list:
 @ui_router.get("/ui/components/pull-requests", response_class=HTMLResponse)
 def ui_pull_requests_component(request: Request):
     """Render the Pull Requests dashboard widget for HTMX partial loading."""
-    templates = _get_templates(request)
     current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
+    _track_widget_view("ado_my_pull_requests", current_user)
+    templates = _get_templates(request)
     widget_state = _get_pr_created_data(current_user)
     return templates.TemplateResponse(
         "partials/components/pull-requests.html",
@@ -991,8 +1005,9 @@ def ui_pull_requests_component(request: Request):
 @ui_router.get("/ui/components/pull-requests-review", response_class=HTMLResponse)
 def ui_pull_requests_review_component(request: Request):
     """Render the PRs-to-review dashboard widget."""
-    templates = _get_templates(request)
     current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
+    _track_widget_view("ado_prs_for_review", current_user)
+    templates = _get_templates(request)
     widget_state = _get_pr_review_data(current_user)
     return templates.TemplateResponse(
         "partials/components/pull-requests-review.html",
@@ -1003,8 +1018,9 @@ def ui_pull_requests_review_component(request: Request):
 @ui_router.get("/ui/components/pipelines", response_class=HTMLResponse)
 def ui_pipelines_component(request: Request):
     """Render the Pipelines dashboard widget for HTMX partial loading."""
-    templates = _get_templates(request)
     current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
+    _track_widget_view("ado_pipeline_status", current_user)
+    templates = _get_templates(request)
     widget_state = _get_pipeline_data(current_user)
     return templates.TemplateResponse(
         "partials/components/pipelines.html",
@@ -1015,8 +1031,9 @@ def ui_pipelines_component(request: Request):
 @ui_router.get("/ui/components/sonarqube-quality", response_class=HTMLResponse)
 def ui_sonarqube_quality_component(request: Request):
     """Render the SonarQube Code Quality dashboard widget for HTMX partial loading."""
-    templates = _get_templates(request)
     current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
+    _track_widget_view("sonar_quality_gate", current_user)
+    templates = _get_templates(request)
     return templates.TemplateResponse(
         "partials/components/sonarqube-quality.html",
         {"request": request, "projects": _get_sonar_data(current_user)},
@@ -1026,8 +1043,9 @@ def ui_sonarqube_quality_component(request: Request):
 @ui_router.get("/ui/components/artifactory-storage", response_class=HTMLResponse)
 def ui_artifactory_storage_component(request: Request):
     """Render the Artifactory Storage dashboard widget for HTMX partial loading."""
-    templates = _get_templates(request)
     current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
+    _track_widget_view("artifactory_storage", current_user)
+    templates = _get_templates(request)
     return templates.TemplateResponse(
         "partials/components/artifactory-storage.html",
         {"request": request, "storage": _get_artifactory_data(current_user)},
@@ -1037,6 +1055,7 @@ def ui_artifactory_storage_component(request: Request):
 @ui_router.get("/ui/components/service-health", response_class=HTMLResponse)
 def ui_service_health_component(request: Request):
     """Render the Service Health dashboard widget for HTMX partial loading."""
+    _track_widget_view("service_health", _current_user_from_token(request.cookies.get("auth_token", "")))
     templates = _get_templates(request)
     return templates.TemplateResponse(
         "partials/components/service-health.html",
@@ -1047,8 +1066,9 @@ def ui_service_health_component(request: Request):
 @ui_router.get("/ui/components/servicenow-tickets", response_class=HTMLResponse)
 def ui_servicenow_tickets_component(request: Request):
     """Render the ServiceNow Tickets dashboard widget for HTMX partial loading."""
-    templates = _get_templates(request)
     current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
+    _track_widget_view("snow_my_tickets", current_user)
+    templates = _get_templates(request)
     stats = {"open": 0, "in_progress": 0, "resolved": 0, "total": 0}
     error = ""
     if current_user:

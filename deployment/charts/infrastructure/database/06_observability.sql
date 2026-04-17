@@ -7,6 +7,16 @@ CREATE TABLE IF NOT EXISTS widget_usage (
     last_used_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Per-user per-widget view tracking (replaces the raw usage counter).
+-- Allows COUNT(DISTINCT user_id) so refreshes don't inflate numbers.
+CREATE TABLE IF NOT EXISTS widget_user_views (
+    user_id      VARCHAR(255) NOT NULL,
+    widget_key   VARCHAR(255) NOT NULL,
+    widget_name  VARCHAR(255) NOT NULL DEFAULT '',
+    last_seen_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, widget_key)
+);
+
 CREATE TABLE IF NOT EXISTS self_service_usage (
     service_key      VARCHAR(255) PRIMARY KEY,
     service_name     VARCHAR(255) NOT NULL,
@@ -42,6 +52,7 @@ DO $obsgrant$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'devops') THEN
     GRANT SELECT, INSERT, UPDATE, DELETE ON widget_usage TO devops;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON widget_user_views TO devops;
     GRANT SELECT, INSERT, UPDATE, DELETE ON self_service_usage TO devops;
     GRANT SELECT, INSERT, UPDATE, DELETE ON azure_projects TO devops;
     GRANT SELECT, INSERT, UPDATE, DELETE ON servicenow_tickets TO devops;

@@ -165,6 +165,18 @@ def ensure_observability_tables() -> None:
         """,
         ),
         (
+            "widget_user_views",
+            """
+        CREATE TABLE IF NOT EXISTS widget_user_views (
+            user_id      VARCHAR(255) NOT NULL,
+            widget_key   VARCHAR(255) NOT NULL,
+            widget_name  VARCHAR(255) NOT NULL DEFAULT '',
+            last_seen_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, widget_key)
+        )
+        """,
+        ),
+        (
             "self_service_usage",
             """
         CREATE TABLE IF NOT EXISTS self_service_usage (

@@ -29,24 +29,32 @@ def _widget_label(widget_key: str) -> str:
     return WIDGET_LABELS.get(widget_key, widget_key.replace("_", " ").title())
 
 
-def record_widget_view(widget_key: str) -> None:
+def record_widget_view(widget_key: str, user_id: Optional[str] = None) -> None:
+    """Record that a specific user viewed a widget.
+
+    Upserts into widget_user_views keyed by (user_id, widget_key) so that
+    repeated page loads by the same user don't inflate the count.
+    Falls back silently if the table doesn't exist yet.
+    """
     if not widget_key or not str(widget_key).strip():
         return
+    if not user_id or not str(user_id).strip():
+        return
     key = str(widget_key).strip()[:255]
+    uid = str(user_id).strip()[:255]
     label = _widget_label(key)[:255]
     try:
         import db
 
         db.execute(
             """
-            INSERT INTO widget_usage (widget_key, widget_name, usage_count, last_used_at)
-            VALUES (%s, %s, 1, CURRENT_TIMESTAMP)
-            ON CONFLICT (widget_key) DO UPDATE SET
-              usage_count = widget_usage.usage_count + 1,
-              widget_name = EXCLUDED.widget_name,
-              last_used_at = CURRENT_TIMESTAMP
+            INSERT INTO widget_user_views (user_id, widget_key, widget_name, last_seen_at)
+            VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (user_id, widget_key) DO UPDATE SET
+              widget_name  = EXCLUDED.widget_name,
+              last_seen_at = CURRENT_TIMESTAMP
             """,
-            [key, label],
+            [uid, key, label],
         )
     except Exception as exc:
         logger.debug("record_widget_view failed: %s", exc)
