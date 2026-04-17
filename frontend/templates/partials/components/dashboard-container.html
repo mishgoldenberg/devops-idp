@@ -43,6 +43,7 @@
 			hx-get="/ui/components/quick-links"
 			hx-trigger="load"
 			hx-swap="innerHTML"
+			{% if enabled_widgets is defined and 'quick_links' not in enabled_widgets %}style="display:none"{% endif %}
 		>
 			<div class="card w-full bg-base-100 border border-base-300 shadow">
 				<div class="card-body p-6">
@@ -66,6 +67,7 @@
 				hx-trigger="load, every 60s, click from:#refresh-btn"
 				hx-target="find .widget-content"
 				hx-swap="innerHTML"
+				{% if enabled_widgets is defined and 'ado_my_work_items' not in enabled_widgets %}style="display:none"{% endif %}
 			>
 				<div class="widget-loading h-full">
 					<div
@@ -96,6 +98,7 @@
 				hx-trigger="load, every 60s, click from:#refresh-btn"
 				hx-target="find .widget-content"
 				hx-swap="innerHTML"
+				{% if enabled_widgets is defined and 'snow_my_tickets' not in enabled_widgets %}style="display:none"{% endif %}
 			>
 				<div class="widget-loading h-full">
 					<div
@@ -126,6 +129,7 @@
 				hx-trigger="load, every 60s, click from:#refresh-btn"
 				hx-target="find .widget-content"
 				hx-swap="innerHTML"
+				{% if enabled_widgets is defined and 'ado_my_pull_requests' not in enabled_widgets %}style="display:none"{% endif %}
 			>
 				<div class="widget-loading h-full">
 					<div
@@ -156,6 +160,7 @@
 				hx-trigger="load, every 60s, click from:#refresh-btn"
 				hx-target="find .widget-content"
 				hx-swap="innerHTML"
+				{% if enabled_widgets is defined and 'ado_prs_for_review' not in enabled_widgets %}style="display:none"{% endif %}
 			>
 				<div class="widget-loading h-full">
 					<div
@@ -186,6 +191,7 @@
 				hx-trigger="load, every 60s, click from:#refresh-btn"
 				hx-target="find .widget-content"
 				hx-swap="innerHTML"
+				{% if enabled_widgets is defined and 'ado_pipeline_status' not in enabled_widgets %}style="display:none"{% endif %}
 			>
 				<div class="widget-loading h-full">
 					<div
@@ -216,6 +222,7 @@
 				hx-trigger="load, every 60s, click from:#refresh-btn"
 				hx-target="find .widget-content"
 				hx-swap="innerHTML"
+				{% if enabled_widgets is defined and 'sonar_quality_gate' not in enabled_widgets %}style="display:none"{% endif %}
 			>
 				<div class="widget-loading h-full">
 					<div
@@ -246,6 +253,7 @@
 				hx-trigger="load, every 60s, click from:#refresh-btn"
 				hx-target="find .widget-content"
 				hx-swap="innerHTML"
+				{% if enabled_widgets is defined and 'artifactory_storage' not in enabled_widgets %}style="display:none"{% endif %}
 			>
 				<div class="widget-loading h-full">
 					<div
@@ -276,6 +284,7 @@
 				hx-trigger="load, every 60s, click from:#refresh-btn"
 				hx-target="find .widget-content"
 				hx-swap="innerHTML"
+				{% if enabled_widgets is defined and 'service_health' not in enabled_widgets %}style="display:none"{% endif %}
 			>
 				<div class="widget-loading h-full">
 					<div
@@ -385,6 +394,11 @@
 			artifactory_storage: "artifactory-storage-component",
 			service_health: "service-health-component",
 		};
+
+		// Server-rendered initial state — no fetch needed, no flash on F5.
+		const serverEnabled = {{ enabled_widgets | tojson | default('[]') }};
+		const initialEnabled = serverEnabled.length > 0 ? serverEnabled : Object.keys(widgetKeys);
+
 		const toggles = Array.from(document.querySelectorAll(".dashboard-widget-toggle"));
 		const drawer = document.getElementById("dashboard-customize-drawer");
 		const saveBtn = document.getElementById("dashboard-save-btn");
@@ -400,16 +414,8 @@
 			});
 		}
 
-		async function loadPrefs() {
-			try {
-				const res = await fetch("/ui/dashboard/preferences");
-				const data = await res.json();
-				const enabled = data?.data?.enabled || Object.keys(widgetKeys);
-				apply(enabled);
-			} catch {
-				apply(Object.keys(widgetKeys));
-			}
-		}
+		// Sync checkboxes to match the server-rendered state immediately.
+		apply(initialEnabled);
 
 		toggles.forEach((cb) =>
 			cb.addEventListener("change", () => {
@@ -427,7 +433,5 @@
 			});
 			if (drawer) drawer.checked = false;
 		});
-
-		loadPrefs();
 	})();
 </script>

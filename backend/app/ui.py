@@ -112,6 +112,20 @@ def ui_index(request: Request):
     except HTTPException:
         return RedirectResponse(url="/ui/auth", status_code=303)
 
+    # Resolve widget preferences server-side so the initial HTML already shows
+    # only the user's chosen widgets — no JS flash of all widgets on F5.
+    enabled_widgets: list = list(HOME_WIDGET_KEYS.keys())
+    try:
+        current_user = _current_user_from_token(token)
+        if current_user:
+            dash = _dash_get_default(current_user=current_user)
+            saved = (dash.get("data") or {}).get("widgets") or []
+            prefs = [w.get("widget_key") for w in saved if w.get("widget_key") in HOME_WIDGET_KEYS]
+            if prefs:
+                enabled_widgets = prefs
+    except Exception:
+        pass
+
     templates = _get_templates(request)
     return templates.TemplateResponse(
         "index.html",
@@ -120,6 +134,7 @@ def ui_index(request: Request):
             "user": user,
             "current_page": "home",
             "now": datetime.utcnow().isoformat() + "Z",
+            "enabled_widgets": enabled_widgets,
         },
     )
 
