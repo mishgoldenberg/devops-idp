@@ -112,17 +112,9 @@ def ui_index(request: Request):
     except HTTPException:
         return RedirectResponse(url="/ui/auth", status_code=303)
 
-    # Resolve widget preferences server-side so the initial HTML already shows
-    # only the user's chosen widgets — no JS flash of all widgets on F5.
-    enabled_widgets: list = list(HOME_WIDGET_KEYS.keys())
-    try:
-        current_user = _current_user_from_token(token)
-        if current_user:
-            saved = _get_home_widget_prefs(str(current_user.get("id", "")))
-            if saved:
-                enabled_widgets = saved
-    except Exception:
-        pass
+    # Resolve widget preferences from cookie — zero DB round-trip, no flash on F5.
+    saved = _get_home_widget_prefs_from_cookie(request)
+    enabled_widgets: list = saved if saved else list(HOME_WIDGET_KEYS.keys())
 
     templates = _get_templates(request)
     return templates.TemplateResponse(
@@ -523,23 +515,21 @@ def ui_settings_page(request: Request):
     )
 
 
-def _get_home_widget_prefs(user_id: str) -> list:
+_HOME_WIDGETS_COOKIE = "home_widgets"
+_HOME_WIDGETS_COOKIE_MAX_AGE = 365 * 24 * 3600  # 1 year
+
+
+def _get_home_widget_prefs_from_cookie(request: Request) -> list:
     """
-    Read saved home widget preferences from users.metadata.
-    Returns the saved list, or [] if none saved yet (caller handles the default).
+    Read home widget preferences from the browser cookie.
+    Returns the valid saved list, or [] if no cookie / invalid.
     """
     import json as _json
+    raw = request.cookies.get(_HOME_WIDGETS_COOKIE, "")
+    if not raw:
+        return []
     try:
-        row = query_one(
-            "SELECT metadata FROM users WHERE id = %s::uuid",
-            [user_id],
-        )
-        if not row:
-            return []
-        meta = row.get("metadata") or {}
-        if isinstance(meta, str):
-            meta = _json.loads(meta)
-        prefs = meta.get("home_widgets")
+        prefs = _json.loads(raw)
         if isinstance(prefs, list):
             return [k for k in prefs if k in HOME_WIDGET_KEYS]
     except Exception:
@@ -547,44 +537,20 @@ def _get_home_widget_prefs(user_id: str) -> list:
     return []
 
 
-def _set_home_widget_prefs(user_id: str, enabled_keys: list) -> None:
-    """
-    Persist home widget preferences into users.metadata using an explicit
-    JSON cast so psycopg2 doesn't misinterpret the list as a PG array.
-    """
-    import json as _json
-    try:
-        execute(
-            """
-            UPDATE users
-            SET metadata = jsonb_set(
-                COALESCE(metadata, '{}'),
-                '{home_widgets}',
-                %s::jsonb,
-                true
-            )
-            WHERE id = %s::uuid
-            """,
-            [_json.dumps(enabled_keys), user_id],
-        )
-    except Exception:
-        pass
-
-
 @ui_router.get("/ui/dashboard/preferences")
 def ui_dashboard_preferences(request: Request):
-    """Get enabled home widgets for the current user."""
+    """Return enabled home widgets (read from cookie — kept for JS compat)."""
     current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
     if not current_user:
         return JSONResponse(status_code=401, content={"success": False, "detail": "Not authenticated"})
 
-    uid = str(current_user.get("id", ""))
-    saved = _get_home_widget_prefs(uid)
+    saved = _get_home_widget_prefs_from_cookie(request)
     enabled = saved if saved else list(HOME_WIDGET_KEYS.keys())
 
-    # Track which widgets this user actually has on their dashboard (once per page load).
+    # Observability tracking — record which widgets this user has enabled.
     try:
         from observability_tracking import record_widget_view
+        uid = str(current_user.get("id", ""))
         for key in enabled:
             record_widget_view(key, user_id=uid)
     except Exception:
@@ -598,7 +564,9 @@ def ui_dashboard_preferences_save(
     request: Request,
     payload: Dict[str, Any] = Body(default={}),
 ):
-    """Persist enabled home widgets into users.metadata."""
+    """Save enabled home widgets into a browser cookie."""
+    import json as _json
+
     current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
     if not current_user:
         return JSONResponse(status_code=401, content={"success": False, "detail": "Not authenticated"})
@@ -608,10 +576,16 @@ def ui_dashboard_preferences_save(
         raise HTTPException(status_code=400, detail="'enabled' must be a list")
 
     enabled_keys = [k for k in requested if isinstance(k, str) and k in HOME_WIDGET_KEYS]
-    uid = str(current_user.get("id", ""))
-    _set_home_widget_prefs(uid, enabled_keys)
 
-    return {"success": True, "data": {"enabled": enabled_keys}}
+    response = JSONResponse({"success": True, "data": {"enabled": enabled_keys}})
+    response.set_cookie(
+        _HOME_WIDGETS_COOKIE,
+        _json.dumps(enabled_keys),
+        max_age=_HOME_WIDGETS_COOKIE_MAX_AGE,
+        httponly=False,   # JS doesn't need it, but server reads it
+        samesite="lax",
+    )
+    return response
 
 
 @ui_router.get("/ui/azure-devops/pat")
