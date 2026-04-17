@@ -4,7 +4,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.encoders import jsonable_encoder
 
-from db import observability_schema_unavailable, query_all_obs
+from db import observability_schema_unavailable, query_all, query_all_obs
 from security import AuthUser, get_current_user, has_effective_admin_access_live
 
 router = APIRouter()
@@ -42,14 +42,42 @@ def get_observability_user(
 
 @router.get("/widgets")
 def list_widget_usage(current_user: AuthUser = Depends(get_observability_user)) -> Dict[str, Any]:
-    rows = query_all_obs(
-        """
-        SELECT widget_name AS name, usage_count AS count, widget_key, last_used_at
-        FROM widget_usage
-        ORDER BY usage_count DESC, widget_name ASC
-        """
-    )
-    return _obs_ok(data=jsonable_encoder(rows))
+    """
+    Count distinct users who currently have each widget enabled on their dashboard.
+    Reads live from the dashboards table — no page-view counter needed.
+    """
+    try:
+        rows = query_all(
+            """
+            SELECT
+                elem->>'widget_key'                          AS widget_key,
+                COUNT(DISTINCT d.user_id)::bigint            AS count
+            FROM dashboards d,
+                 jsonb_array_elements(
+                     CASE jsonb_typeof(d.widgets::jsonb)
+                          WHEN 'array' THEN d.widgets::jsonb
+                          ELSE '[]'::jsonb
+                     END
+                 ) AS elem
+            WHERE elem->>'widget_key' IS NOT NULL
+            GROUP BY elem->>'widget_key'
+            ORDER BY count DESC, widget_key ASC
+            """
+        )
+        # Attach human-readable labels from the in-process map
+        from observability_tracking import WIDGET_LABELS
+        labelled = [
+            {
+                "widget_key": r["widget_key"],
+                "name": WIDGET_LABELS.get(r["widget_key"], str(r["widget_key"]).replace("_", " ").title()),
+                "count": int(r["count"]),
+            }
+            for r in rows
+        ]
+    except Exception:
+        labelled = []
+
+    return _obs_ok(data=jsonable_encoder(labelled))
 
 
 @router.get("/self-services")
