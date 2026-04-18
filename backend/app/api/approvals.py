@@ -476,10 +476,41 @@ def _requester_email(row: Dict[str, Any]) -> str:
 
 
 def _user_facing_error(exc: Exception) -> str:
-    """Strip stack traces / internal paths before surfacing to the UI."""
-    msg = str(exc) or exc.__class__.__name__
-    # Clip absurdly long messages (terraform plans etc.)
-    return msg if len(msg) <= 500 else msg[:500] + "…"
+    """
+    Strip stack traces / internal paths before surfacing to the UI.
+
+    Upstream exceptions (Kubernetes ApiException, HTTPX, Terraform) tend to
+    dump enormous JSON bodies + HTTP headers into str(exc), which is both
+    user-hostile and a mild information leak. We detect the common shapes
+    and rewrite them as single-line, actionable messages; full detail is
+    still kept in the backend logs by the caller.
+    """
+    cls_name = exc.__class__.__name__
+    raw = str(exc) or cls_name
+
+    # kubernetes.client.exceptions.ApiException — massive HTTP dump.
+    if cls_name == "ApiException":
+        status_code = getattr(exc, "status", None)
+        if status_code == 403:
+            return (
+                "Kubernetes denied the request (403 Forbidden). The backend "
+                "ServiceAccount is missing permissions to create the "
+                "provisioning Job. Ask an admin to verify terraform-rbac.yaml "
+                "is applied in the same namespace as the backend pod."
+            )
+        if status_code == 404:
+            return (
+                "Kubernetes returned 404 — the target namespace or resource "
+                "was not found. Ask an admin to verify the provisioning "
+                "namespace exists and K8S_NAMESPACE is set correctly."
+            )
+        if status_code:
+            return f"Kubernetes API error ({status_code}). See backend logs for details."
+        return "Kubernetes API error. See backend logs for details."
+
+    # Clip absurdly long messages (terraform plans etc.) and flatten newlines.
+    single_line = " ".join(raw.splitlines()).strip()
+    return single_line if len(single_line) <= 300 else single_line[:300] + "…"
 
 
 # ─── Permissions ────────────────────────────────────────────────────────

@@ -20,6 +20,7 @@ Prerequisites (must be provisioned in the cluster before use):
 """
 
 import logging
+import os
 import re
 import time
 import uuid
@@ -33,7 +34,34 @@ logger = logging.getLogger(__name__)
 GCS_BUCKET = "devops-control-center-tfstate"
 TF_GCP_SA = "devops-terraform-sa@devops-idp-489012.iam.gserviceaccount.com"
 TF_K8S_SA = "devops-terraform-sa"
-K8S_NAMESPACE = "devops-control-center"
+
+
+def _detect_k8s_namespace() -> str:
+    """
+    Return the namespace Terraform Jobs should be submitted into.
+
+    Priority:
+      1. Explicit K8S_NAMESPACE env var — lets ops override without a rebuild.
+      2. The pod's own namespace, auto-mounted at
+         /var/run/secrets/kubernetes.io/serviceaccount/namespace. This is
+         where the backend-sa RoleBinding (terraform-rbac.yaml) is scoped,
+         so placing the Job here avoids cross-namespace RBAC issues.
+      3. Hard fallback to the legacy control-plane namespace.
+    """
+    env_ns = os.getenv("K8S_NAMESPACE", "").strip()
+    if env_ns:
+        return env_ns
+    try:
+        with open("/var/run/secrets/kubernetes.io/serviceaccount/namespace", "r", encoding="utf-8") as fh:
+            ns = fh.read().strip()
+            if ns:
+                return ns
+    except Exception:
+        pass
+    return "devops-control-center"
+
+
+K8S_NAMESPACE = _detect_k8s_namespace()
 TF_IMAGE = "hashicorp/terraform:1.6"
 # Dedicated fixed-name secret that lives in K8S_NAMESPACE and holds the PATs
 # used by the Terraform container.  Unlike the main 'all-secrets' Secret this
