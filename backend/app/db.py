@@ -335,7 +335,74 @@ def ensure_tables() -> None:
         )
         """
     )
+    ensure_item_tables()
     ensure_observability_tables()
+
+
+_item_tables_lock = threading.Lock()
+_item_tables_ensured = False
+
+
+def ensure_item_tables_once() -> None:
+    """Run item-tracking DDL at most once per process (thread-safe)."""
+    global _item_tables_ensured
+    if _item_tables_ensured:
+        return
+    with _item_tables_lock:
+        if _item_tables_ensured:
+            return
+        try:
+            ensure_item_tables()
+            _item_tables_ensured = True
+        except Exception:
+            # Silent: endpoints that depend on these tables degrade gracefully.
+            pass
+
+
+def ensure_item_tables() -> None:
+    """
+    Tables backing the interactive dashboard widgets:
+      * user_item_pins — items the user has pinned to the top of a widget
+        (e.g. an Azure DevOps work item or ServiceNow incident).
+      * user_item_seen — last time the user opened/acknowledged an item,
+        so the UI can show a red dot when an item updates after that.
+
+    Both are scoped by (user_id, source, item_id). `source` is a small enum
+    string ("azure_devops" or "servicenow"); item_id is whatever the source
+    uses (ADO work-item id, SN sys_id).
+    """
+    execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_item_pins (
+            id         SERIAL PRIMARY KEY,
+            user_id    VARCHAR(255) NOT NULL,
+            source     VARCHAR(32)  NOT NULL,
+            item_id    VARCHAR(128) NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            UNIQUE (user_id, source, item_id)
+        )
+        """
+    )
+    execute(
+        "CREATE INDEX IF NOT EXISTS idx_user_item_pins_user "
+        "ON user_item_pins (user_id, source)"
+    )
+    execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_item_seen (
+            id         SERIAL PRIMARY KEY,
+            user_id    VARCHAR(255) NOT NULL,
+            source     VARCHAR(32)  NOT NULL,
+            item_id    VARCHAR(128) NOT NULL,
+            seen_at    TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            UNIQUE (user_id, source, item_id)
+        )
+        """
+    )
+    execute(
+        "CREATE INDEX IF NOT EXISTS idx_user_item_seen_user "
+        "ON user_item_seen (user_id, source)"
+    )
 
 
 # Primary bootstrap admin (DB role Platform Admin). Single allowed hard-coded identity.

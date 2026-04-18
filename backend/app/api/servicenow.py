@@ -185,6 +185,9 @@ def _map_ticket(raw: dict) -> dict:
         "priority": _extract_display(raw.get("priority", "")),
         "assigned_to": _extract_display(raw.get("assigned_to", "")),
         "opened_at": raw.get("opened_at", ""),
+        # Widgets use sys_updated_on to show the "new updates" indicator; fall
+        # back to opened_at if the field was not requested.
+        "updated_at": raw.get("sys_updated_on", "") or raw.get("opened_at", ""),
     }
 
 
@@ -301,7 +304,7 @@ def get_tickets(current_user: AuthUser = Depends(get_current_user)):
                 "/api/now/table/incident",
                 params={
                     "sysparm_query": query,
-                    "sysparm_fields": "sys_id,number,short_description,state,priority,assigned_to,opened_at",
+                    "sysparm_fields": "sys_id,number,short_description,state,priority,assigned_to,opened_at,sys_updated_on",
                     "sysparm_limit": 50,
                     "sysparm_display_value": "true",
                 },

@@ -89,6 +89,30 @@
 			listEl.querySelectorAll("button[data-id]").forEach((btn) => {
 				btn.addEventListener("click", () => openTicket(btn.dataset.id));
 			});
+
+			// Deep-link support: /ui/support?ticket=<sys_id> auto-opens the ticket
+			// once tickets have loaded. Used by the ServiceNow dashboard widget.
+			try {
+				const params = new URLSearchParams(window.location.search);
+				const target = params.get("ticket");
+				if (target && tickets.some((t) => t.sys_id === target)) {
+					openTicket(target);
+					// Record the view so the widget's red-dot clears.
+					fetch("/api/items/mark-seen", {
+						method: "POST",
+						credentials: "same-origin",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({ source: "servicenow", item_id: target }),
+						keepalive: true,
+					}).catch(() => {});
+					// Strip the query param so a manual refresh doesn't reopen repeatedly.
+					const url = new URL(window.location.href);
+					url.searchParams.delete("ticket");
+					window.history.replaceState({}, "", url.toString());
+				}
+			} catch (_) {
+				/* silent */
+			}
 		}
 
 		async function openTicket(id) {
