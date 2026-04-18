@@ -1,16 +1,13 @@
 <div class="drawer drawer-end flex-1 min-h-0">
 	<input id="dashboard-customize-drawer" type="checkbox" class="drawer-toggle" />
 
-	<main class="drawer-content flex-1 min-h-0 flex flex-col h-full overflow-hidden">
-		<!-- Header -->
-		<header
-			class="bg-base-100 shadow-sm border-b border-base-300 px-6 py-8 flex items-center justify-between"
-		>
+	<main class="drawer-content page-shell h-full">
+		<header class="page-header">
 			<div>
-				<h2 class="text-3xl font-bold text-base-content">
+				<h1 class="page-title">
 					Welcome back, {{ user.display_name }}!
-				</h2>
-				<p class="mt-1 text-sm text-base-content/50">
+				</h1>
+				<p class="page-subtitle">
 					Summary of your connected systems status and tasks.
 				</p>
 			</div>
@@ -31,10 +28,7 @@
 			</div>
 		</header>
 
-		<!-- Page Content (isolated scroll area) -->
-		<div
-			class="flex-1 min-h-0 overflow-y-auto p-6 bg-base-200 flex flex-col gap-6"
-		>
+		<div class="page-content flex flex-col gap-6">
 		<!-- Quick Links sits above the widget grid at its natural width -->
 		<div
 			id="quick-links-component"
@@ -45,7 +39,7 @@
 			hx-swap="innerHTML"
 			{% if enabled_widgets is defined and 'quick_links' not in enabled_widgets %}style="display:none"{% endif %}
 		>
-			<div class="card w-full bg-base-100 border border-base-300 shadow">
+			<div class="section-card w-full">
 				<div class="card-body p-6">
 					<span
 						class="loading loading-spinner loading-md text-base-content/40"
@@ -71,7 +65,7 @@
 			>
 				<div class="widget-loading h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"
@@ -80,7 +74,7 @@
 				</div>
 				<div class="widget-content h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"
@@ -102,7 +96,7 @@
 			>
 				<div class="widget-loading h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"
@@ -111,7 +105,7 @@
 				</div>
 				<div class="widget-content h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"
@@ -133,7 +127,7 @@
 			>
 				<div class="widget-loading h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"
@@ -142,7 +136,7 @@
 				</div>
 				<div class="widget-content h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"
@@ -164,7 +158,7 @@
 			>
 				<div class="widget-loading h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"
@@ -173,7 +167,7 @@
 				</div>
 				<div class="widget-content h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"
@@ -195,7 +189,7 @@
 			>
 				<div class="widget-loading h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"
@@ -204,7 +198,7 @@
 				</div>
 				<div class="widget-content h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"
@@ -226,7 +220,7 @@
 			>
 				<div class="widget-loading h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"
@@ -235,7 +229,7 @@
 				</div>
 				<div class="widget-content h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"
@@ -257,7 +251,7 @@
 			>
 				<div class="widget-loading h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"
@@ -266,7 +260,7 @@
 				</div>
 				<div class="widget-content h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"
@@ -288,7 +282,7 @@
 			>
 				<div class="widget-loading h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"
@@ -297,7 +291,7 @@
 				</div>
 				<div class="widget-content h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"

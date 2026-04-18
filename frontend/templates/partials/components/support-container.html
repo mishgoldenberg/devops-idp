@@ -1,24 +1,24 @@
-<div class="flex-1 min-h-0 flex flex-col overflow-hidden bg-base-200">
-	<header class="bg-base-100 border-b border-base-300 px-8 py-8 flex items-center justify-between">
+<div class="page-shell">
+	<header class="page-header">
 		<div>
-			<h1 class="text-3xl font-bold text-base-content">Support</h1>
-			<p class="text-base-content/60">View, open and reply to your ServiceNow tickets</p>
+			<h1 class="page-title">Support</h1>
+			<p class="page-subtitle">View, open and reply to your ServiceNow tickets</p>
 		</div>
 		<button id="support-new-ticket-btn" class="btn btn-primary btn-sm">New Ticket</button>
 	</header>
 
 	<div class="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-5 gap-6 p-6">
-		<div class="lg:col-span-2 card bg-base-100 border border-base-300 shadow min-h-0">
+		<div class="lg:col-span-2 section-card min-h-0">
 			<div class="card-body p-0 min-h-0 flex flex-col">
-				<div class="px-4 py-3 border-b border-base-300 font-semibold">My Tickets</div>
+				<div class="px-4 py-3 border-b border-base-300 section-title">My Tickets</div>
 				<div id="support-ticket-error" class="hidden mx-3 mt-3 alert alert-warning alert-soft text-xs"></div>
 				<ul id="support-ticket-list" class="flex-1 min-h-0 overflow-y-auto divide-y divide-base-300"></ul>
 			</div>
 		</div>
-		<div class="lg:col-span-3 card bg-base-100 border border-base-300 shadow min-h-0">
+		<div class="lg:col-span-3 section-card min-h-0">
 			<div class="card-body min-h-0 flex flex-col gap-3">
-				<div id="support-ticket-title" class="font-semibold text-lg">Select a ticket</div>
-				<div id="support-conversation" class="flex-1 min-h-0 overflow-y-auto border border-base-300 rounded p-3 space-y-2"></div>
+				<div id="support-ticket-title" class="section-title text-lg">Select a ticket</div>
+				<div id="support-conversation" class="flex-1 min-h-0 overflow-y-auto border border-base-300 rounded-lg p-3 space-y-2"></div>
 				<div class="flex gap-2">
 					<textarea id="support-reply" class="textarea textarea-bordered flex-1" rows="2" placeholder="Write a reply..."></textarea>
 					<button id="support-send-reply" class="btn btn-primary self-end">Send</button>

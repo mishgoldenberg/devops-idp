@@ -1,19 +1,15 @@
-<div class="flex-1 min-h-0 flex flex-col overflow-hidden bg-base-200">
-	<header
-		class="bg-base-100 border-b border-base-300 px-8 py-8 flex items-center justify-between shrink-0"
-	>
+<div class="page-shell">
+	<header class="page-header">
 		<div>
-			<h1 class="text-3xl font-bold text-base-content">Observability</h1>
-			<p class="text-base-content/60">
-				Portal usage and integration activity (Admin only)
-			</p>
+			<h1 class="page-title">Observability</h1>
+			<p class="page-subtitle">Portal usage and integration activity (Admin only)</p>
 		</div>
 		<button id="obs-refresh-btn" type="button" class="btn btn-outline btn-sm">
 			&#8635; Refresh
 		</button>
 	</header>
 
-	<div class="flex-1 min-h-0 overflow-y-auto p-6 bg-base-200 flex flex-col gap-6">
+	<div class="page-content flex flex-col gap-6">
 		<div id="obs-error" class="hidden alert alert-error text-sm"></div>
 		<div id="obs-notice" class="hidden alert alert-info text-sm border border-info/30"></div>
 
@@ -21,16 +17,16 @@
 		<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
 
 			<!-- Widget usage -->
-			<section class="card bg-base-100 border border-base-300 shadow">
+			<section class="section-card">
 				<div class="card-body p-5">
 					<h2 class="card-title text-base">Widget usage</h2>
-					<p class="text-xs text-base-content/50 mb-2">Widget render events by browser session</p>
+					<p class="text-xs text-base-content/50 mb-2">Users who currently have each widget on their dashboard</p>
 					<div class="overflow-x-auto max-h-72 overflow-y-auto">
 						<table class="table table-xs">
 							<thead class="sticky top-0 bg-base-100 z-10">
 								<tr>
 									<th>Widget</th>
-									<th class="text-right">Usage count</th>
+									<th class="text-right">Users with widget</th>
 								</tr>
 							</thead>
 							<tbody id="obs-widgets-body">
@@ -44,7 +40,7 @@
 			</section>
 
 			<!-- Self-service usage -->
-			<section class="card bg-base-100 border border-base-300 shadow">
+			<section class="section-card">
 				<div class="card-body p-5">
 					<h2 class="card-title text-base">Self-service usage</h2>
 					<p class="text-xs text-base-content/50 mb-2">Automation executions by service key</p>
@@ -72,7 +68,7 @@
 		<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
 
 			<!-- ServiceNow tickets -->
-			<section class="card bg-base-100 border border-base-300 shadow">
+			<section class="section-card">
 				<div class="card-body p-5 gap-3">
 					<div>
 						<h2 class="card-title text-base">ServiceNow tickets (portal)</h2>
@@ -118,7 +114,7 @@
 			</section>
 
 			<!-- Azure DevOps projects -->
-			<section class="card bg-base-100 border border-base-300 shadow">
+			<section class="section-card">
 				<div class="card-body p-5">
 					<h2 class="card-title text-base">Azure DevOps projects (self-service)</h2>
 					<p class="text-xs text-base-content/50 mb-2">Projects after successful Terraform provisioning</p>

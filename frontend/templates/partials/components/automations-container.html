@@ -1,21 +1,17 @@
-<div class="flex-1 min-h-0 flex flex-col overflow-hidden bg-base-200">
-	<!-- Page Header -->
-	<header
-		class="bg-base-100 border-b border-base-300 px-8 py-8 flex items-center justify-between"
-	>
+<div class="page-shell">
+	<header class="page-header">
 		<div>
-			<h1 class="text-3xl font-bold text-base-content">Automations</h1>
-			<p class="text-base-content/60">Automation workflows and processes</p>
+			<h1 class="page-title">Automations</h1>
+			<p class="page-subtitle">Automation workflows and processes</p>
 		</div>
 		<button id="refresh-btn" class="btn btn-outline btn-sm">
 			&#8635; Refresh
 		</button>
 	</header>
 
-	<!-- Scrollable Content Area -->
-	<div class="flex-1 min-h-0 overflow-y-auto p-8">
+	<div class="page-content">
 		<div class="max-w-4xl grid grid-cols-1 md:grid-cols-2 gap-6">
-			<button id="ado-self-service-card" class="card bg-base-100 border border-base-300 shadow hover:border-primary transition text-left">
+			<button id="ado-self-service-card" class="section-card-interactive text-left">
 				<div class="card-body">
 					<h3 class="card-title">Azure DevOps Project Creation</h3>
 					<p class="text-sm text-base-content/60">Self-service flow with prompt and confirmation before execution.</p>
