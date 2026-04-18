@@ -530,28 +530,25 @@ _HOME_WIDGETS_COOKIE_MAX_AGE = 365 * 24 * 3600  # 1 year
 
 def _save_widget_prefs_to_db(user_id: str, enabled_keys: list) -> None:
     """
-    Persist widget preferences to home_widget_prefs using plain VARCHAR rows.
-    No JSONB — simple DELETE-then-INSERT so there are zero serialisation issues.
-    The table is auto-created by ensure_observability_tables() on first access.
+    Persist widget preferences using the existing widget_user_views table.
+    Simple DELETE-all-for-user then INSERT each enabled key — no JSONB, no NOT IN.
+    Falls back silently on any DB error.
     """
     if not user_id:
         return
+    from observability_tracking import _widget_label
     try:
-        # Ensure the table exists before writing.
-        from db import ensure_observability_tables_once
-        ensure_observability_tables_once()
-    except Exception:
-        pass
-    try:
-        execute("DELETE FROM home_widget_prefs WHERE user_id = %s", [user_id])
+        execute("DELETE FROM widget_user_views WHERE user_id = %s", [user_id])
         for key in enabled_keys:
             execute(
                 """
-                INSERT INTO home_widget_prefs (user_id, widget_key, updated_at)
-                VALUES (%s, %s, CURRENT_TIMESTAMP)
-                ON CONFLICT (user_id, widget_key) DO UPDATE SET updated_at = CURRENT_TIMESTAMP
+                INSERT INTO widget_user_views (user_id, widget_key, widget_name, last_seen_at)
+                VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (user_id, widget_key) DO UPDATE SET
+                    widget_name  = EXCLUDED.widget_name,
+                    last_seen_at = CURRENT_TIMESTAMP
                 """,
-                [user_id, key],
+                [user_id, key, _widget_label(key)],
             )
     except Exception:
         pass
