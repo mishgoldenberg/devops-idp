@@ -1,3 +1,4 @@
+import logging
 import os
 from datetime import datetime, timezone
 from typing import Optional
@@ -11,6 +12,7 @@ import cache
 from security import AuthUser, get_current_user
 
 router = APIRouter()
+_log = logging.getLogger(__name__)
 
 
 def _ensure_user_tickets_table() -> None:
@@ -201,6 +203,14 @@ def _map_message(raw: dict) -> dict:
 
 
 def _raise_snow_error(exc: Exception, context: str) -> None:
+    """
+    Emit a ServiceNow failure as a 502 with a **plain-string** detail.
+
+    Every branch returns a single user-readable line — never a dict — so the
+    frontend can safely do ``errorEl.textContent = json.detail`` without
+    producing the dreaded ``[object Object]``. Full upstream body (JSON and
+    headers) is still logged server-side so admins can debug the root cause.
+    """
     instance = _resolve_instance()
     if not instance:
         raise HTTPException(
@@ -210,22 +220,45 @@ def _raise_snow_error(exc: Exception, context: str) -> None:
                 "Set it to your instance URL (e.g. https://mycompany.service-now.com)."
             ),
         )
+
     if isinstance(exc, httpx.HTTPStatusError):
+        status_code = exc.response.status_code
+        # Best-effort extraction of the ServiceNow error.message — the common
+        # shape is ``{"error": {"message": "...", "detail": "..."}}``. Anything
+        # that doesn't match is logged server-side and surfaced generically.
+        snow_message = ""
         try:
-            snow_body = exc.response.json()
+            body = exc.response.json()
+            if isinstance(body, dict):
+                err = body.get("error")
+                if isinstance(err, dict):
+                    snow_message = str(err.get("message") or err.get("detail") or "").strip()
+                if not snow_message:
+                    snow_message = str(body.get("message") or "").strip()
         except Exception:
-            snow_body = exc.response.text[:300]
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail={
-                "message": f"ServiceNow returned HTTP {exc.response.status_code} while {context}",
-                "instance": instance,
-                "snow_response": snow_body,
-            },
+            snow_message = exc.response.text[:200].strip()
+
+        _log.warning(
+            "ServiceNow %s failed (context=%s, instance=%s): status=%s body=%s",
+            context, context, instance, status_code, exc.response.text[:400],
         )
+
+        user_msg = f"ServiceNow returned HTTP {status_code} while {context}."
+        if snow_message:
+            user_msg += f" {snow_message}"
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=user_msg)
+
+    _log.warning(
+        "ServiceNow %s unreachable (instance=%s): %s: %s",
+        context, instance, type(exc).__name__, exc,
+    )
     raise HTTPException(
         status_code=status.HTTP_502_BAD_GATEWAY,
-        detail=f"ServiceNow unreachable while {context} (instance: {instance}): {type(exc).__name__}: {exc}",
+        detail=(
+            f"Could not reach ServiceNow while {context}. "
+            "Check that SERVICENOW_URL and credentials are configured and the "
+            "instance is reachable from the portal."
+        ),
     )
 
 
