@@ -599,6 +599,110 @@ def _observe_ado_project_job_started(
 VALID_PROCESS_TYPES = {"scrum", "agile", "cmmi", "basic"}
 
 
+def ensure_custom_ado_process(project_name: str, process_type: str) -> str:
+    """
+    Ensure the inherited Azure DevOps process ``<project_name>-<process_type>``
+    exists (creating it if missing) and return its name.
+
+    Callable outside a Request context — uses the env-level admin PAT
+    (``AZURE_DEVOPS_ADMIN_PAT``) so background workers (e.g. the approval
+    executor) can reuse it. Raises ``RuntimeError`` with a concise, caller-
+    friendly message on any failure; the full upstream body is logged.
+    """
+    if USE_MOCK:
+        return f"{project_name}-{process_type}"
+
+    if not ADO_BASE or ADO_BASE.rstrip("/") == "https://dev.azure.com":
+        raise RuntimeError("AZURE_DEVOPS_ORG is not configured.")
+    if not _ENV_ADMIN_PAT:
+        raise RuntimeError(
+            "AZURE_DEVOPS_ADMIN_PAT is not configured. Cannot create the "
+            "inherited process without admin credentials."
+        )
+
+    proc_auth = httpx.BasicAuth("", _ENV_ADMIN_PAT)
+    custom_process_name = f"{project_name}-{process_type}"
+
+    with httpx.Client(auth=proc_auth, timeout=30.0) as client:
+        try:
+            r_procs = client.get(
+                f"{ADO_BASE}/_apis/work/processes?api-version=7.1-preview.2"
+            )
+            r_procs.raise_for_status()
+            all_procs = r_procs.json().get("value", [])
+        except httpx.HTTPStatusError as exc:
+            _logging.error(
+                "Process list API failed (%s): %s",
+                exc.response.status_code, exc.response.text[:200],
+            )
+            raise RuntimeError(
+                f"Could not fetch Azure DevOps process list "
+                f"(HTTP {exc.response.status_code}). Ensure "
+                "AZURE_DEVOPS_ADMIN_PAT has 'Process (Read & Manage)' scope."
+            )
+        except httpx.RequestError as exc:
+            _logging.error("Network error reaching Azure DevOps: %s", exc)
+            raise RuntimeError(
+                "Could not connect to Azure DevOps. Check network connectivity "
+                "and AZURE_DEVOPS_ORGANIZATION."
+            )
+
+        parent_proc = next(
+            (
+                p for p in all_procs
+                if p.get("customizationType") == "system"
+                and p.get("name", "").lower() == process_type.lower()
+            ),
+            None,
+        )
+        if not parent_proc:
+            available = ", ".join(
+                p["name"] for p in all_procs
+                if p.get("customizationType") == "system"
+            )
+            raise RuntimeError(
+                f"Unknown process type '{process_type}'. "
+                f"Available system processes: {available}"
+            )
+
+        custom_exists = any(
+            p.get("name", "").lower() == custom_process_name.lower()
+            and p.get("customizationType") != "system"
+            for p in all_procs
+        )
+        if custom_exists:
+            _logging.info(
+                "Custom process '%s' already exists — skipping creation.",
+                custom_process_name,
+            )
+            return custom_process_name
+
+        r_cp = client.post(
+            f"{ADO_BASE}/_apis/work/processes?api-version=7.1-preview.2",
+            json={
+                "name": custom_process_name,
+                "description": f"Custom {process_type} process for {project_name}",
+                "parentProcessTypeId": parent_proc["typeId"],
+                "isDefault": False,
+                "isEnabled": True,
+            },
+        )
+        if r_cp.status_code in (200, 201):
+            _logging.info("Created custom process: %s", custom_process_name)
+            return custom_process_name
+
+        body_preview = r_cp.text[:400]
+        _logging.error(
+            "Custom process creation returned %s: %s",
+            r_cp.status_code, body_preview,
+        )
+        raise RuntimeError(
+            f"Azure DevOps rejected the process creation "
+            f"(HTTP {r_cp.status_code}). Ensure AZURE_DEVOPS_ADMIN_PAT has "
+            f"'Process (Read & Manage)' scope."
+        )
+
+
 class ProjectCreationPayload(BaseModel):
     project_name: str
     process_type: str   # Scrum | Agile | CMMI | Basic

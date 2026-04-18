@@ -354,13 +354,17 @@ def _execute_ado_project_create(
     if not admin_username:
         raise ValueError("admin_username is required")
 
-    custom_process = f"{project_name}-{process_type}"
-
     # Re-use the same configuration the interactive self-service endpoint uses
     # so background execution and direct execution behave identically.
-    from .azure_devops import ADO_BASE, USE_MOCK
+    from .azure_devops import ADO_BASE, USE_MOCK, ensure_custom_ado_process
     use_mock = bool(USE_MOCK)
     org = ADO_BASE.rstrip("/").split("/")[-1] if ADO_BASE else ""
+
+    # Pre-create the inherited process Terraform will reference. Without this
+    # step Terraform fails with 'expand project reference: No process template
+    # found' because the custom process name (<project>-<type>) doesn't yet
+    # exist in Azure DevOps.
+    custom_process = ensure_custom_ado_process(project_name, process_type)
 
     job_id = submit_terraform_job(
         project_name=project_name,
