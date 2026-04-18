@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
@@ -5,8 +6,42 @@ from fastapi import APIRouter, Body, Depends, HTTPException, status
 from fastapi.encoders import jsonable_encoder
 
 import db
-from db import observability_schema_unavailable, query_all_obs
+from db import observability_schema_unavailable, query_all, query_all_obs
 from security import AuthUser, get_current_user, has_effective_admin_access_live
+
+_log = logging.getLogger(__name__)
+
+# Human-readable labels for the "Self-service usage" widget. When a new
+# approval-driven request_type is added to approvals.py, add a label here so
+# it surfaces with a clean name on the observability dashboard. Unknown
+# request_types fall back to a Title-cased version of the key.
+_SELF_SERVICE_LABELS: Dict[str, str] = {
+    "ADO_PROJECT_CREATE": "Azure DevOps — Create project",
+    "SONAR_PR_SCANNING_ENABLE": "SonarQube — Enable PR scanning",
+    "AI_MODEL_ACCESS": "AI model access",
+}
+
+
+def _self_service_label(request_type: str) -> str:
+    rt = str(request_type or "").strip()
+    if not rt:
+        return "Unknown"
+    if rt in _SELF_SERVICE_LABELS:
+        return _SELF_SERVICE_LABELS[rt]
+    return rt.replace("_", " ").title()
+
+
+def _safe_query_all(sql: str, params: Optional[list] = None) -> list:
+    """
+    Run a SELECT against a core (non-observability) table but degrade gracefully
+    like observability reads do. Observability is an admin read-only view — a
+    missing table or permission glitch should surface zero rows, not a 500.
+    """
+    try:
+        return query_all(sql, params or [])
+    except Exception as exc:
+        _log.warning("observability: core-table read failed: %s", exc)
+        return []
 
 router = APIRouter()
 
@@ -137,26 +172,85 @@ def list_widget_usage(
 @router.get("/self-services")
 @router.get("/self_services", include_in_schema=False)
 def list_self_service_usage(current_user: AuthUser = Depends(get_observability_user)) -> Dict[str, Any]:
-    rows = query_all_obs(
+    """
+    Break down every approval-driven self-service by lifecycle status so the
+    admin dashboard answers "what was opened / approved / rejected / completed
+    / failed per automation".
+
+    Source of truth is ``approval_requests`` (created by ``POST /api/approvals
+    /requests``). The legacy ``self_service_usage`` counter table is no longer
+    written to by the approval flow, so reading it would always show zeros.
+
+    "Approved" here counts any request that made it past admin approval —
+    i.e. APPROVED + IN_PROGRESS + COMPLETED + EXECUTED + FAILED — which
+    matches the user's mental model ("approved = not rejected and not still
+    pending").
+    """
+    rows = _safe_query_all(
         """
-        SELECT service_name AS name, execution_count AS count, service_key, last_executed_at
-        FROM self_service_usage
-        ORDER BY execution_count DESC, service_name ASC
+        SELECT request_type,
+               COUNT(*)::bigint                                                AS total,
+               COUNT(*) FILTER (WHERE status = 'PENDING')::bigint              AS pending,
+               COUNT(*) FILTER (WHERE status IN (
+                   'APPROVED','IN_PROGRESS','COMPLETED','EXECUTED','FAILED'
+               ))::bigint                                                      AS approved,
+               COUNT(*) FILTER (WHERE status IN ('COMPLETED','EXECUTED'))::bigint  AS completed,
+               COUNT(*) FILTER (WHERE status = 'IN_PROGRESS')::bigint          AS in_progress,
+               COUNT(*) FILTER (WHERE status = 'FAILED')::bigint               AS failed,
+               COUNT(*) FILTER (WHERE status = 'REJECTED')::bigint             AS rejected,
+               MAX(executed_at)                                                AS last_executed_at,
+               MAX(created_at)                                                 AS last_created_at
+          FROM approval_requests
+         GROUP BY request_type
+         ORDER BY total DESC, request_type ASC
         """
     )
-    return _obs_ok(data=jsonable_encoder(rows))
+
+    out = []
+    for r in rows:
+        rt = r.get("request_type") or ""
+        out.append(
+            {
+                "service_key": rt,
+                "name": _self_service_label(rt),
+                # `count` preserves the pre-refactor response shape so any older
+                # dashboard or external consumer keeps rendering.
+                "count": int(r.get("total") or 0),
+                "total": int(r.get("total") or 0),
+                "pending": int(r.get("pending") or 0),
+                "approved": int(r.get("approved") or 0),
+                "in_progress": int(r.get("in_progress") or 0),
+                "completed": int(r.get("completed") or 0),
+                "failed": int(r.get("failed") or 0),
+                "rejected": int(r.get("rejected") or 0),
+                "last_executed_at": r.get("last_executed_at") or r.get("last_created_at"),
+            }
+        )
+    return _obs_ok(data=jsonable_encoder(out))
 
 
 @router.get("/azure-projects")
 @router.get("/azure_projects", include_in_schema=False)
 def list_azure_projects(current_user: AuthUser = Depends(get_observability_user)) -> Dict[str, Any]:
-    rows = query_all_obs(
+    """
+    Completed Azure DevOps projects provisioned via the approval workflow.
+
+    Derived from ``approval_requests`` so the list stays in lock-step with
+    the "My Requests" / "Approvals" pages — a project shows up here as soon
+    as its request reaches COMPLETED/EXECUTED status.
+    """
+    rows = _safe_query_all(
         """
-        SELECT project_name, created_by, process_type, completed_at AS creation_date
-        FROM azure_projects
-        WHERE completed_at IS NOT NULL
-        ORDER BY completed_at DESC
-        LIMIT 500
+        SELECT ar.request_payload->>'project_name'    AS project_name,
+               ar.request_payload->>'process_type'    AS process_type,
+               COALESCE(u.email, u.username)          AS created_by,
+               ar.executed_at                         AS creation_date
+          FROM approval_requests ar
+          LEFT JOIN users u ON ar.requester_id = u.id
+         WHERE ar.request_type = 'ADO_PROJECT_CREATE'
+           AND ar.status IN ('COMPLETED', 'EXECUTED')
+         ORDER BY ar.executed_at DESC NULLS LAST
+         LIMIT 500
         """
     )
     return _obs_ok(data=jsonable_encoder(rows))

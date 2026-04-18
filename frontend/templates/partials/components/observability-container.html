@@ -43,18 +43,22 @@
 			<section class="section-card">
 				<div class="card-body p-5">
 					<h2 class="card-title text-base">Self-service usage</h2>
-					<p class="text-xs text-base-content/50 mb-2">Automation executions by service key</p>
+					<p class="text-xs text-base-content/50 mb-2">Requests submitted through the approval workflow, by lifecycle status</p>
 					<div class="overflow-x-auto max-h-72 overflow-y-auto">
 						<table class="table table-xs">
 							<thead class="sticky top-0 bg-base-100 z-10">
 								<tr>
 									<th>Service</th>
-									<th class="text-right">Executions</th>
+									<th class="text-right">Opened</th>
+									<th class="text-right">Approved</th>
+									<th class="text-right">Completed</th>
+									<th class="text-right">Failed</th>
+									<th class="text-right">Rejected</th>
 								</tr>
 							</thead>
 							<tbody id="obs-self-body">
 								<tr>
-									<td colspan="2" class="text-base-content/50">Loading…</td>
+									<td colspan="6" class="text-base-content/50">Loading…</td>
 								</tr>
 							</tbody>
 						</table>
@@ -242,14 +246,25 @@
 				const sRows = s?.data || [];
 				selfBody.innerHTML =
 					sRows.length === 0
-						? '<tr><td colspan="2" class="text-base-content/50">No data yet</td></tr>'
+						? '<tr><td colspan="6" class="text-base-content/50">No data yet</td></tr>'
 						: sRows
-								.map(
-									(r) =>
-										`<tr><td>${esc(r.name)}</td><td class="text-right font-mono">${esc(
-											r.count
-										)}</td></tr>`
-								)
+								.map((r) => {
+									const opened = r.total ?? r.count ?? 0;
+									const approved = r.approved ?? 0;
+									const completed = r.completed ?? 0;
+									const failed = r.failed ?? 0;
+									const rejected = r.rejected ?? 0;
+									return (
+										`<tr>` +
+										`<td>${esc(r.name)}</td>` +
+										`<td class="text-right font-mono">${esc(opened)}</td>` +
+										`<td class="text-right font-mono text-info">${esc(approved)}</td>` +
+										`<td class="text-right font-mono text-success">${esc(completed)}</td>` +
+										`<td class="text-right font-mono text-error">${esc(failed)}</td>` +
+										`<td class="text-right font-mono text-base-content/60">${esc(rejected)}</td>` +
+										`</tr>`
+									);
+								})
 								.join("");
 
 				const aRows = a?.data || [];
