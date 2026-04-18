@@ -116,6 +116,15 @@ def ui_index(request: Request):
     saved = _get_home_widget_prefs_from_cookie(request)
     enabled_widgets: list = saved if saved else list(HOME_WIDGET_KEYS.keys())
 
+    # Keep home_widget_prefs in sync so observability always has fresh data
+    # even for users who never explicitly open Customize Dashboard.
+    try:
+        cu = _current_user_from_token(token)
+        if cu:
+            _save_widget_prefs_to_db(str(cu.get("id", "")), enabled_widgets)
+    except Exception:
+        pass
+
     templates = _get_templates(request)
     return templates.TemplateResponse(
         "index.html",
