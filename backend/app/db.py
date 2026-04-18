@@ -153,39 +153,41 @@ def ensure_observability_tables() -> None:
 
     log = logging.getLogger(__name__)
     stmts = [
+        # Legacy tables from earlier iterations — dropped so the new
+        # event-based widget_usage schema can take over cleanly.
+        (
+            "drop_legacy_widget_usage",
+            "DROP TABLE IF EXISTS widget_usage",
+        ),
+        (
+            "drop_legacy_widget_user_views",
+            "DROP TABLE IF EXISTS widget_user_views",
+        ),
+        (
+            "drop_legacy_home_widget_prefs",
+            "DROP TABLE IF EXISTS home_widget_prefs",
+        ),
+        # Event-based widget usage: one row per widget view.
         (
             "widget_usage",
             """
         CREATE TABLE IF NOT EXISTS widget_usage (
-            widget_key   VARCHAR(255) PRIMARY KEY,
-            widget_name  VARCHAR(255) NOT NULL,
-            usage_count  BIGINT NOT NULL DEFAULT 0,
-            last_used_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            id         SERIAL PRIMARY KEY,
+            user_id    TEXT NOT NULL,
+            widget_key TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            session_id TEXT,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
         )
         """,
         ),
         (
-            "widget_user_views",
-            """
-        CREATE TABLE IF NOT EXISTS widget_user_views (
-            user_id      VARCHAR(255) NOT NULL,
-            widget_key   VARCHAR(255) NOT NULL,
-            widget_name  VARCHAR(255) NOT NULL DEFAULT '',
-            last_seen_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (user_id, widget_key)
-        )
-        """,
+            "idx_widget_usage_key",
+            "CREATE INDEX IF NOT EXISTS idx_widget_usage_key ON widget_usage (widget_key)",
         ),
         (
-            "home_widget_prefs",
-            """
-        CREATE TABLE IF NOT EXISTS home_widget_prefs (
-            user_id    VARCHAR(255) NOT NULL,
-            widget_key VARCHAR(255) NOT NULL,
-            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (user_id, widget_key)
-        )
-        """,
+            "idx_widget_usage_session",
+            "CREATE INDEX IF NOT EXISTS idx_widget_usage_session ON widget_usage (session_id)",
         ),
         (
             "self_service_usage",

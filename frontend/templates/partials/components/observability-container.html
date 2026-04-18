@@ -24,13 +24,13 @@
 			<section class="card bg-base-100 border border-base-300 shadow">
 				<div class="card-body p-5">
 					<h2 class="card-title text-base">Widget usage</h2>
-					<p class="text-xs text-base-content/50 mb-2">Distinct users who have each widget on their dashboard</p>
+					<p class="text-xs text-base-content/50 mb-2">Widget render events by browser session</p>
 					<div class="overflow-x-auto max-h-72 overflow-y-auto">
 						<table class="table table-xs">
 							<thead class="sticky top-0 bg-base-100 z-10">
 								<tr>
 									<th>Widget</th>
-									<th class="text-right">Users</th>
+									<th class="text-right">Usage count</th>
 								</tr>
 							</thead>
 							<tbody id="obs-widgets-body">
@@ -217,7 +217,7 @@
 			clearNotice();
 			try {
 				const [w, s, a, t] = await Promise.all([
-					loadJson("/api/observability/widgets"),
+					loadJson("/api/observability/widgets/usage"),
 					loadJson("/api/observability/self-services"),
 					loadJson("/api/observability/azure-projects"),
 					loadJson("/api/observability/tickets"),

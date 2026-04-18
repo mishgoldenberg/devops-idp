@@ -403,18 +403,54 @@
 		const drawer = document.getElementById("dashboard-customize-drawer");
 		const saveBtn = document.getElementById("dashboard-save-btn");
 
+		// --- Observability: session id + per-widget render tracking ---
+		function getSessionId() {
+			try {
+				let sid = localStorage.getItem("session_id");
+				if (!sid) {
+					sid = (window.crypto && crypto.randomUUID)
+						? crypto.randomUUID()
+						: String(Date.now()) + "-" + Math.random().toString(36).slice(2);
+					localStorage.setItem("session_id", sid);
+				}
+				return sid;
+			} catch (_) {
+				return null;
+			}
+		}
+		const sessionId = getSessionId();
+		const trackedThisMount = new Set();
+		function trackWidget(key) {
+			if (!key || trackedThisMount.has(key)) return;
+			trackedThisMount.add(key);
+			try {
+				fetch("/api/observability/widget", {
+					method: "POST",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ widget_key: key, session_id: sessionId }),
+					keepalive: true,
+				}).catch(() => {});
+			} catch (_) {
+				/* silent-fail per spec */
+			}
+		}
+
 		function apply(enabled) {
 			Object.entries(widgetKeys).forEach(([key, id]) => {
 				const el = document.getElementById(id);
 				if (!el) return;
-				el.style.display = enabled.includes(key) ? "" : "none";
+				const visible = enabled.includes(key);
+				el.style.display = visible ? "" : "none";
+				if (visible) trackWidget(key);
 			});
 			toggles.forEach((cb) => {
 				cb.checked = enabled.includes(cb.dataset.widgetKey);
 			});
 		}
 
-		// Sync checkboxes to match the server-rendered state immediately.
+		// Sync checkboxes to match the server-rendered state immediately;
+		// this also fires the initial render-tracking events.
 		apply(initialEnabled);
 
 		toggles.forEach((cb) =>

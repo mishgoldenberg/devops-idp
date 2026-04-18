@@ -113,17 +113,10 @@ def ui_index(request: Request):
         return RedirectResponse(url="/ui/auth", status_code=303)
 
     # Resolve widget preferences from cookie — zero DB round-trip, no flash on F5.
+    # Dashboard customisation is purely a UI concern now; observability is driven
+    # by real widget_view events posted from the browser, not by preferences.
     saved = _get_home_widget_prefs_from_cookie(request)
     enabled_widgets: list = saved if saved else list(HOME_WIDGET_KEYS.keys())
-
-    # Keep home_widget_prefs in sync so observability always has fresh data
-    # even for users who never explicitly open Customize Dashboard.
-    try:
-        cu = _current_user_from_token(token)
-        if cu:
-            _save_widget_prefs_to_db(str(cu.get("id", "")), enabled_widgets)
-    except Exception:
-        pass
 
     templates = _get_templates(request)
     return templates.TemplateResponse(
@@ -528,32 +521,6 @@ _HOME_WIDGETS_COOKIE = "home_widgets"
 _HOME_WIDGETS_COOKIE_MAX_AGE = 365 * 24 * 3600  # 1 year
 
 
-def _save_widget_prefs_to_db(user_id: str, enabled_keys: list) -> None:
-    """
-    Persist widget preferences using the existing widget_user_views table.
-    Simple DELETE-all-for-user then INSERT each enabled key — no JSONB, no NOT IN.
-    Falls back silently on any DB error.
-    """
-    if not user_id:
-        return
-    from observability_tracking import _widget_label
-    try:
-        execute("DELETE FROM widget_user_views WHERE user_id = %s", [user_id])
-        for key in enabled_keys:
-            execute(
-                """
-                INSERT INTO widget_user_views (user_id, widget_key, widget_name, last_seen_at)
-                VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
-                ON CONFLICT (user_id, widget_key) DO UPDATE SET
-                    widget_name  = EXCLUDED.widget_name,
-                    last_seen_at = CURRENT_TIMESTAMP
-                """,
-                [user_id, key, _widget_label(key)],
-            )
-    except Exception:
-        pass
-
-
 def _get_home_widget_prefs_from_cookie(request: Request) -> list:
     """
     Read home widget preferences from the browser cookie.
@@ -601,10 +568,6 @@ def ui_dashboard_preferences_save(
         raise HTTPException(status_code=400, detail="'enabled' must be a list")
 
     enabled_keys = [k for k in requested if isinstance(k, str) and k in HOME_WIDGET_KEYS]
-
-    # Persist to DB so observability can aggregate across all users.
-    uid = str(current_user.get("id", ""))
-    _save_widget_prefs_to_db(uid, enabled_keys)
 
     response = JSONResponse({"success": True, "data": {"enabled": enabled_keys}})
     response.set_cookie(

@@ -1,9 +1,10 @@
 from datetime import datetime, timezone
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, status
 from fastapi.encoders import jsonable_encoder
 
+import db
 from db import observability_schema_unavailable, query_all_obs
 from security import AuthUser, get_current_user, has_effective_admin_access_live
 
@@ -40,25 +41,104 @@ def get_observability_user(
     return current_user
 
 
-@router.get("/widgets")
-def list_widget_usage(current_user: AuthUser = Depends(get_observability_user)) -> Dict[str, Any]:
+# Stable set of widget keys the UI can emit — validated on the POST endpoint.
+_ALLOWED_WIDGET_KEYS = {
+    "quick_links",
+    "ado_my_work_items",
+    "snow_my_tickets",
+    "ado_my_pull_requests",
+    "ado_prs_for_review",
+    "ado_pipeline_status",
+    "sonar_quality_gate",
+    "artifactory_storage",
+    "service_health",
+}
+
+
+@router.post("/widget")
+def record_widget_event(
+    payload: Dict[str, Any] = Body(default={}),
+    current_user: AuthUser = Depends(get_current_user),
+) -> Dict[str, Any]:
     """
-    Count distinct users who have each widget enabled on their home dashboard.
-    Reads from widget_user_views which is written when users save their preferences.
+    Event-based widget tracking. Called by each widget component when it mounts.
+    One row per render event; aggregation happens at read time.
+    Errors are swallowed so a tracking failure never breaks the dashboard.
     """
+    widget_key = str((payload or {}).get("widget_key") or "").strip()
+    session_id = (payload or {}).get("session_id")
+    session_id = str(session_id).strip()[:128] if session_id else None
+
+    if not widget_key or widget_key not in _ALLOWED_WIDGET_KEYS:
+        raise HTTPException(status_code=400, detail="Invalid widget_key")
+
+    user_id = str(
+        current_user.get("email") or current_user.get("username") or current_user.get("id") or ""
+    ).strip()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    try:
+        db.ensure_observability_tables_once()
+        db.execute(
+            """
+            INSERT INTO widget_usage (user_id, widget_key, event_type, session_id, created_at)
+            VALUES (%s, %s, %s, %s, NOW())
+            """,
+            [user_id[:255], widget_key[:255], "widget_view", session_id],
+        )
+    except Exception:
+        # Silent-fail per spec: tracking must never break widget rendering.
+        pass
+    return {"success": True}
+
+
+def _widget_usage_rows(query: str) -> list:
+    """Aggregate widget_usage into [{widget_key, name, count}] rows."""
     from observability_tracking import WIDGET_LABELS
-    rows = query_all_obs(
+    rows = query_all_obs(query)
+    return [
+        {
+            "widget_key": r["widget_key"],
+            "name": WIDGET_LABELS.get(r["widget_key"], str(r["widget_key"]).replace("_", " ").title()),
+            "count": int(r["count"] or 0),
+        }
+        for r in rows
+    ]
+
+
+@router.get("/widgets/usage")
+def list_widget_usage_events(
+    current_user: AuthUser = Depends(get_observability_user),
+) -> Dict[str, Any]:
+    """
+    Aggregate widget usage events. Uses COUNT(DISTINCT session_id) when sessions
+    are available so one browser session counts once per widget, otherwise COUNT(*).
+    """
+    rows = _widget_usage_rows(
         """
         SELECT
             widget_key,
-            widget_name                     AS name,
-            COUNT(DISTINCT user_id)::bigint AS count
-        FROM widget_user_views
-        GROUP BY widget_key, widget_name
-        ORDER BY count DESC, widget_name ASC
+            CASE
+              WHEN COUNT(session_id) > 0
+                THEN COUNT(DISTINCT session_id)::bigint
+              ELSE COUNT(*)::bigint
+            END AS count
+        FROM widget_usage
+        WHERE event_type = 'widget_view'
+        GROUP BY widget_key
+        ORDER BY count DESC, widget_key ASC
         """
     )
     return _obs_ok(data=jsonable_encoder(rows))
+
+
+# Kept for backward compatibility with the existing observability page JS.
+@router.get("/widgets")
+def list_widget_usage(
+    current_user: AuthUser = Depends(get_observability_user),
+) -> Dict[str, Any]:
+    return list_widget_usage_events(current_user)
 
 
 @router.get("/self-services")

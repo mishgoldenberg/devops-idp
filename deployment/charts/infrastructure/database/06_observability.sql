@@ -1,30 +1,22 @@
 -- Portal observability tables (mirrors backend/app/db.ensure_tables for Helm init jobs)
 
+-- Drop legacy widget tables from earlier iterations so the new event-based
+-- widget_usage schema below can be created cleanly.
+DROP TABLE IF EXISTS widget_user_views;
+DROP TABLE IF EXISTS home_widget_prefs;
+DROP TABLE IF EXISTS widget_usage;
+
+-- Event-based widget usage: one row per widget render.
 CREATE TABLE IF NOT EXISTS widget_usage (
-    widget_key   VARCHAR(255) PRIMARY KEY,
-    widget_name  VARCHAR(255) NOT NULL,
-    usage_count  BIGINT NOT NULL DEFAULT 0,
-    last_used_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    id         SERIAL PRIMARY KEY,
+    user_id    TEXT NOT NULL,
+    widget_key TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    session_id TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
-
--- Per-user per-widget view tracking (replaces the raw usage counter).
--- Allows COUNT(DISTINCT user_id) so refreshes don't inflate numbers.
-CREATE TABLE IF NOT EXISTS widget_user_views (
-    user_id      VARCHAR(255) NOT NULL,
-    widget_key   VARCHAR(255) NOT NULL,
-    widget_name  VARCHAR(255) NOT NULL DEFAULT '',
-    last_seen_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (user_id, widget_key)
-);
-
--- Simple per-user widget preference rows. Pure VARCHAR — no JSONB serialisation
--- issues. Written on every Save in Customize Dashboard. Used by observability.
-CREATE TABLE IF NOT EXISTS home_widget_prefs (
-    user_id    VARCHAR(255) NOT NULL,
-    widget_key VARCHAR(255) NOT NULL,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (user_id, widget_key)
-);
+CREATE INDEX IF NOT EXISTS idx_widget_usage_key ON widget_usage (widget_key);
+CREATE INDEX IF NOT EXISTS idx_widget_usage_session ON widget_usage (session_id);
 
 CREATE TABLE IF NOT EXISTS self_service_usage (
     service_key      VARCHAR(255) PRIMARY KEY,
@@ -61,11 +53,10 @@ DO $obsgrant$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'devops') THEN
     GRANT SELECT, INSERT, UPDATE, DELETE ON widget_usage TO devops;
-    GRANT SELECT, INSERT, UPDATE, DELETE ON widget_user_views TO devops;
-    GRANT SELECT, INSERT, UPDATE, DELETE ON home_widget_prefs TO devops;
     GRANT SELECT, INSERT, UPDATE, DELETE ON self_service_usage TO devops;
     GRANT SELECT, INSERT, UPDATE, DELETE ON azure_projects TO devops;
     GRANT SELECT, INSERT, UPDATE, DELETE ON servicenow_tickets TO devops;
+    GRANT USAGE, SELECT ON SEQUENCE widget_usage_id_seq TO devops;
     GRANT USAGE, SELECT ON SEQUENCE azure_projects_id_seq TO devops;
     GRANT USAGE, SELECT ON SEQUENCE servicenow_tickets_id_seq TO devops;
   END IF;
