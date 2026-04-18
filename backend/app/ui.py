@@ -611,8 +611,9 @@ def ui_dashboard_preferences_save(
         _HOME_WIDGETS_COOKIE,
         _json.dumps(enabled_keys),
         max_age=_HOME_WIDGETS_COOKIE_MAX_AGE,
-        httponly=False,   # JS doesn't need it, but server reads it
+        httponly=False,
         samesite="lax",
+        path="/",
     )
     return response
 
