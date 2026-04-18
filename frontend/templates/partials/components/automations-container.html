@@ -2,11 +2,9 @@
 	<header class="page-header">
 		<div>
 			<h1 class="page-title">Automations</h1>
-			<p class="page-subtitle">Automation workflows and processes</p>
+			<p class="page-subtitle">Request self-service automations. Admin approval is required before execution.</p>
 		</div>
-		<button id="refresh-btn" class="btn btn-outline btn-sm">
-			&#8635; Refresh
-		</button>
+		<a href="/ui/my-requests" class="btn btn-outline btn-sm">My Requests</a>
 	</header>
 
 	<div class="page-content">
@@ -14,17 +12,18 @@
 			<button id="ado-self-service-card" class="section-card-interactive text-left">
 				<div class="card-body">
 					<h3 class="card-title">Azure DevOps Project Creation</h3>
-					<p class="text-sm text-base-content/60">Self-service flow with prompt and confirmation before execution.</p>
+					<p class="text-sm text-base-content/60">Request a new Azure DevOps project. Runs after admin approval.</p>
 				</div>
 			</button>
 		</div>
-		<div id="ado-create-status" class="text-sm mt-5"></div>
+		<div id="ado-create-status" class="text-sm mt-5" role="status" aria-live="polite"></div>
 	</div>
 </div>
 
 <dialog id="ado-create-modal" class="modal">
 	<div class="modal-box">
-		<h3 class="font-bold text-lg">Azure DevOps Project Creation</h3>
+		<h3 class="font-bold text-lg">Request Azure DevOps Project</h3>
+		<p class="text-sm text-base-content/60 mt-1">Your request will be queued for admin approval.</p>
 		<form id="ado-create-form" class="grid grid-cols-1 gap-3 mt-3">
 			<input class="input input-bordered" type="text" name="project_name" placeholder="Project name" required />
 			<select class="select select-bordered" name="process_type">
@@ -33,13 +32,14 @@
 				<option>CMMI</option>
 				<option>Basic</option>
 			</select>
-			<input class="input input-bordered" type="text" name="admin_username" placeholder="Admin email" required />
+			<input class="input input-bordered" type="email" name="admin_username" placeholder="Admin email" required />
 			<div class="modal-action">
 				<button type="button" id="ado-create-cancel" class="btn">Cancel</button>
-				<button type="submit" class="btn btn-primary">Continue</button>
+				<button type="submit" class="btn btn-primary">Submit for Approval</button>
 			</div>
 		</form>
 	</div>
+	<form method="dialog" class="modal-backdrop"><button>close</button></form>
 </dialog>
 
 <script>
@@ -49,47 +49,56 @@
 		const card = document.getElementById("ado-self-service-card");
 		const modal = document.getElementById("ado-create-modal");
 		const cancelBtn = document.getElementById("ado-create-cancel");
+		if (!form || !statusBox || !card || !modal) return;
 
-		async function poll(jobId) {
-			while (true) {
-				const res = await fetch("/ui/automations/azure-devops/status/" + encodeURIComponent(jobId));
-				const json = await res.json();
-				const data = json?.data || {};
-				statusBox.textContent = "Job status: " + (data.status || "pending");
-				if (data.status === "succeeded") {
-					statusBox.innerHTML = 'Job succeeded. <a class="link" target="_blank" href="' + data.project_url + '">Open project</a>';
-					return;
-				}
-				if (data.status === "failed") {
-					statusBox.textContent = "Job failed: " + (data.error || "Unknown error");
-					return;
-				}
-				await new Promise((r) => setTimeout(r, 3000));
-			}
-		}
+		card.addEventListener("click", () => modal.showModal?.());
+		cancelBtn?.addEventListener("click", () => modal.close?.());
 
-		card?.addEventListener("click", () => modal?.showModal());
-		cancelBtn?.addEventListener("click", () => modal?.close());
-
-		form?.addEventListener("submit", async function (e) {
+		form.addEventListener("submit", async function (e) {
 			e.preventDefault();
-			if (!confirm("Confirm starting the Azure DevOps self-service process?")) return;
-			statusBox.textContent = "Submitting automation job...";
-			const body = new FormData(form);
-			const res = await fetch("/ui/automations/azure-devops/create", { method: "POST", body });
-			const json = await res.json();
-			if (!json?.success) {
-				statusBox.textContent = "Submission failed.";
+			const data = new FormData(form);
+			const projectName = String(data.get("project_name") || "").trim();
+			const processType = String(data.get("process_type") || "Scrum").trim();
+			const adminUser = String(data.get("admin_username") || "").trim();
+
+			if (!projectName || !adminUser) {
+				statusBox.textContent = "Please fill in all required fields.";
+				statusBox.className = "text-sm mt-5 text-error";
 				return;
 			}
-			if (modal?.close) modal.close();
-			const jobId = json?.data?.job_id;
-			if (!jobId) {
-				statusBox.textContent = "No job id returned.";
-				return;
+
+			statusBox.textContent = "Submitting request…";
+			statusBox.className = "text-sm mt-5 text-base-content/60";
+
+			try {
+				const res = await fetch("/api/approvals/requests", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					credentials: "same-origin",
+					body: JSON.stringify({
+						request_type: "ADO_PROJECT_CREATE",
+						request_title: `Azure DevOps project: ${projectName}`,
+						request_payload: {
+							project_name: projectName,
+							process_type: processType,
+							admin_username: adminUser,
+						},
+					}),
+				});
+				if (!res.ok) {
+					const json = await res.json().catch(() => ({}));
+					statusBox.textContent = json?.detail || "Failed to submit request.";
+					statusBox.className = "text-sm mt-5 text-error";
+					return;
+				}
+				modal.close?.();
+				form.reset();
+				statusBox.innerHTML = `Your request has been submitted and is awaiting admin approval. Track it on the <a class="link" href="/ui/my-requests">My Requests</a> page.`;
+				statusBox.className = "text-sm mt-5 text-success";
+			} catch (_err) {
+				statusBox.textContent = "Could not submit request. Please try again.";
+				statusBox.className = "text-sm mt-5 text-error";
 			}
-			statusBox.textContent = "Job created: " + jobId;
-			poll(jobId);
 		});
 	})();
 </script>

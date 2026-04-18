@@ -371,6 +371,29 @@ def ui_automations_page(request: Request):
     )
 
 
+@ui_router.get("/ui/my-requests", response_class=HTMLResponse)
+def ui_my_requests_page(request: Request):
+    """Render the user-facing 'My Requests' page."""
+    token = request.cookies.get("auth_token")
+    if not token:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+    try:
+        user = _get_ui_user(token)
+    except HTTPException:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+
+    templates = _get_templates(request)
+    return templates.TemplateResponse(
+        "my-requests.html",
+        {
+            "request": request,
+            "user": user,
+            "current_page": "my-requests",
+            "now": datetime.utcnow().isoformat() + "Z",
+        },
+    )
+
+
 @ui_router.get("/ui/approvals", response_class=HTMLResponse)
 def ui_approvals_page(request: Request):
     """Render the Approvals tab page."""

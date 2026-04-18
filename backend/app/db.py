@@ -337,6 +337,7 @@ def ensure_tables() -> None:
     )
     ensure_item_tables()
     ensure_observability_tables()
+    ensure_approval_workflow_tables()
 
 
 _item_tables_lock = threading.Lock()
@@ -402,6 +403,58 @@ def ensure_item_tables() -> None:
     execute(
         "CREATE INDEX IF NOT EXISTS idx_user_item_seen_user "
         "ON user_item_seen (user_id, source)"
+    )
+
+
+def ensure_approval_workflow_tables() -> None:
+    """
+    Bring the approval-request workflow up to the schema the new self-service
+    approval flow expects. Idempotent — safe to run on every startup.
+
+    Additions vs. the base schema (deployment/charts/.../00_schema.sql):
+      * approval_status enum gains IN_PROGRESS and COMPLETED values (legacy
+        rows using EXECUTED remain valid; the API treats EXECUTED = COMPLETED).
+      * approval_requests gains a dedicated rejection_reason column.
+      * notifications table for in-app notification bell + dropdown.
+    """
+    # Add new approval_status values. ALTER TYPE ... ADD VALUE is idempotent
+    # via IF NOT EXISTS on PG 12+ but must run outside a multi-value block.
+    for value in ("IN_PROGRESS", "COMPLETED"):
+        try:
+            execute(f"ALTER TYPE approval_status ADD VALUE IF NOT EXISTS '{value}'")
+        except Exception:
+            # Enum may not exist yet on a minimal dev DB; approvals table
+            # creation below is sufficient for fresh installs.
+            pass
+
+    # Optional dedicated rejection reason (approver_comments is still the
+    # canonical free-text field; rejection_reason just makes filtering easier).
+    try:
+        execute(
+            "ALTER TABLE approval_requests "
+            "ADD COLUMN IF NOT EXISTS rejection_reason TEXT"
+        )
+    except Exception:
+        pass
+
+    # In-app notifications (bell + dropdown). Email-keyed so the UI can
+    # resolve them directly from the SSO token without an extra users join.
+    execute(
+        """
+        CREATE TABLE IF NOT EXISTS notifications (
+            id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            user_email     VARCHAR(255) NOT NULL,
+            message        TEXT         NOT NULL,
+            notif_type     VARCHAR(64),
+            related_id     UUID,
+            is_read        BOOLEAN      NOT NULL DEFAULT FALSE,
+            created_at     TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    execute(
+        "CREATE INDEX IF NOT EXISTS idx_notifications_user_unread "
+        "ON notifications (user_email, is_read, created_at DESC)"
     )
 
 

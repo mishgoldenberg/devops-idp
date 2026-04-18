@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from . import admin, auth, dashboards, health, metrics, observability, azure_devops, sonarqube, artifactory, servicenow, ai_chatbot, approvals, pins
+from . import admin, auth, dashboards, health, metrics, observability, azure_devops, sonarqube, artifactory, servicenow, ai_chatbot, approvals, pins, notifications
 
 
 api_router = APIRouter(prefix="/api")
@@ -38,5 +38,8 @@ api_router.include_router(approvals.router, prefix="/approvals", tags=["approval
 # User-scoped item tracking (pins + seen-markers) shared by dashboard widgets.
 # Routes: GET/POST/DELETE /api/pins and POST /api/items/mark-seen.
 api_router.include_router(pins.router, tags=["pins"])
+
+# In-app notifications (bell + dropdown, fed by the approval workflow).
+api_router.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
 
 
