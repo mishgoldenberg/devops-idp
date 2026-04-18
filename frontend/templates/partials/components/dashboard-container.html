@@ -436,6 +436,23 @@
 			}
 		}
 
+		// Always send the full current widget list; backend replaces the row set.
+		// Called on initial load and after every change/save so observability
+		// reflects the live dashboard state (including removals).
+		function syncUserWidgets(widgets) {
+			try {
+				fetch("/api/dashboard/widgets/sync", {
+					method: "POST",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ widgets, session_id: sessionId }),
+					keepalive: true,
+				}).catch(() => {});
+			} catch (_) {
+				/* silent-fail */
+			}
+		}
+
 		function apply(enabled) {
 			Object.entries(widgetKeys).forEach(([key, id]) => {
 				const el = document.getElementById(id);
@@ -449,9 +466,10 @@
 			});
 		}
 
-		// Sync checkboxes to match the server-rendered state immediately;
-		// this also fires the initial render-tracking events.
+		// Sync checkboxes + fire initial render-tracking events.
 		apply(initialEnabled);
+		// Initial sync: make sure DB matches what the user actually sees.
+		syncUserWidgets(initialEnabled);
 
 		toggles.forEach((cb) =>
 			cb.addEventListener("change", () => {
@@ -473,6 +491,8 @@
 				alert("Could not save preferences: " + (e?.message || e));
 				return;
 			}
+			// Observability: full-state sync after save (handles both add & remove).
+			syncUserWidgets(enabled);
 			if (drawer) drawer.checked = false;
 		});
 	})();

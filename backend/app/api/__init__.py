@@ -11,8 +11,10 @@ api_router.include_router(health.router, prefix="/health", tags=["health"])
 # Auth
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 
-# Dashboards
+# Dashboards (mounted at both /dashboards and /dashboard so the observability
+# sync endpoint is reachable at /api/dashboard/widgets/sync per spec).
 api_router.include_router(dashboards.router, prefix="/dashboards", tags=["dashboards"])
+api_router.include_router(dashboards.router, prefix="/dashboard", tags=["dashboards"], include_in_schema=False)
 
 # Metrics
 api_router.include_router(metrics.router, prefix="/metrics", tags=["metrics"])

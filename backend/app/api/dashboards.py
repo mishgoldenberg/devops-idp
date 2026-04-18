@@ -1,14 +1,76 @@
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, status
 from pydantic import BaseModel
 from uuid import uuid4
 
+import db
 from db import query_all, query_one, execute_returning, execute
 from security import AuthUser, get_current_user
 
 
 router = APIRouter()
+
+
+# Stable set of widget keys that may appear on the home dashboard.
+# Kept in-sync with HOME_WIDGET_KEYS in backend/app/ui.py.
+_ALLOWED_WIDGET_KEYS = {
+    "quick_links",
+    "ado_my_work_items",
+    "snow_my_tickets",
+    "ado_my_pull_requests",
+    "ado_prs_for_review",
+    "ado_pipeline_status",
+    "sonar_quality_gate",
+    "artifactory_storage",
+    "service_health",
+}
+
+
+@router.post("/widgets/sync")
+def sync_user_widgets(
+    payload: Dict[str, Any] = Body(default={}),
+    current_user: AuthUser = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    Replace the authenticated user's active-widget list.
+    Observability reads from user_widgets so removals decrement counts immediately.
+    Silent-fails on DB errors so dashboard rendering is never blocked.
+    """
+    widgets = (payload or {}).get("widgets") or []
+    session_id = (payload or {}).get("session_id")
+    session_id = str(session_id).strip()[:128] if session_id else None
+
+    if not isinstance(widgets, list):
+        raise HTTPException(status_code=400, detail="'widgets' must be a list")
+
+    keys = [
+        str(k).strip()[:255]
+        for k in widgets
+        if isinstance(k, str) and str(k).strip() in _ALLOWED_WIDGET_KEYS
+    ]
+
+    user_id = str(
+        current_user.get("email") or current_user.get("username") or current_user.get("id") or ""
+    ).strip()[:255]
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    try:
+        db.ensure_observability_tables_once()
+        execute("DELETE FROM user_widgets WHERE user_id = %s", [user_id])
+        for key in keys:
+            execute(
+                """
+                INSERT INTO user_widgets (user_id, widget_key, session_id, created_at)
+                VALUES (%s, %s, %s, NOW())
+                ON CONFLICT (user_id, widget_key) DO NOTHING
+                """,
+                [user_id, key, session_id],
+            )
+    except Exception:
+        pass
+    return {"success": True, "data": {"widgets": keys}}
 
 
 class DashboardUpdateRequest(BaseModel):

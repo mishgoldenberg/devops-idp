@@ -189,6 +189,26 @@ def ensure_observability_tables() -> None:
             "idx_widget_usage_session",
             "CREATE INDEX IF NOT EXISTS idx_widget_usage_session ON widget_usage (session_id)",
         ),
+        # Current active dashboard state per user. One row per (user, widget).
+        # Observability reads this for "how many users currently have X on their
+        # dashboard". widget_usage stays for historical trend analytics.
+        (
+            "user_widgets",
+            """
+        CREATE TABLE IF NOT EXISTS user_widgets (
+            id         SERIAL PRIMARY KEY,
+            user_id    TEXT NOT NULL,
+            widget_key TEXT NOT NULL,
+            session_id TEXT,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            UNIQUE (user_id, widget_key)
+        )
+        """,
+        ),
+        (
+            "idx_user_widgets_key",
+            "CREATE INDEX IF NOT EXISTS idx_user_widgets_key ON user_widgets (widget_key)",
+        ),
         (
             "self_service_usage",
             """

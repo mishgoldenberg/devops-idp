@@ -112,20 +112,13 @@ def list_widget_usage_events(
     current_user: AuthUser = Depends(get_observability_user),
 ) -> Dict[str, Any]:
     """
-    Aggregate widget usage events. Uses COUNT(DISTINCT session_id) when sessions
-    are available so one browser session counts once per widget, otherwise COUNT(*).
+    Count users who currently have each widget on their dashboard.
+    Reads from user_widgets (current state), not from widget_usage (historical events).
     """
     rows = _widget_usage_rows(
         """
-        SELECT
-            widget_key,
-            CASE
-              WHEN COUNT(session_id) > 0
-                THEN COUNT(DISTINCT session_id)::bigint
-              ELSE COUNT(*)::bigint
-            END AS count
-        FROM widget_usage
-        WHERE event_type = 'widget_view'
+        SELECT widget_key, COUNT(*)::bigint AS count
+        FROM user_widgets
         GROUP BY widget_key
         ORDER BY count DESC, widget_key ASC
         """
