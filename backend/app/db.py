@@ -4,8 +4,17 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import psycopg2
 from psycopg2 import errorcodes, pool
-from psycopg2.extras import RealDictCursor
+from psycopg2.extensions import register_adapter
+from psycopg2.extras import Json, RealDictCursor
 from config import get_settings
+
+# Globally teach psycopg2 how to serialize Python dicts into Postgres JSON /
+# JSONB columns. Without this, any `execute(sql, [some_dict])` raises
+# `ProgrammingError: can't adapt type 'dict'`, which bites endpoints that
+# store JSONB (approval_requests.request_payload, audit_logs.details, etc.).
+# We intentionally don't adapt `list` — psycopg2's default list→ARRAY
+# adapter is still correct for any Postgres text/uuid array columns.
+register_adapter(dict, Json)
 
 # Lazily initialised so that the module can be imported without a live DB
 # (avoids CrashLoopBackOff when the pool creation fails at import time).
