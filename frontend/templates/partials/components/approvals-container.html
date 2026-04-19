@@ -1,44 +1,282 @@
-<div class="flex-1 min-h-0 flex flex-col overflow-hidden bg-base-200">
-	<!-- Page Header -->
-	<header
-		class="bg-base-100 border-b border-base-300 px-8 py-8 flex items-center justify-between"
-	>
+<div class="page-shell">
+	<header class="page-header">
 		<div>
-			<h1 class="text-3xl font-bold text-base-content">Approvals</h1>
-			<p class="text-base-content/60">Approval requests and workflows</p>
+			<h1 class="page-title">Approvals</h1>
+			<p class="page-subtitle">Review and act on self-service requests</p>
 		</div>
-		<button id="refresh-btn" class="btn btn-outline btn-sm">
-			&#8635; Refresh
-		</button>
+		<div class="flex items-center gap-2">
+			<div class="join" role="tablist" aria-label="Request status filter">
+				<button type="button" class="btn btn-sm join-item btn-active" data-approvals-tab="PENDING">Pending</button>
+				<button type="button" class="btn btn-sm join-item" data-approvals-tab="ACTIVE">In&nbsp;Progress</button>
+				<button type="button" class="btn btn-sm join-item" data-approvals-tab="HISTORY">History</button>
+			</div>
+			<button id="approvals-refresh" class="btn btn-outline btn-sm" title="Refresh">
+				<svg viewBox="0 0 24 24" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"></path></svg>
+				Refresh
+			</button>
+		</div>
 	</header>
 
-	<!-- Scrollable Content Area -->
-	<div class="flex-1 min-h-0 overflow-y-auto flex items-center justify-center">
-		<!-- Empty Dashboard State -->
-		<div class="text-center max-w-md">
-			<div class="mb-6 flex justify-center">
-				<svg
-					class="w-16 h-16 text-base-300"
-					fill="none"
-					stroke="currentColor"
-					viewBox="0 0 24 24"
-					aria-hidden="true"
-				>
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						stroke-width="1.5"
-						d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"
-					/>
-				</svg>
+	<div class="page-content">
+		<div class="flex-1 min-h-0" data-approvals-root>
+			<div class="flex items-center justify-center py-12 text-sm text-base-content/60" data-approvals-status>
+				<span class="loading loading-spinner loading-sm text-base-content/40 mr-2"></span>
+				Loading requests…
 			</div>
-			<h3 class="text-lg font-semibold text-base-content mb-2">
-				No components configured
-			</h3>
-			<p class="text-base-content/60">
-				This page is currently empty. Components will appear here when they're
-				configured.
-			</p>
+			<ul class="hidden grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" data-approvals-list></ul>
 		</div>
 	</div>
 </div>
+
+<dialog id="approvals-detail-modal" class="modal">
+	<div class="modal-box max-w-2xl">
+		<form method="dialog" class="absolute right-2 top-2">
+			<button class="btn btn-sm btn-circle btn-ghost" aria-label="Close">&#10005;</button>
+		</form>
+		<h3 class="font-bold text-lg" data-approvals-detail-title>Request</h3>
+		<div class="mt-4 space-y-4" data-approvals-detail-body></div>
+		<div class="modal-action" data-approvals-detail-actions></div>
+	</div>
+	<form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<script>
+	(function () {
+		const root = document.querySelector("[data-approvals-root]");
+		if (!root) return;
+
+		const statusEl = root.querySelector("[data-approvals-status]");
+		const listEl = root.querySelector("[data-approvals-list]");
+		const modal = document.getElementById("approvals-detail-modal");
+		const modalTitle = modal?.querySelector("[data-approvals-detail-title]");
+		const modalBody = modal?.querySelector("[data-approvals-detail-body]");
+		const modalActions = modal?.querySelector("[data-approvals-detail-actions]");
+
+		const tabs = Array.from(document.querySelectorAll("[data-approvals-tab]"));
+		const refreshBtn = document.getElementById("approvals-refresh");
+
+		const STATUS_BADGE = {
+			PENDING: "badge-warning",
+			APPROVED: "badge-info",
+			IN_PROGRESS: "badge-primary",
+			COMPLETED: "badge-success",
+			EXECUTED: "badge-success",
+			FAILED: "badge-error",
+			REJECTED: "badge-ghost",
+		};
+
+		let activeTab = "PENDING";
+		let cache = [];
+
+		function showStatus(msg, isError) {
+			statusEl.textContent = msg;
+			statusEl.className =
+				"flex items-center justify-center py-12 text-sm " +
+				(isError ? "text-error" : "text-base-content/60");
+			statusEl.classList.remove("hidden");
+			listEl.classList.add("hidden");
+		}
+
+		function fmtDate(s) {
+			if (!s) return "—";
+			try {
+				const d = new Date(s);
+				return d.toLocaleString();
+			} catch (_) {
+				return s;
+			}
+		}
+
+		function summarize(payload) {
+			if (!payload || typeof payload !== "object") return "";
+			const parts = [];
+			if (payload.project_name) parts.push("Project: " + payload.project_name);
+			if (payload.process_type) parts.push("Process: " + payload.process_type);
+			if (payload.projectKey) parts.push("ProjectKey: " + payload.projectKey);
+			if (payload.model) parts.push("Model: " + payload.model);
+			if (!parts.length) {
+				const first = Object.entries(payload).slice(0, 2);
+				first.forEach(([k, v]) => parts.push(`${k}: ${v}`));
+			}
+			return parts.join(" · ");
+		}
+
+		function renderCard(r) {
+			const status = String(r.status || "PENDING").toUpperCase();
+			const badge = STATUS_BADGE[status] || "badge-ghost";
+			const requester = r.requester_email || r.requester_username || "unknown";
+			const title = r.request_title || r.request_type || "Request";
+			const summary = summarize(r.request_payload);
+			return `
+				<li class="section-card hover:shadow-lg transition-shadow cursor-pointer" data-request-id="${r.id}">
+					<div class="card-body p-5 gap-3">
+						<div class="flex items-start justify-between gap-3">
+							<h3 class="card-title text-base leading-snug">${escapeHtml(title)}</h3>
+							<span class="badge ${badge} badge-sm whitespace-nowrap">${status.replace("_", " ")}</span>
+						</div>
+						<div class="text-xs text-base-content/60 flex flex-col gap-1">
+							<span><span class="font-medium text-base-content/80">Requested by:</span> ${escapeHtml(requester)}</span>
+							<span><span class="font-medium text-base-content/80">Created:</span> ${fmtDate(r.created_at)}</span>
+							${summary ? `<span class="line-clamp-1">${escapeHtml(summary)}</span>` : ""}
+						</div>
+						<div class="text-xs text-base-content/40 mt-1">${escapeHtml(r.request_type || "")}</div>
+					</div>
+				</li>`;
+		}
+
+		function escapeHtml(s) {
+			return String(s ?? "").replace(/[&<>"']/g, (c) => ({
+				"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+			}[c]));
+		}
+
+		function filterForTab(rows) {
+			if (activeTab === "PENDING") return rows.filter((r) => r.status === "PENDING");
+			if (activeTab === "ACTIVE") return rows.filter((r) => ["APPROVED", "IN_PROGRESS"].includes(r.status));
+			// HISTORY
+			return rows.filter((r) => ["COMPLETED", "EXECUTED", "FAILED", "REJECTED"].includes(r.status));
+		}
+
+		async function load() {
+			showStatus("Loading requests…", false);
+			try {
+				const res = await fetch("/api/approvals/requests?scope=all", { credentials: "same-origin" });
+				if (!res.ok) throw new Error("HTTP " + res.status);
+				const json = await res.json();
+				cache = Array.isArray(json?.data) ? json.data : [];
+				render();
+			} catch (_err) {
+				showStatus("Could not load approval requests.", true);
+			}
+		}
+
+		function render() {
+			const visible = filterForTab(cache);
+			if (!visible.length) {
+				const empty = activeTab === "PENDING"
+					? "No pending requests."
+					: activeTab === "ACTIVE"
+					? "No requests are currently in progress."
+					: "No historic requests yet.";
+				showStatus(empty, false);
+				return;
+			}
+			statusEl.classList.add("hidden");
+			listEl.classList.remove("hidden");
+			listEl.innerHTML = visible.map(renderCard).join("");
+			listEl.querySelectorAll("[data-request-id]").forEach((el) => {
+				el.addEventListener("click", () => openDetail(el.dataset.requestId));
+			});
+		}
+
+		function renderPayloadFields(payload) {
+			if (!payload || typeof payload !== "object") {
+				return `<p class="text-sm text-base-content/60">No inputs.</p>`;
+			}
+			const entries = Object.entries(payload);
+			if (!entries.length) return `<p class="text-sm text-base-content/60">No inputs.</p>`;
+			return `
+				<dl class="grid grid-cols-[auto,1fr] gap-x-4 gap-y-1 text-sm">
+					${entries.map(([k, v]) => `
+						<dt class="text-base-content/60">${escapeHtml(k)}</dt>
+						<dd class="break-words">${escapeHtml(typeof v === "object" ? JSON.stringify(v) : v)}</dd>
+					`).join("")}
+				</dl>`;
+		}
+
+		async function openDetail(id) {
+			const r = cache.find((x) => String(x.id) === String(id));
+			if (!r || !modal) return;
+			modalTitle.textContent = r.request_title || r.request_type || "Request";
+
+			const statusStr = String(r.status || "").toUpperCase();
+			const badge = STATUS_BADGE[statusStr] || "badge-ghost";
+			const requester = r.requester_email || r.requester_username || "unknown";
+
+			modalBody.innerHTML = `
+				<section>
+					<h4 class="text-xs font-semibold uppercase tracking-widest text-base-content/50 mb-2">Request Info</h4>
+					<dl class="grid grid-cols-[auto,1fr] gap-x-4 gap-y-1 text-sm">
+						<dt class="text-base-content/60">Status</dt>
+						<dd><span class="badge ${badge} badge-sm">${statusStr.replace("_", " ")}</span></dd>
+						<dt class="text-base-content/60">Service type</dt>
+						<dd>${escapeHtml(r.request_type || "")}</dd>
+						<dt class="text-base-content/60">Requested by</dt>
+						<dd>${escapeHtml(requester)}</dd>
+						<dt class="text-base-content/60">Requested at</dt>
+						<dd>${fmtDate(r.created_at)}</dd>
+						${r.approver_email ? `
+							<dt class="text-base-content/60">Approved by</dt>
+							<dd>${escapeHtml(r.approver_email)}</dd>
+							<dt class="text-base-content/60">Approved at</dt>
+							<dd>${fmtDate(r.approved_at)}</dd>
+						` : ""}
+						${r.rejection_reason ? `
+							<dt class="text-base-content/60">Rejection reason</dt>
+							<dd class="text-error">${escapeHtml(r.rejection_reason)}</dd>
+						` : ""}
+					</dl>
+				</section>
+				<section>
+					<h4 class="text-xs font-semibold uppercase tracking-widest text-base-content/50 mb-2">Inputs</h4>
+					${renderPayloadFields(r.request_payload)}
+				</section>
+				${r.execution_result ? `
+					<section>
+						<h4 class="text-xs font-semibold uppercase tracking-widest text-base-content/50 mb-2">Execution result</h4>
+						<pre class="text-xs bg-base-200 rounded p-3 overflow-x-auto">${escapeHtml(JSON.stringify(r.execution_result, null, 2))}</pre>
+					</section>` : ""}
+			`;
+
+			modalActions.innerHTML = "";
+			if (statusStr === "PENDING") {
+				modalActions.innerHTML = `
+					<button type="button" class="btn btn-ghost" data-approvals-reject>Reject</button>
+					<button type="button" class="btn btn-primary" data-approvals-approve>Approve</button>
+				`;
+				modalActions.querySelector("[data-approvals-approve]")?.addEventListener("click", () => act(r.id, "approve"));
+				modalActions.querySelector("[data-approvals-reject]")?.addEventListener("click", () => act(r.id, "reject"));
+			} else {
+				modalActions.innerHTML = `<form method="dialog"><button class="btn">Close</button></form>`;
+			}
+
+			modal.showModal();
+		}
+
+		async function act(id, action) {
+			let comments = null;
+			if (action === "reject") {
+				comments = window.prompt("Reason for rejection (optional):", "") || "";
+			}
+			try {
+				const res = await fetch(`/api/approvals/requests/${encodeURIComponent(id)}/${action}`, {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					credentials: "same-origin",
+					body: JSON.stringify({ comments }),
+				});
+				if (!res.ok) {
+					const json = await res.json().catch(() => ({}));
+					alert(json?.detail || `Failed to ${action} request.`);
+					return;
+				}
+				modal?.close();
+				await load();
+			} catch (_err) {
+				alert(`Failed to ${action} request. Please try again.`);
+			}
+		}
+
+		tabs.forEach((btn) => {
+			btn.addEventListener("click", () => {
+				tabs.forEach((b) => b.classList.remove("btn-active"));
+				btn.classList.add("btn-active");
+				activeTab = btn.dataset.approvalsTab;
+				render();
+			});
+		});
+		refreshBtn?.addEventListener("click", load);
+
+		load();
+	})();
+</script>

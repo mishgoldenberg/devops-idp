@@ -1,142 +1,148 @@
-<div class="flex-1 min-h-0 flex flex-col overflow-hidden bg-base-200">
-	<header
-		class="bg-base-100 border-b border-base-300 px-8 py-8 flex items-center justify-between shrink-0"
-	>
+<div class="page-shell">
+	<header class="page-header">
 		<div>
-			<h1 class="text-3xl font-bold text-base-content">Observability</h1>
-			<p class="text-base-content/60">
-				Portal usage and integration activity (Admin only)
-			</p>
+			<h1 class="page-title">Observability</h1>
+			<p class="page-subtitle">Portal usage and integration activity (Admin only)</p>
 		</div>
 		<button id="obs-refresh-btn" type="button" class="btn btn-outline btn-sm">
 			&#8635; Refresh
 		</button>
 	</header>
 
-	<div class="flex-1 min-h-0 overflow-y-auto p-8 space-y-8">
+	<div class="page-content flex flex-col gap-6">
 		<div id="obs-error" class="hidden alert alert-error text-sm"></div>
 		<div id="obs-notice" class="hidden alert alert-info text-sm border border-info/30"></div>
 
-		<!-- Widget usage -->
-		<section class="card bg-base-100 border border-base-300 shadow">
-			<div class="card-body">
-				<h2 class="card-title text-lg">Widget usage</h2>
-				<p class="text-sm text-base-content/60 mb-4">Most viewed dashboard widgets</p>
-				<div class="overflow-x-auto">
-					<table class="table table-sm">
-						<thead>
-							<tr>
-								<th>Widget</th>
-								<th class="text-right">Usage count</th>
-							</tr>
-						</thead>
-						<tbody id="obs-widgets-body">
-							<tr>
-								<td colspan="2" class="text-base-content/50">Loading…</td>
-							</tr>
-						</tbody>
-					</table>
-				</div>
-			</div>
-		</section>
+		<!-- Row 1: Widget usage + Self-service side by side -->
+		<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
 
-		<!-- Self-service usage -->
-		<section class="card bg-base-100 border border-base-300 shadow">
-			<div class="card-body">
-				<h2 class="card-title text-lg">Self-service usage</h2>
-				<p class="text-sm text-base-content/60 mb-4">Automation executions by service key</p>
-				<div class="overflow-x-auto">
-					<table class="table table-sm">
-						<thead>
-							<tr>
-								<th>Service</th>
-								<th class="text-right">Executions</th>
-							</tr>
-						</thead>
-						<tbody id="obs-self-body">
-							<tr>
-								<td colspan="2" class="text-base-content/50">Loading…</td>
-							</tr>
-						</tbody>
-					</table>
+			<!-- Widget usage -->
+			<section class="section-card">
+				<div class="card-body p-5">
+					<h2 class="card-title text-base">Widget usage</h2>
+					<p class="text-xs text-base-content/50 mb-2">Users who currently have each widget on their dashboard</p>
+					<div class="overflow-x-auto max-h-72 overflow-y-auto">
+						<table class="table table-xs">
+							<thead class="sticky top-0 bg-base-100 z-10">
+								<tr>
+									<th>Widget</th>
+									<th class="text-right">Users with widget</th>
+								</tr>
+							</thead>
+							<tbody id="obs-widgets-body">
+								<tr>
+									<td colspan="2" class="text-base-content/50">Loading…</td>
+								</tr>
+							</tbody>
+						</table>
+					</div>
 				</div>
-			</div>
-		</section>
+			</section>
 
-		<!-- Azure DevOps projects -->
-		<section class="card bg-base-100 border border-base-300 shadow">
-			<div class="card-body">
-				<h2 class="card-title text-lg">Azure DevOps projects (self-service)</h2>
-				<p class="text-sm text-base-content/60 mb-4">
-					Projects after successful Terraform provisioning
-				</p>
-				<div class="overflow-x-auto">
-					<table class="table table-sm">
-						<thead>
-							<tr>
-								<th>Project</th>
-								<th>Created by</th>
-								<th>Process</th>
-								<th>Creation date</th>
-							</tr>
-						</thead>
-						<tbody id="obs-ado-body">
-							<tr>
-								<td colspan="4" class="text-base-content/50">Loading…</td>
-							</tr>
-						</tbody>
-					</table>
+			<!-- Self-service usage -->
+			<section class="section-card">
+				<div class="card-body p-5">
+					<h2 class="card-title text-base">Self-service usage</h2>
+					<p class="text-xs text-base-content/50 mb-2">Requests submitted through the approval workflow, by lifecycle status</p>
+					<div class="overflow-x-auto max-h-72 overflow-y-auto">
+						<table class="table table-xs">
+							<thead class="sticky top-0 bg-base-100 z-10">
+								<tr>
+									<th>Service</th>
+									<th class="text-right">Opened</th>
+									<th class="text-right">Approved</th>
+									<th class="text-right">Completed</th>
+									<th class="text-right">Failed</th>
+									<th class="text-right">Rejected</th>
+								</tr>
+							</thead>
+							<tbody id="obs-self-body">
+								<tr>
+									<td colspan="6" class="text-base-content/50">Loading…</td>
+								</tr>
+							</tbody>
+						</table>
+					</div>
 				</div>
-			</div>
-		</section>
+			</section>
 
-		<!-- ServiceNow -->
-		<section class="card bg-base-100 border border-base-300 shadow">
-			<div class="card-body space-y-4">
-				<div>
-					<h2 class="card-title text-lg">ServiceNow tickets (portal)</h2>
-					<p class="text-sm text-base-content/60">
-						Tickets opened from the DevOps Control Center
-					</p>
+		</div>
+
+		<!-- Row 2: ServiceNow summary + ADO projects side by side -->
+		<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+
+			<!-- ServiceNow tickets -->
+			<section class="section-card">
+				<div class="card-body p-5 gap-3">
+					<div>
+						<h2 class="card-title text-base">ServiceNow tickets (portal)</h2>
+						<p class="text-xs text-base-content/50">Tickets opened from the DevOps Control Center</p>
+					</div>
+					<div class="grid grid-cols-4 gap-3">
+						<div class="stat bg-base-200 rounded-box border border-base-300 p-3">
+							<div class="stat-title text-xs uppercase">Total</div>
+							<div class="stat-value text-xl" id="obs-sn-total">—</div>
+						</div>
+						<div class="stat bg-base-200 rounded-box border border-base-300 p-3">
+							<div class="stat-title text-xs uppercase">High</div>
+							<div class="stat-value text-xl text-error" id="obs-sn-high">—</div>
+						</div>
+						<div class="stat bg-base-200 rounded-box border border-base-300 p-3">
+							<div class="stat-title text-xs uppercase">Medium</div>
+							<div class="stat-value text-xl text-warning" id="obs-sn-medium">—</div>
+						</div>
+						<div class="stat bg-base-200 rounded-box border border-base-300 p-3">
+							<div class="stat-title text-xs uppercase">Low</div>
+							<div class="stat-value text-xl text-success" id="obs-sn-low">—</div>
+						</div>
+					</div>
+					<div class="overflow-x-auto max-h-56 overflow-y-auto">
+						<table class="table table-xs">
+							<thead class="sticky top-0 bg-base-100 z-10">
+								<tr>
+									<th>Ticket</th>
+									<th>Description</th>
+									<th>Sev.</th>
+									<th>Created by</th>
+									<th>Date</th>
+								</tr>
+							</thead>
+							<tbody id="obs-sn-body">
+								<tr>
+									<td colspan="5" class="text-base-content/50">Loading…</td>
+								</tr>
+							</tbody>
+						</table>
+					</div>
 				</div>
-				<div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
-					<div class="stat bg-base-200 rounded-box border border-base-300">
-						<div class="stat-title text-xs uppercase">Total</div>
-						<div class="stat-value text-2xl" id="obs-sn-total">—</div>
-					</div>
-					<div class="stat bg-base-200 rounded-box border border-base-300">
-						<div class="stat-title text-xs uppercase">High</div>
-						<div class="stat-value text-2xl text-error" id="obs-sn-high">—</div>
-					</div>
-					<div class="stat bg-base-200 rounded-box border border-base-300">
-						<div class="stat-title text-xs uppercase">Medium</div>
-						<div class="stat-value text-2xl text-warning" id="obs-sn-medium">—</div>
-					</div>
-					<div class="stat bg-base-200 rounded-box border border-base-300">
-						<div class="stat-title text-xs uppercase">Low</div>
-						<div class="stat-value text-2xl text-success" id="obs-sn-low">—</div>
+			</section>
+
+			<!-- Azure DevOps projects -->
+			<section class="section-card">
+				<div class="card-body p-5">
+					<h2 class="card-title text-base">Azure DevOps projects (self-service)</h2>
+					<p class="text-xs text-base-content/50 mb-2">Projects after successful Terraform provisioning</p>
+					<div class="overflow-x-auto max-h-72 overflow-y-auto">
+						<table class="table table-xs">
+							<thead class="sticky top-0 bg-base-100 z-10">
+								<tr>
+									<th>Project</th>
+									<th>Created by</th>
+									<th>Process</th>
+									<th>Date</th>
+								</tr>
+							</thead>
+							<tbody id="obs-ado-body">
+								<tr>
+									<td colspan="4" class="text-base-content/50">Loading…</td>
+								</tr>
+							</tbody>
+						</table>
 					</div>
 				</div>
-				<div class="overflow-x-auto">
-					<table class="table table-sm">
-						<thead>
-							<tr>
-								<th>Ticket</th>
-								<th>Description</th>
-								<th>Severity</th>
-								<th>Created by</th>
-								<th>Created</th>
-							</tr>
-						</thead>
-						<tbody id="obs-sn-body">
-							<tr>
-								<td colspan="5" class="text-base-content/50">Loading…</td>
-							</tr>
-						</tbody>
-					</table>
-				</div>
-			</div>
-		</section>
+			</section>
+
+		</div>
 	</div>
 </div>
 
@@ -211,7 +217,7 @@
 			clearNotice();
 			try {
 				const [w, s, a, t] = await Promise.all([
-					loadJson("/api/observability/widgets"),
+					loadJson("/api/observability/widgets/usage"),
 					loadJson("/api/observability/self-services"),
 					loadJson("/api/observability/azure-projects"),
 					loadJson("/api/observability/tickets"),
@@ -240,14 +246,25 @@
 				const sRows = s?.data || [];
 				selfBody.innerHTML =
 					sRows.length === 0
-						? '<tr><td colspan="2" class="text-base-content/50">No data yet</td></tr>'
+						? '<tr><td colspan="6" class="text-base-content/50">No data yet</td></tr>'
 						: sRows
-								.map(
-									(r) =>
-										`<tr><td>${esc(r.name)}</td><td class="text-right font-mono">${esc(
-											r.count
-										)}</td></tr>`
-								)
+								.map((r) => {
+									const opened = r.total ?? r.count ?? 0;
+									const approved = r.approved ?? 0;
+									const completed = r.completed ?? 0;
+									const failed = r.failed ?? 0;
+									const rejected = r.rejected ?? 0;
+									return (
+										`<tr>` +
+										`<td>${esc(r.name)}</td>` +
+										`<td class="text-right font-mono">${esc(opened)}</td>` +
+										`<td class="text-right font-mono text-info">${esc(approved)}</td>` +
+										`<td class="text-right font-mono text-success">${esc(completed)}</td>` +
+										`<td class="text-right font-mono text-error">${esc(failed)}</td>` +
+										`<td class="text-right font-mono text-base-content/60">${esc(rejected)}</td>` +
+										`</tr>`
+									);
+								})
 								.join("");
 
 				const aRows = a?.data || [];

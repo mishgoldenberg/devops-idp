@@ -1,12 +1,12 @@
 import re
 from datetime import datetime, timezone
-from typing import Any, Dict, Literal
+from typing import Any, Dict, List, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, field_validator
 
-from db import execute, query_one
-from security import AuthUser, get_current_user, has_effective_admin_access
+from db import execute_returning, query_all, query_one
+from security import AuthUser, get_current_user, has_effective_admin_access_live
 
 router = APIRouter()
 
@@ -27,7 +27,7 @@ class GrantRoleRequest(BaseModel):
 
 
 def _require_app_admin(current_user: AuthUser) -> None:
-    if not has_effective_admin_access(current_user):
+    if not has_effective_admin_access_live(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Insufficient permissions",
@@ -49,6 +49,44 @@ def _platform_admin_role() -> Dict[str, Any]:
 
 def _is_platform_admin_role_name(role_name: str) -> bool:
     return (role_name or "").strip().lower() == "platform admin"
+
+
+@router.get("/users")
+def list_users(
+    current_user: AuthUser = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    Return all active users who have logged in at least once.
+    Excludes the current admin from the list. Admin-only.
+    """
+    _require_app_admin(current_user)
+
+    rows = query_all(
+        """
+        SELECT u.email, COALESCE(u.full_name, u.email) AS display_name, r.name AS role_name
+        FROM users u
+        JOIN roles r ON u.role_id = r.id
+        WHERE u.is_active = true
+          AND LOWER(u.email) != %s
+        ORDER BY u.email ASC
+        """,
+        [str(current_user.get("email", "")).strip().lower()],
+    )
+
+    users: List[Dict[str, str]] = [
+        {
+            "email": str(row["email"]),
+            "display_name": str(row["display_name"]),
+            "role_name": str(row["role_name"]),
+        }
+        for row in rows
+    ]
+
+    return {
+        "success": True,
+        "data": users,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 @router.post("/grant-role")
@@ -84,18 +122,25 @@ def grant_role(
             detail="User already has Admin access",
         )
 
-    execute(
+    updated = execute_returning(
         """
         UPDATE users
         SET role_id = %s, updated_at = CURRENT_TIMESTAMP
         WHERE id = %s
+        RETURNING id
         """,
-        [admin_role["id"], target["id"]],
+        [admin_role["id"], str(target["id"])],
     )
+
+    if not updated:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Role update failed — please try again",
+        )
 
     return {
         "success": True,
-        "message": "User granted Admin permissions",
+        "message": f"Admin access granted to {target['email']}. They must sign out and sign back in for the change to take effect.",
         "data": {"email": target["email"], "role": body.role},
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }

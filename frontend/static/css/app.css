@@ -4,3 +4,64 @@
 		nord --default,
 		night --prefersdark;
 }
+
+/*
+ * DevOps Portal — shared design system.
+ * Semantic classes keep every page/section visually consistent
+ * (same spacing scale, header layout, card style, widget grid).
+ */
+@layer components {
+	/* Outer container that sits to the right of the sidebar. */
+	.page-shell {
+		@apply flex-1 min-h-0 flex flex-col overflow-hidden bg-base-200;
+	}
+
+	/* Page header bar: title/subtitle on the left, actions on the right. */
+	.page-header {
+		@apply bg-base-100 border-b border-base-300 px-8 py-6
+			flex items-center justify-between gap-4 shrink-0;
+	}
+
+	/* Page title + subtitle pair. */
+	.page-title {
+		@apply text-3xl font-bold text-base-content;
+	}
+	.page-subtitle {
+		@apply text-sm text-base-content/60 mt-1;
+	}
+
+	/* Section heading used inside cards. */
+	.section-title {
+		@apply text-base font-semibold text-base-content;
+	}
+
+	/* Main scrollable content area with consistent spacing. */
+	.page-content {
+		@apply flex-1 min-h-0 overflow-y-auto p-6;
+	}
+	/* Same as page-content but edge-to-edge (widget grid supplies its own padding). */
+	.page-content-flush {
+		@apply flex-1 min-h-0 overflow-y-auto;
+	}
+
+	/* Reusable surface card — same border, shadow, background everywhere. */
+	.section-card {
+		@apply card bg-base-100 border border-base-300 shadow;
+	}
+	/* Clickable card variant: adds hover affordance. */
+	.section-card-interactive {
+		@apply card bg-base-100 border border-base-300 shadow
+			transition hover:border-primary hover:shadow-md;
+	}
+
+	/* Responsive grid used by system pages for widgets. */
+	.widget-grid {
+		@apply grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 p-6;
+	}
+
+	/* Standard empty-state block. */
+	.empty-state {
+		@apply flex flex-col items-center justify-center text-center
+			text-base-content/60 py-10 gap-2;
+	}
+}

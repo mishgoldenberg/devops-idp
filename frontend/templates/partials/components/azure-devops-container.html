@@ -1,21 +1,16 @@
-<div class="flex-1 min-h-0 flex flex-col overflow-hidden bg-base-200">
-	<!-- Page Header -->
-	<header
-		class="bg-base-100 shadow-sm border-b border-base-300 px-8 py-8 flex items-center justify-between"
-	>
+<div class="page-shell">
+	<header class="page-header">
 		<div>
-			<h1 class="text-3xl font-bold text-base-content">Azure DevOps</h1>
-			<p class="text-base-content/60">Tasks, Pull Requests, and Pipelines</p>
+			<h1 class="page-title">Azure DevOps</h1>
+			<p class="page-subtitle">Tasks, Pull Requests, and Pipelines</p>
 		</div>
 		<button id="refresh-btn" class="btn btn-outline btn-sm">
 			&#8635; Refresh
 		</button>
 	</header>
 
-	<!-- Scrollable Content Area -->
-	<div class="flex-1 min-h-0 overflow-y-auto">
-		<!-- Widget Grid -->
-		<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 p-8">
+	<div class="page-content-flush">
+		<div class="widget-grid">
 			<!-- Azure DevOps Tasks Widget -->
 			<div
 				id="ado-tasks-component"
@@ -27,7 +22,7 @@
 			>
 				<div class="widget-loading h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"
@@ -48,7 +43,7 @@
 			>
 				<div class="widget-loading h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"
@@ -69,7 +64,7 @@
 			>
 				<div class="widget-loading h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"
@@ -90,7 +85,7 @@
 			>
 				<div class="widget-loading h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"

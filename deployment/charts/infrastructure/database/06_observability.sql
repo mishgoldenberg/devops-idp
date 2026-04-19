@@ -1,11 +1,34 @@
 -- Portal observability tables (mirrors backend/app/db.ensure_tables for Helm init jobs)
 
+-- Drop legacy widget tables from earlier iterations so the new event-based
+-- widget_usage schema below can be created cleanly.
+DROP TABLE IF EXISTS widget_user_views;
+DROP TABLE IF EXISTS home_widget_prefs;
+DROP TABLE IF EXISTS widget_usage;
+
+-- Event-based widget usage: one row per widget render.
 CREATE TABLE IF NOT EXISTS widget_usage (
-    widget_key   VARCHAR(255) PRIMARY KEY,
-    widget_name  VARCHAR(255) NOT NULL,
-    usage_count  BIGINT NOT NULL DEFAULT 0,
-    last_used_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    id         SERIAL PRIMARY KEY,
+    user_id    TEXT NOT NULL,
+    widget_key TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    session_id TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+CREATE INDEX IF NOT EXISTS idx_widget_usage_key ON widget_usage (widget_key);
+CREATE INDEX IF NOT EXISTS idx_widget_usage_session ON widget_usage (session_id);
+
+-- Current dashboard state: one row per user/widget the user has active.
+-- Observability page reads this for live "users with widget" counts.
+CREATE TABLE IF NOT EXISTS user_widgets (
+    id         SERIAL PRIMARY KEY,
+    user_id    TEXT NOT NULL,
+    widget_key TEXT NOT NULL,
+    session_id TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE (user_id, widget_key)
+);
+CREATE INDEX IF NOT EXISTS idx_user_widgets_key ON user_widgets (widget_key);
 
 CREATE TABLE IF NOT EXISTS self_service_usage (
     service_key      VARCHAR(255) PRIMARY KEY,
@@ -42,9 +65,12 @@ DO $obsgrant$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'devops') THEN
     GRANT SELECT, INSERT, UPDATE, DELETE ON widget_usage TO devops;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON user_widgets TO devops;
     GRANT SELECT, INSERT, UPDATE, DELETE ON self_service_usage TO devops;
     GRANT SELECT, INSERT, UPDATE, DELETE ON azure_projects TO devops;
     GRANT SELECT, INSERT, UPDATE, DELETE ON servicenow_tickets TO devops;
+    GRANT USAGE, SELECT ON SEQUENCE widget_usage_id_seq TO devops;
+    GRANT USAGE, SELECT ON SEQUENCE user_widgets_id_seq TO devops;
     GRANT USAGE, SELECT ON SEQUENCE azure_projects_id_seq TO devops;
     GRANT USAGE, SELECT ON SEQUENCE servicenow_tickets_id_seq TO devops;
   END IF;

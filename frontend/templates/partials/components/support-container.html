@@ -1,24 +1,24 @@
-<div class="flex-1 min-h-0 flex flex-col overflow-hidden bg-base-200">
-	<header class="bg-base-100 border-b border-base-300 px-8 py-8 flex items-center justify-between">
+<div class="page-shell">
+	<header class="page-header">
 		<div>
-			<h1 class="text-3xl font-bold text-base-content">Support</h1>
-			<p class="text-base-content/60">View, open and reply to your ServiceNow tickets</p>
+			<h1 class="page-title">Support</h1>
+			<p class="page-subtitle">View, open and reply to your ServiceNow tickets</p>
 		</div>
 		<button id="support-new-ticket-btn" class="btn btn-primary btn-sm">New Ticket</button>
 	</header>
 
 	<div class="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-5 gap-6 p-6">
-		<div class="lg:col-span-2 card bg-base-100 border border-base-300 shadow min-h-0">
+		<div class="lg:col-span-2 section-card min-h-0">
 			<div class="card-body p-0 min-h-0 flex flex-col">
-				<div class="px-4 py-3 border-b border-base-300 font-semibold">My Tickets</div>
+				<div class="px-4 py-3 border-b border-base-300 section-title">My Tickets</div>
 				<div id="support-ticket-error" class="hidden mx-3 mt-3 alert alert-warning alert-soft text-xs"></div>
 				<ul id="support-ticket-list" class="flex-1 min-h-0 overflow-y-auto divide-y divide-base-300"></ul>
 			</div>
 		</div>
-		<div class="lg:col-span-3 card bg-base-100 border border-base-300 shadow min-h-0">
+		<div class="lg:col-span-3 section-card min-h-0">
 			<div class="card-body min-h-0 flex flex-col gap-3">
-				<div id="support-ticket-title" class="font-semibold text-lg">Select a ticket</div>
-				<div id="support-conversation" class="flex-1 min-h-0 overflow-y-auto border border-base-300 rounded p-3 space-y-2"></div>
+				<div id="support-ticket-title" class="section-title text-lg">Select a ticket</div>
+				<div id="support-conversation" class="flex-1 min-h-0 overflow-y-auto border border-base-300 rounded-lg p-3 space-y-2"></div>
 				<div class="flex gap-2">
 					<textarea id="support-reply" class="textarea textarea-bordered flex-1" rows="2" placeholder="Write a reply..."></textarea>
 					<button id="support-send-reply" class="btn btn-primary self-end">Send</button>
@@ -43,6 +43,7 @@
 				<option value="4">4 - Low</option>
 				<option value="5">5 - Planning</option>
 			</select>
+			<div id="support-new-ticket-error" class="hidden alert alert-error alert-soft text-xs whitespace-pre-wrap"></div>
 		</div>
 		<div class="px-5 pb-5 flex justify-end gap-2">
 			<button id="support-cancel-ticket" class="btn">Cancel</button>
@@ -59,112 +60,260 @@
 		const titleEl = document.getElementById("support-ticket-title");
 		const convEl = document.getElementById("support-conversation");
 		const replyEl = document.getElementById("support-reply");
+		const modal = document.getElementById("support-new-ticket-overlay");
+		const modalErrEl = document.getElementById("support-new-ticket-error");
+
+		// ── helpers ────────────────────────────────────────────────────────
+
+		function esc(s) {
+			if (s == null) return "";
+			return String(s)
+				.replace(/&/g, "&amp;")
+				.replace(/</g, "&lt;")
+				.replace(/>/g, "&gt;")
+				.replace(/"/g, "&quot;")
+				.replace(/'/g, "&#39;");
+		}
+
+		// Normalize whatever FastAPI sends in `detail` into a readable string.
+		// Handles: string, null, array (pydantic), or dict (legacy shape).
+		function extractErrorMessage(json, fallback) {
+			if (!json) return fallback;
+			const d = json.detail;
+			if (typeof d === "string" && d.trim()) return d;
+			if (Array.isArray(d)) {
+				const parts = d.map((e) => e?.msg || e?.message).filter(Boolean);
+				if (parts.length) return parts.join("; ");
+			}
+			if (d && typeof d === "object") {
+				// Legacy { message, instance, snow_response } payload.
+				if (d.message) return String(d.message);
+				try { return JSON.stringify(d); } catch (_) { /* ignore */ }
+			}
+			if (typeof json.message === "string" && json.message.trim()) return json.message;
+			return fallback;
+		}
+
+		async function parseJsonSafe(res) {
+			try { return await res.json(); }
+			catch (_) {
+				try { return { detail: (await res.text()) || "Internal Server Error" }; }
+				catch (__) { return { detail: "Internal Server Error" }; }
+			}
+		}
+
+		function showListError(msg) {
+			if (!errorEl) return;
+			errorEl.textContent = msg;
+			errorEl.classList.remove("hidden");
+		}
+
+		function clearListError() {
+			if (!errorEl) return;
+			errorEl.classList.add("hidden");
+			errorEl.textContent = "";
+		}
+
+		function showModalError(msg) {
+			if (!modalErrEl) return;
+			modalErrEl.textContent = msg;
+			modalErrEl.classList.remove("hidden");
+		}
+
+		function clearModalError() {
+			if (!modalErrEl) return;
+			modalErrEl.classList.add("hidden");
+			modalErrEl.textContent = "";
+		}
+
+		function fmtDt(iso) {
+			if (!iso) return "";
+			const d = new Date(iso);
+			return isNaN(d.getTime()) ? String(iso) : d.toLocaleString();
+		}
+
+		// ── list ──────────────────────────────────────────────────────────
 
 		async function loadTickets() {
-			const res = await fetch("/api/support/tickets", { credentials: "same-origin" });
-			let json = null;
+			clearListError();
+			listEl.innerHTML = '<li class="px-4 py-3 text-sm opacity-60">Loading…</li>';
+			let res;
 			try {
-				json = await res.json();
-			} catch {
-				const raw = await res.text();
-				json = { detail: raw || "Internal Server Error" };
-			}
-			if (!res.ok) {
-				errorEl.textContent = json?.detail || "Failed to load tickets";
-				errorEl.classList.remove("hidden");
+				res = await fetch("/api/support/tickets", { credentials: "same-origin" });
+			} catch (netErr) {
 				listEl.innerHTML = "";
+				showListError("Could not reach the portal backend. Check your connection and try again.");
 				return;
 			}
-			errorEl.classList.add("hidden");
-			const tickets = json?.data || [];
+			const json = await parseJsonSafe(res);
+			if (!res.ok) {
+				listEl.innerHTML = "";
+				showListError(extractErrorMessage(json, "Failed to load tickets (HTTP " + res.status + ")."));
+				return;
+			}
+			const tickets = Array.isArray(json?.data) ? json.data : [];
+			if (tickets.length === 0) {
+				listEl.innerHTML = '<li class="px-4 py-6 text-sm text-center opacity-60">No tickets yet. Click <span class="font-semibold">New Ticket</span> to open one.</li>';
+				return;
+			}
 			listEl.innerHTML = tickets.map((t) => `
 				<li>
-					<button class="w-full text-left px-4 py-3 hover:bg-base-200" data-id="${t.sys_id}">
-						<div class="text-xs text-primary font-semibold">${t.number}</div>
-						<div class="text-sm">${t.short_description}</div>
-						<div class="text-xs opacity-60">${t.state}</div>
+					<button class="w-full text-left px-4 py-3 hover:bg-base-200 transition-colors" data-id="${esc(t.sys_id)}">
+						<div class="text-xs text-primary font-semibold">${esc(t.number || "")}</div>
+						<div class="text-sm">${esc(t.short_description || "(no description)")}</div>
+						<div class="text-xs opacity-60">${esc(t.state || "")}</div>
 					</button>
 				</li>
 			`).join("");
 			listEl.querySelectorAll("button[data-id]").forEach((btn) => {
 				btn.addEventListener("click", () => openTicket(btn.dataset.id));
 			});
+
+			// Deep-link support: /ui/support?ticket=<sys_id> auto-opens the ticket
+			// once tickets have loaded. Used by the ServiceNow dashboard widget.
+			try {
+				const params = new URLSearchParams(window.location.search);
+				const target = params.get("ticket");
+				if (target && tickets.some((t) => t.sys_id === target)) {
+					openTicket(target);
+					fetch("/api/items/mark-seen", {
+						method: "POST",
+						credentials: "same-origin",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({ source: "servicenow", item_id: target }),
+						keepalive: true,
+					}).catch(() => {});
+					const url = new URL(window.location.href);
+					url.searchParams.delete("ticket");
+					window.history.replaceState({}, "", url.toString());
+				}
+			} catch (_) { /* silent */ }
 		}
+
+		// ── detail / conversation ────────────────────────────────────────
 
 		async function openTicket(id) {
 			selectedId = id;
-			const res = await fetch("/api/support/tickets/" + encodeURIComponent(id), { credentials: "same-origin" });
-			let json = null;
+			titleEl.textContent = "Loading…";
+			convEl.innerHTML = '<div class="text-sm opacity-60">Loading conversation…</div>';
+			let res;
 			try {
-				json = await res.json();
-			} catch {
-				const raw = await res.text();
-				json = { detail: raw || "Internal Server Error" };
+				res = await fetch("/api/support/tickets/" + encodeURIComponent(id), { credentials: "same-origin" });
+			} catch (netErr) {
+				titleEl.textContent = "Ticket";
+				convEl.innerHTML = '<div class="text-sm text-error">Could not reach the portal backend.</div>';
+				return;
 			}
+			const json = await parseJsonSafe(res);
 			if (!res.ok) {
-				convEl.innerHTML = '<div class="text-sm text-error">Failed to load ticket details.</div>';
+				titleEl.textContent = "Ticket";
+				const msg = extractErrorMessage(json, "Failed to load ticket details (HTTP " + res.status + ").");
+				convEl.innerHTML = '<div class="text-sm text-error">' + esc(msg) + '</div>';
 				return;
 			}
 			const t = json?.data || {};
 			titleEl.textContent = `${t.number || ""} ${t.short_description || ""}`.trim() || "Ticket";
-			const convo = t.conversation || [];
-			convEl.innerHTML = convo.map((m) => `
-				<div class="rounded border border-base-300 p-2">
-					<div class="text-xs opacity-60">${m.sys_created_by || "user"} • ${m.sys_created_on || ""}</div>
-					<div class="text-sm whitespace-pre-wrap">${m.value || ""}</div>
-				</div>
-			`).join("");
+			const convo = Array.isArray(t.conversation) ? t.conversation : [];
+			if (convo.length === 0) {
+				convEl.innerHTML = '<div class="text-sm opacity-60">No messages yet. Write a reply below to start the conversation.</div>';
+			} else {
+				convEl.innerHTML = convo.map((m) => `
+					<div class="rounded border border-base-300 p-2">
+						<div class="text-xs opacity-60">${esc(m.sys_created_by || "user")} • ${esc(fmtDt(m.sys_created_on))}</div>
+						<div class="text-sm whitespace-pre-wrap">${esc(m.value || "")}</div>
+					</div>
+				`).join("");
+			}
 			convEl.scrollTop = convEl.scrollHeight;
 		}
 
+		// ── reply ────────────────────────────────────────────────────────
+
 		document.getElementById("support-send-reply")?.addEventListener("click", async () => {
-			if (!selectedId || !replyEl.value.trim()) return;
-			await fetch("/api/support/tickets/" + encodeURIComponent(selectedId) + "/reply", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ message: replyEl.value.trim() }),
-				credentials: "same-origin",
-			});
-			replyEl.value = "";
-			openTicket(selectedId);
+			if (!selectedId) return;
+			const body = replyEl.value.trim();
+			if (!body) return;
+			const sendBtn = document.getElementById("support-send-reply");
+			sendBtn.disabled = true;
+			try {
+				const res = await fetch("/api/support/tickets/" + encodeURIComponent(selectedId) + "/reply", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ message: body }),
+					credentials: "same-origin",
+				});
+				const json = await parseJsonSafe(res);
+				if (!res.ok) {
+					const msg = extractErrorMessage(json, "Failed to send reply.");
+					convEl.insertAdjacentHTML(
+						"beforeend",
+						'<div class="text-sm text-error">' + esc(msg) + '</div>'
+					);
+					convEl.scrollTop = convEl.scrollHeight;
+					return;
+				}
+				replyEl.value = "";
+				openTicket(selectedId);
+			} catch (_) {
+				convEl.insertAdjacentHTML(
+					"beforeend",
+					'<div class="text-sm text-error">Could not reach the portal backend.</div>'
+				);
+			} finally {
+				sendBtn.disabled = false;
+			}
 		});
 
-		const modal = document.getElementById("support-new-ticket-overlay");
-		document.getElementById("support-new-ticket-btn")?.addEventListener("click", () => {
+		// ── new-ticket modal ─────────────────────────────────────────────
+
+		function openModal() {
+			clearModalError();
 			modal?.classList.remove("hidden");
 			modal?.classList.add("flex");
-		});
-		document.getElementById("support-cancel-ticket")?.addEventListener("click", () => {
+		}
+
+		function closeModal() {
 			modal?.classList.add("hidden");
 			modal?.classList.remove("flex");
-		});
+			clearModalError();
+		}
+
+		document.getElementById("support-new-ticket-btn")?.addEventListener("click", openModal);
+		document.getElementById("support-cancel-ticket")?.addEventListener("click", closeModal);
+
 		document.getElementById("support-create-ticket")?.addEventListener("click", async () => {
-			const title = document.getElementById("support-new-title")?.value || "";
-			const description = document.getElementById("support-new-description")?.value || "";
+			const title = (document.getElementById("support-new-title")?.value || "").trim();
+			const description = (document.getElementById("support-new-description")?.value || "").trim();
 			const priority = document.getElementById("support-new-priority")?.value || "3";
-			if (!title.trim() || !description.trim()) return;
-			const res = await fetch("/api/support/tickets", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ title: title.trim(), description: description.trim(), priority }),
-				credentials: "same-origin",
-			});
-			let json = null;
-			try {
-				json = await res.json();
-			} catch {
-				const raw = await res.text();
-				json = { detail: raw || "Internal Server Error" };
-			}
-			if (!res.ok) {
-				errorEl.textContent = json?.detail || "Failed to create ticket";
-				errorEl.classList.remove("hidden");
+			if (!title || !description) {
+				showModalError("Title and description are required.");
 				return;
 			}
-			modal?.classList.add("hidden");
-			modal?.classList.remove("flex");
-			await loadTickets();
-			if (json?.data?.sys_id) openTicket(json.data.sys_id);
+			clearModalError();
+			const createBtn = document.getElementById("support-create-ticket");
+			createBtn.disabled = true;
+			try {
+				const res = await fetch("/api/support/tickets", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ title, description, priority }),
+					credentials: "same-origin",
+				});
+				const json = await parseJsonSafe(res);
+				if (!res.ok) {
+					showModalError(extractErrorMessage(json, "Failed to create ticket (HTTP " + res.status + ")."));
+					return;
+				}
+				closeModal();
+				document.getElementById("support-new-title").value = "";
+				document.getElementById("support-new-description").value = "";
+				await loadTickets();
+				if (json?.data?.sys_id) openTicket(json.data.sys_id);
+			} catch (_) {
+				showModalError("Could not reach the portal backend. Try again in a moment.");
+			} finally {
+				createBtn.disabled = false;
+			}
 		});
 
 		loadTickets();

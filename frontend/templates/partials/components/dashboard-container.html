@@ -1,16 +1,13 @@
 <div class="drawer drawer-end flex-1 min-h-0">
 	<input id="dashboard-customize-drawer" type="checkbox" class="drawer-toggle" />
 
-	<main class="drawer-content flex-1 min-h-0 flex flex-col h-full overflow-hidden">
-		<!-- Header -->
-		<header
-			class="bg-base-100 shadow-sm border-b border-base-300 px-6 py-8 flex items-center justify-between"
-		>
+	<main class="drawer-content page-shell h-full">
+		<header class="page-header">
 			<div>
-				<h2 class="text-3xl font-bold text-base-content">
+				<h1 class="page-title">
 					Welcome back, {{ user.display_name }}!
-				</h2>
-				<p class="mt-1 text-sm text-base-content/50">
+				</h1>
+				<p class="page-subtitle">
 					Summary of your connected systems status and tasks.
 				</p>
 			</div>
@@ -31,10 +28,7 @@
 			</div>
 		</header>
 
-		<!-- Page Content (isolated scroll area) -->
-		<div
-			class="flex-1 min-h-0 overflow-y-auto p-6 bg-base-200 flex flex-col gap-6"
-		>
+		<div class="page-content flex flex-col gap-6">
 		<!-- Quick Links sits above the widget grid at its natural width -->
 		<div
 			id="quick-links-component"
@@ -43,8 +37,9 @@
 			hx-get="/ui/components/quick-links"
 			hx-trigger="load"
 			hx-swap="innerHTML"
+			{% if enabled_widgets is defined and 'quick_links' not in enabled_widgets %}style="display:none"{% endif %}
 		>
-			<div class="card w-full bg-base-100 border border-base-300 shadow">
+			<div class="section-card w-full">
 				<div class="card-body p-6">
 					<span
 						class="loading loading-spinner loading-md text-base-content/40"
@@ -66,10 +61,11 @@
 				hx-trigger="load, every 60s, click from:#refresh-btn"
 				hx-target="find .widget-content"
 				hx-swap="innerHTML"
+				{% if enabled_widgets is defined and 'ado_my_work_items' not in enabled_widgets %}style="display:none"{% endif %}
 			>
 				<div class="widget-loading h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"
@@ -78,7 +74,7 @@
 				</div>
 				<div class="widget-content h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"
@@ -96,10 +92,11 @@
 				hx-trigger="load, every 60s, click from:#refresh-btn"
 				hx-target="find .widget-content"
 				hx-swap="innerHTML"
+				{% if enabled_widgets is defined and 'snow_my_tickets' not in enabled_widgets %}style="display:none"{% endif %}
 			>
 				<div class="widget-loading h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"
@@ -108,7 +105,7 @@
 				</div>
 				<div class="widget-content h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"
@@ -126,10 +123,11 @@
 				hx-trigger="load, every 60s, click from:#refresh-btn"
 				hx-target="find .widget-content"
 				hx-swap="innerHTML"
+				{% if enabled_widgets is defined and 'ado_my_pull_requests' not in enabled_widgets %}style="display:none"{% endif %}
 			>
 				<div class="widget-loading h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"
@@ -138,7 +136,7 @@
 				</div>
 				<div class="widget-content h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"
@@ -156,10 +154,11 @@
 				hx-trigger="load, every 60s, click from:#refresh-btn"
 				hx-target="find .widget-content"
 				hx-swap="innerHTML"
+				{% if enabled_widgets is defined and 'ado_prs_for_review' not in enabled_widgets %}style="display:none"{% endif %}
 			>
 				<div class="widget-loading h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"
@@ -168,7 +167,7 @@
 				</div>
 				<div class="widget-content h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"
@@ -186,10 +185,11 @@
 				hx-trigger="load, every 60s, click from:#refresh-btn"
 				hx-target="find .widget-content"
 				hx-swap="innerHTML"
+				{% if enabled_widgets is defined and 'ado_pipeline_status' not in enabled_widgets %}style="display:none"{% endif %}
 			>
 				<div class="widget-loading h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"
@@ -198,7 +198,7 @@
 				</div>
 				<div class="widget-content h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"
@@ -216,10 +216,11 @@
 				hx-trigger="load, every 60s, click from:#refresh-btn"
 				hx-target="find .widget-content"
 				hx-swap="innerHTML"
+				{% if enabled_widgets is defined and 'sonar_quality_gate' not in enabled_widgets %}style="display:none"{% endif %}
 			>
 				<div class="widget-loading h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"
@@ -228,7 +229,7 @@
 				</div>
 				<div class="widget-content h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"
@@ -246,10 +247,11 @@
 				hx-trigger="load, every 60s, click from:#refresh-btn"
 				hx-target="find .widget-content"
 				hx-swap="innerHTML"
+				{% if enabled_widgets is defined and 'artifactory_storage' not in enabled_widgets %}style="display:none"{% endif %}
 			>
 				<div class="widget-loading h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"
@@ -258,7 +260,7 @@
 				</div>
 				<div class="widget-content h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"
@@ -276,10 +278,11 @@
 				hx-trigger="load, every 60s, click from:#refresh-btn"
 				hx-target="find .widget-content"
 				hx-swap="innerHTML"
+				{% if enabled_widgets is defined and 'service_health' not in enabled_widgets %}style="display:none"{% endif %}
 			>
 				<div class="widget-loading h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"
@@ -288,7 +291,7 @@
 				</div>
 				<div class="widget-content h-full">
 					<div
-						class="card bg-base-100 border border-base-300 shadow h-full flex items-center justify-center"
+						class="section-card h-full flex items-center justify-center"
 					>
 						<span
 							class="loading loading-spinner loading-md text-base-content/40"
@@ -385,31 +388,82 @@
 			artifactory_storage: "artifactory-storage-component",
 			service_health: "service-health-component",
 		};
+
+		// Server-rendered initial state — no fetch needed, no flash on F5.
+		const serverEnabled = {{ enabled_widgets | tojson | default('[]') }};
+		const initialEnabled = serverEnabled.length > 0 ? serverEnabled : Object.keys(widgetKeys);
+
 		const toggles = Array.from(document.querySelectorAll(".dashboard-widget-toggle"));
 		const drawer = document.getElementById("dashboard-customize-drawer");
 		const saveBtn = document.getElementById("dashboard-save-btn");
+
+		// --- Observability: session id + per-widget render tracking ---
+		function getSessionId() {
+			try {
+				let sid = localStorage.getItem("session_id");
+				if (!sid) {
+					sid = (window.crypto && crypto.randomUUID)
+						? crypto.randomUUID()
+						: String(Date.now()) + "-" + Math.random().toString(36).slice(2);
+					localStorage.setItem("session_id", sid);
+				}
+				return sid;
+			} catch (_) {
+				return null;
+			}
+		}
+		const sessionId = getSessionId();
+		const trackedThisMount = new Set();
+		function trackWidget(key) {
+			if (!key || trackedThisMount.has(key)) return;
+			trackedThisMount.add(key);
+			try {
+				fetch("/api/observability/widget", {
+					method: "POST",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ widget_key: key, session_id: sessionId }),
+					keepalive: true,
+				}).catch(() => {});
+			} catch (_) {
+				/* silent-fail per spec */
+			}
+		}
+
+		// Always send the full current widget list; backend replaces the row set.
+		// Called on initial load and after every change/save so observability
+		// reflects the live dashboard state (including removals).
+		function syncUserWidgets(widgets) {
+			try {
+				fetch("/api/dashboard/widgets/sync", {
+					method: "POST",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ widgets, session_id: sessionId }),
+					keepalive: true,
+				}).catch(() => {});
+			} catch (_) {
+				/* silent-fail */
+			}
+		}
 
 		function apply(enabled) {
 			Object.entries(widgetKeys).forEach(([key, id]) => {
 				const el = document.getElementById(id);
 				if (!el) return;
-				el.style.display = enabled.includes(key) ? "" : "none";
+				const visible = enabled.includes(key);
+				el.style.display = visible ? "" : "none";
+				if (visible) trackWidget(key);
 			});
 			toggles.forEach((cb) => {
 				cb.checked = enabled.includes(cb.dataset.widgetKey);
 			});
 		}
 
-		async function loadPrefs() {
-			try {
-				const res = await fetch("/ui/dashboard/preferences");
-				const data = await res.json();
-				const enabled = data?.data?.enabled || Object.keys(widgetKeys);
-				apply(enabled);
-			} catch {
-				apply(Object.keys(widgetKeys));
-			}
-		}
+		// Sync checkboxes + fire initial render-tracking events.
+		apply(initialEnabled);
+		// Initial sync: make sure DB matches what the user actually sees.
+		syncUserWidgets(initialEnabled);
 
 		toggles.forEach((cb) =>
 			cb.addEventListener("change", () => {
@@ -420,14 +474,20 @@
 
 		saveBtn?.addEventListener("click", async () => {
 			const enabled = toggles.filter((x) => x.checked).map((x) => x.dataset.widgetKey);
-			await fetch("/ui/dashboard/preferences", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ enabled }),
-			});
+			try {
+				const res = await fetch("/ui/dashboard/preferences", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ enabled }),
+				});
+				if (!res.ok) throw new Error("Save failed: " + res.status);
+			} catch (e) {
+				alert("Could not save preferences: " + (e?.message || e));
+				return;
+			}
+			// Observability: full-state sync after save (handles both add & remove).
+			syncUserWidgets(enabled);
 			if (drawer) drawer.checked = false;
 		});
-
-		loadPrefs();
 	})();
 </script>

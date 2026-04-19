@@ -1,0 +1,192 @@
+<div class="page-shell">
+	<header class="page-header">
+		<div>
+			<h1 class="page-title">My Requests</h1>
+			<p class="page-subtitle">Track the status of your self-service requests</p>
+		</div>
+		<div class="flex items-center gap-2">
+			<a href="/ui/automations" class="btn btn-primary btn-sm">New Request</a>
+			<button id="my-requests-refresh" class="btn btn-outline btn-sm" title="Refresh">
+				<svg viewBox="0 0 24 24" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"></path></svg>
+				Refresh
+			</button>
+		</div>
+	</header>
+
+	<div class="page-content">
+		<div class="flex-1 min-h-0" data-my-root>
+			<div class="flex items-center justify-center py-12 text-sm text-base-content/60" data-my-status>
+				<span class="loading loading-spinner loading-sm text-base-content/40 mr-2"></span>
+				Loading your requests…
+			</div>
+			<ul class="hidden grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" data-my-list></ul>
+		</div>
+	</div>
+</div>
+
+<dialog id="my-requests-modal" class="modal">
+	<div class="modal-box max-w-2xl">
+		<form method="dialog" class="absolute right-2 top-2">
+			<button class="btn btn-sm btn-circle btn-ghost" aria-label="Close">&#10005;</button>
+		</form>
+		<h3 class="font-bold text-lg" data-my-detail-title>Request</h3>
+		<div class="mt-4 space-y-4" data-my-detail-body></div>
+		<div class="modal-action">
+			<form method="dialog"><button class="btn">Close</button></form>
+		</div>
+	</div>
+	<form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<script>
+	(function () {
+		const root = document.querySelector("[data-my-root]");
+		if (!root) return;
+
+		const statusEl = root.querySelector("[data-my-status]");
+		const listEl = root.querySelector("[data-my-list]");
+		const modal = document.getElementById("my-requests-modal");
+		const modalTitle = modal?.querySelector("[data-my-detail-title]");
+		const modalBody = modal?.querySelector("[data-my-detail-body]");
+		const refreshBtn = document.getElementById("my-requests-refresh");
+
+		const STATUS_BADGE = {
+			PENDING: "badge-warning",
+			APPROVED: "badge-info",
+			IN_PROGRESS: "badge-primary",
+			COMPLETED: "badge-success",
+			EXECUTED: "badge-success",
+			FAILED: "badge-error",
+			REJECTED: "badge-ghost",
+		};
+
+		let cache = [];
+
+		function escapeHtml(s) {
+			return String(s ?? "").replace(/[&<>"']/g, (c) => ({
+				"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+			}[c]));
+		}
+		function fmtDate(s) {
+			if (!s) return "—";
+			try { return new Date(s).toLocaleString(); } catch (_) { return s; }
+		}
+		function showStatus(msg, isError) {
+			statusEl.textContent = msg;
+			statusEl.className =
+				"flex items-center justify-center py-12 text-sm " +
+				(isError ? "text-error" : "text-base-content/60");
+			statusEl.classList.remove("hidden");
+			listEl.classList.add("hidden");
+		}
+
+		function summarize(payload) {
+			if (!payload || typeof payload !== "object") return "";
+			const parts = [];
+			if (payload.project_name) parts.push("Project: " + payload.project_name);
+			if (payload.process_type) parts.push("Process: " + payload.process_type);
+			if (payload.projectKey) parts.push("ProjectKey: " + payload.projectKey);
+			return parts.join(" · ");
+		}
+
+		function renderCard(r) {
+			const statusStr = String(r.status || "PENDING").toUpperCase();
+			const badge = STATUS_BADGE[statusStr] || "badge-ghost";
+			const summary = summarize(r.request_payload);
+			return `
+				<li class="section-card hover:shadow-lg transition-shadow cursor-pointer" data-request-id="${r.id}">
+					<div class="card-body p-5 gap-3">
+						<div class="flex items-start justify-between gap-3">
+							<h3 class="card-title text-base leading-snug">${escapeHtml(r.request_title || r.request_type || "Request")}</h3>
+							<span class="badge ${badge} badge-sm whitespace-nowrap">${statusStr.replace("_", " ")}</span>
+						</div>
+						<div class="text-xs text-base-content/60 flex flex-col gap-1">
+							<span><span class="font-medium text-base-content/80">Created:</span> ${fmtDate(r.created_at)}</span>
+							${r.approved_at ? `<span><span class="font-medium text-base-content/80">Decided:</span> ${fmtDate(r.approved_at)}</span>` : ""}
+							${summary ? `<span class="line-clamp-1">${escapeHtml(summary)}</span>` : ""}
+						</div>
+						<div class="text-xs text-base-content/40 mt-1">${escapeHtml(r.request_type || "")}</div>
+					</div>
+				</li>`;
+		}
+
+		async function load() {
+			showStatus("Loading your requests…", false);
+			try {
+				const res = await fetch("/api/approvals/requests?scope=mine", { credentials: "same-origin" });
+				if (!res.ok) throw new Error("HTTP " + res.status);
+				const json = await res.json();
+				cache = Array.isArray(json?.data) ? json.data : [];
+				if (!cache.length) {
+					showStatus("You haven't submitted any requests yet.", false);
+					return;
+				}
+				statusEl.classList.add("hidden");
+				listEl.classList.remove("hidden");
+				listEl.innerHTML = cache.map(renderCard).join("");
+				listEl.querySelectorAll("[data-request-id]").forEach((el) => {
+					el.addEventListener("click", () => openDetail(el.dataset.requestId));
+				});
+			} catch (_err) {
+				showStatus("Could not load your requests.", true);
+			}
+		}
+
+		function renderPayloadFields(payload) {
+			if (!payload || typeof payload !== "object") return `<p class="text-sm text-base-content/60">No inputs.</p>`;
+			const entries = Object.entries(payload);
+			if (!entries.length) return `<p class="text-sm text-base-content/60">No inputs.</p>`;
+			return `
+				<dl class="grid grid-cols-[auto,1fr] gap-x-4 gap-y-1 text-sm">
+					${entries.map(([k, v]) => `
+						<dt class="text-base-content/60">${escapeHtml(k)}</dt>
+						<dd class="break-words">${escapeHtml(typeof v === "object" ? JSON.stringify(v) : v)}</dd>
+					`).join("")}
+				</dl>`;
+		}
+
+		function openDetail(id) {
+			const r = cache.find((x) => String(x.id) === String(id));
+			if (!r || !modal) return;
+			modalTitle.textContent = r.request_title || r.request_type || "Request";
+			const statusStr = String(r.status || "").toUpperCase();
+			const badge = STATUS_BADGE[statusStr] || "badge-ghost";
+			modalBody.innerHTML = `
+				<section>
+					<h4 class="text-xs font-semibold uppercase tracking-widest text-base-content/50 mb-2">Request Info</h4>
+					<dl class="grid grid-cols-[auto,1fr] gap-x-4 gap-y-1 text-sm">
+						<dt class="text-base-content/60">Status</dt>
+						<dd><span class="badge ${badge} badge-sm">${statusStr.replace("_", " ")}</span></dd>
+						<dt class="text-base-content/60">Service type</dt>
+						<dd>${escapeHtml(r.request_type || "")}</dd>
+						<dt class="text-base-content/60">Requested at</dt>
+						<dd>${fmtDate(r.created_at)}</dd>
+						${r.approver_email ? `
+							<dt class="text-base-content/60">Approved by</dt>
+							<dd>${escapeHtml(r.approver_email)}</dd>
+							<dt class="text-base-content/60">Approved at</dt>
+							<dd>${fmtDate(r.approved_at)}</dd>
+						` : ""}
+						${r.rejection_reason ? `
+							<dt class="text-base-content/60">Rejection reason</dt>
+							<dd class="text-error">${escapeHtml(r.rejection_reason)}</dd>
+						` : ""}
+					</dl>
+				</section>
+				<section>
+					<h4 class="text-xs font-semibold uppercase tracking-widest text-base-content/50 mb-2">Inputs</h4>
+					${renderPayloadFields(r.request_payload)}
+				</section>
+				${r.execution_result ? `
+					<section>
+						<h4 class="text-xs font-semibold uppercase tracking-widest text-base-content/50 mb-2">Result</h4>
+						<pre class="text-xs bg-base-200 rounded p-3 overflow-x-auto">${escapeHtml(JSON.stringify(r.execution_result, null, 2))}</pre>
+					</section>` : ""}
+			`;
+			modal.showModal();
+		}
+
+		refreshBtn?.addEventListener("click", load);
+		load();
+	})();
+</script>

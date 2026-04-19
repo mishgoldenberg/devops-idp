@@ -142,6 +142,45 @@ def has_effective_admin_access(user: AuthUser) -> bool:
     return False
 
 
+def has_effective_admin_access_live(user: AuthUser) -> bool:
+    """
+    Like has_effective_admin_access but also checks the live DB role as a fallback.
+
+    Use this for sidebar / page-guard decisions so that users whose DB role was
+    promoted after their current JWT was issued don't have to re-login just to see
+    the Admin section — they'll get full API access on their next login.
+    """
+    if has_effective_admin_access(user):
+        return True
+    user_id = user.get("id")
+    if not user_id:
+        return False
+    try:
+        from db import query_one
+
+        row = query_one(
+            """
+            SELECT r.name AS role_name, r.hierarchy_level
+            FROM users u
+            JOIN roles r ON u.role_id = r.id
+            WHERE u.id = %s AND u.is_active = true
+            """,
+            [str(user_id)],
+        )
+        if not row:
+            return False
+        try:
+            if int(row.get("hierarchy_level", 99)) == 1:
+                return True
+        except (TypeError, ValueError):
+            pass
+        if (row.get("role_name") or "").strip().lower() == "platform admin":
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def can_view_observability(user: AuthUser) -> bool:
     """
     Observability and monitoring are restricted to Admins only.

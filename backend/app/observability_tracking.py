@@ -29,53 +29,6 @@ def _widget_label(widget_key: str) -> str:
     return WIDGET_LABELS.get(widget_key, widget_key.replace("_", " ").title())
 
 
-def record_widget_view(widget_key: str) -> None:
-    if not widget_key or not str(widget_key).strip():
-        return
-    key = str(widget_key).strip()[:255]
-    label = _widget_label(key)[:255]
-    try:
-        import db
-
-        db.execute(
-            """
-            INSERT INTO widget_usage (widget_key, widget_name, usage_count, last_used_at)
-            VALUES (%s, %s, 1, CURRENT_TIMESTAMP)
-            ON CONFLICT (widget_key) DO UPDATE SET
-              usage_count = widget_usage.usage_count + 1,
-              widget_name = EXCLUDED.widget_name,
-              last_used_at = CURRENT_TIMESTAMP
-            """,
-            [key, label],
-        )
-    except Exception as exc:
-        logger.debug("record_widget_view failed: %s", exc)
-
-
-def record_widget_add(widget_key: str) -> None:
-    """User added/enabled a widget on their dashboard."""
-    if not widget_key or not str(widget_key).strip():
-        return
-    key = str(widget_key).strip()[:255]
-    label = _widget_label(key)[:255]
-    try:
-        import db
-
-        db.execute(
-            """
-            INSERT INTO widget_usage (widget_key, widget_name, usage_count, last_used_at)
-            VALUES (%s, %s, 1, CURRENT_TIMESTAMP)
-            ON CONFLICT (widget_key) DO UPDATE SET
-              usage_count = widget_usage.usage_count + 1,
-              widget_name = EXCLUDED.widget_name,
-              last_used_at = CURRENT_TIMESTAMP
-            """,
-            [key, label],
-        )
-    except Exception as exc:
-        logger.debug("record_widget_add failed: %s", exc)
-
-
 def record_self_service_execution(service_key: str, service_name: Optional[str] = None) -> None:
     """
     One row per logical self-service product, keyed by stable identifier e.g.

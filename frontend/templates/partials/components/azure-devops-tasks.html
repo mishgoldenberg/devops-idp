@@ -1,8 +1,16 @@
-<div
-	class="card bg-base-100 border border-base-300 shadow h-full flex flex-col"
->
-	<div class="card-body p-5 flex flex-col h-full gap-4">
-		<!-- Header -->
+{#
+    Azure DevOps work-items widget.
+
+    The shell is server-rendered (icon + title + list skeleton); the rows are
+    fetched client-side from GET /api/dashboard/ado-items. Keeping the fetch
+    client-side lets us render pin/seen state without round-tripping to ui.py
+    and lets HTMX continue to own the simple "reload skeleton every 60s" loop.
+
+    The server-side `error` branch is still used for the ADO PAT-missing
+    flow, because that requires the PAT capture form.
+#}
+<div class="section-card h-full flex flex-col" data-ado-widget-root>
+	<div class="card-body p-5 flex flex-col h-full gap-3">
 		<div class="flex items-center gap-3">
 			<div
 				class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/30 bg-primary/10"
@@ -20,9 +28,38 @@
 			<h3
 				class="text-sm font-bold uppercase tracking-widest text-base-content/70"
 			>
-				Azure DevOps Tasks
+				Azure DevOps – My Work Items
 			</h3>
+			<div class="ml-auto flex items-center gap-1">
+				<button
+					type="button"
+					class="btn btn-ghost btn-xs px-2 text-base-content/60 hover:text-base-content"
+					data-ado-filter="all"
+					aria-pressed="true"
+				>
+					All
+				</button>
+				<button
+					type="button"
+					class="btn btn-ghost btn-xs px-2 text-base-content/60 hover:text-base-content"
+					data-ado-filter="pinned"
+					aria-pressed="false"
+				>
+					Pinned
+				</button>
+				<button
+					type="button"
+					class="btn btn-ghost btn-xs btn-circle text-base-content/60 hover:text-base-content"
+					title="Refresh"
+					data-ado-refresh
+				>
+					<svg viewBox="0 0 20 20" class="h-4 w-4 fill-current" aria-hidden="true">
+						<path d="M10 3a7 7 0 015.938 10.6l1.06 1.06A8.5 8.5 0 1010 18.5v-1.5a7 7 0 110-14zm4.5 0h2.5v2.5h-1V4.621l-2.56 2.56A5 5 0 1015 10h1.5a6.5 6.5 0 11-3.44-5.734L14.5 3z"/>
+					</svg>
+				</button>
+			</div>
 		</div>
+
 		{% if error %}
 		<div
 			class="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-base-content/80"
@@ -30,60 +67,271 @@
 			<p class="font-semibold text-warning">Azure DevOps unavailable</p>
 			<p class="mt-1">{{ error }}</p>
 			<div class="mt-3 grid grid-cols-1 gap-2">
-				<input type="password" placeholder="Paste Personal Access Token" class="input input-bordered input-sm w-full ado-pat-input" />
-				<button type="button" class="btn btn-xs btn-primary ado-pat-save-btn">Save PAT</button>
+				<input
+					type="password"
+					placeholder="Paste Personal Access Token"
+					class="input input-bordered input-sm w-full ado-pat-input"
+				/>
+				<button type="button" class="btn btn-xs btn-primary ado-pat-save-btn">
+					Save PAT
+				</button>
 			</div>
 		</div>
 		{% else %}
-		<!-- 2×2 stat grid -->
-		<div class="grid grid-cols-2 gap-3 flex-1 min-h-0">
-			<!-- To Do -->
+		<div
+			class="flex-1 min-h-0 flex flex-col"
+			data-ado-body
+		>
 			<div
-				class="bg-accent/15 border border-accent/25 rounded-xl flex flex-col items-center justify-center gap-1"
+				class="flex-1 min-h-0 flex items-center justify-center text-xs text-base-content/50"
+				data-ado-status
 			>
-				<span
-					class="text-xs font-semibold uppercase tracking-wider text-accent/80"
-					>To Do</span
-				>
-				<span class="text-4xl font-bold text-accent">{{ counts.todo }}</span>
+				<span class="loading loading-spinner loading-sm text-base-content/30"></span>
 			</div>
-			<!-- In Progress -->
-			<div
-				class="bg-primary/15 border border-primary/25 rounded-xl flex flex-col items-center justify-center gap-1"
-			>
-				<span
-					class="text-xs font-semibold uppercase tracking-wider text-primary/80"
-					>In Progress</span
-				>
-				<span class="text-4xl font-bold text-primary"
-					>{{ counts.in_progress }}</span
-				>
-			</div>
-			<!-- Blocked -->
-			<div
-				class="bg-error/15 border border-error/25 rounded-xl flex flex-col items-center justify-center gap-1"
-			>
-				<span
-					class="text-xs font-semibold uppercase tracking-wider text-error/80"
-					>Blocked</span
-				>
-				<span class="text-4xl font-bold text-error">{{ counts.blocked }}</span>
-			</div>
-			<!-- Done -->
-			<div
-				class="bg-success/15 border border-success/25 rounded-xl flex flex-col items-center justify-center gap-1"
-			>
-				<span
-					class="text-xs font-semibold uppercase tracking-wider text-success/80"
-					>Done</span
-				>
-				<span class="text-4xl font-bold text-success">{{ counts.done }}</span>
-			</div>
+			<ul
+				class="hidden flex-1 min-h-0 overflow-y-auto overscroll-contain flex flex-col gap-2 pr-1"
+				data-ado-list
+			></ul>
 		</div>
 		{% endif %}
 	</div>
 </div>
 <script>
+	(function () {
+		// Widget lives inside an HTMX-swapped container, so the DOM is fresh on
+		// every refresh. Single element per page -> simple querySelector is fine.
+		const root = document.querySelector("[data-ado-widget-root]");
+		if (!root) return;
+		// Error branch has no list container; skip interactive init.
+		const body = root.querySelector("[data-ado-body]");
+		if (!body) return;
+
+		const listEl = root.querySelector("[data-ado-list]");
+		const statusEl = root.querySelector("[data-ado-status]");
+		const filterBtns = root.querySelectorAll("[data-ado-filter]");
+		const refreshBtn = root.querySelector("[data-ado-refresh]");
+
+		let items = [];
+		let filter = "all";
+
+		function setStatus(msg) {
+			if (!msg) {
+				statusEl.classList.add("hidden");
+				listEl.classList.remove("hidden");
+				listEl.classList.add("flex");
+				return;
+			}
+			statusEl.classList.remove("hidden");
+			statusEl.textContent = msg;
+			statusEl.classList.remove("flex");
+			statusEl.classList.add("flex");
+			listEl.classList.add("hidden");
+		}
+
+		function escapeHtml(str) {
+			return String(str == null ? "" : str)
+				.replace(/&/g, "&amp;")
+				.replace(/</g, "&lt;")
+				.replace(/>/g, "&gt;")
+				.replace(/\"/g, "&quot;")
+				.replace(/'/g, "&#39;");
+		}
+
+		function timeAgo(iso) {
+			if (!iso) return "";
+			const t = Date.parse(iso);
+			if (isNaN(t)) return "";
+			const secs = Math.max(1, Math.floor((Date.now() - t) / 1000));
+			if (secs < 60) return secs + "s ago";
+			if (secs < 3600) return Math.floor(secs / 60) + "m ago";
+			if (secs < 86400) return Math.floor(secs / 3600) + "h ago";
+			const days = Math.floor(secs / 86400);
+			if (days < 30) return days + "d ago";
+			const months = Math.floor(days / 30);
+			if (months < 12) return months + "mo ago";
+			return Math.floor(months / 12) + "y ago";
+		}
+
+		function statusColor(category, state) {
+			const c = (category || "").toLowerCase();
+			const s = (state || "").toLowerCase();
+			if (c === "inprogress" || s === "in progress" || s === "active" || s === "doing") return "text-primary";
+			if (c === "completed" || c === "resolved" || s === "done" || s === "closed") return "text-success";
+			if (s === "blocked" || s === "impediment") return "text-error";
+			return "text-base-content/60";
+		}
+
+		function renderPinSvg(pinned) {
+			return pinned
+				? '<svg viewBox="0 0 20 20" class="h-4 w-4 fill-current text-warning" aria-hidden="true"><path d="M11.7 1.7a1 1 0 011.4 0l5.2 5.2a1 1 0 010 1.4l-1.4 1.4a1 1 0 01-1 .26l-2.9-.82-3.6 3.6.73 3a1 1 0 01-1.67.94l-2.65-2.65-3.3 3.3a1 1 0 01-1.41-1.41l3.3-3.3L1.78 9.97a1 1 0 01.94-1.67l3 .73 3.6-3.6-.82-2.9a1 1 0 01.26-1L11.7 1.7z"/></svg>'
+				: '<svg viewBox="0 0 20 20" class="h-4 w-4 fill-current text-base-content/40 hover:text-warning transition" aria-hidden="true"><path d="M11.7 1.7a1 1 0 011.4 0l5.2 5.2a1 1 0 010 1.4l-1.4 1.4a1 1 0 01-1 .26l-2.9-.82-3.6 3.6.73 3a1 1 0 01-1.67.94l-2.65-2.65-3.3 3.3a1 1 0 01-1.41-1.41l3.3-3.3L1.78 9.97a1 1 0 01.94-1.67l3 .73 3.6-3.6-.82-2.9a1 1 0 01.26-1L11.7 1.7zm.7 2.12l-.42 2.07a1 1 0 01-.73.76L8 7.2l4.8 4.8 .55-2.25a1 1 0 01.76-.73l2.07-.42L12.4 3.82z"/></svg>';
+		}
+
+		function render() {
+			const visible = filter === "pinned"
+				? items.filter((i) => i.pinned)
+				: items;
+
+			if (!visible.length) {
+				listEl.innerHTML = "";
+				setStatus(filter === "pinned" ? "No pinned items yet." : "No work items assigned to you.");
+				return;
+			}
+
+			listEl.innerHTML = visible
+				.map((it) => {
+					const idStr = escapeHtml(it.id);
+					const idDisplay = escapeHtml((it.meta && it.meta.id_display) || ("#" + it.id));
+					const type = escapeHtml((it.meta && it.meta.type) || "");
+					const title = escapeHtml(it.title || "");
+					const status = escapeHtml(it.status || "");
+					const statusCls = statusColor((it.meta && it.meta.state_category) || "", it.status || "");
+					const ago = escapeHtml(timeAgo(it.updated_at));
+					const url = String(it.url || "");
+					const dot = it.has_update
+						? '<span class="w-2 h-2 rounded-full bg-error shrink-0" title="Updated since you last opened this"></span>'
+						: '<span class="w-2 h-2 shrink-0"></span>';
+					const pin = renderPinSvg(!!it.pinned);
+					const pinnedCls = it.pinned ? "bg-warning/5 border-warning/30" : "bg-base-200/60 border-base-300";
+					return (
+						'<li class="rounded-lg border ' + pinnedCls + ' px-3 py-2 flex items-center gap-2 transition hover:border-primary/50 hover:bg-base-200" data-id="' + idStr + '">' +
+							'<div class="flex-1 min-w-0">' +
+								'<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer" class="block text-sm font-medium text-base-content hover:text-primary truncate" data-ado-open>' +
+									title +
+								'</a>' +
+								'<div class="flex items-center gap-2 text-xs text-base-content/60 mt-0.5">' +
+									(type ? '<span class="badge badge-outline badge-xs">' + type + '</span>' : '') +
+									'<span class="' + statusCls + ' font-medium truncate">' + status + '</span>' +
+									(ago ? '<span class="ml-auto shrink-0 text-base-content/40">' + ago + '</span>' : '') +
+								'</div>' +
+								'<div class="text-[10px] text-base-content/40 mt-0.5 truncate">' + idDisplay + '</div>' +
+							'</div>' +
+							dot +
+							'<button type="button" class="btn btn-ghost btn-xs btn-circle" data-ado-pin aria-label="Toggle pin" title="' + (it.pinned ? "Unpin" : "Pin to top") + '">' +
+								pin +
+							'</button>' +
+						'</li>'
+					);
+				})
+				.join("");
+
+			setStatus(null);
+		}
+
+		async function load() {
+			try {
+				const res = await fetch("/api/dashboard/ado-items", {
+					credentials: "same-origin",
+					headers: { Accept: "application/json" },
+				});
+				if (!res.ok) throw new Error("http " + res.status);
+				const body = await res.json();
+				items = Array.isArray(body && body.data) ? body.data : [];
+				if (body && body.error) {
+					// Inline warning; keep whatever data we managed to load.
+					statusEl.innerHTML =
+						'<span class="rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-warning">' +
+						escapeHtml(body.error) +
+						"</span>";
+					if (!items.length) {
+						statusEl.classList.remove("hidden");
+						listEl.classList.add("hidden");
+						return;
+					}
+				}
+				render();
+			} catch (err) {
+				items = [];
+				statusEl.innerHTML =
+					'<span class="text-base-content/50">Service unavailable</span>';
+				statusEl.classList.remove("hidden");
+				listEl.classList.add("hidden");
+			}
+		}
+
+		async function togglePin(itemId, nextPinned) {
+			const method = nextPinned ? "POST" : "DELETE";
+			try {
+				await fetch("/api/pins", {
+					method,
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ source: "azure_devops", item_id: String(itemId) }),
+				});
+			} catch (_) {
+				/* silent */
+			}
+		}
+
+		function markSeen(itemId) {
+			try {
+				fetch("/api/items/mark-seen", {
+					method: "POST",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ source: "azure_devops", item_id: String(itemId) }),
+					keepalive: true,
+				}).catch(() => {});
+			} catch (_) {
+				/* silent */
+			}
+		}
+
+		body.addEventListener("click", (e) => {
+			const pinBtn = e.target.closest("[data-ado-pin]");
+			if (pinBtn) {
+				e.preventDefault();
+				e.stopPropagation();
+				const row = pinBtn.closest("li[data-id]");
+				if (!row) return;
+				const id = row.dataset.id;
+				const item = items.find((x) => String(x.id) === String(id));
+				if (!item) return;
+				item.pinned = !item.pinned;
+				togglePin(id, item.pinned);
+				// Resort: pinned first, then by updated_at desc.
+				items.sort((a, b) => {
+					if (!!b.pinned !== !!a.pinned) return a.pinned ? -1 : 1;
+					return (Date.parse(b.updated_at || 0) || 0) - (Date.parse(a.updated_at || 0) || 0);
+				});
+				render();
+				return;
+			}
+			const openLink = e.target.closest("[data-ado-open]");
+			if (openLink) {
+				const row = openLink.closest("li[data-id]");
+				if (row) {
+					const id = row.dataset.id;
+					const item = items.find((x) => String(x.id) === String(id));
+					if (item) {
+						item.has_update = false;
+						markSeen(id);
+						// Re-render to clear the red dot without waiting for the next poll.
+						render();
+					}
+				}
+				// Let the anchor do its thing (open in new tab).
+			}
+		});
+
+		filterBtns.forEach((btn) => {
+			btn.addEventListener("click", () => {
+				filter = btn.dataset.adoFilter;
+				filterBtns.forEach((b) => {
+					const on = b.dataset.adoFilter === filter;
+					b.setAttribute("aria-pressed", on ? "true" : "false");
+					b.classList.toggle("text-primary", on);
+					b.classList.toggle("font-semibold", on);
+				});
+				render();
+			});
+		});
+
+		refreshBtn?.addEventListener("click", load);
+
+		load();
+	})();
+
 	(function () {
 		if (window.__adoPatBinderAttached) return;
 		window.__adoPatBinderAttached = true;

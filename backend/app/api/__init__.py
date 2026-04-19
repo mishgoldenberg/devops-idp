@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from . import admin, auth, dashboards, health, metrics, observability, azure_devops, sonarqube, artifactory, servicenow, ai_chatbot, approvals
+from . import admin, auth, dashboards, health, metrics, observability, azure_devops, sonarqube, artifactory, servicenow, ai_chatbot, approvals, pins, notifications
 
 
 api_router = APIRouter(prefix="/api")
@@ -11,8 +11,10 @@ api_router.include_router(health.router, prefix="/health", tags=["health"])
 # Auth
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 
-# Dashboards
+# Dashboards (mounted at both /dashboards and /dashboard so the observability
+# sync endpoint is reachable at /api/dashboard/widgets/sync per spec).
 api_router.include_router(dashboards.router, prefix="/dashboards", tags=["dashboards"])
+api_router.include_router(dashboards.router, prefix="/dashboard", tags=["dashboards"], include_in_schema=False)
 
 # Metrics
 api_router.include_router(metrics.router, prefix="/metrics", tags=["metrics"])
@@ -32,5 +34,12 @@ api_router.include_router(ai_chatbot.router, prefix="/ai-chatbot", tags=["ai-cha
 
 # Approvals
 api_router.include_router(approvals.router, prefix="/approvals", tags=["approvals"])
+
+# User-scoped item tracking (pins + seen-markers) shared by dashboard widgets.
+# Routes: GET/POST/DELETE /api/pins and POST /api/items/mark-seen.
+api_router.include_router(pins.router, tags=["pins"])
+
+# In-app notifications (bell + dropdown, fed by the approval workflow).
+api_router.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
 
 

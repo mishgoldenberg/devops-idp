@@ -239,27 +239,52 @@
 			</h2>
 			<ul class="menu menu-compact w-full">
 				<li>
-					<a href="/ui/automations" class="flex items-center gap-3"
-						><svg
-							viewBox="0 0 32 32"
-							class="w-5 h-5"
-							fill="none"
-							stroke="currentColor"
-							stroke-width="2"
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							aria-hidden="true"
-						>
+					{% if current_page == 'automations' %}
+					<div class="flex items-center gap-3 bg-base-200 cursor-default">
+						<svg viewBox="0 0 32 32" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 							<polygon points="29,28 3,28 5,24 27,24" />
-							<polyline
-								points="13,18 11,18 14,13 14,6 16,3 18,6 18,13 21,18 19,18"
-							/>
+							<polyline points="13,18 11,18 14,13 14,6 16,3 18,6 18,13 21,18 19,18" />
 							<line x1="16" y1="18" x2="16" y2="21" />
 							<polyline points="14,10 6,10 6,21" />
 							<polyline points="26,21 26,10 18,10" />
 						</svg>
-						Automations</a
-					>
+						Automations
+					</div>
+					{% else %}
+					<a href="/ui/automations" class="flex items-center gap-3">
+						<svg viewBox="0 0 32 32" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+							<polygon points="29,28 3,28 5,24 27,24" />
+							<polyline points="13,18 11,18 14,13 14,6 16,3 18,6 18,13 21,18 19,18" />
+							<line x1="16" y1="18" x2="16" y2="21" />
+							<polyline points="14,10 6,10 6,21" />
+							<polyline points="26,21 26,10 18,10" />
+						</svg>
+						Automations
+					</a>
+					{% endif %}
+				</li>
+				<li>
+					{% if current_page == 'my-requests' %}
+					<div class="flex items-center gap-3 bg-base-200 cursor-default">
+						<svg viewBox="0 0 24 24" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+							<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+							<polyline points="14 2 14 8 20 8"/>
+							<line x1="9" y1="13" x2="15" y2="13"/>
+							<line x1="9" y1="17" x2="15" y2="17"/>
+						</svg>
+						My Requests
+					</div>
+					{% else %}
+					<a href="/ui/my-requests" class="flex items-center gap-3">
+						<svg viewBox="0 0 24 24" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+							<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+							<polyline points="14 2 14 8 20 8"/>
+							<line x1="9" y1="13" x2="15" y2="13"/>
+							<line x1="9" y1="17" x2="15" y2="17"/>
+						</svg>
+						My Requests
+					</a>
+					{% endif %}
 				</li>
 				<li>
 					{% if current_page == 'support' %}

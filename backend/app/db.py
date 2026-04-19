@@ -4,8 +4,17 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import psycopg2
 from psycopg2 import errorcodes, pool
-from psycopg2.extras import RealDictCursor
+from psycopg2.extensions import register_adapter
+from psycopg2.extras import Json, RealDictCursor
 from config import get_settings
+
+# Globally teach psycopg2 how to serialize Python dicts into Postgres JSON /
+# JSONB columns. Without this, any `execute(sql, [some_dict])` raises
+# `ProgrammingError: can't adapt type 'dict'`, which bites endpoints that
+# store JSONB (approval_requests.request_payload, audit_logs.details, etc.).
+# We intentionally don't adapt `list` — psycopg2's default list→ARRAY
+# adapter is still correct for any Postgres text/uuid array columns.
+register_adapter(dict, Json)
 
 # Lazily initialised so that the module can be imported without a live DB
 # (avoids CrashLoopBackOff when the pool creation fails at import time).
@@ -153,16 +162,61 @@ def ensure_observability_tables() -> None:
 
     log = logging.getLogger(__name__)
     stmts = [
+        # Legacy tables from earlier iterations — dropped so the new
+        # event-based widget_usage schema can take over cleanly.
+        (
+            "drop_legacy_widget_usage",
+            "DROP TABLE IF EXISTS widget_usage",
+        ),
+        (
+            "drop_legacy_widget_user_views",
+            "DROP TABLE IF EXISTS widget_user_views",
+        ),
+        (
+            "drop_legacy_home_widget_prefs",
+            "DROP TABLE IF EXISTS home_widget_prefs",
+        ),
+        # Event-based widget usage: one row per widget view.
         (
             "widget_usage",
             """
         CREATE TABLE IF NOT EXISTS widget_usage (
-            widget_key   VARCHAR(255) PRIMARY KEY,
-            widget_name  VARCHAR(255) NOT NULL,
-            usage_count  BIGINT NOT NULL DEFAULT 0,
-            last_used_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            id         SERIAL PRIMARY KEY,
+            user_id    TEXT NOT NULL,
+            widget_key TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            session_id TEXT,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
         )
         """,
+        ),
+        (
+            "idx_widget_usage_key",
+            "CREATE INDEX IF NOT EXISTS idx_widget_usage_key ON widget_usage (widget_key)",
+        ),
+        (
+            "idx_widget_usage_session",
+            "CREATE INDEX IF NOT EXISTS idx_widget_usage_session ON widget_usage (session_id)",
+        ),
+        # Current active dashboard state per user. One row per (user, widget).
+        # Observability reads this for "how many users currently have X on their
+        # dashboard". widget_usage stays for historical trend analytics.
+        (
+            "user_widgets",
+            """
+        CREATE TABLE IF NOT EXISTS user_widgets (
+            id         SERIAL PRIMARY KEY,
+            user_id    TEXT NOT NULL,
+            widget_key TEXT NOT NULL,
+            session_id TEXT,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            UNIQUE (user_id, widget_key)
+        )
+        """,
+        ),
+        (
+            "idx_user_widgets_key",
+            "CREATE INDEX IF NOT EXISTS idx_user_widgets_key ON user_widgets (widget_key)",
         ),
         (
             "self_service_usage",
@@ -290,7 +344,127 @@ def ensure_tables() -> None:
         )
         """
     )
+    ensure_item_tables()
     ensure_observability_tables()
+    ensure_approval_workflow_tables()
+
+
+_item_tables_lock = threading.Lock()
+_item_tables_ensured = False
+
+
+def ensure_item_tables_once() -> None:
+    """Run item-tracking DDL at most once per process (thread-safe)."""
+    global _item_tables_ensured
+    if _item_tables_ensured:
+        return
+    with _item_tables_lock:
+        if _item_tables_ensured:
+            return
+        try:
+            ensure_item_tables()
+            _item_tables_ensured = True
+        except Exception:
+            # Silent: endpoints that depend on these tables degrade gracefully.
+            pass
+
+
+def ensure_item_tables() -> None:
+    """
+    Tables backing the interactive dashboard widgets:
+      * user_item_pins — items the user has pinned to the top of a widget
+        (e.g. an Azure DevOps work item or ServiceNow incident).
+      * user_item_seen — last time the user opened/acknowledged an item,
+        so the UI can show a red dot when an item updates after that.
+
+    Both are scoped by (user_id, source, item_id). `source` is a small enum
+    string ("azure_devops" or "servicenow"); item_id is whatever the source
+    uses (ADO work-item id, SN sys_id).
+    """
+    execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_item_pins (
+            id         SERIAL PRIMARY KEY,
+            user_id    VARCHAR(255) NOT NULL,
+            source     VARCHAR(32)  NOT NULL,
+            item_id    VARCHAR(128) NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            UNIQUE (user_id, source, item_id)
+        )
+        """
+    )
+    execute(
+        "CREATE INDEX IF NOT EXISTS idx_user_item_pins_user "
+        "ON user_item_pins (user_id, source)"
+    )
+    execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_item_seen (
+            id         SERIAL PRIMARY KEY,
+            user_id    VARCHAR(255) NOT NULL,
+            source     VARCHAR(32)  NOT NULL,
+            item_id    VARCHAR(128) NOT NULL,
+            seen_at    TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            UNIQUE (user_id, source, item_id)
+        )
+        """
+    )
+    execute(
+        "CREATE INDEX IF NOT EXISTS idx_user_item_seen_user "
+        "ON user_item_seen (user_id, source)"
+    )
+
+
+def ensure_approval_workflow_tables() -> None:
+    """
+    Bring the approval-request workflow up to the schema the new self-service
+    approval flow expects. Idempotent — safe to run on every startup.
+
+    Additions vs. the base schema (deployment/charts/.../00_schema.sql):
+      * approval_status enum gains IN_PROGRESS and COMPLETED values (legacy
+        rows using EXECUTED remain valid; the API treats EXECUTED = COMPLETED).
+      * approval_requests gains a dedicated rejection_reason column.
+      * notifications table for in-app notification bell + dropdown.
+    """
+    # Add new approval_status values. ALTER TYPE ... ADD VALUE is idempotent
+    # via IF NOT EXISTS on PG 12+ but must run outside a multi-value block.
+    for value in ("IN_PROGRESS", "COMPLETED"):
+        try:
+            execute(f"ALTER TYPE approval_status ADD VALUE IF NOT EXISTS '{value}'")
+        except Exception:
+            # Enum may not exist yet on a minimal dev DB; approvals table
+            # creation below is sufficient for fresh installs.
+            pass
+
+    # Optional dedicated rejection reason (approver_comments is still the
+    # canonical free-text field; rejection_reason just makes filtering easier).
+    try:
+        execute(
+            "ALTER TABLE approval_requests "
+            "ADD COLUMN IF NOT EXISTS rejection_reason TEXT"
+        )
+    except Exception:
+        pass
+
+    # In-app notifications (bell + dropdown). Email-keyed so the UI can
+    # resolve them directly from the SSO token without an extra users join.
+    execute(
+        """
+        CREATE TABLE IF NOT EXISTS notifications (
+            id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            user_email     VARCHAR(255) NOT NULL,
+            message        TEXT         NOT NULL,
+            notif_type     VARCHAR(64),
+            related_id     UUID,
+            is_read        BOOLEAN      NOT NULL DEFAULT FALSE,
+            created_at     TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    execute(
+        "CREATE INDEX IF NOT EXISTS idx_notifications_user_unread "
+        "ON notifications (user_email, is_read, created_at DESC)"
+    )
 
 
 # Primary bootstrap admin (DB role Platform Admin). Single allowed hard-coded identity.

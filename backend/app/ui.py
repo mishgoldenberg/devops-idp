@@ -19,7 +19,7 @@ from api.servicenow import get_tickets as _snow_get_tickets
 from api.sonarqube import get_projects as _sonar_get_projects
 from db import query_one
 from secrets_manager import delete_user_azure_devops_pat, get_user_azure_devops_pat, store_user_azure_devops_pat
-from security import AuthUser, decode_access_token, has_effective_admin_access
+from security import AuthUser, decode_access_token, has_effective_admin_access, has_effective_admin_access_live
 
 ui_router = APIRouter()
 
@@ -81,14 +81,6 @@ def _current_user_from_token(token: str) -> Optional[AuthUser]:
         return None
 
 
-def _track_widget_view(widget_key: str) -> None:
-    try:
-        from observability_tracking import record_widget_view
-
-        record_widget_view(widget_key)
-    except Exception:
-        pass
-
 
 def _time_ago(iso_str: str) -> str:
     """Convert an ISO-8601 datetime string to a human-readable relative time."""
@@ -120,6 +112,12 @@ def ui_index(request: Request):
     except HTTPException:
         return RedirectResponse(url="/ui/auth", status_code=303)
 
+    # Resolve widget preferences from cookie — zero DB round-trip, no flash on F5.
+    # Dashboard customisation is purely a UI concern now; observability is driven
+    # by real widget_view events posted from the browser, not by preferences.
+    saved = _get_home_widget_prefs_from_cookie(request)
+    enabled_widgets: list = saved if saved else list(HOME_WIDGET_KEYS.keys())
+
     templates = _get_templates(request)
     return templates.TemplateResponse(
         "index.html",
@@ -128,6 +126,7 @@ def ui_index(request: Request):
             "user": user,
             "current_page": "home",
             "now": datetime.utcnow().isoformat() + "Z",
+            "enabled_widgets": enabled_widgets,
         },
     )
 
@@ -372,6 +371,29 @@ def ui_automations_page(request: Request):
     )
 
 
+@ui_router.get("/ui/my-requests", response_class=HTMLResponse)
+def ui_my_requests_page(request: Request):
+    """Render the user-facing 'My Requests' page."""
+    token = request.cookies.get("auth_token")
+    if not token:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+    try:
+        user = _get_ui_user(token)
+    except HTTPException:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+
+    templates = _get_templates(request)
+    return templates.TemplateResponse(
+        "my-requests.html",
+        {
+            "request": request,
+            "user": user,
+            "current_page": "my-requests",
+            "now": datetime.utcnow().isoformat() + "Z",
+        },
+    )
+
+
 @ui_router.get("/ui/approvals", response_class=HTMLResponse)
 def ui_approvals_page(request: Request):
     """Render the Approvals tab page."""
@@ -385,7 +407,7 @@ def ui_approvals_page(request: Request):
     except HTTPException:
         return RedirectResponse(url="/ui/auth", status_code=303)
 
-    if not has_effective_admin_access(AuthUser(payload)):
+    if not has_effective_admin_access_live(AuthUser(payload)):
         return RedirectResponse(url="/ui/", status_code=303)
 
     templates = _get_templates(request)
@@ -411,7 +433,7 @@ def ui_observability_page(request: Request):
         payload = decode_access_token(token)
     except HTTPException:
         return RedirectResponse(url="/ui/auth", status_code=303)
-    if not has_effective_admin_access(AuthUser(payload)):
+    if not has_effective_admin_access_live(AuthUser(payload)):
         return RedirectResponse(url="/ui/", status_code=303)
 
     templates = _get_templates(request)
@@ -437,7 +459,7 @@ def ui_platform_managing_page(request: Request):
         payload = decode_access_token(token)
     except HTTPException:
         return RedirectResponse(url="/ui/auth", status_code=303)
-    if not has_effective_admin_access(AuthUser(payload)):
+    if not has_effective_admin_access_live(AuthUser(payload)):
         return RedirectResponse(url="/ui/", status_code=303)
 
     templates = _get_templates(request)
@@ -518,19 +540,37 @@ def ui_settings_page(request: Request):
     )
 
 
+_HOME_WIDGETS_COOKIE = "home_widgets"
+_HOME_WIDGETS_COOKIE_MAX_AGE = 365 * 24 * 3600  # 1 year
+
+
+def _get_home_widget_prefs_from_cookie(request: Request) -> list:
+    """
+    Read home widget preferences from the browser cookie.
+    Returns the valid saved list, or [] if no cookie / invalid.
+    """
+    import json as _json
+    raw = request.cookies.get(_HOME_WIDGETS_COOKIE, "")
+    if not raw:
+        return []
+    try:
+        prefs = _json.loads(raw)
+        if isinstance(prefs, list):
+            return [k for k in prefs if k in HOME_WIDGET_KEYS]
+    except Exception:
+        pass
+    return []
+
+
 @ui_router.get("/ui/dashboard/preferences")
 def ui_dashboard_preferences(request: Request):
-    """Get enabled home widgets for the current user."""
+    """Return enabled home widgets (read from cookie — kept for JS compat)."""
     current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
     if not current_user:
         return JSONResponse(status_code=401, content={"success": False, "detail": "Not authenticated"})
 
-    dash = _dash_get_default(current_user=current_user)
-    widgets = (dash.get("data") or {}).get("widgets") or []
-    enabled = [w.get("widget_key") for w in widgets if w.get("widget_key") in HOME_WIDGET_KEYS]
-    if not enabled:
-        enabled = list(HOME_WIDGET_KEYS.keys())
-
+    saved = _get_home_widget_prefs_from_cookie(request)
+    enabled = saved if saved else list(HOME_WIDGET_KEYS.keys())
     return {"success": True, "data": {"enabled": enabled}}
 
 
@@ -539,7 +579,9 @@ def ui_dashboard_preferences_save(
     request: Request,
     payload: Dict[str, Any] = Body(default={}),
 ):
-    """Persist enabled home widgets to the default dashboard."""
+    """Save enabled home widgets into a browser cookie."""
+    import json as _json
+
     current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
     if not current_user:
         return JSONResponse(status_code=401, content={"success": False, "detail": "Not authenticated"})
@@ -549,36 +591,17 @@ def ui_dashboard_preferences_save(
         raise HTTPException(status_code=400, detail="'enabled' must be a list")
 
     enabled_keys = [k for k in requested if isinstance(k, str) and k in HOME_WIDGET_KEYS]
-    dash = _dash_get_default(current_user=current_user)
-    dash_data = dash.get("data") or {}
-    dashboard_id = dash_data.get("id")
-    existing_widgets = dash_data.get("widgets") or []
-    existing_by_key = {w.get("widget_key"): w for w in existing_widgets if w.get("widget_key")}
 
-    new_widgets = []
-    for key in enabled_keys:
-        existing = existing_by_key.get(key, {})
-        new_widgets.append(
-            {
-                "id": existing.get("id") or f"{key}-home",
-                "widget_key": key,
-                "config": existing.get("config") or {},
-            }
-        )
-
-    _dash_update(
-        dashboard_id=dashboard_id,
-        body=DashboardUpdateRequest(widgets=new_widgets),
-        current_user=current_user,
+    response = JSONResponse({"success": True, "data": {"enabled": enabled_keys}})
+    response.set_cookie(
+        _HOME_WIDGETS_COOKIE,
+        _json.dumps(enabled_keys),
+        max_age=_HOME_WIDGETS_COOKIE_MAX_AGE,
+        httponly=False,
+        samesite="lax",
+        path="/",
     )
-    try:
-        from observability_tracking import record_widget_add
-
-        for key in enabled_keys:
-            record_widget_add(key)
-    except Exception:
-        pass
-    return {"success": True, "data": {"enabled": enabled_keys}}
+    return response
 
 
 @ui_router.get("/ui/azure-devops/pat")
@@ -707,7 +730,6 @@ def ui_sidebar_component(request: Request):
 @ui_router.get("/ui/components/quick-links", response_class=HTMLResponse)
 def ui_quick_links_component(request: Request):
     """Render the Quick Links dashboard component for HTMX partial loading."""
-    _track_widget_view("quick_links")
     templates = _get_templates(request)
     return templates.TemplateResponse(
         "partials/components/quick-links.html",
@@ -765,9 +787,8 @@ def _get_ado_task_counts(current_user: Optional[AuthUser]) -> Dict[str, Any]:
 @ui_router.get("/ui/components/azure-devops-tasks", response_class=HTMLResponse)
 def ui_azure_devops_tasks_component(request: Request):
     """Render the Azure DevOps Tasks dashboard widget for HTMX partial loading."""
-    _track_widget_view("ado_my_work_items")
-    templates = _get_templates(request)
     current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
+    templates = _get_templates(request)
     widget_state = _get_ado_task_counts(current_user)
     return templates.TemplateResponse(
         "partials/components/azure-devops-tasks.html",
@@ -989,9 +1010,8 @@ def _get_service_health_data() -> list:
 @ui_router.get("/ui/components/pull-requests", response_class=HTMLResponse)
 def ui_pull_requests_component(request: Request):
     """Render the Pull Requests dashboard widget for HTMX partial loading."""
-    _track_widget_view("ado_my_pull_requests")
-    templates = _get_templates(request)
     current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
+    templates = _get_templates(request)
     widget_state = _get_pr_created_data(current_user)
     return templates.TemplateResponse(
         "partials/components/pull-requests.html",
@@ -1002,9 +1022,8 @@ def ui_pull_requests_component(request: Request):
 @ui_router.get("/ui/components/pull-requests-review", response_class=HTMLResponse)
 def ui_pull_requests_review_component(request: Request):
     """Render the PRs-to-review dashboard widget."""
-    _track_widget_view("ado_prs_for_review")
-    templates = _get_templates(request)
     current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
+    templates = _get_templates(request)
     widget_state = _get_pr_review_data(current_user)
     return templates.TemplateResponse(
         "partials/components/pull-requests-review.html",
@@ -1015,9 +1034,8 @@ def ui_pull_requests_review_component(request: Request):
 @ui_router.get("/ui/components/pipelines", response_class=HTMLResponse)
 def ui_pipelines_component(request: Request):
     """Render the Pipelines dashboard widget for HTMX partial loading."""
-    _track_widget_view("ado_pipeline_status")
-    templates = _get_templates(request)
     current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
+    templates = _get_templates(request)
     widget_state = _get_pipeline_data(current_user)
     return templates.TemplateResponse(
         "partials/components/pipelines.html",
@@ -1028,9 +1046,8 @@ def ui_pipelines_component(request: Request):
 @ui_router.get("/ui/components/sonarqube-quality", response_class=HTMLResponse)
 def ui_sonarqube_quality_component(request: Request):
     """Render the SonarQube Code Quality dashboard widget for HTMX partial loading."""
-    _track_widget_view("sonar_quality_gate")
-    templates = _get_templates(request)
     current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
+    templates = _get_templates(request)
     return templates.TemplateResponse(
         "partials/components/sonarqube-quality.html",
         {"request": request, "projects": _get_sonar_data(current_user)},
@@ -1040,9 +1057,8 @@ def ui_sonarqube_quality_component(request: Request):
 @ui_router.get("/ui/components/artifactory-storage", response_class=HTMLResponse)
 def ui_artifactory_storage_component(request: Request):
     """Render the Artifactory Storage dashboard widget for HTMX partial loading."""
-    _track_widget_view("artifactory_storage")
-    templates = _get_templates(request)
     current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
+    templates = _get_templates(request)
     return templates.TemplateResponse(
         "partials/components/artifactory-storage.html",
         {"request": request, "storage": _get_artifactory_data(current_user)},
@@ -1052,7 +1068,6 @@ def ui_artifactory_storage_component(request: Request):
 @ui_router.get("/ui/components/service-health", response_class=HTMLResponse)
 def ui_service_health_component(request: Request):
     """Render the Service Health dashboard widget for HTMX partial loading."""
-    _track_widget_view("service_health")
     templates = _get_templates(request)
     return templates.TemplateResponse(
         "partials/components/service-health.html",
@@ -1063,9 +1078,8 @@ def ui_service_health_component(request: Request):
 @ui_router.get("/ui/components/servicenow-tickets", response_class=HTMLResponse)
 def ui_servicenow_tickets_component(request: Request):
     """Render the ServiceNow Tickets dashboard widget for HTMX partial loading."""
-    _track_widget_view("snow_my_tickets")
-    templates = _get_templates(request)
     current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
+    templates = _get_templates(request)
     stats = {"open": 0, "in_progress": 0, "resolved": 0, "total": 0}
     error = ""
     if current_user:

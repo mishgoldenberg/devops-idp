@@ -101,12 +101,10 @@ def create_app() -> FastAPI:
         token = request.cookies.get("auth_token")
         if token:
             try:
-                from security import decode_access_token
+                from security import decode_access_token, AuthUser, has_effective_admin_access_live
 
                 payload = decode_access_token(token)
-                from security import AuthUser, has_effective_admin_access
-
-                request.state.portal_is_admin = has_effective_admin_access(AuthUser(payload))
+                request.state.portal_is_admin = has_effective_admin_access_live(AuthUser(payload))
             except Exception:
                 pass
         return await call_next(request)

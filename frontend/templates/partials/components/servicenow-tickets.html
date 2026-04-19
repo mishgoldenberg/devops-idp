@@ -1,9 +1,12 @@
-{% set stats_data = stats | default({}) %}
-<div
-	class="card bg-base-100 border border-base-300 shadow h-full flex flex-col"
->
-	<div class="card-body p-5 flex flex-col h-full gap-4">
-		<!-- Header -->
+{#
+    ServiceNow incidents widget.
+
+    Same pattern as azure-devops-tasks.html: static shell + client-side fetch
+    of /api/dashboard/snow-items. Clicking a row navigates inside the portal
+    (/ui/support?ticket=<sys_id>) where support-container.html auto-opens it.
+#}
+<div class="section-card h-full flex flex-col" data-snow-widget-root>
+	<div class="card-body p-5 flex flex-col h-full gap-3">
 		<div class="flex items-center gap-3">
 			<div
 				class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/30 bg-primary/10"
@@ -21,59 +24,271 @@
 			<h3
 				class="text-sm font-bold uppercase tracking-widest text-base-content/70"
 			>
-				ServiceNow Tickets
+				ServiceNow – My Tickets
 			</h3>
-		</div>
-
-		{% if error %}
-		<div class="alert alert-warning alert-soft text-xs">
-			<span>{{ error }}</span>
-		</div>
-		{% endif %}
-
-		<div class="grid grid-cols-2 gap-3 flex-1 min-h-0">
-			<div
-				class="bg-accent/15 border border-accent/25 rounded-xl flex flex-col items-center justify-center gap-1"
-			>
-				<span
-					class="text-xs font-semibold uppercase tracking-wider text-accent/80"
-					>Open</span
+			<div class="ml-auto flex items-center gap-1">
+				<button
+					type="button"
+					class="btn btn-ghost btn-xs px-2 text-base-content/60 hover:text-base-content"
+					data-snow-filter="all"
+					aria-pressed="true"
 				>
-				<span class="text-4xl font-bold text-accent">{{ stats_data.open or 0 }}</span>
-			</div>
-
-			<div
-				class="bg-primary/15 border border-primary/25 rounded-xl flex flex-col items-center justify-center gap-1"
-			>
-				<span
-					class="text-xs font-semibold uppercase tracking-wider text-primary/80"
-					>In Progress</span
+					All
+				</button>
+				<button
+					type="button"
+					class="btn btn-ghost btn-xs px-2 text-base-content/60 hover:text-base-content"
+					data-snow-filter="pinned"
+					aria-pressed="false"
 				>
-				<span class="text-4xl font-bold text-primary">{{ stats_data.in_progress or 0 }}</span>
-			</div>
-
-			<div
-				class="bg-warning/15 border border-warning/25 rounded-xl flex flex-col items-center justify-center gap-1"
-			>
-				<span
-					class="text-xs font-semibold uppercase tracking-wider text-warning/80"
-					>Resolved</span
+					Pinned
+				</button>
+				<button
+					type="button"
+					class="btn btn-ghost btn-xs btn-circle text-base-content/60 hover:text-base-content"
+					title="Refresh"
+					data-snow-refresh
 				>
-				<span class="text-4xl font-bold text-warning">{{ stats_data.resolved or 0 }}</span>
-			</div>
-
-			<div
-				class="bg-success/15 border border-success/25 rounded-xl flex flex-col items-center justify-center gap-1"
-			>
-				<span
-					class="text-xs font-semibold uppercase tracking-wider text-success/80"
-					>Total</span
-				>
-				<span class="text-4xl font-bold text-success">{{ stats_data.total or 0 }}</span>
+					<svg viewBox="0 0 20 20" class="h-4 w-4 fill-current" aria-hidden="true">
+						<path d="M10 3a7 7 0 015.938 10.6l1.06 1.06A8.5 8.5 0 1010 18.5v-1.5a7 7 0 110-14zm4.5 0h2.5v2.5h-1V4.621l-2.56 2.56A5 5 0 1015 10h1.5a6.5 6.5 0 11-3.44-5.734L14.5 3z"/>
+					</svg>
+				</button>
 			</div>
 		</div>
-		<div class="pt-1">
-			<a href="/ui/support" class="btn btn-xs btn-outline w-full">Open Support</a>
+
+		<div class="flex-1 min-h-0 flex flex-col" data-snow-body>
+			<div
+				class="flex-1 min-h-0 flex items-center justify-center text-xs text-base-content/50"
+				data-snow-status
+			>
+				<span class="loading loading-spinner loading-sm text-base-content/30"></span>
+			</div>
+			<ul
+				class="hidden flex-1 min-h-0 overflow-y-auto overscroll-contain flex flex-col gap-2 pr-1"
+				data-snow-list
+			></ul>
 		</div>
+
+		<a href="/ui/support" class="btn btn-xs btn-outline w-full shrink-0">
+			Open Support
+		</a>
 	</div>
 </div>
+<script>
+	(function () {
+		const root = document.querySelector("[data-snow-widget-root]");
+		if (!root) return;
+		const body = root.querySelector("[data-snow-body]");
+		const listEl = root.querySelector("[data-snow-list]");
+		const statusEl = root.querySelector("[data-snow-status]");
+		const filterBtns = root.querySelectorAll("[data-snow-filter]");
+		const refreshBtn = root.querySelector("[data-snow-refresh]");
+
+		let items = [];
+		let filter = "all";
+
+		function setStatus(msg, html) {
+			if (msg == null && !html) {
+				statusEl.classList.add("hidden");
+				listEl.classList.remove("hidden");
+				return;
+			}
+			statusEl.classList.remove("hidden");
+			if (html) {
+				statusEl.innerHTML = html;
+			} else {
+				statusEl.textContent = msg;
+			}
+			listEl.classList.add("hidden");
+		}
+
+		function escapeHtml(str) {
+			return String(str == null ? "" : str)
+				.replace(/&/g, "&amp;")
+				.replace(/</g, "&lt;")
+				.replace(/>/g, "&gt;")
+				.replace(/\"/g, "&quot;")
+				.replace(/'/g, "&#39;");
+		}
+
+		function timeAgo(iso) {
+			if (!iso) return "";
+			// ServiceNow display format "YYYY-MM-DD HH:MM:SS" has no timezone;
+			// treat as UTC for display-only diffing.
+			const normalized = /T/.test(iso) ? iso : iso.replace(" ", "T") + "Z";
+			const t = Date.parse(normalized);
+			if (isNaN(t)) return "";
+			const secs = Math.max(1, Math.floor((Date.now() - t) / 1000));
+			if (secs < 60) return secs + "s ago";
+			if (secs < 3600) return Math.floor(secs / 60) + "m ago";
+			if (secs < 86400) return Math.floor(secs / 3600) + "h ago";
+			const days = Math.floor(secs / 86400);
+			if (days < 30) return days + "d ago";
+			const months = Math.floor(days / 30);
+			if (months < 12) return months + "mo ago";
+			return Math.floor(months / 12) + "y ago";
+		}
+
+		function statusColor(state) {
+			const s = (state || "").toLowerCase();
+			if (s === "in progress") return "text-primary";
+			if (s === "new" || s === "open") return "text-accent";
+			if (s === "on hold") return "text-warning";
+			if (s === "resolved" || s === "closed") return "text-success";
+			if (s === "cancelled") return "text-base-content/50";
+			return "text-base-content/60";
+		}
+
+		function renderPinSvg(pinned) {
+			return pinned
+				? '<svg viewBox="0 0 20 20" class="h-4 w-4 fill-current text-warning" aria-hidden="true"><path d="M11.7 1.7a1 1 0 011.4 0l5.2 5.2a1 1 0 010 1.4l-1.4 1.4a1 1 0 01-1 .26l-2.9-.82-3.6 3.6.73 3a1 1 0 01-1.67.94l-2.65-2.65-3.3 3.3a1 1 0 01-1.41-1.41l3.3-3.3L1.78 9.97a1 1 0 01.94-1.67l3 .73 3.6-3.6-.82-2.9a1 1 0 01.26-1L11.7 1.7z"/></svg>'
+				: '<svg viewBox="0 0 20 20" class="h-4 w-4 fill-current text-base-content/40 hover:text-warning transition" aria-hidden="true"><path d="M11.7 1.7a1 1 0 011.4 0l5.2 5.2a1 1 0 010 1.4l-1.4 1.4a1 1 0 01-1 .26l-2.9-.82-3.6 3.6.73 3a1 1 0 01-1.67.94l-2.65-2.65-3.3 3.3a1 1 0 01-1.41-1.41l3.3-3.3L1.78 9.97a1 1 0 01.94-1.67l3 .73 3.6-3.6-.82-2.9a1 1 0 01.26-1L11.7 1.7zm.7 2.12l-.42 2.07a1 1 0 01-.73.76L8 7.2l4.8 4.8 .55-2.25a1 1 0 01.76-.73l2.07-.42L12.4 3.82z"/></svg>';
+		}
+
+		function render() {
+			const visible = filter === "pinned"
+				? items.filter((i) => i.pinned)
+				: items;
+
+			if (!visible.length) {
+				listEl.innerHTML = "";
+				setStatus(filter === "pinned" ? "No pinned tickets yet." : "No tickets assigned to you.");
+				return;
+			}
+
+			listEl.innerHTML = visible
+				.map((it) => {
+					const idStr = escapeHtml(it.id);
+					const idDisplay = escapeHtml((it.meta && it.meta.id_display) || "");
+					const priority = escapeHtml((it.meta && it.meta.priority) || "");
+					const title = escapeHtml(it.title || "");
+					const status = escapeHtml(it.status || "");
+					const statusCls = statusColor(it.status || "");
+					const ago = escapeHtml(timeAgo(it.updated_at));
+					const url = String(it.url || "/ui/support");
+					const dot = it.has_update
+						? '<span class="w-2 h-2 rounded-full bg-error shrink-0" title="Updated since you last opened this"></span>'
+						: '<span class="w-2 h-2 shrink-0"></span>';
+					const pin = renderPinSvg(!!it.pinned);
+					const pinnedCls = it.pinned ? "bg-warning/5 border-warning/30" : "bg-base-200/60 border-base-300";
+					return (
+						'<li class="rounded-lg border ' + pinnedCls + ' px-3 py-2 flex items-center gap-2 transition hover:border-primary/50 hover:bg-base-200" data-id="' + idStr + '">' +
+							'<div class="flex-1 min-w-0">' +
+								'<a href="' + escapeHtml(url) + '" class="block text-sm font-medium text-base-content hover:text-primary truncate" data-snow-open>' +
+									title +
+								'</a>' +
+								'<div class="flex items-center gap-2 text-xs text-base-content/60 mt-0.5">' +
+									(idDisplay ? '<span class="badge badge-outline badge-xs">' + idDisplay + '</span>' : '') +
+									'<span class="' + statusCls + ' font-medium truncate">' + status + '</span>' +
+									(ago ? '<span class="ml-auto shrink-0 text-base-content/40">' + ago + '</span>' : '') +
+								'</div>' +
+								(priority ? '<div class="text-[10px] text-base-content/40 mt-0.5 truncate">Priority: ' + priority + '</div>' : '') +
+							'</div>' +
+							dot +
+							'<button type="button" class="btn btn-ghost btn-xs btn-circle" data-snow-pin aria-label="Toggle pin" title="' + (it.pinned ? "Unpin" : "Pin to top") + '">' +
+								pin +
+							'</button>' +
+						'</li>'
+					);
+				})
+				.join("");
+
+			setStatus(null);
+		}
+
+		async function load() {
+			try {
+				const res = await fetch("/api/dashboard/snow-items", {
+					credentials: "same-origin",
+					headers: { Accept: "application/json" },
+				});
+				if (!res.ok) throw new Error("http " + res.status);
+				const body = await res.json();
+				items = Array.isArray(body && body.data) ? body.data : [];
+				if (body && body.error && !items.length) {
+					setStatus(null, '<span class="rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-warning">' + escapeHtml(body.error) + '</span>');
+					return;
+				}
+				render();
+			} catch (err) {
+				items = [];
+				setStatus(null, '<span class="text-base-content/50">Service unavailable</span>');
+			}
+		}
+
+		async function togglePin(itemId, nextPinned) {
+			const method = nextPinned ? "POST" : "DELETE";
+			try {
+				await fetch("/api/pins", {
+					method,
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ source: "servicenow", item_id: String(itemId) }),
+				});
+			} catch (_) {
+				/* silent */
+			}
+		}
+
+		function markSeen(itemId) {
+			try {
+				fetch("/api/items/mark-seen", {
+					method: "POST",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ source: "servicenow", item_id: String(itemId) }),
+					keepalive: true,
+				}).catch(() => {});
+			} catch (_) {
+				/* silent */
+			}
+		}
+
+		body.addEventListener("click", (e) => {
+			const pinBtn = e.target.closest("[data-snow-pin]");
+			if (pinBtn) {
+				e.preventDefault();
+				e.stopPropagation();
+				const row = pinBtn.closest("li[data-id]");
+				if (!row) return;
+				const id = row.dataset.id;
+				const item = items.find((x) => String(x.id) === String(id));
+				if (!item) return;
+				item.pinned = !item.pinned;
+				togglePin(id, item.pinned);
+				items.sort((a, b) => {
+					if (!!b.pinned !== !!a.pinned) return a.pinned ? -1 : 1;
+					return (Date.parse(b.updated_at || 0) || 0) - (Date.parse(a.updated_at || 0) || 0);
+				});
+				render();
+				return;
+			}
+			const openLink = e.target.closest("[data-snow-open]");
+			if (openLink) {
+				const row = openLink.closest("li[data-id]");
+				if (row) {
+					const id = row.dataset.id;
+					markSeen(id);
+				}
+				// Same-origin navigation; let the anchor handle it.
+			}
+		});
+
+		filterBtns.forEach((btn) => {
+			btn.addEventListener("click", () => {
+				filter = btn.dataset.snowFilter;
+				filterBtns.forEach((b) => {
+					const on = b.dataset.snowFilter === filter;
+					b.setAttribute("aria-pressed", on ? "true" : "false");
+					b.classList.toggle("text-primary", on);
+					b.classList.toggle("font-semibold", on);
+				});
+				render();
+			});
+		});
+
+		refreshBtn?.addEventListener("click", load);
+
+		load();
+	})();
+</script>
