@@ -43,19 +43,25 @@ try:
 except ImportError:
     pass
 
-from fastapi import FastAPI, Request, status
+import logging
+
+from fastapi import FastAPI, HTTPException, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import JSONResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from api import api_router
 from config import get_settings
+import audit
 import db
+import safe_mode
 from ui import ui_router
+
+
+_log = logging.getLogger(__name__)
 
 
 def create_app() -> FastAPI:
@@ -114,40 +120,43 @@ def create_app() -> FastAPI:
     def root(request: Request):
         return RedirectResponse(url="/ui/auth")
 
-    # Kubernetes PROBE ENDPOINTS
-    # These are essential for Kubernetes orchestration:
-    # - Liveness: Determines if pod should be restarted
-    # - Readiness: Determines if pod should receive traffic
-    @app.get("/api/health/live", status_code=status.HTTP_200_OK)
-    def liveness_probe():
-        """
-        Kubernetes Liveness Probe
-        
-        Returns 200 if the pod is alive and functioning.
-        If this endpoint dies/hangs, Kubernetes will restart the pod.
-        Should be lightweight - just check that the process is running.
-        """
+    # Kubernetes probe endpoints live on the `health` router mounted at
+    # /api/health (see api/health.py). The /live and /ready paths are kept
+    # compatible there and must not be duplicated here — duplicate registrations
+    # cause FastAPI's OpenAPI docs to become inconsistent.
+
+    # ─── Global error boundary ────────────────────────────────────────────
+    # Any unhandled exception is logged in full and surfaced as a generic,
+    # user-friendly 500 so the frontend never sees raw stack traces or
+    # internal tracebacks. Explicit HTTPExceptions and 422 validation errors
+    # keep their original messages so clients still get actionable detail.
+
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exception_handler(request: Request, exc: StarletteHTTPException):
         return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={"status": "alive", "timestamp": _now_iso()}
+            status_code=exc.status_code,
+            content={"success": False, "detail": exc.detail},
         )
 
-    @app.get("/api/health/ready", status_code=status.HTTP_200_OK)
-    def readiness_probe():
-        """
-        Kubernetes Readiness Probe
-        
-        Returns 200 if the pod is ready to serve traffic.
-        Failed readiness checks remove the pod from load balancers temporarily.
-        
-        ENHANCEMENT TODO: Add checks for:
-        - Database connectivity (psycopg2 connection test)
-        - Redis connectivity (redis-py ping test)
-        - External system availability (Azure DevOps API)
-        """
+    @app.exception_handler(RequestValidationError)
+    async def _validation_exception_handler(request: Request, exc: RequestValidationError):
         return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={"status": "ready", "timestamp": _now_iso()}
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content={"success": False, "detail": exc.errors()},
+        )
+
+    @app.exception_handler(Exception)
+    async def _unhandled_exception_handler(request: Request, exc: Exception):
+        _log.exception(
+            "Unhandled exception during %s %s: %s",
+            request.method, request.url.path, exc,
+        )
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={
+                "success": False,
+                "detail": "Something went wrong. Please try again.",
+            },
         )
 
     @app.on_event("startup")
@@ -155,13 +164,19 @@ def create_app() -> FastAPI:
         try:
             db.ensure_tables()
         except Exception as exc:
-            import logging
-            logging.getLogger(__name__).warning("ensure_tables() failed: %s", exc)
+            _log.warning("ensure_tables() failed: %s", exc)
         try:
             db.ensure_bootstrap_platform_admin()
         except Exception as exc:
-            import logging
-            logging.getLogger(__name__).warning("ensure_bootstrap_platform_admin() failed: %s", exc)
+            _log.warning("ensure_bootstrap_platform_admin() failed: %s", exc)
+        try:
+            audit.ensure_table()
+        except Exception as exc:
+            _log.warning("audit.ensure_table() failed: %s", exc)
+        try:
+            safe_mode.ensure_table()
+        except Exception as exc:
+            _log.warning("safe_mode.ensure_table() failed: %s", exc)
 
     # Include all API routers (azure_devops, auth, approvals, etc.)
     app.include_router(api_router)

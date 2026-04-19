@@ -297,3 +297,122 @@ def list_portal_tickets(current_user: AuthUser = Depends(get_observability_user)
             }
         )
     )
+
+
+@router.get("/summary")
+def get_observability_summary(
+    current_user: AuthUser = Depends(get_observability_user),
+) -> Dict[str, Any]:
+    """
+    Consolidated observability numbers for the Admin dashboard header.
+
+    Intentionally best-effort: every sub-query is wrapped so that a missing
+    observability schema or a cold DB never turns the admin page into a 500.
+    """
+    from observability_tracking import WIDGET_LABELS
+
+    def _scalar(sql: str, default: int = 0) -> int:
+        try:
+            rows = query_all_obs(sql)
+        except Exception:
+            try:
+                rows = query_all(sql)
+            except Exception:
+                return default
+        if not rows:
+            return default
+        first = rows[0] or {}
+        for v in first.values():
+            if v is None:
+                return default
+            try:
+                return int(v)
+            except Exception:
+                return default
+        return default
+
+    top_widgets_rows = _widget_usage_rows(
+        """
+        SELECT widget_key, COUNT(*)::bigint AS count
+        FROM user_widgets
+        GROUP BY widget_key
+        ORDER BY count DESC, widget_key ASC
+        LIMIT 5
+        """
+    )
+
+    top_services = _safe_query_all(
+        """
+        SELECT request_type, COUNT(*)::bigint AS count
+        FROM approval_requests
+        GROUP BY request_type
+        ORDER BY count DESC, request_type ASC
+        LIMIT 5
+        """
+    )
+    top_services_out = [
+        {
+            "service_key": r.get("request_type") or "",
+            "name": _self_service_label(r.get("request_type") or ""),
+            "count": int(r.get("count") or 0),
+        }
+        for r in top_services
+    ]
+
+    ss_status = _safe_query_all(
+        """
+        SELECT
+            COUNT(*) FILTER (WHERE status IN ('COMPLETED','EXECUTED'))::bigint   AS succeeded,
+            COUNT(*) FILTER (WHERE status = 'FAILED')::bigint                    AS failed,
+            COUNT(*) FILTER (WHERE status = 'PENDING')::bigint                   AS pending,
+            COUNT(*) FILTER (WHERE status = 'REJECTED')::bigint                  AS rejected
+          FROM approval_requests
+        """
+    )
+    ss_status_row = (ss_status[0] if ss_status else {}) or {}
+
+    # Average approval time: time from request creation to approval/execution.
+    # We prefer ``executed_at`` because every approved request has it; fall
+    # back to ``updated_at`` for older rows.
+    approval_time_row = _safe_query_all(
+        """
+        SELECT AVG(
+                 EXTRACT(EPOCH FROM (COALESCE(executed_at, updated_at) - created_at))
+               )::float AS avg_seconds
+          FROM approval_requests
+         WHERE status IN ('APPROVED','IN_PROGRESS','COMPLETED','EXECUTED')
+           AND COALESCE(executed_at, updated_at) IS NOT NULL
+        """
+    )
+    avg_seconds = 0.0
+    try:
+        avg_seconds = float((approval_time_row[0] or {}).get("avg_seconds") or 0.0)
+    except Exception:
+        avg_seconds = 0.0
+
+    ado_total = _scalar(
+        """
+        SELECT COUNT(*)::bigint
+          FROM approval_requests
+         WHERE request_type = 'ADO_PROJECT_CREATE'
+           AND status IN ('COMPLETED', 'EXECUTED')
+        """
+    )
+
+    snow_total = _scalar("SELECT COUNT(*)::bigint FROM servicenow_tickets")
+
+    return _obs_ok(
+        data={
+            "top_widgets": top_widgets_rows,
+            "top_self_services": top_services_out,
+            "self_services": {
+                "succeeded": int(ss_status_row.get("succeeded") or 0),
+                "failed": int(ss_status_row.get("failed") or 0),
+                "pending": int(ss_status_row.get("pending") or 0),
+                "rejected": int(ss_status_row.get("rejected") or 0),
+                "avg_approval_seconds": round(avg_seconds or 0.0, 1),
+            },
+            "ado_projects_created": int(ado_total or 0),
+            "servicenow_tickets_total": int(snow_total or 0),
+        }
+    )

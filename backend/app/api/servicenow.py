@@ -451,8 +451,52 @@ def create_ticket(
     current_user: AuthUser = Depends(get_current_user),
 ):
     user_email = current_user.get("username", "")
+
+    # Hardening: reject empty title/description so we never post meaningless
+    # tickets to ServiceNow. Mirrors the frontend guard for defense-in-depth.
+    title_clean = (body.title or "").strip()
+    description_clean = (body.description or "").strip()
+    if not title_clean:
+        raise HTTPException(status_code=400, detail="Ticket title is required.")
+    if not description_clean:
+        raise HTTPException(status_code=400, detail="Ticket description is required.")
+    if len(title_clean) > 160:
+        raise HTTPException(
+            status_code=400,
+            detail="Ticket title is too long (max 160 characters).",
+        )
+
     try:
         _ensure_user_tickets_table()
+    except Exception:
+        pass
+
+    # Safe Mode: simulate success without hitting ServiceNow.
+    try:
+        import safe_mode as _safe_mode
+        import audit as _audit
+        if _safe_mode.is_enabled():
+            ts = int(datetime.now(timezone.utc).timestamp())
+            simulated = {
+                "sys_id": f"safe_{ts}",
+                "number": f"INC-SAFE-{ts % 10_000_000:07d}",
+                "short_description": title_clean,
+                "state": "New",
+                "priority": str(body.priority or "3"),
+                "assigned_to": user_email,
+                "opened_at": _now_iso(),
+                "description": description_clean,
+                "safe_mode": True,
+            }
+            try:
+                _audit.log(
+                    _audit.Action.TICKET_CREATED,
+                    user_email=user_email,
+                    metadata={"safe_mode": True, "title": title_clean[:160]},
+                )
+            except Exception:
+                pass
+            return {"success": True, "data": simulated, "timestamp": _now_iso()}
     except Exception:
         pass
 
@@ -498,6 +542,21 @@ def create_ticket(
                 user_email,
                 priority_to_severity_band(str(body.priority)),
                 body.title or "",
+            )
+        except Exception:
+            pass
+        try:
+            import audit as _audit
+            _audit.log(
+                _audit.Action.TICKET_CREATED,
+                user_email=user_email,
+                metadata={
+                    "ticket_number": ticket_number,
+                    "sys_id": new_sys_id,
+                    "priority": str(body.priority or ""),
+                    "title": title_clean[:160],
+                    "mock": True,
+                },
             )
         except Exception:
             pass
@@ -568,6 +627,21 @@ def create_ticket(
             user_email,
             priority_to_severity_band(str(body.priority)),
             body.title or "",
+        )
+    except Exception:
+        pass
+
+    try:
+        import audit as _audit
+        _audit.log(
+            _audit.Action.TICKET_CREATED,
+            user_email=user_email,
+            metadata={
+                "ticket_number": ticket.get("number"),
+                "sys_id": ticket.get("sys_id"),
+                "priority": str(body.priority or ""),
+                "title": title_clean[:160],
+            },
         )
     except Exception:
         pass

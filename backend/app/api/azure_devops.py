@@ -747,6 +747,27 @@ def create_ado_project(
     custom_process_name = f"{project_name}-{process_type}"
     org = ADO_BASE.split("/")[-1]
 
+    # ── Safe Mode short-circuit ────────────────────────────────────────────
+    # Admin-controlled toggle or SAFE_MODE=true env simulates success without
+    # touching Azure DevOps / Terraform. See backend/app/safe_mode.py.
+    try:
+        import safe_mode as _safe_mode
+        if _safe_mode.is_enabled():
+            return {
+                "success": True,
+                "data": {
+                    "job_id": "safe-mode-simulated",
+                    "status": "succeeded",
+                    "safe_mode": True,
+                    "project_name": project_name,
+                    "process_type": process_type,
+                    "message": "Safe Mode is enabled — project creation simulated.",
+                },
+                "timestamp": _now_iso(),
+            }
+    except Exception:
+        pass
+
     # ── Mock mode ──────────────────────────────────────────────────────────
     if USE_MOCK:
         job_id = submit_terraform_job(
