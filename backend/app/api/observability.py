@@ -169,6 +169,140 @@ def list_widget_usage(
     return list_widget_usage_events(current_user)
 
 
+# ── Per-user "smart dashboard" helpers ────────────────────────────────────────
+# These endpoints power the Customize Dashboard drawer's "Recently used" and
+# "Suggested for you" sections. They intentionally:
+#   * degrade quietly (missing schema → empty lists, never a 500)
+#   * require only a regular authenticated user (NOT admin)
+#   * return the same shape as list_widget_usage_events for easy UI reuse
+
+@router.get("/widgets/recent")
+def list_recent_widgets_for_me(
+    current_user: AuthUser = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Widgets the current user rendered most recently (last 30 days)."""
+    from observability_tracking import WIDGET_LABELS
+
+    user_id = str(
+        current_user.get("email") or current_user.get("username") or current_user.get("id") or ""
+    ).strip()
+    if not user_id:
+        return _obs_ok(data=[])
+
+    try:
+        db.ensure_observability_tables_once()
+        rows = query_all_obs(
+            """
+            SELECT widget_key, MAX(created_at) AS last_seen, COUNT(*)::bigint AS views
+              FROM widget_usage
+             WHERE user_id = %s
+               AND created_at >= NOW() - INTERVAL '30 days'
+               AND widget_key = ANY(%s)
+             GROUP BY widget_key
+             ORDER BY last_seen DESC NULLS LAST
+             LIMIT 6
+            """,
+            [user_id[:255], list(_ALLOWED_WIDGET_KEYS)],
+        )
+    except Exception as exc:
+        _log.warning("observability: recent widgets read failed: %s", exc)
+        rows = []
+
+    data = [
+        {
+            "widget_key": r["widget_key"],
+            "name": WIDGET_LABELS.get(
+                r["widget_key"], str(r["widget_key"]).replace("_", " ").title()
+            ),
+            "views": int(r.get("views") or 0),
+            "last_seen": r.get("last_seen"),
+        }
+        for r in rows
+    ]
+    return _obs_ok(data=jsonable_encoder(data))
+
+
+@router.get("/widgets/suggested")
+def list_suggested_widgets_for_me(
+    current_user: AuthUser = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    Suggest widgets the current user does NOT already have enabled but which
+    are popular across the portal. Falls back to a static default ordering if
+    the observability schema isn't available.
+    """
+    from observability_tracking import WIDGET_LABELS
+
+    user_id = str(
+        current_user.get("email") or current_user.get("username") or current_user.get("id") or ""
+    ).strip()
+    if not user_id:
+        return _obs_ok(data=[])
+
+    # Widgets this user already has enabled (core-table read, best-effort).
+    enabled: set = set()
+    try:
+        for r in _safe_query_all(
+            "SELECT widget_key FROM user_widgets WHERE user_id = %s",
+            [user_id[:255]],
+        ):
+            wk = r.get("widget_key")
+            if wk:
+                enabled.add(str(wk))
+    except Exception:
+        enabled = set()
+
+    # Popularity ranking from widget_usage (observability) — best-effort.
+    popular_rows = []
+    try:
+        db.ensure_observability_tables_once()
+        popular_rows = query_all_obs(
+            """
+            SELECT widget_key, COUNT(*)::bigint AS views
+              FROM widget_usage
+             WHERE created_at >= NOW() - INTERVAL '30 days'
+               AND widget_key = ANY(%s)
+             GROUP BY widget_key
+             ORDER BY views DESC
+            """,
+            [list(_ALLOWED_WIDGET_KEYS)],
+        )
+    except Exception as exc:
+        _log.info("observability: suggested widgets fallback (%s)", exc)
+
+    ranked = [r["widget_key"] for r in popular_rows if r.get("widget_key")]
+    # Static tail so new portals with no usage still return sensible suggestions.
+    _DEFAULT_ORDER = [
+        "ado_my_work_items",
+        "snow_my_tickets",
+        "ado_my_pull_requests",
+        "ado_pipeline_status",
+        "quick_links",
+        "sonar_quality_gate",
+        "artifactory_storage",
+        "service_health",
+        "ado_prs_for_review",
+    ]
+    for key in _DEFAULT_ORDER:
+        if key not in ranked:
+            ranked.append(key)
+
+    suggestions = []
+    for key in ranked:
+        if key in enabled or key not in _ALLOWED_WIDGET_KEYS:
+            continue
+        suggestions.append(
+            {
+                "widget_key": key,
+                "name": WIDGET_LABELS.get(key, key.replace("_", " ").title()),
+            }
+        )
+        if len(suggestions) >= 4:
+            break
+
+    return _obs_ok(data=jsonable_encoder(suggestions))
+
+
 @router.get("/self-services")
 @router.get("/self_services", include_in_schema=False)
 def list_self_service_usage(current_user: AuthUser = Depends(get_observability_user)) -> Dict[str, Any]:

@@ -331,21 +331,39 @@ def get_tickets(current_user: AuthUser = Depends(get_current_user)):
         "^ORDERBYDESCsys_created_on"
     )
 
+    def _fetch_live():
+        try:
+            with _snow_client() as client:
+                resp = client.get(
+                    "/api/now/table/incident",
+                    params={
+                        "sysparm_query": query,
+                        "sysparm_fields": "sys_id,number,short_description,state,priority,assigned_to,opened_at,sys_updated_on",
+                        "sysparm_limit": 50,
+                        "sysparm_display_value": "true",
+                    },
+                )
+                resp.raise_for_status()
+                return [_map_ticket(r) for r in resp.json().get("result", [])]
+        except Exception as exc:
+            _raise_snow_error(exc, "fetching tickets")
+
+    # 60s cache keyed on the effective ServiceNow identity; the list of my
+    # tickets is hit by the support page header, badges, and the dashboard
+    # widget simultaneously.
     try:
-        with _snow_client() as client:
-            resp = client.get(
-                "/api/now/table/incident",
-                params={
-                    "sysparm_query": query,
-                    "sysparm_fields": "sys_id,number,short_description,state,priority,assigned_to,opened_at,sys_updated_on",
-                    "sysparm_limit": 50,
-                    "sysparm_display_value": "true",
-                },
-            )
-            resp.raise_for_status()
-            records = [_map_ticket(r) for r in resp.json().get("result", [])]
-    except Exception as exc:
-        _raise_snow_error(exc, "fetching tickets")
+        from integrations_cache import cached_external
+        records = cached_external(
+            "snow",
+            (user_email or "anon").lower(),
+            f"tickets:{snow_user}",
+            _fetch_live,
+            ttl=60,
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        records = _fetch_live()
 
     return {"success": True, "data": records, "timestamp": _now_iso()}
 
@@ -615,6 +633,11 @@ def create_ticket(
 
     # Bust the ticket-list cache so the new ticket appears immediately
     cache.invalidate(f"snow:tickets:{user_email}")
+    try:
+        from integrations_cache import invalidate_owner
+        invalidate_owner("snow", user_email)
+    except Exception:
+        pass
 
     try:
         from observability_tracking import (
