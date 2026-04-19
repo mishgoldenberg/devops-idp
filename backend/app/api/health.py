@@ -43,11 +43,38 @@ def health_root():
 
 @router.get("/ready", summary="Readiness probe")
 def readiness():
+    """
+    Kubernetes marks the pod Ready only on HTTP 2xx.
+
+    We require **PostgreSQL** here — without the DB the API cannot serve
+    meaningful traffic. **Redis** is best-effort (cache); a down Redis
+    degrades performance but should not block rollout, otherwise clusters
+    where Redis is still starting or temporarily unreachable wedge every
+    backend pod in NotReady forever.
+
+    For a strict DB+Redis check (e.g. synthetic monitors), use GET /api/health
+    which returns 503 if either dependency is down.
+    """
     db_healthy = db_health_check()
     redis_healthy = redis_health_check()
-    if db_healthy and redis_healthy:
-        return {"ready": True}
-    return JSONResponse(content={"ready": False}, status_code=503)
+    if not db_healthy:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "ready": False,
+                "services": {
+                    "database": "down",
+                    "redis": "up" if redis_healthy else "down",
+                },
+            },
+        )
+    return {
+        "ready": True,
+        "services": {
+            "database": "up",
+            "redis": "up" if redis_healthy else "down",
+        },
+    }
 
 
 @router.get("/live", summary="Liveness probe")
