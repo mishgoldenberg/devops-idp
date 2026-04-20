@@ -5,20 +5,16 @@
 			<p class="page-subtitle">Portal preferences, suggestions, and account session</p>
 		</div>
 	</header>
-	<div class="flex-1 min-h-0 overflow-y-auto p-6 space-y-6">
-		<!-- Appearance -->
+	<div class="page-content space-y-6">
+		<!-- Section 1: Appearance -->
 		<section class="max-w-2xl section-card">
-			<div class="card-body gap-4">
-				<h2 class="card-title text-lg">Appearance</h2>
-				<p class="text-sm text-base-content/60">
-					Choose how the portal looks. The setting is saved to your account and
-					applied on every device after you sign in.
-				</p>
-				<div class="flex items-center justify-between py-2">
+			<div class="card-body p-5">
+				<h2 class="section-title mb-4">Appearance</h2>
+				<div class="flex items-center justify-between">
 					<div>
 						<p class="font-medium">Dark mode</p>
-						<p class="text-xs text-base-content/50" data-theme-caption>
-							Using the saved preference on this device.
+						<p class="text-xs text-base-content/50">
+							Saved to your account and applied on every device.
 						</p>
 					</div>
 					<input
@@ -31,18 +27,14 @@
 			</div>
 		</section>
 
-		<!-- Suggestions -->
+		<!-- Section 2: Suggestions -->
 		<section class="max-w-2xl section-card">
-			<div class="card-body gap-4">
-				<h2 class="card-title text-lg">Send a suggestion</h2>
-				<p class="text-sm text-base-content/60">
-					Spotted something we should add or fix? Drop a quick note below and the
-					platform team will see it.
-				</p>
-				<form id="suggestion-form" class="space-y-3">
+			<div class="card-body p-5">
+				<h2 class="section-title mb-4">Suggestions</h2>
+				<form id="suggestion-form" class="space-y-4">
 					<div>
-						<label class="label" for="suggestion-title">
-							<span class="label-text">Title</span>
+						<label class="label pb-1" for="suggestion-title">
+							<span class="label-text text-xs">Title</span>
 						</label>
 						<input
 							id="suggestion-title"
@@ -54,8 +46,8 @@
 						/>
 					</div>
 					<div>
-						<label class="label" for="suggestion-description">
-							<span class="label-text">Details (optional)</span>
+						<label class="label pb-1" for="suggestion-description">
+							<span class="label-text text-xs">Description</span>
 						</label>
 						<textarea
 							id="suggestion-description"
@@ -87,25 +79,19 @@
 			</div>
 		</section>
 
-		<!-- Session -->
+		<!-- Section 3: Session -->
 		<section class="max-w-2xl section-card">
-			<div class="card-body gap-4">
-				<h2 class="card-title text-lg">Session</h2>
-				<p class="text-sm text-base-content/60">
-					You are signed in as
-					<span class="font-medium text-base-content">{{ user.display_name }}</span>
-					{% if user.username %}
-					<span class="text-base-content/50">({{ user.username }})</span>
-					{% endif %}
-				</p>
-				<p class="text-sm text-base-content/60">
-					<strong>Sign out</strong> clears your session and sends you to the sign-in page. To
-					<strong>sign in</strong> again, use the same options shown there (e.g.
-					<em>Sign in with SSO</em>).
-				</p>
-				<div class="pt-2">
+			<div class="card-body p-5">
+				<h2 class="section-title mb-4">Session</h2>
+				<div class="flex items-center justify-between">
+					<div>
+						<p class="font-medium">{{ user.display_name }}</p>
+						{% if user.username %}
+						<p class="text-xs text-base-content/50">{{ user.username }}</p>
+						{% endif %}
+					</div>
 					<form method="post" action="/ui/auth/logout">
-						<button type="submit" class="btn btn-outline btn-error">Sign out</button>
+						<button type="submit" class="btn btn-outline btn-error btn-sm">Sign out</button>
 					</form>
 				</div>
 			</div>

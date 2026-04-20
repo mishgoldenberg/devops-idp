@@ -2277,9 +2277,6 @@
   .z-50 {
     z-index: 50;
   }
-  .z-\[1\] {
-    z-index: 1;
-  }
   .modal-box {
     @layer daisyui.l1.l2.l3 {
       grid-column-start: 1;
@@ -2562,6 +2559,9 @@
   .mb-3 {
     margin-bottom: calc(var(--spacing) * 3);
   }
+  .mb-4 {
+    margin-bottom: calc(var(--spacing) * 4);
+  }
   .mb-6 {
     margin-bottom: calc(var(--spacing) * 6);
   }
@@ -2812,8 +2812,8 @@
   .h-16 {
     height: calc(var(--spacing) * 16);
   }
-  .h-20 {
-    height: calc(var(--spacing) * 20);
+  .h-24 {
+    height: calc(var(--spacing) * 24);
   }
   .h-80 {
     height: calc(var(--spacing) * 80);
@@ -2830,8 +2830,8 @@
   .max-h-72 {
     max-height: calc(var(--spacing) * 72);
   }
-  .max-h-80 {
-    max-height: calc(var(--spacing) * 80);
+  .max-h-96 {
+    max-height: calc(var(--spacing) * 96);
   }
   .max-h-\[60vh\] {
     max-height: 60vh;
@@ -2943,8 +2943,8 @@
   .max-w-\[80\%\] {
     max-width: 80%;
   }
-  .max-w-\[90vw\] {
-    max-width: 90vw;
+  .max-w-\[calc\(100vw-2rem\)\] {
+    max-width: calc(100vw - 2rem);
   }
   .max-w-full {
     max-width: 100%;
@@ -2969,19 +2969,6 @@
   }
   .shrink-0 {
     flex-shrink: 0;
-  }
-  .swap-rotate {
-    @layer daisyui.l1.l2 {
-      .swap-on, input:indeterminate ~ .swap-on {
-        rotate: 45deg;
-      }
-      input:is(:checked, :indeterminate) ~ .swap-on, &.swap-active .swap-on {
-        rotate: 0deg;
-      }
-      input:is(:checked, :indeterminate) ~ .swap-off, &.swap-active .swap-off {
-        rotate: calc(45deg * -1);
-      }
-    }
   }
   .swap-flip {
     @layer daisyui.l1.l2 {
@@ -3046,6 +3033,9 @@
   }
   .cursor-default {
     cursor: default;
+  }
+  .cursor-not-allowed {
+    cursor: not-allowed;
   }
   .cursor-pointer {
     cursor: pointer;
@@ -3725,6 +3715,9 @@
   .pt-0 {
     padding-top: calc(var(--spacing) * 0);
   }
+  .pt-1 {
+    padding-top: calc(var(--spacing) * 1);
+  }
   .pt-2 {
     padding-top: calc(var(--spacing) * 2);
   }
@@ -4223,6 +4216,13 @@
     -webkit-user-select: none;
     user-select: none;
   }
+  .toggle-primary {
+    @layer daisyui.l1.l2 {
+      &:checked, &[aria-checked="true"] {
+        --input-color: var(--color-primary);
+      }
+    }
+  }
   .toggle-warning {
     @layer daisyui.l1.l2 {
       &:checked, &[aria-checked="true"] {
@@ -4289,6 +4289,16 @@
     &:hover {
       @media (hover: hover) {
         background-color: transparent;
+      }
+    }
+  }
+  .hover\:bg-white\/10 {
+    &:hover {
+      @media (hover: hover) {
+        background-color: color-mix(in srgb, #fff 10%, transparent);
+        @supports (color: color-mix(in lab, red, red)) {
+          background-color: color-mix(in oklab, var(--color-white) 10%, transparent);
+        }
       }
     }
   }

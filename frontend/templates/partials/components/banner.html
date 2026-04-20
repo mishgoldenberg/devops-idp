@@ -1,5 +1,5 @@
 <header
-	class="px-8 py-8 border-b border-base-300 bg-[url(../images/banner.svg)] flex items-center gap-3 bg-cover"
+	class="relative px-8 py-8 border-b border-base-300 bg-[url(../images/banner.svg)] flex items-center gap-3 bg-cover"
 >
 	<img
 		src="../static/images/idp-icon.svg"
@@ -10,14 +10,78 @@
 		<h1 class="font-bold text-3xl text-white">DevOps Portal</h1>
 		<p class="text-lg text-white/60">Internal Developer Portal</p>
 	</div>
+
 	<!--
-		The notifications bell used to live here. It now lives in the sidebar
-		footer (bottom-left) so every page sees it in exactly one place. See
-		`partials/components/sidebar.html` for the new bell + dropdown.
+		Notifications (top-right of every page). Simple DaisyUI dropdown
+		anchored to the bell: `dropdown-end` aligns the panel to the right
+		edge of the trigger so it stays inside the viewport on every screen
+		width; the panel caps its height and scrolls internally if the list
+		is long. No custom positioning JS — the dropdown toggle is handled
+		by the underlying DaisyUI/focus behavior.
 	-->
+	<div class="dropdown dropdown-end" data-notif-root>
+		<button
+			type="button"
+			tabindex="0"
+			class="btn btn-ghost btn-circle text-white hover:bg-white/10"
+			aria-label="Notifications"
+			title="Notifications"
+		>
+			<div class="indicator">
+				<svg
+					viewBox="0 0 24 24"
+					class="w-6 h-6"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					aria-hidden="true"
+				>
+					<path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+					<path d="M13.73 21a2 2 0 01-3.46 0"></path>
+				</svg>
+				<span
+					class="indicator-item badge badge-error badge-xs hidden"
+					data-notif-count
+					>0</span
+				>
+			</div>
+		</button>
+		<div
+			tabindex="0"
+			class="dropdown-content z-50 mt-3 w-80 max-w-[calc(100vw-2rem)] card card-compact bg-base-100 text-base-content shadow-xl border border-base-300"
+		>
+			<div class="card-body p-0">
+				<div
+					class="flex items-center justify-between px-4 py-3 border-b border-base-300"
+				>
+					<h3 class="font-semibold text-sm">Notifications</h3>
+					<button
+						type="button"
+						class="btn btn-ghost btn-xs"
+						data-notif-read-all
+					>
+						Mark all read
+					</button>
+				</div>
+				<ul
+					class="max-h-96 overflow-y-auto divide-y divide-base-200"
+					data-notif-list
+				>
+					<li class="p-4 text-xs text-base-content/50 text-center">
+						Loading…
+					</li>
+				</ul>
+			</div>
+		</div>
+	</div>
 </header>
 
 <script>
+	// ── Notifications bell (banner, top-right) ──────────────────────────────
+	// Polls every 45s for unread count + latest 50 notifications. Clicking a
+	// notification marks it read (optionally navigating to `link`).
 	(function () {
 		const root = document.querySelector("[data-notif-root]");
 		if (!root) return;
@@ -64,14 +128,13 @@
 					const lj = await listRes.json();
 					const items = Array.isArray(lj?.data) ? lj.data : [];
 					if (!items.length) {
-						list.innerHTML = `<li class="p-4 text-xs text-base-content/50 text-center">No notifications.</li>`;
+						list.innerHTML = `<li class="p-6 text-xs text-base-content/50 text-center">
+							<div class="mb-1">No notifications yet.</div>
+							<div class="opacity-70">Approvals and system alerts will show up here.</div>
+						</li>`;
 					} else {
 						list.innerHTML = items.map((n) => {
 							const unread = !n.is_read;
-							const count = Number(n.group_count || n.count || 1);
-							const countBadge = count > 1
-								? `<span class="badge badge-ghost badge-xs ml-1">${count}×</span>`
-								: "";
 							return `
 								<li class="p-3 ${unread ? "bg-primary/5" : ""} hover:bg-base-200 cursor-pointer transition-colors"
 								    data-notif-item
@@ -80,7 +143,7 @@
 									<div class="flex items-start gap-2">
 										<span class="mt-1 h-2 w-2 rounded-full ${unread ? "bg-primary" : "bg-transparent"}"></span>
 										<div class="flex-1 min-w-0">
-											<p class="text-xs leading-snug">${escapeHtml(n.message || "")}${countBadge}</p>
+											<p class="text-xs leading-snug">${escapeHtml(n.message || "")}</p>
 											<p class="text-[10px] text-base-content/50 mt-1">${fmtRelative(n.created_at)}</p>
 										</div>
 									</div>
@@ -106,7 +169,7 @@
 					}
 				}
 			} catch (_err) {
-				/* silent */
+				/* silent — keep last known state */
 			}
 		}
 
@@ -126,8 +189,7 @@
 	// ── Global error boundary ───────────────────────────────────────────────
 	// Mounted once per page via the banner include. Catches raw JS crashes,
 	// unhandled promise rejections, and HTMX failures, and shows a single
-	// friendly toast instead of letting the UI "disappear". Never calls any
-	// external service directly.
+	// friendly toast instead of letting the UI "disappear".
 	(function () {
 		if (window.__PORTAL_ERR_BOUNDARY__) return;
 		window.__PORTAL_ERR_BOUNDARY__ = true;

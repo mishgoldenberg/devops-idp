@@ -191,6 +191,38 @@ def create_app() -> FastAPI:
         except Exception as exc:
             _log.warning("safe_mode.ensure_table() failed: %s", exc)
 
+        # ── Audit log retention ──────────────────────────────────────────
+        # Purge rows older than AUDIT_RETENTION_DAYS (default 7). We run one
+        # pass immediately so freshly-started pods don't display stale rows
+        # from a previous incarnation, then loop every 6 hours. Using a
+        # daemon thread keeps it simple and safe: the interpreter exit
+        # reaps it, and we never block request handling.
+        import threading
+        import time as _time
+
+        def _audit_retention_loop() -> None:
+            interval_seconds = 6 * 60 * 60
+            while True:
+                try:
+                    audit.delete_older_than(audit.AUDIT_RETENTION_DAYS)
+                except Exception as exc:
+                    _log.warning("audit retention sweep failed: %s", exc)
+                _time.sleep(interval_seconds)
+
+        try:
+            t = threading.Thread(
+                target=_audit_retention_loop,
+                name="audit-retention",
+                daemon=True,
+            )
+            t.start()
+            _log.info(
+                "audit retention sweeper started (every 6h, %d day cutoff)",
+                audit.AUDIT_RETENTION_DAYS,
+            )
+        except Exception as exc:
+            _log.warning("could not start audit retention thread: %s", exc)
+
     # Include all API routers (azure_devops, auth, approvals, etc.)
     app.include_router(api_router)
 

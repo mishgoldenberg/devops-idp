@@ -174,3 +174,49 @@ def distinct_actions() -> List[str]:
         return [str(r["action"]) for r in rows if r.get("action")]
     except Exception:
         return []
+
+
+# ── Retention ──────────────────────────────────────────────────────────────
+# Audit events are meant to answer "what happened in the last few days" during
+# incident triage. Keeping them longer bloats the DB and muddies the UI, so we
+# hard-cap retention and expose a tiny helper that the app's startup wires to
+# a background thread (see ``main.py``'s ``_audit_retention_loop``).
+
+AUDIT_RETENTION_DAYS = 7
+
+
+def delete_older_than(days: int = AUDIT_RETENTION_DAYS) -> int:
+    """
+    Delete rows in ``audit_events`` whose ``created_at`` is older than ``days``.
+
+    Returns the number of rows deleted. Safe to call repeatedly; never raises
+    (deletion is best-effort — if the DB hiccups, the next run picks it up).
+    Only accepts a positive integer day count as a guard against accidental
+    mass deletion (``days <= 0`` is rejected).
+    """
+    try:
+        days = int(days)
+    except (TypeError, ValueError):
+        return 0
+    if days <= 0:
+        _log.warning("audit.delete_older_than: refusing days=%s (must be > 0)", days)
+        return 0
+    try:
+        row = query_one(
+            """
+            WITH deleted AS (
+                DELETE FROM audit_events
+                 WHERE created_at < NOW() - (%s || ' days')::interval
+                 RETURNING 1
+            )
+            SELECT COUNT(*)::bigint AS n FROM deleted
+            """,
+            [days],
+        )
+        deleted = int((row or {}).get("n") or 0)
+        if deleted:
+            _log.info("audit.delete_older_than(%s): purged %d row(s)", days, deleted)
+        return deleted
+    except Exception as exc:
+        _log.warning("audit.delete_older_than(%s) failed: %s", days, exc)
+        return 0
