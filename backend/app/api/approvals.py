@@ -29,10 +29,24 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
+import audit
+import safe_mode
 from db import execute, execute_returning, query_all, query_one
 from security import AuthUser, get_current_user
 
 from .notifications import create_notification
+
+
+# Where the bell dropdown should navigate when the user clicks a request
+# notification. Different request types land on different pages in the UI.
+_REQUEST_LINK_DEFAULT = "/ui/my-requests"
+
+
+def _notification_link(request_row: Dict[str, Any]) -> str:
+    rt = str(request_row.get("request_type") or "")
+    if rt == "SNOW_TICKET":
+        return "/ui/support"
+    return _REQUEST_LINK_DEFAULT
 
 
 log = logging.getLogger(__name__)
@@ -76,6 +90,34 @@ def create_request(
             detail="Insufficient permissions to create this request type",
         )
 
+    # ── Validate payload (spec: no empty values; project-name rules on ADO) ─
+    _validate_request_payload(body.request_type, body.request_title, body.request_payload)
+
+    # ── Duplicate prevention: reject an identical pending request from the
+    # same user so a double-click never opens two approval tickets.
+    existing = query_one(
+        """
+        SELECT id, request_title
+          FROM approval_requests
+         WHERE requester_id = %s
+           AND request_type = %s
+           AND status = 'PENDING'
+           AND request_title = %s
+         ORDER BY created_at DESC
+         LIMIT 1
+        """,
+        [current_user["id"], body.request_type, body.request_title],
+    )
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "You already have a pending request with the same title. "
+                "Wait for the existing request to be approved or rejected before "
+                "submitting another."
+            ),
+        )
+
     rows = execute_returning(
         """
         INSERT INTO approval_requests (requester_id, request_type, request_title, request_payload, status)
@@ -88,15 +130,27 @@ def create_request(
 
     _log_audit(current_user["id"], "CREATE_REQUEST", "approval_request", str(row["id"]))
 
+    email = str(current_user.get("email") or "").strip().lower()
+    audit.log(
+        audit.Action.SELF_SERVICE_REQUEST_CREATED,
+        user_email=email,
+        metadata={
+            "request_id": str(row["id"]),
+            "request_type": body.request_type,
+            "request_title": body.request_title,
+        },
+    )
+
     # Notify the requester immediately. Admins are notified via the
     # Approvals page polling the "pending" list (no per-admin fan-out).
-    email = str(current_user.get("email") or "").strip().lower()
     if email:
         create_notification(
             user_email=email,
             message=f"Your request '{body.request_title}' was submitted and is pending approval.",
             notif_type="REQUEST_SUBMITTED",
             related_id=str(row["id"]),
+            link=_REQUEST_LINK_DEFAULT,
+            group_key=f"request:{row['id']}",
         )
 
     return {"success": True, "data": row, "timestamp": _now_iso()}
@@ -206,6 +260,15 @@ def approve_request(
         raise HTTPException(status_code=409, detail="Request was already processed")
 
     _log_audit(current_user["id"], "APPROVE_REQUEST", "approval_request", request_id)
+    audit.log(
+        audit.Action.REQUEST_APPROVED,
+        user_email=str(current_user.get("email") or ""),
+        metadata={
+            "request_id": str(request_id),
+            "request_type": request_row.get("request_type"),
+            "approval_time_seconds": _seconds_since(request_row.get("created_at")),
+        },
+    )
 
     # Notify requester of approval
     requester_email = _requester_email(request_row)
@@ -215,6 +278,8 @@ def approve_request(
             message=f"Your request '{request_row.get('request_title')}' was approved. Execution is starting now.",
             notif_type="REQUEST_APPROVED",
             related_id=str(request_id),
+            link=_notification_link(request_row),
+            group_key=f"request:{request_id}",
         )
 
     # Kick off async execution. Never let executor errors leak to the admin.
@@ -266,6 +331,16 @@ def reject_request(
         raise HTTPException(status_code=409, detail="Request was already processed")
 
     _log_audit(current_user["id"], "REJECT_REQUEST", "approval_request", request_id)
+    audit.log(
+        audit.Action.REQUEST_REJECTED,
+        user_email=str(current_user.get("email") or ""),
+        metadata={
+            "request_id": str(request_id),
+            "request_type": request_row.get("request_type"),
+            "reason": reason,
+            "approval_time_seconds": _seconds_since(request_row.get("created_at")),
+        },
+    )
 
     requester_email = _requester_email(request_row)
     if requester_email:
@@ -274,6 +349,8 @@ def reject_request(
             message=f"Your request '{request_row.get('request_title')}' was rejected. Reason: {reason}",
             notif_type="REQUEST_REJECTED",
             related_id=str(request_id),
+            link=_notification_link(request_row),
+            group_key=f"request:{request_id}",
         )
 
     return {"success": True, "message": "Request rejected", "timestamp": _now_iso()}
@@ -302,6 +379,18 @@ def _execute_approved_request(request_row: Dict[str, Any]) -> None:
     payload = request_row.get("request_payload") or {}
 
     try:
+        # Safe Mode: simulate success for all self-services without real
+        # external side effects. Admin toggle/SAFE_MODE env both feed into
+        # safe_mode.is_enabled(); when it's on we never call K8s / ADO / etc.
+        if safe_mode.is_enabled():
+            result = {
+                "safe_mode": True,
+                "message": "Safe Mode is enabled — request simulated successfully.",
+                "request_type": request_type,
+            }
+            _finish_completed(request_id, result)
+            return
+
         if request_type == "ADO_PROJECT_CREATE":
             result = _execute_ado_project_create(request_row, payload)
         elif request_type == "SONAR_PR_SCANNING_ENABLE":
@@ -373,6 +462,16 @@ def _execute_ado_project_create(
         admin_username=admin_username,
         use_mock=use_mock,
     )
+    audit.log(
+        audit.Action.TERRAFORM_STARTED,
+        user_email=str(request_row.get("requester_email") or ""),
+        metadata={
+            "request_id": str(request_row.get("id")),
+            "job_id": job_id,
+            "project_name": project_name,
+            "process_type": process_type,
+        },
+    )
 
     # Poll until terminal. Bounded to ~20 minutes; terraform jobs beyond
     # that will be considered failed rather than hanging the thread forever.
@@ -443,12 +542,22 @@ def _finish_completed(request_id: str, result_data: Dict[str, Any]) -> None:
     )
     row = _load_request(request_id)
     email = _requester_email(row or {})
+    audit.log(
+        audit.Action.TERRAFORM_COMPLETED,
+        user_email=email,
+        metadata={
+            "request_id": str(request_id),
+            "request_type": (row or {}).get("request_type"),
+        },
+    )
     if email and row:
         create_notification(
             user_email=email,
             message=f"Your request '{row.get('request_title')}' completed successfully.",
             notif_type="REQUEST_COMPLETED",
             related_id=str(request_id),
+            link=_notification_link(row),
+            group_key=f"request:{request_id}",
         )
 
 
@@ -466,12 +575,23 @@ def _finish_failed(request_id: str, error_message: str) -> None:
     )
     row = _load_request(request_id)
     email = _requester_email(row or {})
+    audit.log(
+        audit.Action.TERRAFORM_FAILED,
+        user_email=email,
+        metadata={
+            "request_id": str(request_id),
+            "request_type": (row or {}).get("request_type"),
+            "error": error_message[:500],
+        },
+    )
     if email and row:
         create_notification(
             user_email=email,
             message=f"Your request '{row.get('request_title')}' failed: {error_message}",
             notif_type="REQUEST_FAILED",
             related_id=str(request_id),
+            link=_notification_link(row),
+            group_key=f"request:{request_id}",
         )
 
 
@@ -518,6 +638,60 @@ def _user_facing_error(exc: Exception) -> str:
 
 
 # ─── Permissions ────────────────────────────────────────────────────────
+
+def _seconds_since(ts: Any) -> Optional[int]:
+    """Return integer seconds from ``ts`` to now, or None if ts is falsy/unparseable."""
+    if not ts:
+        return None
+    from datetime import datetime, timezone
+
+    try:
+        if isinstance(ts, datetime):
+            dt = ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+        else:
+            dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+        return int((datetime.now(timezone.utc) - dt).total_seconds())
+    except Exception:
+        return None
+
+
+# Project-name rules used by ADO self-service. Keep in sync with any frontend
+# validation so users see the same constraints client-side and server-side.
+_ADO_NAME_RE = __import__("re").compile(r"^[A-Za-z0-9][A-Za-z0-9 _\-.]{1,62}$")
+
+
+def _validate_request_payload(request_type: str, title: str, payload: Dict[str, Any]) -> None:
+    """
+    Spec: no empty values; project-name length + allowed-character rules for
+    Azure DevOps project creation. Raises HTTPException(400) with a single
+    human-readable message on first failure.
+    """
+    if not str(title or "").strip():
+        raise HTTPException(status_code=400, detail="Request title is required.")
+    if not isinstance(payload, dict) or not any(
+        str(v).strip() for v in payload.values() if v is not None
+    ):
+        raise HTTPException(status_code=400, detail="Request inputs cannot be empty.")
+
+    if request_type == "ADO_PROJECT_CREATE":
+        name = str(payload.get("project_name") or "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="project_name is required.")
+        if not _ADO_NAME_RE.match(name):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "project_name must be 2–63 characters, start with a letter or "
+                    "digit, and contain only letters, digits, spaces, hyphens, "
+                    "underscores, or dots."
+                ),
+            )
+        admin = str(payload.get("admin_username") or "").strip()
+        if not admin:
+            raise HTTPException(status_code=400, detail="admin_username is required.")
+
 
 def _can_create(user: AuthUser, request_type: str) -> bool:
     """

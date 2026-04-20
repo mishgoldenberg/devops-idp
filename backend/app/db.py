@@ -1,3 +1,25 @@
+"""
+Postgres access layer.
+
+Responsibilities
+----------------
+* Own the application's single ``psycopg2.pool.SimpleConnectionPool``.
+  The pool is created lazily so importing this module never fails when the
+  DB is temporarily unreachable (matters during pod startup / CrashLoopBackOff).
+* Provide small, explicit helpers (``query_all``, ``query_one``,
+  ``execute``, ``execute_returning``) instead of pulling in a full ORM — the
+  schema and query surface are small enough to keep direct SQL honest.
+* Own all DDL: every table the app writes to is created by an
+  ``ensure_*()`` helper called at startup. These helpers are idempotent
+  (``CREATE TABLE IF NOT EXISTS`` / ``ALTER TABLE ... IF NOT EXISTS``) so
+  schema drift between installs heals itself at the next boot.
+* Register the ``dict → Json`` adapter so endpoints can write JSONB columns
+  without wrapping every value in ``Json(...)`` by hand.
+
+Anything that reads/writes the DB goes through here; don't open raw
+connections from API routers.
+"""
+
 import threading
 from contextlib import contextmanager
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -347,6 +369,79 @@ def ensure_tables() -> None:
     ensure_item_tables()
     ensure_observability_tables()
     ensure_approval_workflow_tables()
+    ensure_user_preference_columns()
+    ensure_suggestions_table()
+
+
+def ensure_user_preference_columns() -> None:
+    """
+    Extend ``users`` with per-user UI preferences that the portal persists:
+      * ``avatar_url``       — data URL (base64) or URL of the sidebar avatar.
+      * ``preferred_theme``  — "light" or "night" (DaisyUI theme name).
+
+    Added via ALTER TABLE ... ADD COLUMN IF NOT EXISTS so the baseline schema
+    in deployment/charts/.../00_schema.sql can stay untouched and dev DBs keep
+    working across deploys.
+    """
+    for sql in (
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_theme VARCHAR(32)",
+    ):
+        try:
+            execute(sql)
+        except Exception:
+            # Silent: users table may not exist yet on a minimal dev DB.
+            pass
+
+
+def ensure_suggestions_table() -> None:
+    """
+    Table for in-app user suggestions submitted from the Settings page.
+    Kept intentionally flat — admins can triage later via a dedicated UI.
+    """
+    execute(
+        """
+        CREATE TABLE IF NOT EXISTS suggestions (
+            id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            user_email  VARCHAR(255) NOT NULL,
+            title       VARCHAR(255) NOT NULL,
+            description TEXT,
+            status      VARCHAR(32)  NOT NULL DEFAULT 'new',
+            created_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    execute(
+        "CREATE INDEX IF NOT EXISTS idx_suggestions_created "
+        "ON suggestions (created_at DESC)"
+    )
+
+
+def cleanup_old_audit_logs(retention_days: int = 7) -> int:
+    """
+    Delete audit_logs rows older than ``retention_days`` days.
+
+    Audit logs grow unbounded as users exercise the portal. Keeping only the
+    last week is enough for the dashboards + recent-activity views that read
+    from this table, and it keeps the table small enough that admin queries
+    stay snappy without a dedicated archive job.
+
+    Returns the number of rows deleted (0 on failure — best-effort).
+    """
+    try:
+        row = query_one(
+            f"""
+            WITH deleted AS (
+                DELETE FROM audit_logs
+                WHERE created_at < NOW() - INTERVAL '{int(retention_days)} days'
+                RETURNING 1
+            )
+            SELECT COUNT(*) AS n FROM deleted
+            """
+        )
+        return int((row or {}).get("n") or 0)
+    except Exception:
+        return 0
 
 
 _item_tables_lock = threading.Lock()
@@ -465,6 +560,16 @@ def ensure_approval_workflow_tables() -> None:
         "CREATE INDEX IF NOT EXISTS idx_notifications_user_unread "
         "ON notifications (user_email, is_read, created_at DESC)"
     )
+    # Polish columns: click-to-navigate link + grouping key. Added via ALTER
+    # so existing installs keep working without a full migration.
+    for stmt in (
+        "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS link TEXT",
+        "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS group_key VARCHAR(128)",
+    ):
+        try:
+            execute(stmt)
+        except Exception:
+            pass
 
 
 # Primary bootstrap admin (DB role Platform Admin). Single allowed hard-coded identity.

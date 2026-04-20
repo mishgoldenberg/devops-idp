@@ -1,3 +1,26 @@
+"""
+ServiceNow integration (Support page).
+
+Talks to a ServiceNow instance via the Table API (``/api/now/table/…``)
+using HTTP Basic auth with a service-account user. All portal-created
+tickets are technically opened by that shared account, so we keep a
+mapping in the local ``user_tickets`` table to recover the portal
+requester for "My Tickets".
+
+Resilience
+----------
+* Every outbound call has a hard timeout (30 s) and goes through
+  ``httpx.Client`` so connection errors surface fast.
+* We cache ticket lists for 60 s (per user) and ticket detail for the
+  same window; writes explicitly invalidate those keys so the UI never
+  shows a stale state after the user's own action.
+* Transport errors never leak upstream — ``_raise_snow_error`` converts
+  them into a generic 502 "Service temporarily unavailable".
+
+Mock mode (``USE_MOCK_SERVICENOW=true``, default) returns canned data so
+local dev doesn't need real credentials.
+"""
+
 import logging
 import os
 from datetime import datetime, timezone
@@ -331,21 +354,39 @@ def get_tickets(current_user: AuthUser = Depends(get_current_user)):
         "^ORDERBYDESCsys_created_on"
     )
 
+    def _fetch_live():
+        try:
+            with _snow_client() as client:
+                resp = client.get(
+                    "/api/now/table/incident",
+                    params={
+                        "sysparm_query": query,
+                        "sysparm_fields": "sys_id,number,short_description,state,priority,assigned_to,opened_at,sys_updated_on",
+                        "sysparm_limit": 50,
+                        "sysparm_display_value": "true",
+                    },
+                )
+                resp.raise_for_status()
+                return [_map_ticket(r) for r in resp.json().get("result", [])]
+        except Exception as exc:
+            _raise_snow_error(exc, "fetching tickets")
+
+    # 60s cache keyed on the effective ServiceNow identity; the list of my
+    # tickets is hit by the support page header, badges, and the dashboard
+    # widget simultaneously.
     try:
-        with _snow_client() as client:
-            resp = client.get(
-                "/api/now/table/incident",
-                params={
-                    "sysparm_query": query,
-                    "sysparm_fields": "sys_id,number,short_description,state,priority,assigned_to,opened_at,sys_updated_on",
-                    "sysparm_limit": 50,
-                    "sysparm_display_value": "true",
-                },
-            )
-            resp.raise_for_status()
-            records = [_map_ticket(r) for r in resp.json().get("result", [])]
-    except Exception as exc:
-        _raise_snow_error(exc, "fetching tickets")
+        from integrations_cache import cached_external
+        records = cached_external(
+            "snow",
+            (user_email or "anon").lower(),
+            f"tickets:{snow_user}",
+            _fetch_live,
+            ttl=60,
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        records = _fetch_live()
 
     return {"success": True, "data": records, "timestamp": _now_iso()}
 
@@ -451,8 +492,52 @@ def create_ticket(
     current_user: AuthUser = Depends(get_current_user),
 ):
     user_email = current_user.get("username", "")
+
+    # Hardening: reject empty title/description so we never post meaningless
+    # tickets to ServiceNow. Mirrors the frontend guard for defense-in-depth.
+    title_clean = (body.title or "").strip()
+    description_clean = (body.description or "").strip()
+    if not title_clean:
+        raise HTTPException(status_code=400, detail="Ticket title is required.")
+    if not description_clean:
+        raise HTTPException(status_code=400, detail="Ticket description is required.")
+    if len(title_clean) > 160:
+        raise HTTPException(
+            status_code=400,
+            detail="Ticket title is too long (max 160 characters).",
+        )
+
     try:
         _ensure_user_tickets_table()
+    except Exception:
+        pass
+
+    # Safe Mode: simulate success without hitting ServiceNow.
+    try:
+        import safe_mode as _safe_mode
+        import audit as _audit
+        if _safe_mode.is_enabled():
+            ts = int(datetime.now(timezone.utc).timestamp())
+            simulated = {
+                "sys_id": f"safe_{ts}",
+                "number": f"INC-SAFE-{ts % 10_000_000:07d}",
+                "short_description": title_clean,
+                "state": "New",
+                "priority": str(body.priority or "3"),
+                "assigned_to": user_email,
+                "opened_at": _now_iso(),
+                "description": description_clean,
+                "safe_mode": True,
+            }
+            try:
+                _audit.log(
+                    _audit.Action.TICKET_CREATED,
+                    user_email=user_email,
+                    metadata={"safe_mode": True, "title": title_clean[:160]},
+                )
+            except Exception:
+                pass
+            return {"success": True, "data": simulated, "timestamp": _now_iso()}
     except Exception:
         pass
 
@@ -498,6 +583,21 @@ def create_ticket(
                 user_email,
                 priority_to_severity_band(str(body.priority)),
                 body.title or "",
+            )
+        except Exception:
+            pass
+        try:
+            import audit as _audit
+            _audit.log(
+                _audit.Action.TICKET_CREATED,
+                user_email=user_email,
+                metadata={
+                    "ticket_number": ticket_number,
+                    "sys_id": new_sys_id,
+                    "priority": str(body.priority or ""),
+                    "title": title_clean[:160],
+                    "mock": True,
+                },
             )
         except Exception:
             pass
@@ -556,6 +656,11 @@ def create_ticket(
 
     # Bust the ticket-list cache so the new ticket appears immediately
     cache.invalidate(f"snow:tickets:{user_email}")
+    try:
+        from integrations_cache import invalidate_owner
+        invalidate_owner("snow", user_email)
+    except Exception:
+        pass
 
     try:
         from observability_tracking import (
@@ -568,6 +673,21 @@ def create_ticket(
             user_email,
             priority_to_severity_band(str(body.priority)),
             body.title or "",
+        )
+    except Exception:
+        pass
+
+    try:
+        import audit as _audit
+        _audit.log(
+            _audit.Action.TICKET_CREATED,
+            user_email=user_email,
+            metadata={
+                "ticket_number": ticket.get("number"),
+                "sys_id": ticket.get("sys_id"),
+                "priority": str(body.priority or ""),
+                "title": title_clean[:160],
+            },
         )
     except Exception:
         pass

@@ -1,3 +1,19 @@
+"""
+Authentication, token handling, and RBAC helpers.
+
+The portal issues its own HS256 JWTs after Google OAuth completes (see
+``api/auth.py``) and stores them in an ``auth_token`` HttpOnly cookie.
+Every protected endpoint depends on :func:`get_current_user`, which
+accepts either the cookie or an ``Authorization: Bearer <token>`` header —
+the Bearer path exists so internal tools and tests don't have to
+round-trip cookies.
+
+``has_effective_admin_access_live`` is intentionally uncached: an admin
+grant/revoke must take effect immediately without waiting for token
+expiry, so the check reads the user's current role from Postgres on every
+call. The slight cost is worth the correctness.
+"""
+
 import datetime as dt
 from typing import Any, Dict, List, Optional
 

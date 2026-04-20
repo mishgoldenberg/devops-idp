@@ -278,6 +278,12 @@ def _create_k8s_job(project_name: str, process_name: str, ado_org: str, admin_us
         spec=k8s.V1JobSpec(
             ttl_seconds_after_finished=86400,
             backoff_limit=0,
+            # Hard execution timeout so a stuck Terraform job never hangs the
+            # approval thread indefinitely. Configurable via env so closed-network
+            # installs can lengthen it without rebuilding the image.
+            active_deadline_seconds=int(
+                os.getenv("TERRAFORM_JOB_TIMEOUT_SECONDS", "1200") or 1200
+            ),
             template=k8s.V1PodTemplateSpec(
                 metadata=k8s.V1ObjectMeta(
                     annotations={"iam.gke.io/gcp-service-account": TF_GCP_SA}
@@ -397,6 +403,17 @@ def _get_k8s_status(job_id: str) -> Dict[str, Any]:
         return {"status": "succeeded", "project_url": project_url}
 
     if failed > 0:
+        # Surface DeadlineExceeded specifically so the UI message is actionable.
+        for cond in (job.status.conditions or []):
+            if getattr(cond, "type", "") == "Failed" and getattr(cond, "reason", "") == "DeadlineExceeded":
+                return {
+                    "status": "failed",
+                    "error": (
+                        "Terraform job exceeded its maximum execution time and was "
+                        "terminated. Increase TERRAFORM_JOB_TIMEOUT_SECONDS or check "
+                        "the pod logs for the cause."
+                    ),
+                }
         return {"status": "failed", "error": _extract_error(job_id, core)}
 
     # Check pod-level conditions while the Job is still "active" or "pending".

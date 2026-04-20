@@ -10,38 +10,11 @@
 		<h1 class="font-bold text-3xl text-white">DevOps Portal</h1>
 		<p class="text-lg text-white/60">Internal Developer Portal</p>
 	</div>
-
-	<div class="dropdown dropdown-end" data-notif-root>
-		<button
-			type="button"
-			tabindex="0"
-			class="btn btn-ghost btn-circle text-white hover:bg-white/10"
-			aria-label="Notifications"
-			data-notif-toggle
-		>
-			<div class="indicator">
-				<svg viewBox="0 0 24 24" class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-					<path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
-					<path d="M13.73 21a2 2 0 01-3.46 0"></path>
-				</svg>
-				<span class="indicator-item badge badge-error badge-xs hidden" data-notif-count>0</span>
-			</div>
-		</button>
-		<div
-			tabindex="0"
-			class="dropdown-content z-[1] mt-3 w-80 max-w-[90vw] card card-compact bg-base-100 text-base-content shadow-xl border border-base-300"
-		>
-			<div class="card-body p-0">
-				<div class="flex items-center justify-between px-4 py-3 border-b border-base-300">
-					<h3 class="font-semibold text-sm">Notifications</h3>
-					<button type="button" class="btn btn-ghost btn-xs" data-notif-read-all>Mark all read</button>
-				</div>
-				<ul class="max-h-80 overflow-y-auto divide-y divide-base-200" data-notif-list>
-					<li class="p-4 text-xs text-base-content/50 text-center">Loading…</li>
-				</ul>
-			</div>
-		</div>
-	</div>
+	<!--
+		The notifications bell used to live here. It now lives in the sidebar
+		footer (bottom-left) so every page sees it in exactly one place. See
+		`partials/components/sidebar.html` for the new bell + dropdown.
+	-->
 </header>
 
 <script>
@@ -95,12 +68,19 @@
 					} else {
 						list.innerHTML = items.map((n) => {
 							const unread = !n.is_read;
+							const count = Number(n.group_count || n.count || 1);
+							const countBadge = count > 1
+								? `<span class="badge badge-ghost badge-xs ml-1">${count}×</span>`
+								: "";
 							return `
-								<li class="p-3 ${unread ? "bg-primary/5" : ""} hover:bg-base-200 cursor-pointer" data-notif-item data-id="${escapeHtml(n.id)}">
+								<li class="p-3 ${unread ? "bg-primary/5" : ""} hover:bg-base-200 cursor-pointer transition-colors"
+								    data-notif-item
+								    data-id="${escapeHtml(n.id)}"
+								    data-link="${escapeHtml(n.link || "")}">
 									<div class="flex items-start gap-2">
 										<span class="mt-1 h-2 w-2 rounded-full ${unread ? "bg-primary" : "bg-transparent"}"></span>
 										<div class="flex-1 min-w-0">
-											<p class="text-xs leading-snug">${escapeHtml(n.message || "")}</p>
+											<p class="text-xs leading-snug">${escapeHtml(n.message || "")}${countBadge}</p>
 											<p class="text-[10px] text-base-content/50 mt-1">${fmtRelative(n.created_at)}</p>
 										</div>
 									</div>
@@ -109,11 +89,17 @@
 						list.querySelectorAll("[data-notif-item]").forEach((el) => {
 							el.addEventListener("click", async () => {
 								const id = el.dataset.id;
-								if (!id) return;
-								await fetch(`/api/notifications/${encodeURIComponent(id)}/read`, {
-									method: "POST",
-									credentials: "same-origin",
-								}).catch(() => {});
+								const link = el.dataset.link;
+								if (id) {
+									fetch(`/api/notifications/${encodeURIComponent(id)}/read`, {
+										method: "POST",
+										credentials: "same-origin",
+									}).catch(() => {});
+								}
+								if (link) {
+									window.location.href = link;
+									return;
+								}
 								refresh();
 							});
 						});
@@ -135,5 +121,77 @@
 
 		refresh();
 		setInterval(refresh, 45_000);
+	})();
+
+	// ── Global error boundary ───────────────────────────────────────────────
+	// Mounted once per page via the banner include. Catches raw JS crashes,
+	// unhandled promise rejections, and HTMX failures, and shows a single
+	// friendly toast instead of letting the UI "disappear". Never calls any
+	// external service directly.
+	(function () {
+		if (window.__PORTAL_ERR_BOUNDARY__) return;
+		window.__PORTAL_ERR_BOUNDARY__ = true;
+
+		const toastRoot = (() => {
+			const existing = document.getElementById("portal-toast-root");
+			if (existing) return existing;
+			const el = document.createElement("div");
+			el.id = "portal-toast-root";
+			el.style.position = "fixed";
+			el.style.bottom = "1.5rem";
+			el.style.right = "1.5rem";
+			el.style.zIndex = "9999";
+			el.style.display = "flex";
+			el.style.flexDirection = "column";
+			el.style.gap = "0.5rem";
+			document.body.appendChild(el);
+			return el;
+		})();
+
+		function showToast(message, kind) {
+			const t = document.createElement("div");
+			t.className = "alert alert-error shadow-lg text-sm max-w-sm transition-opacity";
+			if (kind === "warn") t.className = "alert alert-warning shadow-lg text-sm max-w-sm transition-opacity";
+			t.setAttribute("role", "alert");
+			t.textContent = message || "Something went wrong. Please try again.";
+			toastRoot.appendChild(t);
+			setTimeout(() => { t.style.opacity = "0"; }, 5000);
+			setTimeout(() => { t.remove(); }, 5800);
+		}
+
+		let lastShownAt = 0;
+		function throttledToast(msg, kind) {
+			const now = Date.now();
+			if (now - lastShownAt < 1500) return;
+			lastShownAt = now;
+			showToast(msg, kind);
+		}
+
+		window.addEventListener("error", (evt) => {
+			console.error("[portal] uncaught error:", evt?.error || evt?.message);
+			throttledToast("Something went wrong. Please try again.");
+		});
+
+		window.addEventListener("unhandledrejection", (evt) => {
+			console.error("[portal] unhandled rejection:", evt?.reason);
+			throttledToast("Something went wrong. Please try again.");
+		});
+
+		document.body.addEventListener("htmx:responseError", (evt) => {
+			const status = evt?.detail?.xhr?.status;
+			if (status === 401 || status === 403) {
+				throttledToast("You do not have access to that action.", "warn");
+				return;
+			}
+			throttledToast("Service temporarily unavailable. Please try again.");
+		});
+
+		document.body.addEventListener("htmx:sendError", () => {
+			throttledToast("Network error. Please check your connection and try again.");
+		});
+
+		document.body.addEventListener("htmx:timeout", () => {
+			throttledToast("The request took too long. Please try again.");
+		});
 	})();
 </script>
