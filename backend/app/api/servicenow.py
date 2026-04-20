@@ -1,3 +1,26 @@
+"""
+ServiceNow integration (Support page).
+
+Talks to a ServiceNow instance via the Table API (``/api/now/table/…``)
+using HTTP Basic auth with a service-account user. All portal-created
+tickets are technically opened by that shared account, so we keep a
+mapping in the local ``user_tickets`` table to recover the portal
+requester for "My Tickets".
+
+Resilience
+----------
+* Every outbound call has a hard timeout (30 s) and goes through
+  ``httpx.Client`` so connection errors surface fast.
+* We cache ticket lists for 60 s (per user) and ticket detail for the
+  same window; writes explicitly invalidate those keys so the UI never
+  shows a stale state after the user's own action.
+* Transport errors never leak upstream — ``_raise_snow_error`` converts
+  them into a generic 502 "Service temporarily unavailable".
+
+Mock mode (``USE_MOCK_SERVICENOW=true``, default) returns canned data so
+local dev doesn't need real credentials.
+"""
+
 import logging
 import os
 from datetime import datetime, timezone

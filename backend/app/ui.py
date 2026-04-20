@@ -1,3 +1,22 @@
+"""
+HTMX UI routes.
+
+Every ``/ui/…`` path in the browser is handled here. Two flavors coexist:
+
+* **Pages** — full HTML documents rendered from templates under
+  ``frontend/templates/``. Each page extends ``base.html`` and fills in a
+  ``content`` block; the shell (sidebar, banner, notification bell) is
+  shared.
+* **Partials / widget endpoints** (``/ui/components/…``) — small HTML
+  fragments fetched by HTMX and swapped into the DOM. These are how
+  dashboard widgets load their data without a full page refresh.
+
+This module is deliberately kept thin — it calls into the JSON ``api/…``
+routers for data and leaves all business logic there. If you find yourself
+writing a non-trivial query here, move it into the matching ``api`` module
+instead.
+"""
+
 import os
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional

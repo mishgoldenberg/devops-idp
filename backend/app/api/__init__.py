@@ -1,3 +1,15 @@
+"""
+Aggregate router for the portal's JSON API.
+
+Every domain has its own module under ``backend/app/api/`` which exposes an
+``APIRouter`` called ``router``. This file imports all of them and mounts
+them under ``/api`` with a per-domain prefix. ``backend/app/main.py`` picks
+up ``api_router`` and calls ``app.include_router(api_router)``.
+
+Adding a new domain: create ``backend/app/api/<name>.py`` with
+``router = APIRouter()``, then import it here and include it below.
+"""
+
 from fastapi import APIRouter
 
 from . import admin, auth, dashboards, health, metrics, observability, azure_devops, sonarqube, artifactory, servicenow, ai_chatbot, approvals, pins, notifications

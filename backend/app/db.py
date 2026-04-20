@@ -1,3 +1,25 @@
+"""
+Postgres access layer.
+
+Responsibilities
+----------------
+* Own the application's single ``psycopg2.pool.SimpleConnectionPool``.
+  The pool is created lazily so importing this module never fails when the
+  DB is temporarily unreachable (matters during pod startup / CrashLoopBackOff).
+* Provide small, explicit helpers (``query_all``, ``query_one``,
+  ``execute``, ``execute_returning``) instead of pulling in a full ORM — the
+  schema and query surface are small enough to keep direct SQL honest.
+* Own all DDL: every table the app writes to is created by an
+  ``ensure_*()`` helper called at startup. These helpers are idempotent
+  (``CREATE TABLE IF NOT EXISTS`` / ``ALTER TABLE ... IF NOT EXISTS``) so
+  schema drift between installs heals itself at the next boot.
+* Register the ``dict → Json`` adapter so endpoints can write JSONB columns
+  without wrapping every value in ``Json(...)`` by hand.
+
+Anything that reads/writes the DB goes through here; don't open raw
+connections from API routers.
+"""
+
 import threading
 from contextlib import contextmanager
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
