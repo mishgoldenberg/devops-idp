@@ -47,27 +47,43 @@ def _format_display_name(username: str) -> str:
     return " ".join(part.capitalize() for part in local_part.split() if part) or username
 
 
-def _get_ui_user(token: str) -> Dict[str, str]:
-    """Resolve the authenticated user's display info for the UI layer."""
+def _get_ui_user(token: str) -> Dict[str, Any]:
+    """Resolve the authenticated user's display info for the UI layer.
+
+    Returns display_name (with DB override if present) plus the per-user
+    preferences the sidebar + base template rely on (avatar + theme). The DB
+    lookup is best-effort so that a missing ``avatar_url``/``preferred_theme``
+    column never breaks page rendering.
+    """
     payload = decode_access_token(token)
     username = str(payload.get("username", "User"))
     display_name = _format_display_name(username)
+    avatar_url: Optional[str] = None
+    preferred_theme: Optional[str] = None
 
     user_id = payload.get("id")
     if user_id:
         try:
             user_row = query_one(
-                "SELECT full_name FROM users WHERE id = %s",
+                "SELECT full_name, avatar_url, preferred_theme FROM users WHERE id = %s",
                 [user_id],
             )
-            if user_row and user_row.get("full_name"):
-                display_name = str(user_row["full_name"])
+            if user_row:
+                if user_row.get("full_name"):
+                    display_name = str(user_row["full_name"])
+                if user_row.get("avatar_url"):
+                    avatar_url = str(user_row["avatar_url"])
+                if user_row.get("preferred_theme"):
+                    preferred_theme = str(user_row["preferred_theme"])
         except Exception:
             pass
 
     return {
         "username": username,
         "display_name": display_name,
+        "avatar_url": avatar_url,
+        "preferred_theme": preferred_theme,
+        "email": payload.get("email", ""),
     }
 
 

@@ -48,14 +48,48 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import JSONResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 
 from api import api_router
 from config import get_settings
 import db
 from ui import ui_router
+
+
+# How often the audit-log retention sweep runs in the background. Hourly is
+# frequent enough that we never hold more than an hour's worth of rows older
+# than the retention window, but rare enough that we don't pressure the DB.
+AUDIT_CLEANUP_INTERVAL_SECONDS = 60 * 60  # 1 hour
+AUDIT_RETENTION_DAYS = 7
+
+
+def _start_audit_retention_worker() -> None:
+    """Start a daemon thread that periodically prunes old audit_logs rows.
+
+    We intentionally use threading.Timer (not APScheduler / asyncio) to avoid
+    pulling in a new dependency and to keep the worker self-contained — it
+    dies with the process and doesn't interact with the FastAPI event loop.
+    """
+    import logging
+    import threading
+
+    log = logging.getLogger(__name__)
+
+    def _run() -> None:
+        try:
+            deleted = db.cleanup_old_audit_logs(AUDIT_RETENTION_DAYS)
+            if deleted:
+                log.info("audit_logs retention: deleted %d rows older than %dd",
+                         deleted, AUDIT_RETENTION_DAYS)
+        except Exception as exc:
+            log.warning("audit_logs retention sweep failed: %s", exc)
+        finally:
+            t = threading.Timer(AUDIT_CLEANUP_INTERVAL_SECONDS, _run)
+            t.daemon = True
+            t.start()
+
+    # Run once on startup (so a pod that was down during the daily window
+    # still catches up), then reschedule itself.
+    _run()
 
 
 def create_app() -> FastAPI:
@@ -96,7 +130,14 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def portal_admin_nav_context(request: Request, call_next):
-        """Expose Admin menu visibility to Jinja (sidebar) without per-route boilerplate."""
+        """Expose shared nav context to Jinja templates without per-route boilerplate.
+
+        Sets on ``request.state``:
+          * ``portal_is_admin``    — boolean, used by sidebar to show Admin menu.
+          * ``portal_system_urls`` — dict of external console URLs so every
+            system page can render the top-right "Open" button without each
+            route explicitly plumbing the config.
+        """
         request.state.portal_is_admin = False
         token = request.cookies.get("auth_token")
         if token:
@@ -107,6 +148,12 @@ def create_app() -> FastAPI:
                 request.state.portal_is_admin = has_effective_admin_access_live(AuthUser(payload))
             except Exception:
                 pass
+        try:
+            from api.system_urls import get_system_urls_for_template
+
+            request.state.portal_system_urls = get_system_urls_for_template()
+        except Exception:
+            request.state.portal_system_urls = {}
         return await call_next(request)
 
     # Root endpoint (non-API) - Serves a small HTML landing page for HTMX-based UI.
@@ -162,6 +209,13 @@ def create_app() -> FastAPI:
         except Exception as exc:
             import logging
             logging.getLogger(__name__).warning("ensure_bootstrap_platform_admin() failed: %s", exc)
+        # Kick off the audit-log retention sweep. Must run AFTER ensure_tables
+        # because the audit_logs table is created there on a fresh install.
+        try:
+            _start_audit_retention_worker()
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("audit retention worker failed to start: %s", exc)
 
     # Include all API routers (azure_devops, auth, approvals, etc.)
     app.include_router(api_router)
