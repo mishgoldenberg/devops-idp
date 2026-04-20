@@ -422,8 +422,14 @@ def ui_my_requests_page(request: Request):
         return RedirectResponse(url="/ui/auth", status_code=303)
     try:
         user = _get_ui_user(token)
+        payload = decode_access_token(token)
     except HTTPException:
         return RedirectResponse(url="/ui/auth", status_code=303)
+
+    # Admin capability flag — powers the force-fail / delete buttons in the
+    # detail modal for stuck requests. Uses the same live DB check as the
+    # Approvals page so we don't drift from the backend authorization.
+    is_admin = has_effective_admin_access_live(AuthUser(payload))
 
     templates = _get_templates(request)
     return templates.TemplateResponse(
@@ -433,6 +439,7 @@ def ui_my_requests_page(request: Request):
             "user": user,
             "current_page": "my-requests",
             "now": datetime.utcnow().isoformat() + "Z",
+            "is_admin": is_admin,
         },
     )
 
