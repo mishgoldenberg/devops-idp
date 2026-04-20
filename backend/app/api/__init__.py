@@ -12,7 +12,25 @@ Adding a new domain: create ``backend/app/api/<name>.py`` with
 
 from fastapi import APIRouter
 
-from . import admin, auth, dashboards, health, metrics, observability, azure_devops, sonarqube, artifactory, servicenow, ai_chatbot, approvals, pins, notifications
+from . import (
+    admin,
+    auth,
+    dashboards,
+    health,
+    metrics,
+    observability,
+    azure_devops,
+    sonarqube,
+    artifactory,
+    servicenow,
+    ai_chatbot,
+    approvals,
+    pins,
+    notifications,
+    user_prefs,
+    suggestions,
+    system_urls,
+)
 
 
 api_router = APIRouter(prefix="/api")
@@ -53,5 +71,14 @@ api_router.include_router(pins.router, tags=["pins"])
 
 # In-app notifications (bell + dropdown, fed by the approval workflow).
 api_router.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
+
+# Per-user preferences (avatar, theme, display name).
+api_router.include_router(user_prefs.router, prefix="/me", tags=["user-prefs"])
+
+# User-submitted suggestions (Settings page).
+api_router.include_router(suggestions.router, prefix="/suggestions", tags=["suggestions"])
+
+# External system console URLs consumed by the "Open" button on system pages.
+api_router.include_router(system_urls.router, prefix="/config", tags=["config"])
 
 

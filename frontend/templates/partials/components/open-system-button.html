@@ -1,0 +1,38 @@
+{#
+	Reusable "Open external system" button.
+
+	Usage:
+		{% with system_key = 'azure_devops' %}
+			{% include "partials/components/open-system-button.html" %}
+		{% endwith %}
+
+	Renders nothing if the URL for the given key is not configured — admins can
+	drop a new env var in without editing templates.
+#}
+{% set _urls = request.state.portal_system_urls or {} %}
+{% set _url = _urls.get(system_key) %}
+{% if _url %}
+<a
+	href="{{ _url }}"
+	target="_blank"
+	rel="noopener noreferrer"
+	class="btn btn-primary btn-sm"
+	title="Open in a new tab"
+>
+	<svg
+		viewBox="0 0 24 24"
+		class="w-4 h-4"
+		fill="none"
+		stroke="currentColor"
+		stroke-width="2"
+		stroke-linecap="round"
+		stroke-linejoin="round"
+		aria-hidden="true"
+	>
+		<path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"></path>
+		<polyline points="15 3 21 3 21 9"></polyline>
+		<line x1="10" y1="14" x2="21" y2="3"></line>
+	</svg>
+	Open
+</a>
+{% endif %}

@@ -4,9 +4,14 @@
 			<h1 class="page-title">Artifactory</h1>
 			<p class="page-subtitle">Repository and storage management</p>
 		</div>
-		<button id="refresh-btn" class="btn btn-outline btn-sm">
-			&#8635; Refresh
-		</button>
+		<div class="flex items-center gap-2">
+			{% with system_key = 'artifactory' %}
+				{% include "partials/components/open-system-button.html" %}
+			{% endwith %}
+			<button id="refresh-btn" class="btn btn-outline btn-sm">
+				&#8635; Refresh
+			</button>
+		</div>
 	</header>
 
 	<div class="page-content-flush">

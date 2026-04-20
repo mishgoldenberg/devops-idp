@@ -4,9 +4,14 @@
 			<h1 class="page-title">Internal AWS</h1>
 			<p class="page-subtitle">AWS infrastructure and resources</p>
 		</div>
-		<button id="refresh-btn" class="btn btn-outline btn-sm">
-			&#8635; Refresh
-		</button>
+		<div class="flex items-center gap-2">
+			{% with system_key = 'internal_aws' %}
+				{% include "partials/components/open-system-button.html" %}
+			{% endwith %}
+			<button id="refresh-btn" class="btn btn-outline btn-sm">
+				&#8635; Refresh
+			</button>
+		</div>
 	</header>
 
 	<div class="flex-1 min-h-0 overflow-y-auto flex items-center justify-center p-6">
