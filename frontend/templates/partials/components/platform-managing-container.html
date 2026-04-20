@@ -7,21 +7,23 @@
 	</header>
 
 	<div class="page-content">
-		<section class="section-card max-w-xl mb-6">
+		<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+		<section class="section-card">
 			<div class="card-body gap-4">
-				<div class="flex items-start justify-between gap-4">
-					<div>
-						<h2 class="card-title text-lg">Safe Mode</h2>
-						<p class="text-sm text-base-content/60">
-							When Safe Mode is enabled, self-services (Azure DevOps project creation,
-							ServiceNow tickets, etc.) simulate success without touching real
-							systems. Use it to verify workflows without affecting production.
-						</p>
-					</div>
-					<label class="swap swap-flip">
-						<input id="safe-mode-toggle" type="checkbox" class="toggle toggle-warning" />
-					</label>
+				<div class="flex items-center justify-between gap-4">
+					<h2 class="card-title text-lg">Safe Mode</h2>
+					<input
+						id="safe-mode-toggle"
+						type="checkbox"
+						class="toggle toggle-warning"
+						aria-label="Toggle Safe Mode"
+					/>
 				</div>
+				<p class="text-sm text-base-content/60">
+					When Safe Mode is enabled, self-services (Azure DevOps project creation,
+					ServiceNow tickets, etc.) simulate success without touching real
+					systems. Use it to verify workflows without affecting production.
+				</p>
 				<div class="flex items-center gap-3 text-sm">
 					<span class="text-base-content/70">Current state:</span>
 					<span id="safe-mode-state" class="badge badge-ghost">Loading…</span>
@@ -30,7 +32,7 @@
 			</div>
 		</section>
 
-		<section class="section-card max-w-xl">
+		<section class="section-card">
 			<div class="card-body gap-4">
 				<div>
 					<h2 class="card-title text-lg">User Role Management</h2>
@@ -102,7 +104,7 @@
 			</div>
 		</section>
 
-		<section class="section-card max-w-4xl mt-6">
+		<section class="section-card lg:col-span-2">
 			<div class="card-body gap-4">
 				<div class="flex items-start justify-between gap-4">
 					<div>
@@ -152,6 +154,7 @@
 				</div>
 			</div>
 		</section>
+		</div>
 	</div>
 </div>
 

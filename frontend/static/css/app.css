@@ -107,36 +107,84 @@
 
 /*
  * Display density.
- * Selector lives on <html data-density="comfortable|compact">. Tightening
- * header padding, widget grid gap and card body spacing is enough to fit
- * visibly more content without redesigning any layout. `comfortable` keeps
- * the defaults the rest of the stylesheet already uses — we only override
- * inside `[data-density="compact"]`.
+ * Selector lives on <html data-density="comfortable|compact">. `comfortable`
+ * keeps the stylesheet's defaults (page-header py-6, widget grids gap-6,
+ * card-body p-5, widget h3 text-sm, etc.) — so we only need to *override*
+ * inside `[data-density="compact"]`. The compact rules below intentionally
+ * touch padding, gaps, typography, AND the internals of widget lists so the
+ * mode has an obvious visual effect on the dashboard and system pages (not
+ * just a grid re-flow).
  */
+
+/* ── Page chrome ───────────────────────────────────────────────────────── */
 html[data-density="compact"] .page-header {
-	padding-top: 1rem;
-	padding-bottom: 1rem;
-	padding-left: 1.5rem;
-	padding-right: 1.5rem;
-}
-html[data-density="compact"] .page-content {
-	padding: 1rem;
-}
-html[data-density="compact"] .widget-grid {
-	gap: 1rem;
-	padding: 1rem;
-}
-/* Tighten the dashboard widget grid (not declared as .widget-grid) as well. */
-html[data-density="compact"] main .grid.gap-6 {
-	gap: 1rem;
-}
-html[data-density="compact"] .page-content.flex-col.gap-6,
-html[data-density="compact"] .page-content.space-y-6 > * + * {
-	margin-top: 1rem;
-}
-html[data-density="compact"] .section-card .card-body {
-	padding: 1rem;
+	padding: 0.75rem 1.25rem;
 }
 html[data-density="compact"] .page-title {
-	font-size: 1.5rem;
+	font-size: 1.25rem;
+}
+html[data-density="compact"] .page-subtitle {
+	font-size: 0.75rem;
+	margin-top: 0.125rem;
+}
+html[data-density="compact"] .page-content {
+	padding: 0.75rem;
+}
+
+/* ── Widget grids (system pages + dashboard) ───────────────────────────── */
+html[data-density="compact"] .widget-grid {
+	gap: 0.75rem;
+	padding: 0.75rem;
+}
+/* Dashboard root uses an ad-hoc grid instead of `.widget-grid`. */
+html[data-density="compact"] main .grid.gap-6 {
+	gap: 0.75rem;
+}
+/* Dashboard root `.page-content` uses `flex flex-col gap-6` — override the
+   Tailwind `gap-6` utility so the stacked widgets sit closer together. */
+html[data-density="compact"] .page-content.gap-6,
+html[data-density="compact"] .page-content .flex.flex-col.gap-6 {
+	gap: 0.75rem;
+}
+/* Pages using `space-y-6` for vertical rhythm (settings, profile, …). */
+html[data-density="compact"] .page-content.space-y-6 > * + * {
+	margin-top: 0.75rem;
+}
+
+/* ── Card internals (widgets + generic sections) ───────────────────────── */
+html[data-density="compact"] .section-card .card-body {
+	padding: 0.75rem;
+	gap: 0.5rem;
+}
+html[data-density="compact"] .section-card h3.text-sm {
+	font-size: 0.6875rem;
+	letter-spacing: 0.08em;
+}
+/* Shrink the colored icon bubble in front of widget titles. */
+html[data-density="compact"] .section-card .card-body > .flex.items-center.gap-3 > .h-9.w-9 {
+	height: 2rem;
+	width: 2rem;
+}
+
+/* ── Lists inside widgets (work items, tickets, PRs, pipelines …) ───── */
+html[data-density="compact"] .section-card ul > li {
+	padding-top: 0.375rem;
+	padding-bottom: 0.375rem;
+	padding-left: 0.5rem;
+	padding-right: 0.5rem;
+}
+html[data-density="compact"] .section-card ul.gap-2,
+html[data-density="compact"] .section-card ul.flex.flex-col.gap-2 {
+	gap: 0.25rem;
+}
+
+/* ── Dashboard: fit an extra column on very wide screens so the same data
+   is visible without scrolling — this is what makes "compact" tangible on
+   the dashboard rather than a cosmetic tweak. The selector is scoped to the
+   dashboard widget grid (unique `items-start` + `gap-6` combo on the root
+   grid container). ─────────────────────────────────────────────────────── */
+@media (min-width: 1280px) {
+	html[data-density="compact"] main .grid.items-start {
+		grid-template-columns: repeat(4, minmax(0, 1fr));
+	}
 }
