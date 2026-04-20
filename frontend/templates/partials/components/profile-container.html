@@ -2,24 +2,86 @@
 	<header class="page-header">
 		<div>
 			<h1 class="page-title">Profile</h1>
-			<p class="page-subtitle">Update your appearance name.</p>
+			<p class="page-subtitle">Display name and sidebar avatar.</p>
 		</div>
 	</header>
 	<div class="page-content">
 		<div class="max-w-2xl section-card">
-			<div class="card-body gap-4">
+			<div class="card-body gap-5">
 				{% if saved %}
 				<div class="alert alert-success alert-soft text-sm">
 					<span>Profile updated.</span>
 				</div>
 				{% endif %}
+
+				<!-- Avatar -->
+				<div class="flex items-center gap-4">
+					<div
+						class="w-20 h-20 rounded-full overflow-hidden border border-base-300 bg-base-200 flex items-center justify-center"
+					>
+						<img
+							id="profile-avatar-preview"
+							src="{{ user.avatar_url or '' }}"
+							alt="Profile avatar"
+							class="w-full h-full object-cover {% if not user.avatar_url %}hidden{% endif %}"
+						/>
+						<svg
+							id="profile-avatar-placeholder"
+							class="w-10 h-10 text-base-content/40 {% if user.avatar_url %}hidden{% endif %}"
+							viewBox="0 0 15 15"
+							fill="currentColor"
+							aria-hidden="true"
+						>
+							<path
+								fill-rule="evenodd"
+								clip-rule="evenodd"
+								d="M0.877014 7.49988C0.877014 3.84219 3.84216 0.877045 7.49985 0.877045C11.1575 0.877045 14.1227 3.84219 14.1227 7.49988C14.1227 11.1575 11.1575 14.1227 7.49985 14.1227C3.84216 14.1227 0.877014 11.1575 0.877014 7.49988ZM7.49985 1.82704C4.36683 1.82704 1.82701 4.36686 1.82701 7.49988C1.82701 8.97196 2.38774 10.3131 3.30727 11.3213C4.19074 9.94119 5.73818 9.02499 7.50023 9.02499C9.26206 9.02499 10.8093 9.94097 11.6929 11.3208C12.6121 10.3127 13.1727 8.97172 13.1727 7.49988C13.1727 4.36686 10.6328 1.82704 7.49985 1.82704ZM10.9818 11.9787C10.2839 10.7795 8.9857 9.97499 7.50023 9.97499C6.01458 9.97499 4.71624 10.7797 4.01845 11.9791C4.97952 12.7272 6.18765 13.1727 7.49985 13.1727C8.81227 13.1727 10.0206 12.727 10.9818 11.9787ZM5.14999 6.50487C5.14999 5.207 6.20212 4.15487 7.49999 4.15487C8.79786 4.15487 9.84999 5.207 9.84999 6.50487C9.84999 7.80274 8.79786 8.85487 7.49999 8.85487C6.20212 8.85487 5.14999 7.80274 5.14999 6.50487ZM7.49999 5.10487C6.72679 5.10487 6.09999 5.73167 6.09999 6.50487C6.09999 7.27807 6.72679 7.90487 7.49999 7.90487C8.27319 7.90487 8.89999 7.27807 8.89999 6.50487C8.89999 5.73167 8.27319 5.10487 7.49999 5.10487Z"
+							/>
+						</svg>
+					</div>
+					<div class="flex-1">
+						<p class="font-medium">Profile picture</p>
+						<p class="text-xs text-base-content/60 mb-2">
+							Shown in the sidebar. PNG or JPG, up to ~450 KB.
+						</p>
+						<div class="flex gap-2">
+							<label class="btn btn-sm btn-outline cursor-pointer">
+								<input
+									id="profile-avatar-file"
+									type="file"
+									accept="image/png,image/jpeg,image/webp"
+									class="hidden"
+								/>
+								Upload image
+							</label>
+							<button
+								id="profile-avatar-clear"
+								type="button"
+								class="btn btn-sm btn-ghost {% if not user.avatar_url %}hidden{% endif %}"
+							>
+								Remove
+							</button>
+						</div>
+						<p
+							class="text-xs mt-2 hidden"
+							data-avatar-status
+							aria-live="polite"
+						></p>
+					</div>
+				</div>
+
+				<!-- Display name + email -->
 				<form action="/ui/profile" method="post" class="space-y-4">
 					<div>
-						<label class="label"><span class="label-text">Appearance name</span></label>
-						<input class="input input-bordered w-full" name="display_name" value="{{ user.display_name }}" />
+						<label class="label"><span class="label-text">Display name</span></label>
+						<input
+							class="input input-bordered w-full"
+							name="display_name"
+							value="{{ user.display_name }}"
+						/>
 					</div>
 					<div>
-						<label class="label"><span class="label-text">Gmail</span></label>
+						<label class="label"><span class="label-text">Email (from SSO)</span></label>
 						<input class="input input-bordered w-full" value="{{ email }}" readonly />
 					</div>
 					<div class="flex justify-end">
@@ -30,3 +92,96 @@
 		</div>
 	</div>
 </div>
+
+<script>
+	// --- Avatar upload -----------------------------------------------------
+	// We resize and re-encode to a 256px JPEG on the client so the DB payload
+	// stays well below the 600KB server cap and every user ends up with a
+	// consistent, square avatar regardless of source dimensions.
+	(function () {
+		const input = document.getElementById("profile-avatar-file");
+		const clearBtn = document.getElementById("profile-avatar-clear");
+		const img = document.getElementById("profile-avatar-preview");
+		const placeholder = document.getElementById("profile-avatar-placeholder");
+		const status = document.querySelector("[data-avatar-status]");
+		if (!input) return;
+
+		function showStatus(msg, tone) {
+			if (!status) return;
+			status.textContent = msg;
+			status.classList.remove("hidden", "text-error", "text-success", "text-base-content/60");
+			status.classList.add(
+				tone === "error" ? "text-error" : tone === "ok" ? "text-success" : "text-base-content/60"
+			);
+		}
+
+		async function toJpegDataUrl(file, maxEdge = 256) {
+			const bitmap = await createImageBitmap(file);
+			const canvas = document.createElement("canvas");
+			const size = Math.min(maxEdge, Math.max(bitmap.width, bitmap.height));
+			canvas.width = size;
+			canvas.height = size;
+			const ctx = canvas.getContext("2d");
+			const s = Math.min(bitmap.width, bitmap.height);
+			const sx = (bitmap.width - s) / 2;
+			const sy = (bitmap.height - s) / 2;
+			ctx.drawImage(bitmap, sx, sy, s, s, 0, 0, size, size);
+			return canvas.toDataURL("image/jpeg", 0.85);
+		}
+
+		input.addEventListener("change", async () => {
+			const file = input.files?.[0];
+			if (!file) return;
+			if (file.size > 8 * 1024 * 1024) {
+				showStatus("Image is too large. Please pick one under 8 MB.", "error");
+				input.value = "";
+				return;
+			}
+			showStatus("Preparing image…", "muted");
+			try {
+				const dataUrl = await toJpegDataUrl(file, 256);
+				const res = await fetch("/api/me/avatar", {
+					method: "POST",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ avatar_url: dataUrl }),
+				});
+				if (!res.ok) {
+					const txt = await res.text();
+					showStatus(`Upload failed: ${txt || res.status}`, "error");
+					return;
+				}
+				img.src = dataUrl;
+				img.classList.remove("hidden");
+				placeholder.classList.add("hidden");
+				clearBtn.classList.remove("hidden");
+				showStatus("Profile picture updated.", "ok");
+			} catch (err) {
+				showStatus("Could not read image.", "error");
+			} finally {
+				input.value = "";
+			}
+		});
+
+		clearBtn?.addEventListener("click", async () => {
+			showStatus("Removing…", "muted");
+			try {
+				const res = await fetch("/api/me/avatar", {
+					method: "DELETE",
+					credentials: "same-origin",
+				});
+				if (!res.ok) {
+					showStatus("Could not remove avatar.", "error");
+					return;
+				}
+				img.removeAttribute("src");
+				img.classList.add("hidden");
+				placeholder.classList.remove("hidden");
+				clearBtn.classList.add("hidden");
+				showStatus("Profile picture removed.", "ok");
+			} catch (_err) {
+				showStatus("Network error.", "error");
+			}
+		});
+	})();
+</script>

@@ -2,10 +2,92 @@
 	<header class="page-header">
 		<div>
 			<h1 class="page-title">Settings</h1>
-			<p class="page-subtitle">Portal preferences and account session</p>
+			<p class="page-subtitle">Portal preferences, suggestions, and account session</p>
 		</div>
 	</header>
 	<div class="flex-1 min-h-0 overflow-y-auto p-6 space-y-6">
+		<!-- Appearance -->
+		<section class="max-w-2xl section-card">
+			<div class="card-body gap-4">
+				<h2 class="card-title text-lg">Appearance</h2>
+				<p class="text-sm text-base-content/60">
+					Choose how the portal looks. The setting is saved to your account and
+					applied on every device after you sign in.
+				</p>
+				<div class="flex items-center justify-between py-2">
+					<div>
+						<p class="font-medium">Dark mode</p>
+						<p class="text-xs text-base-content/50" data-theme-caption>
+							Using the saved preference on this device.
+						</p>
+					</div>
+					<input
+						type="checkbox"
+						class="toggle toggle-primary"
+						id="settings-theme-toggle"
+						aria-label="Toggle dark mode"
+					/>
+				</div>
+			</div>
+		</section>
+
+		<!-- Suggestions -->
+		<section class="max-w-2xl section-card">
+			<div class="card-body gap-4">
+				<h2 class="card-title text-lg">Send a suggestion</h2>
+				<p class="text-sm text-base-content/60">
+					Spotted something we should add or fix? Drop a quick note below and the
+					platform team will see it.
+				</p>
+				<form id="suggestion-form" class="space-y-3">
+					<div>
+						<label class="label" for="suggestion-title">
+							<span class="label-text">Title</span>
+						</label>
+						<input
+							id="suggestion-title"
+							name="title"
+							class="input input-bordered w-full"
+							maxlength="255"
+							required
+							placeholder="Short summary"
+						/>
+					</div>
+					<div>
+						<label class="label" for="suggestion-description">
+							<span class="label-text">Details (optional)</span>
+						</label>
+						<textarea
+							id="suggestion-description"
+							name="description"
+							class="textarea textarea-bordered w-full"
+							rows="4"
+							maxlength="5000"
+							placeholder="What would make your day better?"
+						></textarea>
+					</div>
+					<div
+						class="alert alert-success alert-soft text-sm hidden"
+						data-suggestion-success
+					>
+						<span>Thanks! Your suggestion was sent to the platform team.</span>
+					</div>
+					<div
+						class="alert alert-error alert-soft text-sm hidden"
+						data-suggestion-error
+					>
+						<span data-suggestion-error-message>Could not submit suggestion.</span>
+					</div>
+					<div class="flex justify-end">
+						<button class="btn btn-primary" type="submit" data-suggestion-submit>
+							Send suggestion
+						</button>
+					</div>
+				</form>
+			</div>
+		</section>
+
+		<!-- Session -->
 		<section class="max-w-2xl section-card">
 			<div class="card-body gap-4">
 				<h2 class="card-title text-lg">Session</h2>
@@ -28,10 +110,82 @@
 				</div>
 			</div>
 		</section>
-		<section class="max-w-2xl section-card">
-			<div class="card-body">
-				<p class="text-base-content/70">More settings will appear here later.</p>
-			</div>
-		</section>
 	</div>
 </div>
+
+<script>
+	// --- Theme toggle (moved from sidebar) ---------------------------------
+	// On change we update localStorage for instant paint on the next nav AND
+	// persist to the server so the preference follows the user across devices.
+	// The sidebar's theme initializer seeds localStorage from the server value
+	// on first login, so these two sources stay in sync.
+	(function () {
+		const toggle = document.getElementById("settings-theme-toggle");
+		if (!toggle) return;
+		const key = "portal-theme";
+		const root = document.documentElement;
+		const current = localStorage.getItem(key) || "night";
+		toggle.checked = current === "night";
+
+		toggle.addEventListener("change", async () => {
+			const theme = toggle.checked ? "night" : "light";
+			root.setAttribute("data-theme", theme);
+			try { localStorage.setItem(key, theme); } catch (_) {}
+			try {
+				await fetch("/api/me/theme", {
+					method: "PUT",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ theme }),
+				});
+			} catch (_err) {
+				// Non-fatal: LS still has the new value, sync resumes on next change.
+			}
+		});
+	})();
+
+	// --- Suggestions form --------------------------------------------------
+	(function () {
+		const form = document.getElementById("suggestion-form");
+		if (!form) return;
+		const successEl = form.querySelector("[data-suggestion-success]");
+		const errorEl = form.querySelector("[data-suggestion-error]");
+		const errorMsg = form.querySelector("[data-suggestion-error-message]");
+		const submitBtn = form.querySelector("[data-suggestion-submit]");
+
+		form.addEventListener("submit", async (e) => {
+			e.preventDefault();
+			successEl?.classList.add("hidden");
+			errorEl?.classList.add("hidden");
+
+			const title = form.querySelector("#suggestion-title").value.trim();
+			const description = form.querySelector("#suggestion-description").value.trim();
+			if (!title) return;
+
+			submitBtn.disabled = true;
+			submitBtn.classList.add("btn-disabled");
+			try {
+				const res = await fetch("/api/suggestions", {
+					method: "POST",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ title, description }),
+				});
+				if (!res.ok) {
+					const msg = await res.text();
+					if (errorMsg) errorMsg.textContent = `Could not submit: ${msg || res.status}`;
+					errorEl?.classList.remove("hidden");
+					return;
+				}
+				form.reset();
+				successEl?.classList.remove("hidden");
+			} catch (err) {
+				if (errorMsg) errorMsg.textContent = "Network error while submitting.";
+				errorEl?.classList.remove("hidden");
+			} finally {
+				submitBtn.disabled = false;
+				submitBtn.classList.remove("btn-disabled");
+			}
+		});
+	})();
+</script>

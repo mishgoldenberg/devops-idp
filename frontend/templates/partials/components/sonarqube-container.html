@@ -4,9 +4,14 @@
 			<h1 class="page-title">SonarQube</h1>
 			<p class="page-subtitle">Code quality and security analysis</p>
 		</div>
-		<button id="refresh-btn" class="btn btn-outline btn-sm">
-			&#8635; Refresh
-		</button>
+		<div class="flex items-center gap-2">
+			{% with system_key = 'sonarqube' %}
+				{% include "partials/components/open-system-button.html" %}
+			{% endwith %}
+			<button id="refresh-btn" class="btn btn-outline btn-sm">
+				&#8635; Refresh
+			</button>
+		</div>
 	</header>
 
 	<div class="page-content-flush">

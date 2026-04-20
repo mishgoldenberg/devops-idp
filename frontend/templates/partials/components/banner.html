@@ -10,38 +10,11 @@
 		<h1 class="font-bold text-3xl text-white">DevOps Portal</h1>
 		<p class="text-lg text-white/60">Internal Developer Portal</p>
 	</div>
-
-	<div class="dropdown dropdown-end" data-notif-root>
-		<button
-			type="button"
-			tabindex="0"
-			class="btn btn-ghost btn-circle text-white hover:bg-white/10"
-			aria-label="Notifications"
-			data-notif-toggle
-		>
-			<div class="indicator">
-				<svg viewBox="0 0 24 24" class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-					<path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
-					<path d="M13.73 21a2 2 0 01-3.46 0"></path>
-				</svg>
-				<span class="indicator-item badge badge-error badge-xs hidden" data-notif-count>0</span>
-			</div>
-		</button>
-		<div
-			tabindex="0"
-			class="dropdown-content z-[1] mt-3 w-80 max-w-[90vw] card card-compact bg-base-100 text-base-content shadow-xl border border-base-300"
-		>
-			<div class="card-body p-0">
-				<div class="flex items-center justify-between px-4 py-3 border-b border-base-300">
-					<h3 class="font-semibold text-sm">Notifications</h3>
-					<button type="button" class="btn btn-ghost btn-xs" data-notif-read-all>Mark all read</button>
-				</div>
-				<ul class="max-h-80 overflow-y-auto divide-y divide-base-200" data-notif-list>
-					<li class="p-4 text-xs text-base-content/50 text-center">Loading…</li>
-				</ul>
-			</div>
-		</div>
-	</div>
+	<!--
+		The notifications bell used to live here. It now lives in the sidebar
+		footer (bottom-left) so every page sees it in exactly one place. See
+		`partials/components/sidebar.html` for the new bell + dropdown.
+	-->
 </header>
 
 <script>

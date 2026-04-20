@@ -442,11 +442,18 @@
 		</div>
 		{% endif %}
 	</nav>
-	<!-- Footer -->
+	<!-- Footer: profile avatar, in-app notifications bell, settings -->
 	<div
-		class="py-4 px-7.5 border-t border-base-300 flex items-center justify-between gap-2"
+		class="py-4 px-4 border-t border-base-300 flex items-center justify-between gap-2"
 	>
 		<a href="/ui/profile" class="btn btn-ghost btn-circle btn-sm" title="Profile">
+			{% if user.avatar_url %}
+			<img
+				src="{{ user.avatar_url }}"
+				alt="Profile avatar"
+				class="w-8 h-8 rounded-full object-cover border border-base-300"
+			/>
+			{% else %}
 			<svg
 				viewBox="0 0 15 15"
 				class="w-5 h-5"
@@ -459,33 +466,69 @@
 					d="M0.877014 7.49988C0.877014 3.84219 3.84216 0.877045 7.49985 0.877045C11.1575 0.877045 14.1227 3.84219 14.1227 7.49988C14.1227 11.1575 11.1575 14.1227 7.49985 14.1227C3.84216 14.1227 0.877014 11.1575 0.877014 7.49988ZM7.49985 1.82704C4.36683 1.82704 1.82701 4.36686 1.82701 7.49988C1.82701 8.97196 2.38774 10.3131 3.30727 11.3213C4.19074 9.94119 5.73818 9.02499 7.50023 9.02499C9.26206 9.02499 10.8093 9.94097 11.6929 11.3208C12.6121 10.3127 13.1727 8.97172 13.1727 7.49988C13.1727 4.36686 10.6328 1.82704 7.49985 1.82704ZM10.9818 11.9787C10.2839 10.7795 8.9857 9.97499 7.50023 9.97499C6.01458 9.97499 4.71624 10.7797 4.01845 11.9791C4.97952 12.7272 6.18765 13.1727 7.49985 13.1727C8.81227 13.1727 10.0206 12.727 10.9818 11.9787ZM5.14999 6.50487C5.14999 5.207 6.20212 4.15487 7.49999 4.15487C8.79786 4.15487 9.84999 5.207 9.84999 6.50487C9.84999 7.80274 8.79786 8.85487 7.49999 8.85487C6.20212 8.85487 5.14999 7.80274 5.14999 6.50487ZM7.49999 5.10487C6.72679 5.10487 6.09999 5.73167 6.09999 6.50487C6.09999 7.27807 6.72679 7.90487 7.49999 7.90487C8.27319 7.90487 8.89999 7.27807 8.89999 6.50487C8.89999 5.73167 8.27319 5.10487 7.49999 5.10487Z"
 				/>
 			</svg>
+			{% endif %}
 		</a>
-		<label class="swap swap-rotate">
-			<!-- this hidden checkbox controls the state -->
-			<input id="theme-toggle" type="checkbox" class="theme-controller" value="night" />
 
-			<!-- sun icon -->
-			<svg
-				class="swap-off h-6 w-6 fill-current"
-				xmlns="http://www.w3.org/2000/svg"
-				viewBox="0 0 24 24"
+		<!-- Notifications bell: dropdown opens upward so it stays on-screen -->
+		<div class="dropdown dropdown-top dropdown-end" data-notif-root>
+			<button
+				type="button"
+				tabindex="0"
+				class="btn btn-ghost btn-circle btn-sm"
+				aria-label="Notifications"
+				title="Notifications"
+				data-notif-toggle
 			>
-				<path
-					d="M5.64,17l-.71.71a1,1,0,0,0,0,1.41,1,1,0,0,0,1.41,0l.71-.71A1,1,0,0,0,5.64,17ZM5,12a1,1,0,0,0-1-1H3a1,1,0,0,0,0,2H4A1,1,0,0,0,5,12Zm7-7a1,1,0,0,0,1-1V3a1,1,0,0,0-2,0V4A1,1,0,0,0,12,5ZM5.64,7.05a1,1,0,0,0,.7.29,1,1,0,0,0,.71-.29,1,1,0,0,0,0-1.41l-.71-.71A1,1,0,0,0,4.93,6.34Zm12,.29a1,1,0,0,0,.7-.29l.71-.71a1,1,0,1,0-1.41-1.41L17,5.64a1,1,0,0,0,0,1.41A1,1,0,0,0,17.66,7.34ZM21,11H20a1,1,0,0,0,0,2h1a1,1,0,0,0,0-2Zm-9,8a1,1,0,0,0-1,1v1a1,1,0,0,0,2,0V20A1,1,0,0,0,12,19ZM18.36,17A1,1,0,0,0,17,18.36l.71.71a1,1,0,0,0,1.41,0,1,1,0,0,0,0-1.41ZM12,6.5A5.5,5.5,0,1,0,17.5,12,5.51,5.51,0,0,0,12,6.5Zm0,9A3.5,3.5,0,1,1,15.5,12,3.5,3.5,0,0,1,12,15.5Z"
-				/>
-			</svg>
+				<div class="indicator">
+					<svg
+						viewBox="0 0 24 24"
+						class="w-5 h-5"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						aria-hidden="true"
+					>
+						<path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+						<path d="M13.73 21a2 2 0 01-3.46 0"></path>
+					</svg>
+					<span
+						class="indicator-item badge badge-error badge-xs hidden"
+						data-notif-count
+						>0</span
+					>
+				</div>
+			</button>
+			<div
+				tabindex="0"
+				class="dropdown-content z-[1] mb-3 w-80 max-w-[90vw] card card-compact bg-base-100 text-base-content shadow-xl border border-base-300"
+			>
+				<div class="card-body p-0">
+					<div
+						class="flex items-center justify-between px-4 py-3 border-b border-base-300"
+					>
+						<h3 class="font-semibold text-sm">Notifications</h3>
+						<button
+							type="button"
+							class="btn btn-ghost btn-xs"
+							data-notif-read-all
+						>
+							Mark all read
+						</button>
+					</div>
+					<ul
+						class="max-h-80 overflow-y-auto divide-y divide-base-200"
+						data-notif-list
+					>
+						<li class="p-4 text-xs text-base-content/50 text-center">
+							Loading…
+						</li>
+					</ul>
+				</div>
+			</div>
+		</div>
 
-			<!-- moon icon -->
-			<svg
-				class="swap-on h-6 w-6 fill-current"
-				xmlns="http://www.w3.org/2000/svg"
-				viewBox="0 0 24 24"
-			>
-				<path
-					d="M21.64,13a1,1,0,0,0-1.05-.14,8.05,8.05,0,0,1-3.37.73A8.15,8.15,0,0,1,9.08,5.49a8.59,8.59,0,0,1,.25-2A1,1,0,0,0,8,2.36,10.14,10.14,0,1,0,22,14.05,1,1,0,0,0,21.64,13Zm-9.5,6.69A8.14,8.14,0,0,1,7.08,5.22v.27A10.15,10.15,0,0,0,17.22,15.63a9.79,9.79,0,0,0,2.1-.22A8.11,8.11,0,0,1,12.14,19.73Z"
-				/>
-			</svg>
-		</label>
 		<a href="/ui/settings" class="btn btn-ghost btn-circle btn-sm" title="Settings">
 			<svg
 				viewBox="0 0 24 24"
@@ -504,19 +547,117 @@
 	</div>
 </aside>
 <script>
+	// --- Theme initializer (moved from UI toggle to Settings page) ---------
+	// Runs on every page load to apply the persisted theme before first paint.
+	// The toggle UI now lives in Settings; this script only reads the saved
+	// value and optionally hydrates from the server-side preferred_theme that
+	// the UI route plumbs onto `user.preferred_theme`.
 	(function () {
 		const key = "portal-theme";
-		const toggle = document.getElementById("theme-toggle");
 		const root = document.documentElement;
-		const saved = localStorage.getItem(key) || "night";
-		root.setAttribute("data-theme", saved);
-		if (toggle) {
-			toggle.checked = saved === "night";
-			toggle.addEventListener("change", function () {
-				const theme = toggle.checked ? "night" : "light";
-				root.setAttribute("data-theme", theme);
-				localStorage.setItem(key, theme);
-			});
+		const serverPreferred = {{ (user.preferred_theme or '')|tojson }};
+		let saved = localStorage.getItem(key);
+		if (!saved && serverPreferred) {
+			saved = serverPreferred;
+			try { localStorage.setItem(key, serverPreferred); } catch (_) {}
 		}
+		root.setAttribute("data-theme", saved || "night");
+	})();
+
+	// --- Notifications bell (sidebar footer) -------------------------------
+	(function () {
+		const root = document.querySelector("[data-notif-root]");
+		if (!root) return;
+		const badge = root.querySelector("[data-notif-count]");
+		const list = root.querySelector("[data-notif-list]");
+		const markAllBtn = root.querySelector("[data-notif-read-all]");
+
+		function escapeHtml(s) {
+			return String(s ?? "").replace(/[&<>"']/g, (c) => ({
+				"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+			}[c]));
+		}
+		function fmtRelative(iso) {
+			if (!iso) return "";
+			try {
+				const d = new Date(iso);
+				const diff = (Date.now() - d.getTime()) / 1000;
+				if (diff < 60) return "just now";
+				if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+				if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+				return d.toLocaleDateString();
+			} catch (_) {
+				return "";
+			}
+		}
+
+		async function refresh() {
+			try {
+				const [countRes, listRes] = await Promise.all([
+					fetch("/api/notifications/unread-count", { credentials: "same-origin" }),
+					fetch("/api/notifications", { credentials: "same-origin" }),
+				]);
+				if (countRes.ok) {
+					const cj = await countRes.json();
+					const n = Number(cj?.data?.count || 0);
+					if (n > 0) {
+						badge.textContent = n > 99 ? "99+" : String(n);
+						badge.classList.remove("hidden");
+					} else {
+						badge.classList.add("hidden");
+					}
+				}
+				if (listRes.ok) {
+					const lj = await listRes.json();
+					const items = Array.isArray(lj?.data) ? lj.data : [];
+					if (!items.length) {
+						list.innerHTML = `<li class="p-6 text-xs text-base-content/50 text-center">
+							<div class="mb-1">No notifications yet.</div>
+							<div class="opacity-70">Approvals and system alerts will show up here.</div>
+						</li>`;
+					} else {
+						list.innerHTML = items.map((n) => {
+							const unread = !n.is_read;
+							return `
+								<li class="p-3 ${unread ? "bg-primary/5" : ""} hover:bg-base-200 cursor-pointer" data-notif-item data-id="${escapeHtml(n.id)}">
+									<div class="flex items-start gap-2">
+										<span class="mt-1 h-2 w-2 rounded-full ${unread ? "bg-primary" : "bg-transparent"}"></span>
+										<div class="flex-1 min-w-0">
+											<p class="text-xs leading-snug">${escapeHtml(n.message || "")}</p>
+											<p class="text-[10px] text-base-content/50 mt-1">${fmtRelative(n.created_at)}</p>
+										</div>
+									</div>
+								</li>`;
+						}).join("");
+						list.querySelectorAll("[data-notif-item]").forEach((el) => {
+							el.addEventListener("click", async () => {
+								const id = el.dataset.id;
+								if (!id) return;
+								await fetch(`/api/notifications/${encodeURIComponent(id)}/read`, {
+									method: "POST",
+									credentials: "same-origin",
+								}).catch(() => {});
+								refresh();
+							});
+						});
+					}
+				}
+			} catch (_err) {
+				/* silent — keep last known state */
+			}
+		}
+
+		markAllBtn?.addEventListener("click", async (e) => {
+			e.stopPropagation();
+			await fetch("/api/notifications/read-all", {
+				method: "POST",
+				credentials: "same-origin",
+			}).catch(() => {});
+			refresh();
+		});
+
+		refresh();
+		// 45s matches the existing cadence from the top-bar bell we replaced.
+		setInterval(refresh, 45_000);
 	})();
 </script>

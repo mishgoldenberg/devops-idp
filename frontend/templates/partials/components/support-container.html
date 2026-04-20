@@ -4,7 +4,12 @@
 			<h1 class="page-title">Support</h1>
 			<p class="page-subtitle">View, open and reply to your ServiceNow tickets</p>
 		</div>
-		<button id="support-new-ticket-btn" class="btn btn-primary btn-sm">New Ticket</button>
+		<div class="flex items-center gap-2">
+			{% with system_key = 'servicenow' %}
+				{% include "partials/components/open-system-button.html" %}
+			{% endwith %}
+			<button id="support-new-ticket-btn" class="btn btn-primary btn-sm">New Ticket</button>
+		</div>
 	</header>
 
 	<div class="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-5 gap-6 p-6">

@@ -102,7 +102,14 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def portal_admin_nav_context(request: Request, call_next):
-        """Expose Admin menu visibility to Jinja (sidebar) without per-route boilerplate."""
+        """Expose shared nav context to Jinja templates without per-route boilerplate.
+
+        Sets on ``request.state``:
+          * ``portal_is_admin``    — boolean, used by sidebar to show Admin menu.
+          * ``portal_system_urls`` — dict of external console URLs so every
+            system page can render the top-right "Open" button without each
+            route explicitly plumbing the config.
+        """
         request.state.portal_is_admin = False
         token = request.cookies.get("auth_token")
         if token:
@@ -113,6 +120,12 @@ def create_app() -> FastAPI:
                 request.state.portal_is_admin = has_effective_admin_access_live(AuthUser(payload))
             except Exception:
                 pass
+        try:
+            from api.system_urls import get_system_urls_for_template
+
+            request.state.portal_system_urls = get_system_urls_for_template()
+        except Exception:
+            request.state.portal_system_urls = {}
         return await call_next(request)
 
     # Root endpoint (non-API) - Serves a small HTML landing page for HTMX-based UI.
