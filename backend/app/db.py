@@ -560,6 +560,16 @@ def ensure_approval_workflow_tables() -> None:
         "CREATE INDEX IF NOT EXISTS idx_notifications_user_unread "
         "ON notifications (user_email, is_read, created_at DESC)"
     )
+    # Polish columns: click-to-navigate link + grouping key. Added via ALTER
+    # so existing installs keep working without a full migration.
+    for stmt in (
+        "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS link TEXT",
+        "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS group_key VARCHAR(128)",
+    ):
+        try:
+            execute(stmt)
+        except Exception:
+            pass
 
 
 # Primary bootstrap admin (DB role Platform Admin). Single allowed hard-coded identity.

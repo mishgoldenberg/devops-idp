@@ -1,0 +1,260 @@
+<div class="page-shell">
+	<header class="page-header">
+		<div>
+			<h1 class="page-title">Audit Logs</h1>
+			<p class="page-subtitle">
+				Portal activity: self-service requests, approvals, Terraform runs,
+				ServiceNow tickets, and Safe Mode toggles.
+			</p>
+		</div>
+		<div class="flex items-center gap-2">
+			<button id="audit-refresh" type="button" class="btn btn-sm btn-primary">
+				<svg viewBox="0 0 24 24" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+					<polyline points="23 4 23 10 17 10" />
+					<polyline points="1 20 1 14 7 14" />
+					<path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />
+				</svg>
+				Refresh
+			</button>
+		</div>
+	</header>
+
+	<div class="page-content">
+		<section class="section-card">
+			<div class="card-body gap-4">
+				<div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+					<div class="form-control">
+						<label class="label pt-0" for="audit-filter-user">
+							<span class="label-text">User (email)</span>
+						</label>
+						<input id="audit-filter-user" type="text" class="input input-bordered input-sm" placeholder="user@example.com" />
+					</div>
+					<div class="form-control">
+						<label class="label pt-0" for="audit-filter-action">
+							<span class="label-text">Action</span>
+						</label>
+						<select id="audit-filter-action" class="select select-bordered select-sm">
+							<option value="">All actions</option>
+						</select>
+					</div>
+					<div class="form-control">
+						<label class="label pt-0" for="audit-filter-from">
+							<span class="label-text">From</span>
+						</label>
+						<input id="audit-filter-from" type="date" class="input input-bordered input-sm" />
+					</div>
+					<div class="form-control">
+						<label class="label pt-0" for="audit-filter-to">
+							<span class="label-text">To</span>
+						</label>
+						<input id="audit-filter-to" type="date" class="input input-bordered input-sm" />
+					</div>
+				</div>
+				<div class="flex flex-wrap items-center gap-2">
+					<button id="audit-apply" type="button" class="btn btn-sm btn-primary">Apply filters</button>
+					<button id="audit-clear" type="button" class="btn btn-sm btn-ghost">Clear</button>
+					<div id="audit-status" class="ml-auto text-sm text-base-content/60"></div>
+				</div>
+			</div>
+		</section>
+
+		<section class="section-card mt-6">
+			<div class="card-body gap-3">
+				<div id="audit-alert" class="hidden alert text-sm" role="status"></div>
+
+				<div class="overflow-x-auto max-h-[60vh] overflow-y-auto">
+					<table class="table table-zebra table-sm w-full">
+						<thead class="sticky top-0 bg-base-100 z-10">
+							<tr>
+								<th class="w-48">When</th>
+								<th class="w-64">User</th>
+								<th class="w-64">Action</th>
+								<th>Details</th>
+							</tr>
+						</thead>
+						<tbody id="audit-rows">
+							<tr id="audit-empty">
+								<td colspan="4" class="text-center py-8 text-base-content/50 italic">
+									Loading audit events…
+								</td>
+							</tr>
+						</tbody>
+					</table>
+				</div>
+
+				<div class="flex items-center justify-between gap-2 pt-2">
+					<div id="audit-page-info" class="text-sm text-base-content/60"></div>
+					<div class="flex items-center gap-2">
+						<button id="audit-prev" type="button" class="btn btn-sm btn-ghost" disabled>Prev</button>
+						<button id="audit-next" type="button" class="btn btn-sm btn-ghost" disabled>Next</button>
+					</div>
+				</div>
+			</div>
+		</section>
+	</div>
+</div>
+
+<script>
+	(function () {
+		const userEl    = document.getElementById("audit-filter-user");
+		const actionEl  = document.getElementById("audit-filter-action");
+		const fromEl    = document.getElementById("audit-filter-from");
+		const toEl      = document.getElementById("audit-filter-to");
+		const applyBtn  = document.getElementById("audit-apply");
+		const clearBtn  = document.getElementById("audit-clear");
+		const refreshBtn = document.getElementById("audit-refresh");
+		const rowsEl    = document.getElementById("audit-rows");
+		const alertEl   = document.getElementById("audit-alert");
+		const statusEl  = document.getElementById("audit-status");
+		const pageInfoEl = document.getElementById("audit-page-info");
+		const prevBtn   = document.getElementById("audit-prev");
+		const nextBtn   = document.getElementById("audit-next");
+
+		const PAGE_SIZE = 50;
+		let offset = 0;
+		let total  = 0;
+
+		function escHtml(s) {
+			return String(s == null ? "" : s)
+				.replace(/&/g, "&amp;")
+				.replace(/</g, "&lt;")
+				.replace(/>/g, "&gt;")
+				.replace(/"/g, "&quot;");
+		}
+
+		function formatDate(iso) {
+			if (!iso) return "—";
+			try {
+				const d = new Date(iso);
+				if (isNaN(d.getTime())) return iso;
+				return d.toLocaleString();
+			} catch {
+				return iso;
+			}
+		}
+
+		function prettyAction(a) {
+			return String(a || "").replace(/_/g, " ").replace(/\./g, " · ");
+		}
+
+		function showAlert(kind, text) {
+			alertEl.classList.remove("hidden", "alert-error", "alert-info");
+			alertEl.classList.add(kind === "err" ? "alert-error" : "alert-info");
+			alertEl.textContent = text;
+		}
+
+		function clearAlert() {
+			alertEl.classList.add("hidden");
+			alertEl.textContent = "";
+		}
+
+		function renderRows(items) {
+			if (!items || items.length === 0) {
+				rowsEl.innerHTML = `
+					<tr>
+						<td colspan="4" class="text-center py-8 text-base-content/50 italic">
+							No audit events match your filters.
+						</td>
+					</tr>`;
+				return;
+			}
+			rowsEl.innerHTML = items.map((r) => {
+				let meta = r.metadata;
+				let metaStr = "";
+				if (meta && typeof meta === "object") {
+					try { metaStr = JSON.stringify(meta); } catch { metaStr = String(meta); }
+				} else if (meta != null) {
+					metaStr = String(meta);
+				}
+				return `
+					<tr>
+						<td class="whitespace-nowrap text-sm">${escHtml(formatDate(r.created_at))}</td>
+						<td class="text-sm">${escHtml(r.user_email || "—")}</td>
+						<td class="text-sm"><span class="badge badge-ghost">${escHtml(prettyAction(r.action))}</span></td>
+						<td class="text-xs font-mono text-base-content/70 break-all">${escHtml(metaStr)}</td>
+					</tr>`;
+			}).join("");
+		}
+
+		function buildQuery() {
+			const params = new URLSearchParams();
+			if (userEl.value.trim())   params.set("user_email", userEl.value.trim());
+			if (actionEl.value)        params.set("action", actionEl.value);
+			if (fromEl.value)          params.set("date_from", fromEl.value);
+			if (toEl.value)            params.set("date_to", toEl.value);
+			params.set("limit", String(PAGE_SIZE));
+			params.set("offset", String(offset));
+			return params.toString();
+		}
+
+		async function loadActions() {
+			try {
+				const res = await fetch("/api/audit-logs/actions", { credentials: "same-origin" });
+				const json = await res.json();
+				if (!res.ok) throw new Error("actions");
+				const data = json?.data || [];
+				actionEl.innerHTML = '<option value="">All actions</option>' + data.map(
+					(a) => `<option value="${escHtml(a)}">${escHtml(prettyAction(a))}</option>`
+				).join("");
+			} catch {
+				actionEl.innerHTML = '<option value="">All actions</option>';
+			}
+		}
+
+		async function load() {
+			clearAlert();
+			statusEl.textContent = "Loading…";
+			rowsEl.innerHTML = `
+				<tr>
+					<td colspan="4" class="text-center py-8 text-base-content/50 italic">
+						Loading…
+					</td>
+				</tr>`;
+			try {
+				const res = await fetch(`/api/audit-logs?${buildQuery()}`, { credentials: "same-origin" });
+				const json = await res.json();
+				if (!res.ok) {
+					throw new Error(json?.detail || "Failed to load audit logs");
+				}
+				total = Number(json?.total || (json?.items || []).length || 0);
+				renderRows(json?.items || []);
+				const shown = (json?.items || []).length;
+				const start = shown === 0 ? 0 : offset + 1;
+				const end = offset + shown;
+				pageInfoEl.textContent = total > 0
+					? `Showing ${start}–${end} of ${total}`
+					: "No results";
+				prevBtn.disabled = offset <= 0;
+				nextBtn.disabled = (offset + PAGE_SIZE) >= total;
+				statusEl.textContent = "";
+			} catch (e) {
+				statusEl.textContent = "";
+				showAlert("err", e?.message || "Could not load audit logs.");
+				rowsEl.innerHTML = `
+					<tr>
+						<td colspan="4" class="text-center py-8 text-error italic">
+							Could not load audit logs.
+						</td>
+					</tr>`;
+			}
+		}
+
+		applyBtn.addEventListener("click", () => { offset = 0; load(); });
+		refreshBtn.addEventListener("click", () => load());
+		clearBtn.addEventListener("click", () => {
+			userEl.value = ""; actionEl.value = ""; fromEl.value = ""; toEl.value = "";
+			offset = 0; load();
+		});
+		prevBtn.addEventListener("click", () => {
+			offset = Math.max(0, offset - PAGE_SIZE);
+			load();
+		});
+		nextBtn.addEventListener("click", () => {
+			offset = offset + PAGE_SIZE;
+			load();
+		});
+
+		loadActions();
+		load();
+	})();
+</script>

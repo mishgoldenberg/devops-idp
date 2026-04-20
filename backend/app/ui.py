@@ -509,6 +509,32 @@ def ui_platform_managing_page(request: Request):
     )
 
 
+@ui_router.get("/ui/audit-logs", response_class=HTMLResponse)
+def ui_audit_logs_page(request: Request):
+    """Admin-only Audit Logs browser."""
+    token = request.cookies.get("auth_token")
+    if not token:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+    try:
+        user = _get_ui_user(token)
+        payload = decode_access_token(token)
+    except HTTPException:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+    if not has_effective_admin_access_live(AuthUser(payload)):
+        return RedirectResponse(url="/ui/", status_code=303)
+
+    templates = _get_templates(request)
+    return templates.TemplateResponse(
+        "audit-logs.html",
+        {
+            "request": request,
+            "user": user,
+            "current_page": "audit-logs",
+            "now": datetime.utcnow().isoformat() + "Z",
+        },
+    )
+
+
 @ui_router.get("/ui/profile", response_class=HTMLResponse)
 def ui_profile_page(request: Request):
     """Render the user profile page."""

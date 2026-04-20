@@ -13,6 +13,40 @@
 		<div id="obs-error" class="hidden alert alert-error text-sm"></div>
 		<div id="obs-notice" class="hidden alert alert-info text-sm border border-info/30"></div>
 
+		<!-- KPI summary row -->
+		<section class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+			<div class="section-card"><div class="card-body p-4">
+				<div class="text-xs text-base-content/50">ADO projects</div>
+				<div id="obs-sum-ado" class="text-2xl font-semibold">—</div>
+				<div class="text-[10px] text-base-content/40">Created via portal</div>
+			</div></div>
+			<div class="section-card"><div class="card-body p-4">
+				<div class="text-xs text-base-content/50">ServiceNow tickets</div>
+				<div id="obs-sum-snow" class="text-2xl font-semibold">—</div>
+				<div class="text-[10px] text-base-content/40">Opened via portal</div>
+			</div></div>
+			<div class="section-card"><div class="card-body p-4">
+				<div class="text-xs text-base-content/50">Successful</div>
+				<div id="obs-sum-ok" class="text-2xl font-semibold text-success">—</div>
+				<div class="text-[10px] text-base-content/40">Self-services completed</div>
+			</div></div>
+			<div class="section-card"><div class="card-body p-4">
+				<div class="text-xs text-base-content/50">Failed</div>
+				<div id="obs-sum-fail" class="text-2xl font-semibold text-error">—</div>
+				<div class="text-[10px] text-base-content/40">Self-services failed</div>
+			</div></div>
+			<div class="section-card"><div class="card-body p-4">
+				<div class="text-xs text-base-content/50">Pending</div>
+				<div id="obs-sum-pending" class="text-2xl font-semibold">—</div>
+				<div class="text-[10px] text-base-content/40">Awaiting approval</div>
+			</div></div>
+			<div class="section-card"><div class="card-body p-4">
+				<div class="text-xs text-base-content/50">Avg approval time</div>
+				<div id="obs-sum-avg" class="text-2xl font-semibold">—</div>
+				<div class="text-[10px] text-base-content/40">Created → approved</div>
+			</div></div>
+		</section>
+
 		<!-- Row 1: Widget usage + Self-service side by side -->
 		<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
 
@@ -212,16 +246,42 @@
 			return json;
 		}
 
+		function fmtDuration(sec) {
+			const s = Number(sec || 0);
+			if (!s) return "—";
+			if (s < 90) return `${Math.round(s)}s`;
+			const m = s / 60;
+			if (m < 90) return `${m.toFixed(1)}m`;
+			return `${(m / 60).toFixed(1)}h`;
+		}
+
+		function renderSummary(sum) {
+			if (!sum) return;
+			const ss = sum.self_services || {};
+			const set = (id, val) => {
+				const el = document.getElementById(id);
+				if (el) el.textContent = String(val);
+			};
+			set("obs-sum-ado", sum.ado_projects_created ?? 0);
+			set("obs-sum-snow", sum.servicenow_tickets_total ?? 0);
+			set("obs-sum-ok", ss.succeeded ?? 0);
+			set("obs-sum-fail", ss.failed ?? 0);
+			set("obs-sum-pending", ss.pending ?? 0);
+			set("obs-sum-avg", fmtDuration(ss.avg_approval_seconds ?? 0));
+		}
+
 		async function loadAll() {
 			clearError();
 			clearNotice();
 			try {
-				const [w, s, a, t] = await Promise.all([
+				const [w, s, a, t, sum] = await Promise.all([
 					loadJson("/api/observability/widgets/usage"),
 					loadJson("/api/observability/self-services"),
 					loadJson("/api/observability/azure-projects"),
 					loadJson("/api/observability/tickets"),
+					loadJson("/api/observability/summary").catch(() => null),
 				]);
+				if (sum) renderSummary(sum.data || sum);
 
 				const notice = w?.notice || s?.notice || a?.notice || t?.notice;
 				if (notice && noticeEl) {

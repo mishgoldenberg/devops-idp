@@ -40,10 +40,11 @@
 			{% if enabled_widgets is defined and 'quick_links' not in enabled_widgets %}style="display:none"{% endif %}
 		>
 			<div class="section-card w-full">
-				<div class="card-body p-6">
-					<span
-						class="loading loading-spinner loading-md text-base-content/40"
-					></span>
+				<div class="card-body p-6 flex flex-row gap-3">
+					<div class="sk-line h-9 w-28 rounded-md"></div>
+					<div class="sk-line h-9 w-28 rounded-md"></div>
+					<div class="sk-line h-9 w-28 rounded-md"></div>
+					<div class="sk-line h-9 w-28 rounded-md"></div>
 				</div>
 			</div>
 		</div>
@@ -64,22 +65,10 @@
 				{% if enabled_widgets is defined and 'ado_my_work_items' not in enabled_widgets %}style="display:none"{% endif %}
 			>
 				<div class="widget-loading h-full">
-					<div
-						class="section-card h-full flex items-center justify-center"
-					>
-						<span
-							class="loading loading-spinner loading-md text-base-content/40"
-						></span>
-					</div>
+					{% include "partials/components/widget-skeleton.html" %}
 				</div>
 				<div class="widget-content h-full">
-					<div
-						class="section-card h-full flex items-center justify-center"
-					>
-						<span
-							class="loading loading-spinner loading-md text-base-content/40"
-						></span>
-					</div>
+					{% include "partials/components/widget-skeleton.html" %}
 				</div>
 			</div>
 
@@ -95,22 +84,10 @@
 				{% if enabled_widgets is defined and 'snow_my_tickets' not in enabled_widgets %}style="display:none"{% endif %}
 			>
 				<div class="widget-loading h-full">
-					<div
-						class="section-card h-full flex items-center justify-center"
-					>
-						<span
-							class="loading loading-spinner loading-md text-base-content/40"
-						></span>
-					</div>
+					{% include "partials/components/widget-skeleton.html" %}
 				</div>
 				<div class="widget-content h-full">
-					<div
-						class="section-card h-full flex items-center justify-center"
-					>
-						<span
-							class="loading loading-spinner loading-md text-base-content/40"
-						></span>
-					</div>
+					{% include "partials/components/widget-skeleton.html" %}
 				</div>
 			</div>
 
@@ -126,22 +103,10 @@
 				{% if enabled_widgets is defined and 'ado_my_pull_requests' not in enabled_widgets %}style="display:none"{% endif %}
 			>
 				<div class="widget-loading h-full">
-					<div
-						class="section-card h-full flex items-center justify-center"
-					>
-						<span
-							class="loading loading-spinner loading-md text-base-content/40"
-						></span>
-					</div>
+					{% include "partials/components/widget-skeleton.html" %}
 				</div>
 				<div class="widget-content h-full">
-					<div
-						class="section-card h-full flex items-center justify-center"
-					>
-						<span
-							class="loading loading-spinner loading-md text-base-content/40"
-						></span>
-					</div>
+					{% include "partials/components/widget-skeleton.html" %}
 				</div>
 			</div>
 
@@ -157,22 +122,10 @@
 				{% if enabled_widgets is defined and 'ado_prs_for_review' not in enabled_widgets %}style="display:none"{% endif %}
 			>
 				<div class="widget-loading h-full">
-					<div
-						class="section-card h-full flex items-center justify-center"
-					>
-						<span
-							class="loading loading-spinner loading-md text-base-content/40"
-						></span>
-					</div>
+					{% include "partials/components/widget-skeleton.html" %}
 				</div>
 				<div class="widget-content h-full">
-					<div
-						class="section-card h-full flex items-center justify-center"
-					>
-						<span
-							class="loading loading-spinner loading-md text-base-content/40"
-						></span>
-					</div>
+					{% include "partials/components/widget-skeleton.html" %}
 				</div>
 			</div>
 
@@ -188,22 +141,10 @@
 				{% if enabled_widgets is defined and 'ado_pipeline_status' not in enabled_widgets %}style="display:none"{% endif %}
 			>
 				<div class="widget-loading h-full">
-					<div
-						class="section-card h-full flex items-center justify-center"
-					>
-						<span
-							class="loading loading-spinner loading-md text-base-content/40"
-						></span>
-					</div>
+					{% include "partials/components/widget-skeleton.html" %}
 				</div>
 				<div class="widget-content h-full">
-					<div
-						class="section-card h-full flex items-center justify-center"
-					>
-						<span
-							class="loading loading-spinner loading-md text-base-content/40"
-						></span>
-					</div>
+					{% include "partials/components/widget-skeleton.html" %}
 				</div>
 			</div>
 
@@ -219,22 +160,10 @@
 				{% if enabled_widgets is defined and 'sonar_quality_gate' not in enabled_widgets %}style="display:none"{% endif %}
 			>
 				<div class="widget-loading h-full">
-					<div
-						class="section-card h-full flex items-center justify-center"
-					>
-						<span
-							class="loading loading-spinner loading-md text-base-content/40"
-						></span>
-					</div>
+					{% include "partials/components/widget-skeleton.html" %}
 				</div>
 				<div class="widget-content h-full">
-					<div
-						class="section-card h-full flex items-center justify-center"
-					>
-						<span
-							class="loading loading-spinner loading-md text-base-content/40"
-						></span>
-					</div>
+					{% include "partials/components/widget-skeleton.html" %}
 				</div>
 			</div>
 
@@ -250,22 +179,10 @@
 				{% if enabled_widgets is defined and 'artifactory_storage' not in enabled_widgets %}style="display:none"{% endif %}
 			>
 				<div class="widget-loading h-full">
-					<div
-						class="section-card h-full flex items-center justify-center"
-					>
-						<span
-							class="loading loading-spinner loading-md text-base-content/40"
-						></span>
-					</div>
+					{% include "partials/components/widget-skeleton.html" %}
 				</div>
 				<div class="widget-content h-full">
-					<div
-						class="section-card h-full flex items-center justify-center"
-					>
-						<span
-							class="loading loading-spinner loading-md text-base-content/40"
-						></span>
-					</div>
+					{% include "partials/components/widget-skeleton.html" %}
 				</div>
 			</div>
 
@@ -281,22 +198,10 @@
 				{% if enabled_widgets is defined and 'service_health' not in enabled_widgets %}style="display:none"{% endif %}
 			>
 				<div class="widget-loading h-full">
-					<div
-						class="section-card h-full flex items-center justify-center"
-					>
-						<span
-							class="loading loading-spinner loading-md text-base-content/40"
-						></span>
-					</div>
+					{% include "partials/components/widget-skeleton.html" %}
 				</div>
 				<div class="widget-content h-full">
-					<div
-						class="section-card h-full flex items-center justify-center"
-					>
-						<span
-							class="loading loading-spinner loading-md text-base-content/40"
-						></span>
-					</div>
+					{% include "partials/components/widget-skeleton.html" %}
 				</div>
 			</div>
 		</div>
@@ -326,6 +231,21 @@
 			</div>
 
 			<div class="flex-1 overflow-y-auto p-6 space-y-4">
+				<!-- Smart dashboard: suggestions + recents (populated via JS). -->
+				<section id="dashboard-suggested-section" class="hidden">
+					<h4 class="text-xs font-semibold uppercase tracking-wide text-base-content/60 mb-2">
+						Suggested for you
+					</h4>
+					<div id="dashboard-suggested-list" class="flex flex-wrap gap-2"></div>
+				</section>
+
+				<section id="dashboard-recent-section" class="hidden">
+					<h4 class="text-xs font-semibold uppercase tracking-wide text-base-content/60 mb-2">
+						Recently used
+					</h4>
+					<div id="dashboard-recent-list" class="flex flex-wrap gap-2"></div>
+				</section>
+
 				<fieldset class="fieldset bg-base-200 border border-base-300 rounded-box p-4">
 					<legend class="fieldset-legend text-base-content/80">Available Components</legend>
 
@@ -489,5 +409,92 @@
 			syncUserWidgets(enabled);
 			if (drawer) drawer.checked = false;
 		});
+
+		// ── Smart dashboard: suggested + recently used ──────────────────────
+		// Populates the two extra sections in the Customize drawer. Falls back
+		// silently if the observability schema isn't ready.
+		function renderSmartSection(rootId, listId, items) {
+			const section = document.getElementById(rootId);
+			const list = document.getElementById(listId);
+			if (!section || !list) return;
+			if (!Array.isArray(items) || items.length === 0) {
+				section.classList.add("hidden");
+				return;
+			}
+			list.innerHTML = items
+				.map((it) => {
+					const key = String(it.widget_key || "");
+					const name = String(it.name || key);
+					return `
+						<button type="button"
+							class="btn btn-xs btn-outline hoverable"
+							data-smart-key="${key}">
+							+ ${name}
+						</button>`;
+				})
+				.join("");
+			section.classList.remove("hidden");
+
+			list.querySelectorAll("[data-smart-key]").forEach((btn) => {
+				btn.addEventListener("click", () => {
+					const key = btn.getAttribute("data-smart-key");
+					const cb = toggles.find((x) => x.dataset.widgetKey === key);
+					if (cb && !cb.checked) {
+						cb.checked = true;
+						cb.dispatchEvent(new Event("change", { bubbles: true }));
+					}
+					btn.disabled = true;
+					btn.classList.add("btn-disabled");
+				});
+			});
+		}
+
+		async function loadSmartDashboard() {
+			try {
+				const [rRecent, rSugg] = await Promise.all([
+					fetch("/api/observability/widgets/recent", { credentials: "same-origin" }),
+					fetch("/api/observability/widgets/suggested", { credentials: "same-origin" }),
+				]);
+				let recentData = [];
+				if (rRecent.ok) {
+					const j = await rRecent.json();
+					recentData = (j && j.data) || [];
+					renderSmartSection(
+						"dashboard-recent-section",
+						"dashboard-recent-list",
+						recentData
+					);
+				}
+				if (rSugg.ok) {
+					const j = await rSugg.json();
+					renderSmartSection(
+						"dashboard-suggested-section",
+						"dashboard-suggested-list",
+						(j && j.data) || []
+					);
+				}
+				// Reorder the grid so frequently-used widgets float higher. We move
+				// the user's top-3 most-viewed widgets to the front, in order.
+				if (Array.isArray(recentData) && recentData.length > 1) {
+					const grid = document.querySelector(".page-content .grid");
+					if (grid) {
+						const keysToBubble = recentData
+							.slice(0, 3)
+							.map((r) => r.widget_key)
+							.reverse();
+						keysToBubble.forEach((key) => {
+							const id = widgetKeys[key];
+							const el = id ? document.getElementById(id) : null;
+							if (el && el.parentNode === grid) {
+								grid.insertBefore(el, grid.firstChild);
+							}
+						});
+					}
+				}
+			} catch (_) {
+				/* silent-fail: sections just stay hidden */
+			}
+		}
+		loadSmartDashboard();
 	})();
 </script>

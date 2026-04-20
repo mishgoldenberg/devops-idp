@@ -64,4 +64,43 @@
 		@apply flex flex-col items-center justify-center text-center
 			text-base-content/60 py-10 gap-2;
 	}
+
+	/*
+	 * Skeleton loader primitive.
+	 * Used in place of spinners so pages feel stable while data loads: rough
+	 * shape shows immediately, then real content swaps in. Relies on DaisyUI's
+	 * own shimmer keyframe via the `skeleton` utility.
+	 */
+	.skeleton-block {
+		@apply skeleton rounded bg-base-300/70;
+	}
+
+	/* Card-shaped skeleton that mirrors the internal widget layout
+	   (header line, a few bars, and an action row) so the swap feels subtle.
+	   We duplicate the section-card styles here instead of @apply'ing the
+	   component class, because Tailwind v4 doesn't allow @apply of other
+	   custom component classes. */
+	.widget-skeleton {
+		@apply card bg-base-100 border border-base-300 shadow h-full;
+	}
+	.widget-skeleton .card-body {
+		@apply p-5 gap-3;
+	}
+	.widget-skeleton .sk-line {
+		@apply skeleton rounded bg-base-300/70;
+	}
+
+	/* Subtle hover affordance for any clickable row/card without needing to
+	   remember the full combo. */
+	.hoverable {
+		@apply transition-colors hover:bg-base-200/70;
+	}
+
+	/* Common action-button hover/transition baseline so every clickable
+	   element feels like it belongs to the same product. */
+	.btn,
+	.section-card-interactive,
+	.hoverable {
+		@apply transition-all duration-150;
+	}
 }

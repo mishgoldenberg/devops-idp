@@ -205,6 +205,9 @@ def get_work_items(
     Optionally filter by project name.  Each item includes state_category so the
     frontend can group by 'Proposed'/'InProgress'/'Resolved'/'Completed' regardless
     of the team's custom state names (e.g. 'Doing' → 'InProgress').
+
+    Results are cached per (user, project) for 60 seconds so multiple dashboard
+    widgets that share this endpoint don't each trigger a full WIQL round-trip.
     """
     if USE_MOCK:
         work_items = [
@@ -228,6 +231,41 @@ def get_work_items(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="AZURE_DEVOPS_ORG is not configured on the server",
         )
+
+    # ── 60s per-user cache ────────────────────────────────────────────────
+    # The dashboard renders this endpoint through the "work items" widget AND
+    # normalizes it for the ADO items feed, so two concurrent browser requests
+    # would otherwise run WIQL twice. Caching serialized output short-circuits
+    # both. See backend/app/integrations_cache.py.
+    try:
+        from integrations_cache import cached_external
+        owner = str(
+            current_user.get("email") or current_user.get("username") or current_user.get("id") or ""
+        ).lower()
+
+        def _produce():
+            return _fetch_work_items_live(project, current_user)
+
+        cached = cached_external(
+            "ado",
+            owner,
+            f"work-items:{project or ''}",
+            _produce,
+            ttl=60,
+        )
+        return cached
+    except HTTPException:
+        raise
+    except Exception:
+        # If the cache layer itself fails, fall back to a direct call.
+        return _fetch_work_items_live(project, current_user)
+
+
+def _fetch_work_items_live(
+    project: Optional[str],
+    current_user: AuthUser,
+) -> Dict[str, Any]:
+    """Uncached real-mode WIQL fetch. Raises HTTPException on failure."""
     try:
         pat = _get_pat_for_user(current_user)
         auth = httpx.BasicAuth("", pat)
@@ -368,34 +406,89 @@ def get_pull_requests(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="AZURE_DEVOPS_ORG is not configured on the server",
         )
+
+    # 60s per-(user, effective_username) cache. PR listing iterates every repo
+    # in every project so is by far the most expensive dashboard call; two
+    # widgets (authored / reviewer) render it concurrently.
+    try:
+        from integrations_cache import cached_external
+        owner = str(
+            current_user.get("email") or current_user.get("username") or current_user.get("id") or ""
+        ).lower()
+
+        def _produce():
+            return _fetch_pull_requests_live(effective_username, current_user)
+
+        return cached_external(
+            "ado",
+            owner,
+            f"pull-requests:{effective_username}",
+            _produce,
+            ttl=60,
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        return _fetch_pull_requests_live(effective_username, current_user)
+
+
+def _fetch_pull_requests_live(effective_username: str, current_user: AuthUser) -> Dict[str, Any]:
+    """Uncached real-mode PR fetch. Raises HTTPException on failure.
+
+    The per-project/per-repo PR enumeration used to run sequentially, which
+    made the dashboard widget feel sluggish on any org with more than a
+    handful of repos. We now parallelize the repo+PR GETs through a
+    ``ThreadPoolExecutor`` while keeping the outer httpx client around for
+    connection reuse.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     try:
         pat = _get_pat_for_user(current_user)
         auth = httpx.BasicAuth("", pat)
-        # Query all projects in the org
         projects_url = f"{ADO_BASE}/_apis/projects?api-version=7.0"
         with httpx.Client(auth=auth, timeout=30.0) as client:
             r_projects = client.get(projects_url)
             r_projects.raise_for_status()
             projects = r_projects.json().get("value", [])
 
-            pull_requests = []
-            # Iterate projects and query PRs for each
-            for proj in projects:
+            def _repos_for_project(proj: Dict[str, Any]):
                 project_id = proj.get("id")
                 repos_url = f"{ADO_BASE}/{project_id}/_apis/git/repositories?api-version=7.0"
-                r_repos = client.get(repos_url)
-                if r_repos.status_code != 200:
-                    continue
-                repos = r_repos.json().get("value", [])
+                try:
+                    r_repos = client.get(repos_url)
+                    if r_repos.status_code != 200:
+                        return proj, []
+                    return proj, r_repos.json().get("value", []) or []
+                except Exception:
+                    return proj, []
 
-                for repo in repos:
-                    repo_id = repo.get("id")
-                    prs_url = f"{ADO_BASE}/{project_id}/_apis/git/repositories/{repo_id}/pullrequests?searchCriteria.status=active&api-version=7.0"
+            def _prs_for_repo(proj: Dict[str, Any], repo: Dict[str, Any]):
+                project_id = proj.get("id")
+                repo_id = repo.get("id")
+                prs_url = (
+                    f"{ADO_BASE}/{project_id}/_apis/git/repositories/{repo_id}"
+                    "/pullrequests?searchCriteria.status=active&api-version=7.0"
+                )
+                try:
                     r_prs = client.get(prs_url)
                     if r_prs.status_code != 200:
-                        continue
-                    prs = r_prs.json().get("value", [])
+                        return proj, repo, []
+                    return proj, repo, r_prs.json().get("value", []) or []
+                except Exception:
+                    return proj, repo, []
 
+            pull_requests: List[Dict[str, Any]] = []
+            max_workers = min(16, max(4, len(projects) or 4))
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                repo_results = list(pool.map(_repos_for_project, projects))
+
+                pr_jobs = []
+                for proj, repos in repo_results:
+                    for repo in repos:
+                        pr_jobs.append(pool.submit(_prs_for_repo, proj, repo))
+
+                for fut in as_completed(pr_jobs):
+                    proj, repo, prs = fut.result()
                     for pr in prs:
                         created_by = pr.get("createdBy", {}).get("displayName", "Unknown")
                         created_by_email = pr.get("createdBy", {}).get("uniqueName", "").lower()
@@ -472,6 +565,7 @@ def get_pipelines(
             detail="AZURE_DEVOPS_ORG is not configured on the server",
         )
     try:
+        from concurrent.futures import ThreadPoolExecutor
         pat = _get_pat_for_user(current_user)
         auth = httpx.BasicAuth("", pat)
         # Query all projects in the org and get their recent builds
@@ -481,24 +575,30 @@ def get_pipelines(
             r_projects.raise_for_status()
             projects = r_projects.json().get("value", [])
 
+            target_projects = [
+                p for p in projects
+                if not project or project.lower() == (p.get("name") or "").lower()
+            ]
+
+            def _builds_for(proj):
+                pid = proj.get("id")
+                url = f"{ADO_BASE}/{pid}/_apis/build/builds?$top=20&api-version=7.0"
+                try:
+                    r = client.get(url)
+                    if r.status_code != 200:
+                        return proj, []
+                    return proj, r.json().get("value", []) or []
+                except Exception:
+                    return proj, []
+
             pipelines = []
-            # Iterate projects and query builds for each
-            for proj in projects:
-                project_id = proj.get("id")
+            max_workers = min(16, max(4, len(target_projects) or 4))
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                builds_by_project = list(pool.map(_builds_for, target_projects))
+
+            query_user_lower = (ADO_QUERY_USER or current_user.get("username", "")).lower()
+            for proj, builds in builds_by_project:
                 project_name = proj.get("name")
-                
-                # Skip if project filter is provided and doesn't match
-                if project and project.lower() != project_name.lower():
-                    continue
-
-                # Query recent builds (pipeline runs)
-                builds_url = f"{ADO_BASE}/{project_id}/_apis/build/builds?$top=20&api-version=7.0"
-                r_builds = client.get(builds_url)
-                if r_builds.status_code != 200:
-                    continue
-                builds = r_builds.json().get("value", [])
-
-                query_user_lower = (ADO_QUERY_USER or current_user.get("username", "")).lower()
                 for build in builds:
                     requested_for = build.get("requestedFor", {}) or {}
                     requested_for_email = str(requested_for.get("uniqueName", "")).lower()
@@ -746,6 +846,27 @@ def create_ado_project(
 
     custom_process_name = f"{project_name}-{process_type}"
     org = ADO_BASE.split("/")[-1]
+
+    # ── Safe Mode short-circuit ────────────────────────────────────────────
+    # Admin-controlled toggle or SAFE_MODE=true env simulates success without
+    # touching Azure DevOps / Terraform. See backend/app/safe_mode.py.
+    try:
+        import safe_mode as _safe_mode
+        if _safe_mode.is_enabled():
+            return {
+                "success": True,
+                "data": {
+                    "job_id": "safe-mode-simulated",
+                    "status": "succeeded",
+                    "safe_mode": True,
+                    "project_name": project_name,
+                    "process_type": process_type,
+                    "message": "Safe Mode is enabled — project creation simulated.",
+                },
+                "timestamp": _now_iso(),
+            }
+    except Exception:
+        pass
 
     # ── Mock mode ──────────────────────────────────────────────────────────
     if USE_MOCK:
@@ -1018,6 +1139,19 @@ def get_project_creation_status(
                 save_logs_to_gcs(job_id, job_id)
             except Exception:
                 pass
+
+    # Once a project is observed to have succeeded, drop the caller's cached
+    # ADO reads so the new project + related items show up without waiting for
+    # the 60s TTL.
+    if result.get("status") == "succeeded":
+        try:
+            from integrations_cache import invalidate_owner
+            owner = str(
+                current_user.get("email") or current_user.get("username") or current_user.get("id") or ""
+            ).lower()
+            invalidate_owner("ado", owner)
+        except Exception:
+            pass
 
     return {"success": True, "data": result, "timestamp": _now_iso()}
 

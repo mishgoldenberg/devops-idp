@@ -27,9 +27,8 @@ from . import (
     approvals,
     pins,
     notifications,
-    user_prefs,
-    suggestions,
-    system_urls,
+    audit_logs,
+    safe_mode,
 )
 
 
@@ -72,13 +71,8 @@ api_router.include_router(pins.router, tags=["pins"])
 # In-app notifications (bell + dropdown, fed by the approval workflow).
 api_router.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
 
-# Per-user preferences (avatar, theme, display name).
-api_router.include_router(user_prefs.router, prefix="/me", tags=["user-prefs"])
-
-# User-submitted suggestions (Settings page).
-api_router.include_router(suggestions.router, prefix="/suggestions", tags=["suggestions"])
-
-# External system console URLs consumed by the "Open" button on system pages.
-api_router.include_router(system_urls.router, prefix="/config", tags=["config"])
+# Admin-only: portal audit log read API + Safe Mode toggle.
+api_router.include_router(audit_logs.router, prefix="/audit-logs", tags=["audit-logs"])
+api_router.include_router(safe_mode.router, prefix="/safe-mode", tags=["safe-mode"])
 
 
