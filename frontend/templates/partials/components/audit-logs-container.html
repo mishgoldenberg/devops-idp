@@ -21,40 +21,46 @@
 
 	<div class="page-content">
 		<section class="section-card">
-			<div class="card-body gap-4">
-				<div class="grid grid-cols-1 md:grid-cols-4 gap-3">
-					<div class="form-control">
-						<label class="label pt-0" for="audit-filter-user">
-							<span class="label-text">User (email)</span>
-						</label>
-						<input id="audit-filter-user" type="text" class="input input-bordered input-sm" placeholder="user@example.com" />
-					</div>
-					<div class="form-control">
-						<label class="label pt-0" for="audit-filter-action">
-							<span class="label-text">Action</span>
-						</label>
-						<select id="audit-filter-action" class="select select-bordered select-sm">
+			<div class="card-body p-4">
+				<!-- Single horizontal filter row. Wraps cleanly on narrow widths; every
+				     input + button is btn-sm/input-sm sized so heights match. -->
+				<div class="flex flex-wrap items-end gap-3">
+					<label class="form-control min-w-[14rem] flex-1">
+						<span class="label-text text-xs mb-1">User (email)</span>
+						<input
+							id="audit-filter-user"
+							type="text"
+							class="input input-bordered input-sm w-full"
+							placeholder="user@example.com"
+						/>
+					</label>
+					<label class="form-control min-w-[12rem] flex-1">
+						<span class="label-text text-xs mb-1">Action</span>
+						<select id="audit-filter-action" class="select select-bordered select-sm w-full">
 							<option value="">All actions</option>
 						</select>
-					</div>
-					<div class="form-control">
-						<label class="label pt-0" for="audit-filter-from">
-							<span class="label-text">From</span>
-						</label>
-						<input id="audit-filter-from" type="date" class="input input-bordered input-sm" />
-					</div>
-					<div class="form-control">
-						<label class="label pt-0" for="audit-filter-to">
-							<span class="label-text">To</span>
-						</label>
-						<input id="audit-filter-to" type="date" class="input input-bordered input-sm" />
+					</label>
+					<label class="form-control w-40">
+						<span class="label-text text-xs mb-1">From</span>
+						<input id="audit-filter-from" type="date" class="input input-bordered input-sm w-full" />
+					</label>
+					<label class="form-control w-40">
+						<span class="label-text text-xs mb-1">To</span>
+						<input id="audit-filter-to" type="date" class="input input-bordered input-sm w-full" />
+					</label>
+					<div class="flex items-center gap-2 ml-auto">
+						<button id="audit-apply" type="button" class="btn btn-sm btn-primary">
+							Apply filters
+						</button>
+						<button id="audit-clear" type="button" class="btn btn-sm btn-ghost">
+							Clear
+						</button>
 					</div>
 				</div>
-				<div class="flex flex-wrap items-center gap-2">
-					<button id="audit-apply" type="button" class="btn btn-sm btn-primary">Apply filters</button>
-					<button id="audit-clear" type="button" class="btn btn-sm btn-ghost">Clear</button>
-					<div id="audit-status" class="ml-auto text-sm text-base-content/60"></div>
-				</div>
+				<div
+					id="audit-status"
+					class="text-xs text-base-content/60 mt-3 min-h-[1rem]"
+				></div>
 			</div>
 		</section>
 

@@ -442,9 +442,9 @@
 		</div>
 		{% endif %}
 	</nav>
-	<!-- Footer: profile avatar + settings (notifications bell lives in the top banner) -->
+	<!-- Footer: profile, theme toggle, settings. Notifications bell lives in the top banner. -->
 	<div
-		class="py-4 px-4 border-t border-base-300 flex items-center justify-end gap-2"
+		class="py-4 px-4 border-t border-base-300 flex items-center justify-around"
 	>
 		<a href="/ui/profile" class="btn btn-ghost btn-circle btn-sm" title="Profile">
 			{% if user.avatar_url %}
@@ -469,6 +469,44 @@
 			{% endif %}
 		</a>
 
+		<button
+			id="sidebar-theme-toggle"
+			type="button"
+			class="btn btn-ghost btn-circle btn-sm"
+			title="Toggle theme"
+			aria-label="Toggle theme"
+		>
+			<!-- Sun — shown in dark mode to invite switching to light -->
+			<svg
+				data-theme-icon="sun"
+				viewBox="0 0 24 24"
+				class="w-5 h-5 hidden"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="2"
+				stroke-linecap="round"
+				stroke-linejoin="round"
+				aria-hidden="true"
+			>
+				<circle cx="12" cy="12" r="4" />
+				<path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+			</svg>
+			<!-- Moon — shown in light mode to invite switching to dark -->
+			<svg
+				data-theme-icon="moon"
+				viewBox="0 0 24 24"
+				class="w-5 h-5 hidden"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="2"
+				stroke-linecap="round"
+				stroke-linejoin="round"
+				aria-hidden="true"
+			>
+				<path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" />
+			</svg>
+		</button>
+
 		<a href="/ui/settings" class="btn btn-ghost btn-circle btn-sm" title="Settings">
 			<svg
 				viewBox="0 0 24 24"
@@ -491,7 +529,9 @@
 	// Runs on every page load to apply the persisted theme and UI density
 	// before first paint. Both preferences hydrate from localStorage for a
 	// flash-free F5, with server-side values as the cross-device fallback.
-	// The toggle UIs live on the Settings page; this script only applies.
+	// The sidebar theme toggle (bottom-left) and the Settings page both drive
+	// the same ``portal-theme`` / ``portal-density`` LS keys, so changes stay
+	// in sync across tabs and pages.
 	(function () {
 		const root = document.documentElement;
 		const serverTheme = {{ (user.preferred_theme or '')|tojson }};
@@ -503,7 +543,8 @@
 			theme = serverTheme;
 			try { localStorage.setItem(themeKey, serverTheme); } catch (_) {}
 		}
-		root.setAttribute("data-theme", theme || "night");
+		theme = theme === "light" ? "light" : "night";
+		root.setAttribute("data-theme", theme);
 
 		const densityKey = "portal-density";
 		let density = localStorage.getItem(densityKey);
@@ -513,5 +554,35 @@
 		}
 		if (density !== "compact") density = "comfortable";
 		root.setAttribute("data-density", density);
+
+		// Sidebar theme toggle (sun/moon button between Profile and Settings).
+		const toggleBtn = document.getElementById("sidebar-theme-toggle");
+		if (!toggleBtn) return;
+		const sunIcon = toggleBtn.querySelector('[data-theme-icon="sun"]');
+		const moonIcon = toggleBtn.querySelector('[data-theme-icon="moon"]');
+
+		function paintIcon() {
+			const dark = root.getAttribute("data-theme") !== "light";
+			sunIcon?.classList.toggle("hidden", !dark);
+			moonIcon?.classList.toggle("hidden", dark);
+		}
+		paintIcon();
+
+		toggleBtn.addEventListener("click", async () => {
+			const next = root.getAttribute("data-theme") === "light" ? "night" : "light";
+			root.setAttribute("data-theme", next);
+			try { localStorage.setItem(themeKey, next); } catch (_) {}
+			paintIcon();
+			try {
+				await fetch("/api/me/theme", {
+					method: "PUT",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ theme: next }),
+				});
+			} catch (_err) {
+				// Non-fatal: LS already reflects the new value; sync resumes next change.
+			}
+		});
 	})();
 </script>
