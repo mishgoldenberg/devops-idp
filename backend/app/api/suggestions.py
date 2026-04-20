@@ -73,13 +73,43 @@ def list_suggestions(
     try:
         rows = query_all(
             """
-            SELECT id, user_email, title, description, status, created_at
-            FROM suggestions
-            ORDER BY created_at DESC
-            LIMIT 200
+            SELECT id::text AS id, user_email, title, description,
+                   status, created_at,
+                   (status = 'reviewed') AS reviewed
+              FROM suggestions
+             ORDER BY created_at DESC
+             LIMIT 200
             """
         )
     except Exception as exc:
         log.debug("list_suggestions failed: %s", exc)
         rows = []
     return {"success": True, "data": rows}
+
+
+class ReviewBody(BaseModel):
+    reviewed: bool = Field(..., description="Mark the suggestion as reviewed or un-review it.")
+
+
+@router.patch("/{suggestion_id}")
+def set_reviewed(
+    suggestion_id: str,
+    body: ReviewBody,
+    current_user: AuthUser = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    Admin-only: toggle the ``reviewed`` flag. Backed by the existing ``status``
+    column ('reviewed' vs 'new') so we don't need another migration.
+    """
+    if not has_effective_admin_access_live(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    new_status = "reviewed" if body.reviewed else "new"
+    try:
+        execute(
+            "UPDATE suggestions SET status = %s WHERE id = %s",
+            [new_status, suggestion_id],
+        )
+    except Exception as exc:
+        log.debug("set_reviewed failed: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to update suggestion")
+    return {"success": True, "data": {"id": suggestion_id, "reviewed": body.reviewed}}

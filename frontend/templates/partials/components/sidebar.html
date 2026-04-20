@@ -444,7 +444,7 @@
 	</nav>
 	<!-- Footer: profile avatar + settings (notifications bell lives in the top banner) -->
 	<div
-		class="py-4 px-4 border-t border-base-300 flex items-center justify-between gap-2"
+		class="py-4 px-4 border-t border-base-300 flex items-center justify-end gap-2"
 	>
 		<a href="/ui/profile" class="btn btn-ghost btn-circle btn-sm" title="Profile">
 			{% if user.avatar_url %}
@@ -487,20 +487,31 @@
 	</div>
 </aside>
 <script>
-	// --- Theme initializer (moved from UI toggle to Settings page) ---------
-	// Runs on every page load to apply the persisted theme before first paint.
-	// The toggle UI now lives in Settings; this script only reads the saved
-	// value and optionally hydrates from the server-side preferred_theme that
-	// the UI route plumbs onto `user.preferred_theme`.
+	// --- Theme + display-density initializer --------------------------------
+	// Runs on every page load to apply the persisted theme and UI density
+	// before first paint. Both preferences hydrate from localStorage for a
+	// flash-free F5, with server-side values as the cross-device fallback.
+	// The toggle UIs live on the Settings page; this script only applies.
 	(function () {
-		const key = "portal-theme";
 		const root = document.documentElement;
-		const serverPreferred = {{ (user.preferred_theme or '')|tojson }};
-		let saved = localStorage.getItem(key);
-		if (!saved && serverPreferred) {
-			saved = serverPreferred;
-			try { localStorage.setItem(key, serverPreferred); } catch (_) {}
+		const serverTheme = {{ (user.preferred_theme or '')|tojson }};
+		const serverDensity = {{ (user.preferred_density or '')|tojson }};
+
+		const themeKey = "portal-theme";
+		let theme = localStorage.getItem(themeKey);
+		if (!theme && serverTheme) {
+			theme = serverTheme;
+			try { localStorage.setItem(themeKey, serverTheme); } catch (_) {}
 		}
-		root.setAttribute("data-theme", saved || "night");
+		root.setAttribute("data-theme", theme || "night");
+
+		const densityKey = "portal-density";
+		let density = localStorage.getItem(densityKey);
+		if (!density && serverDensity) {
+			density = serverDensity;
+			try { localStorage.setItem(densityKey, serverDensity); } catch (_) {}
+		}
+		if (density !== "compact") density = "comfortable";
+		root.setAttribute("data-density", density);
 	})();
 </script>

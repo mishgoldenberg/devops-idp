@@ -88,6 +88,18 @@
 					<div>
 						<label class="label pb-1"><span class="label-text text-xs">Email (from SSO)</span></label>
 						<input class="input input-bordered w-full bg-base-200 cursor-not-allowed" value="{{ email }}" readonly />
+						{% set role_label = user.role or 'User' %}
+						{% if role_label == 'Admin' %}
+							{% set role_badge_class = 'badge-primary' %}
+						{% elif role_label == 'TeamLead' %}
+							{% set role_badge_class = 'badge-info' %}
+						{% else %}
+							{% set role_badge_class = 'badge-ghost' %}
+						{% endif %}
+						<div class="mt-2 flex items-center gap-2">
+							<span class="text-xs text-base-content/60">Role</span>
+							<span class="badge badge-sm {{ role_badge_class }}">{{ role_label }}</span>
+						</div>
 					</div>
 					<div class="flex justify-end pt-1">
 						<button class="btn btn-primary" type="submit">Save</button>

@@ -2833,6 +2833,9 @@
   .max-h-96 {
     max-height: calc(var(--spacing) * 96);
   }
+  .max-h-\[28rem\] {
+    max-height: 28rem;
+  }
   .max-h-\[60vh\] {
     max-height: 60vh;
   }
@@ -2858,6 +2861,9 @@
   }
   .w-1\/3 {
     width: calc(1 / 3 * 100%);
+  }
+  .w-1\/5 {
+    width: calc(1 / 5 * 100%);
   }
   .w-2 {
     width: calc(var(--spacing) * 2);
@@ -2915,6 +2921,9 @@
   }
   .w-32 {
     width: calc(var(--spacing) * 32);
+  }
+  .w-40 {
+    width: calc(var(--spacing) * 40);
   }
   .w-48 {
     width: calc(var(--spacing) * 48);
@@ -3748,6 +3757,9 @@
   .text-right {
     text-align: right;
   }
+  .align-top {
+    vertical-align: top;
+  }
   .font-mono {
     font-family: var(--font-mono);
   }
@@ -4220,6 +4232,20 @@
     @layer daisyui.l1.l2 {
       &:checked, &[aria-checked="true"] {
         --input-color: var(--color-primary);
+      }
+    }
+  }
+  .toggle-sm {
+    @layer daisyui.l1.l2 {
+      &:is([type="checkbox"]), &:has([type="checkbox"]) {
+        --size: calc(var(--size-selector, 0.25rem) * 5);
+      }
+    }
+  }
+  .toggle-success {
+    @layer daisyui.l1.l2 {
+      &:checked, &[aria-checked="true"] {
+        --input-color: var(--color-success);
       }
     }
   }
@@ -5075,6 +5101,31 @@
     --tw-duration: 150ms;
     transition-duration: 150ms;
   }
+}
+html[data-density="compact"] .page-header {
+  padding-top: 1rem;
+  padding-bottom: 1rem;
+  padding-left: 1.5rem;
+  padding-right: 1.5rem;
+}
+html[data-density="compact"] .page-content {
+  padding: 1rem;
+}
+html[data-density="compact"] .widget-grid {
+  gap: 1rem;
+  padding: 1rem;
+}
+html[data-density="compact"] main .grid.gap-6 {
+  gap: 1rem;
+}
+html[data-density="compact"] .page-content.flex-col.gap-6, html[data-density="compact"] .page-content.space-y-6 > * + * {
+  margin-top: 1rem;
+}
+html[data-density="compact"] .section-card .card-body {
+  padding: 1rem;
+}
+html[data-density="compact"] .page-title {
+  font-size: 1.5rem;
 }
 @layer base {
   :where(:root),:root:has(input.theme-controller[value=nord]:checked),[data-theme=nord] {

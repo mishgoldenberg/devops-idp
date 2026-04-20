@@ -70,21 +70,23 @@ def _get_ui_user(token: str) -> Dict[str, Any]:
     """Resolve the authenticated user's display info for the UI layer.
 
     Returns display_name (with DB override if present) plus the per-user
-    preferences the sidebar + base template rely on (avatar + theme). The DB
-    lookup is best-effort so that a missing ``avatar_url``/``preferred_theme``
-    column never breaks page rendering.
+    preferences the sidebar + base template rely on (avatar + theme + display
+    density) and the effective role from the JWT. The DB lookup is best-effort
+    so that missing preference columns never break page rendering.
     """
     payload = decode_access_token(token)
     username = str(payload.get("username", "User"))
     display_name = _format_display_name(username)
     avatar_url: Optional[str] = None
     preferred_theme: Optional[str] = None
+    preferred_density: Optional[str] = None
 
     user_id = payload.get("id")
     if user_id:
         try:
             user_row = query_one(
-                "SELECT full_name, avatar_url, preferred_theme FROM users WHERE id = %s",
+                "SELECT full_name, avatar_url, preferred_theme, preferred_density "
+                "FROM users WHERE id = %s",
                 [user_id],
             )
             if user_row:
@@ -94,7 +96,11 @@ def _get_ui_user(token: str) -> Dict[str, Any]:
                     avatar_url = str(user_row["avatar_url"])
                 if user_row.get("preferred_theme"):
                     preferred_theme = str(user_row["preferred_theme"])
+                if user_row.get("preferred_density"):
+                    preferred_density = str(user_row["preferred_density"])
         except Exception:
+            # Column may not yet exist on older DBs — the startup migration in
+            # ``ensure_user_preference_columns`` adds it, but we stay resilient.
             pass
 
     return {
@@ -102,7 +108,9 @@ def _get_ui_user(token: str) -> Dict[str, Any]:
         "display_name": display_name,
         "avatar_url": avatar_url,
         "preferred_theme": preferred_theme,
+        "preferred_density": preferred_density,
         "email": payload.get("email", ""),
+        "role": payload.get("role") or "User",
     }
 
 

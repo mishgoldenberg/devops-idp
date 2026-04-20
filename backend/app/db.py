@@ -376,8 +376,9 @@ def ensure_tables() -> None:
 def ensure_user_preference_columns() -> None:
     """
     Extend ``users`` with per-user UI preferences that the portal persists:
-      * ``avatar_url``       — data URL (base64) or URL of the sidebar avatar.
-      * ``preferred_theme``  — "light" or "night" (DaisyUI theme name).
+      * ``avatar_url``         — data URL (base64) or URL of the sidebar avatar.
+      * ``preferred_theme``    — "light" or "night" (DaisyUI theme name).
+      * ``preferred_density``  — "comfortable" or "compact" (dashboard spacing).
 
     Added via ALTER TABLE ... ADD COLUMN IF NOT EXISTS so the baseline schema
     in deployment/charts/.../00_schema.sql can stay untouched and dev DBs keep
@@ -386,6 +387,7 @@ def ensure_user_preference_columns() -> None:
     for sql in (
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_theme VARCHAR(32)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_density VARCHAR(32)",
     ):
         try:
             execute(sql)

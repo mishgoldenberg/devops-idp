@@ -104,3 +104,39 @@
 		@apply transition-all duration-150;
 	}
 }
+
+/*
+ * Display density.
+ * Selector lives on <html data-density="comfortable|compact">. Tightening
+ * header padding, widget grid gap and card body spacing is enough to fit
+ * visibly more content without redesigning any layout. `comfortable` keeps
+ * the defaults the rest of the stylesheet already uses — we only override
+ * inside `[data-density="compact"]`.
+ */
+html[data-density="compact"] .page-header {
+	padding-top: 1rem;
+	padding-bottom: 1rem;
+	padding-left: 1.5rem;
+	padding-right: 1.5rem;
+}
+html[data-density="compact"] .page-content {
+	padding: 1rem;
+}
+html[data-density="compact"] .widget-grid {
+	gap: 1rem;
+	padding: 1rem;
+}
+/* Tighten the dashboard widget grid (not declared as .widget-grid) as well. */
+html[data-density="compact"] main .grid.gap-6 {
+	gap: 1rem;
+}
+html[data-density="compact"] .page-content.flex-col.gap-6,
+html[data-density="compact"] .page-content.space-y-6 > * + * {
+	margin-top: 1rem;
+}
+html[data-density="compact"] .section-card .card-body {
+	padding: 1rem;
+}
+html[data-density="compact"] .page-title {
+	font-size: 1.5rem;
+}
