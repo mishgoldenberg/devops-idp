@@ -52,6 +52,7 @@ HOME_WIDGET_KEYS = {
     "sonar_quality_gate": "sonarqube-quality-component",
     "artifactory_storage": "artifactory-storage-component",
     "service_health": "service-health-component",
+    "recent_activity": "recent-activity-component",
 }
 
 
@@ -1092,6 +1093,23 @@ def ui_pull_requests_component(request: Request):
     return templates.TemplateResponse(
         "partials/components/pull-requests.html",
         {"request": request, "prs": widget_state["prs"], "error": widget_state["error"]},
+    )
+
+
+@ui_router.get("/ui/components/recent-activity", response_class=HTMLResponse)
+def ui_recent_activity_component(request: Request):
+    """
+    Render the Recent Activity dashboard widget.
+
+    The partial self-fetches from ``/api/activity`` on mount, so this
+    handler just returns the shell — no server-side DB hit — keeping
+    parity with how servicenow-tickets.html / azure-devops-tasks.html
+    load their data after the skeleton swap.
+    """
+    templates = _get_templates(request)
+    return templates.TemplateResponse(
+        "partials/components/recent-activity.html",
+        {"request": request},
     )
 
 

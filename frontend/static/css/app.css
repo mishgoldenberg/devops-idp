@@ -188,3 +188,68 @@ html[data-density="compact"] .section-card ul.flex.flex-col.gap-2 {
 		grid-template-columns: repeat(4, minmax(0, 1fr));
 	}
 }
+
+/*
+ * Subtle motion + hover polish.
+ * Scoped additions so the portal feels smoother without mass-touching
+ * component styles. Everything respects prefers-reduced-motion.
+ */
+
+/* Dropdown menus / search panels / notification panels fade in when they
+   open instead of flash-appearing. DaisyUI toggles `.dropdown-content` via
+   :focus-within, so we piggy-back on that for a single animation trigger. */
+@keyframes portal-fade-in {
+	from { opacity: 0; transform: translateY(-2px); }
+	to   { opacity: 1; transform: translateY(0); }
+}
+.dropdown-content,
+[data-global-search-panel]:not(.hidden) {
+	animation: portal-fade-in 120ms ease-out;
+}
+
+/* Modal/dialog fade-in for native <dialog> elements (used by My Requests,
+   ADO self-service, etc.). :modal matches the currently-open one. */
+@keyframes portal-modal-in {
+	from { opacity: 0; transform: translateY(4px) scale(0.99); }
+	to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+dialog.modal[open] > .modal-box {
+	animation: portal-modal-in 140ms ease-out;
+}
+
+/* Slight press feedback on every btn so clicks feel grounded. */
+.btn:not(.btn-disabled):not([disabled]):active {
+	transform: translateY(1px);
+}
+
+/* Cards already transition via `.section-card-interactive`; give the
+   non-interactive `.section-card` the same smoothness when it's hovered
+   inside clickable contexts (e.g. the My Requests cards that attach a
+   click handler in JS) without forcing every card to lift. Scoped to
+   cursor-pointer so it only lights up when the element is actually
+   interactive. */
+.section-card.cursor-pointer {
+	transition: box-shadow 150ms ease, border-color 150ms ease, transform 150ms ease;
+}
+.section-card.cursor-pointer:hover {
+	border-color: var(--color-primary, theme(colors.primary));
+	box-shadow: 0 4px 14px -8px rgba(0, 0, 0, 0.25);
+}
+
+/* Hoverable list rows inside widgets — reinforces which rows are clickable
+   without requiring every partial to opt in manually. */
+.section-card ul > li a:hover,
+.section-card ul > li:hover > a {
+	color: var(--color-primary, theme(colors.primary));
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.dropdown-content,
+	[data-global-search-panel]:not(.hidden),
+	dialog.modal[open] > .modal-box {
+		animation: none !important;
+	}
+	.btn:not(.btn-disabled):not([disabled]):active {
+		transform: none !important;
+	}
+}

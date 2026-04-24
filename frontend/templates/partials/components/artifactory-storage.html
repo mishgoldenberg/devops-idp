@@ -38,6 +38,11 @@
 			></progress>
 		</div>
 		<!-- Per-repo breakdown -->
+		{% if not storage.repositories %}
+		<p class="text-xs text-base-content/50 text-center py-4">
+			No repositories reported yet.
+		</p>
+		{% else %}
 		<ul
 			class="flex flex-col gap-2 flex-1 min-h-0 overflow-y-auto overscroll-contain"
 		>
@@ -57,5 +62,6 @@
 			</li>
 			{% endfor %}
 		</ul>
+		{% endif %}
 	</div>
 </div>

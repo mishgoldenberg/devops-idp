@@ -33,6 +33,18 @@
 			</div>
 		</div>
 		{% else %}
+		{% if not prs %}
+		<div class="flex flex-1 flex-col items-center justify-center text-center gap-2 py-8 text-base-content/60">
+			<svg class="w-10 h-10 text-base-content/30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+				<path d="M9 12l2 2 4-4"></path>
+				<circle cx="12" cy="12" r="9"></circle>
+			</svg>
+			<p class="text-sm font-medium">All caught up</p>
+			<p class="text-xs text-base-content/50 max-w-xs">
+				No pull requests are waiting on your review right now.
+			</p>
+		</div>
+		{% else %}
 		<ul class="flex flex-col gap-2 flex-1 min-h-0 overflow-y-auto overscroll-contain">
 			{% for pr in prs %}
 			<li class="rounded-lg bg-base-200/60 border border-base-300 px-3 py-2.5 flex flex-col gap-1">
@@ -50,6 +62,7 @@
 			</li>
 			{% endfor %}
 		</ul>
+		{% endif %}
 		{% endif %}
 	</div>
 </div>

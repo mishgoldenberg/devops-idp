@@ -24,6 +24,17 @@
 			</h3>
 		</div>
 		<!-- Project rows -->
+		{% if not projects %}
+		<div class="flex flex-1 flex-col items-center justify-center text-center gap-2 py-8 text-base-content/60">
+			<svg class="w-10 h-10 text-base-content/30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+				<path d="M12 2L3 6v6c0 5 3.5 9.5 9 11 5.5-1.5 9-6 9-11V6l-9-4z"></path>
+			</svg>
+			<p class="text-sm font-medium">No analyzed projects</p>
+			<p class="text-xs text-base-content/50 max-w-xs">
+				Quality gate results will appear here after the next SonarQube scan.
+			</p>
+		</div>
+		{% else %}
 		<ul
 			class="flex flex-col gap-2 flex-1 min-h-0 overflow-y-auto overscroll-contain"
 		>
@@ -58,5 +69,6 @@
 			</li>
 			{% endfor %}
 		</ul>
+		{% endif %}
 	</div>
 </div>

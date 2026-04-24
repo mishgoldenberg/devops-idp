@@ -49,6 +49,11 @@
 			</div>
 		</div>
 
+		<!-- Favorites strip. Sits between Quick Links and the widget grid
+		     and auto-hides while the user has no favorites, so empty
+		     accounts don't see an empty shell. Backed by /api/favorites. -->
+		{% include "partials/components/favorites-section.html" %}
+
 		<!-- Dashboard widget grid -->
 		<div
 			class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 items-start"
@@ -204,6 +209,25 @@
 					{% include "partials/components/widget-skeleton.html" %}
 				</div>
 			</div>
+
+			<!-- Recent Activity (self-fetches /api/activity after mount) -->
+			<div
+				id="recent-activity-component"
+				data-widget-key="recent_activity"
+				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
+				hx-get="/ui/components/recent-activity"
+				hx-trigger="load, click from:#refresh-btn"
+				hx-target="find .widget-content"
+				hx-swap="innerHTML"
+				{% if enabled_widgets is defined and 'recent_activity' not in enabled_widgets %}style="display:none"{% endif %}
+			>
+				<div class="widget-loading h-full">
+					{% include "partials/components/widget-skeleton.html" %}
+				</div>
+				<div class="widget-content h-full">
+					{% include "partials/components/widget-skeleton.html" %}
+				</div>
+			</div>
 		</div>
 	</main>
 
@@ -285,6 +309,10 @@
 						<input type="checkbox" checked class="checkbox checkbox-primary dashboard-widget-toggle" data-widget-key="service_health" />
 						<span class="font-medium text-base-content">Service Health</span>
 					</label>
+					<label class="label cursor-pointer justify-start gap-3 py-2">
+						<input type="checkbox" checked class="checkbox checkbox-primary dashboard-widget-toggle" data-widget-key="recent_activity" />
+						<span class="font-medium text-base-content">Recent Activity</span>
+					</label>
 				</fieldset>
 			</div>
 
@@ -307,6 +335,7 @@
 			sonar_quality_gate: "sonarqube-quality-component",
 			artifactory_storage: "artifactory-storage-component",
 			service_health: "service-health-component",
+			recent_activity: "recent-activity-component",
 		};
 
 		// Server-rendered initial state — no fetch needed, no flash on F5.

@@ -24,6 +24,19 @@
 			</h3>
 		</div>
 		<!-- 2-column service status grid -->
+		{% if not services %}
+		<div class="flex flex-1 flex-col items-center justify-center text-center gap-2 py-8 text-base-content/60">
+			<svg class="w-10 h-10 text-base-content/30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+				<circle cx="12" cy="12" r="9"></circle>
+				<path d="M12 8v5"></path>
+				<circle cx="12" cy="16.5" r="0.75" fill="currentColor"></circle>
+			</svg>
+			<p class="text-sm font-medium">No services monitored</p>
+			<p class="text-xs text-base-content/50 max-w-xs">
+				Health checks will appear here once services report status.
+			</p>
+		</div>
+		{% else %}
 		<div class="grid grid-cols-2 gap-2 flex-1">
 			{% for svc in services %}
 			<div
@@ -44,5 +57,6 @@
 			</div>
 			{% endfor %}
 		</div>
+		{% endif %}
 	</div>
 </div>

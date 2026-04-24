@@ -24,15 +24,46 @@
 	<div class="modal-box">
 		<h3 class="font-bold text-lg">Request Azure DevOps Project</h3>
 		<p class="text-sm text-base-content/60 mt-1">Your request will be queued for admin approval.</p>
-		<form id="ado-create-form" class="grid grid-cols-1 gap-3 mt-3">
-			<input class="input input-bordered" type="text" name="project_name" placeholder="Project name" required />
+		<form id="ado-create-form" class="grid grid-cols-1 gap-3 mt-3" novalidate>
+			<div>
+				<input
+					class="input input-bordered w-full"
+					type="text"
+					name="project_name"
+					placeholder="Project name"
+					required
+					minlength="2"
+					maxlength="63"
+					pattern="^[A-Za-z0-9][A-Za-z0-9 _\-.]{1,62}$"
+					aria-describedby="ado-create-err-project_name"
+				/>
+				<p
+					id="ado-create-err-project_name"
+					class="text-xs text-error mt-1 hidden"
+					data-error-for="project_name"
+				></p>
+			</div>
 			<select class="select select-bordered" name="process_type">
 				<option>Scrum</option>
 				<option>Agile</option>
 				<option>CMMI</option>
 				<option>Basic</option>
 			</select>
-			<input class="input input-bordered" type="email" name="admin_username" placeholder="Admin email" required />
+			<div>
+				<input
+					class="input input-bordered w-full"
+					type="email"
+					name="admin_username"
+					placeholder="Admin email"
+					required
+					aria-describedby="ado-create-err-admin_username"
+				/>
+				<p
+					id="ado-create-err-admin_username"
+					class="text-xs text-error mt-1 hidden"
+					data-error-for="admin_username"
+				></p>
+			</div>
 			<div class="modal-action">
 				<button type="button" id="ado-create-cancel" class="btn">Cancel</button>
 				<button type="submit" class="btn btn-primary">Submit for Approval</button>
@@ -54,6 +85,58 @@
 		card.addEventListener("click", () => modal.showModal?.());
 		cancelBtn?.addEventListener("click", () => modal.close?.());
 
+		// ── Inline validation ─────────────────────────────────────────────
+		// Rules mirror backend checks in backend/app/api/approvals.py so
+		// users see the same constraints the server enforces without a
+		// round-trip. `errorFor` toggles per-field error text instead of
+		// dumping everything into the single statusBox at the bottom.
+		const projectInput = form.querySelector('[name="project_name"]');
+		const adminInput = form.querySelector('[name="admin_username"]');
+		const PROJECT_RE = /^[A-Za-z0-9][A-Za-z0-9 _\-.]{1,62}$/;
+		const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+		function errorFor(field, msg) {
+			const el = form.querySelector(`[data-error-for="${field}"]`);
+			const input = form.querySelector(`[name="${field}"]`);
+			if (!el || !input) return;
+			if (msg) {
+				el.textContent = msg;
+				el.classList.remove("hidden");
+				input.classList.add("input-error");
+			} else {
+				el.textContent = "";
+				el.classList.add("hidden");
+				input.classList.remove("input-error");
+			}
+		}
+
+		function validateProject(value) {
+			const v = String(value || "").trim();
+			if (!v) return "Project name is required.";
+			if (!PROJECT_RE.test(v))
+				return "Use 2–63 characters: start with a letter or digit, then letters, digits, spaces, hyphens, underscores, or dots.";
+			return "";
+		}
+		function validateAdmin(value) {
+			const v = String(value || "").trim();
+			if (!v) return "Admin email is required.";
+			if (!EMAIL_RE.test(v)) return "Enter a valid email address.";
+			return "";
+		}
+
+		projectInput?.addEventListener("input", () =>
+			errorFor("project_name", validateProject(projectInput.value))
+		);
+		projectInput?.addEventListener("blur", () =>
+			errorFor("project_name", validateProject(projectInput.value))
+		);
+		adminInput?.addEventListener("input", () =>
+			errorFor("admin_username", validateAdmin(adminInput.value))
+		);
+		adminInput?.addEventListener("blur", () =>
+			errorFor("admin_username", validateAdmin(adminInput.value))
+		);
+
 		form.addEventListener("submit", async function (e) {
 			e.preventDefault();
 			const data = new FormData(form);
@@ -61,9 +144,12 @@
 			const processType = String(data.get("process_type") || "Scrum").trim();
 			const adminUser = String(data.get("admin_username") || "").trim();
 
-			if (!projectName || !adminUser) {
-				statusBox.textContent = "Please fill in all required fields.";
-				statusBox.className = "text-sm mt-5 text-error";
+			const projErr = validateProject(projectName);
+			const adminErr = validateAdmin(adminUser);
+			errorFor("project_name", projErr);
+			errorFor("admin_username", adminErr);
+			if (projErr || adminErr) {
+				(projErr ? projectInput : adminInput)?.focus();
 				return;
 			}
 
@@ -87,17 +173,29 @@
 				});
 				if (!res.ok) {
 					const json = await res.json().catch(() => ({}));
-					statusBox.textContent = json?.detail || "Failed to submit request.";
+					const detail = json?.detail || "Failed to submit request.";
+					statusBox.textContent = detail;
 					statusBox.className = "text-sm mt-5 text-error";
+					window.portalToast?.({ kind: "error", message: detail });
 					return;
 				}
 				modal.close?.();
 				form.reset();
+				errorFor("project_name", "");
+				errorFor("admin_username", "");
 				statusBox.innerHTML = `Your request has been submitted and is awaiting admin approval. Track it on the <a class="link" href="/ui/my-requests">My Requests</a> page.`;
 				statusBox.className = "text-sm mt-5 text-success";
+				window.portalToast?.({
+					kind: "success",
+					message: "Request submitted for admin approval.",
+				});
 			} catch (_err) {
 				statusBox.textContent = "Could not submit request. Please try again.";
 				statusBox.className = "text-sm mt-5 text-error";
+				window.portalToast?.({
+					kind: "error",
+					message: "Could not submit request. Please try again.",
+				});
 			}
 		});
 	})();

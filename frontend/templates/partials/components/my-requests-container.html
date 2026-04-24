@@ -166,6 +166,94 @@
 			}
 		}
 
+		// Build a four-step vertical timeline (Submitted → Approved →
+		// Running → Completed) driven entirely off fields we already have
+		// on the approval_requests row — no new API. Steps ahead of the
+		// current status render as pending; a request that ended in
+		// REJECTED/FAILED terminates on that step with an error tone.
+		function renderTimeline(r) {
+			const status = String(r.status || "").toUpperCase();
+			const okTerminal = status === "COMPLETED" || status === "EXECUTED";
+			const failed = status === "FAILED";
+			const rejected = status === "REJECTED";
+
+			// Each step: { label, doneAt, state }
+			// state ∈ "done" | "current" | "pending" | "skipped" | "failed"
+			const submitted = {
+				label: "Submitted",
+				at: r.created_at,
+				state: "done",
+			};
+			let approved;
+			if (rejected) {
+				approved = {
+					label: "Rejected",
+					at: r.approved_at,
+					state: "failed",
+				};
+			} else if (status === "PENDING") {
+				approved = { label: "Awaiting approval", at: null, state: "current" };
+			} else {
+				approved = { label: "Approved", at: r.approved_at, state: "done" };
+			}
+			let running;
+			if (rejected) {
+				running = { label: "Execution", at: null, state: "skipped" };
+			} else if (status === "PENDING") {
+				running = { label: "Execution", at: null, state: "pending" };
+			} else if (status === "APPROVED" || status === "IN_PROGRESS") {
+				running = { label: "Running", at: null, state: "current" };
+			} else {
+				running = { label: "Running", at: null, state: "done" };
+			}
+			let finished;
+			if (rejected) {
+				finished = { label: "Closed", at: r.approved_at, state: "failed" };
+			} else if (failed) {
+				finished = { label: "Failed", at: r.executed_at, state: "failed" };
+			} else if (okTerminal) {
+				finished = { label: "Completed", at: r.executed_at, state: "done" };
+			} else {
+				finished = { label: "Completed", at: null, state: "pending" };
+			}
+
+			const steps = [submitted, approved, running, finished];
+			const dotClass = (s) => {
+				if (s === "done") return "bg-success border-success";
+				if (s === "current") return "bg-primary border-primary animate-pulse";
+				if (s === "failed") return "bg-error border-error";
+				if (s === "skipped") return "bg-base-300 border-base-300";
+				return "bg-transparent border-base-content/30";
+			};
+			const lineClass = (s) => {
+				if (s === "done") return "bg-success";
+				if (s === "failed") return "bg-error";
+				return "bg-base-300";
+			};
+			const labelClass = (s) => {
+				if (s === "current") return "text-base-content font-medium";
+				if (s === "failed") return "text-error font-medium";
+				if (s === "pending" || s === "skipped") return "text-base-content/50";
+				return "text-base-content";
+			};
+
+			return `
+				<ol class="relative pl-5 space-y-4">
+					${steps.map((st, i) => {
+						const isLast = i === steps.length - 1;
+						return `
+							<li class="relative">
+								<span class="absolute -left-5 top-1 h-3 w-3 rounded-full border-2 ${dotClass(st.state)}"></span>
+								${isLast ? "" : `<span class="absolute -left-[14px] top-4 w-0.5 h-[calc(100%+0.25rem)] ${lineClass(st.state)}"></span>`}
+								<div class="flex items-center justify-between gap-3">
+									<span class="text-sm ${labelClass(st.state)}">${escapeHtml(st.label)}</span>
+									<span class="text-[11px] text-base-content/50">${st.at ? fmtDate(st.at) : ""}</span>
+								</div>
+							</li>`;
+					}).join("")}
+				</ol>`;
+		}
+
 		function renderPayloadFields(payload) {
 			if (!payload || typeof payload !== "object") return `<p class="text-sm text-base-content/60">No inputs.</p>`;
 			const entries = Object.entries(payload);
@@ -194,6 +282,10 @@
 				adminActionsEl.hidden = !show;
 			}
 			modalBody.innerHTML = `
+				<section>
+					<h4 class="text-xs font-semibold uppercase tracking-widest text-base-content/50 mb-3">Progress</h4>
+					${renderTimeline(r)}
+				</section>
 				<section>
 					<h4 class="text-xs font-semibold uppercase tracking-widest text-base-content/50 mb-2">Request Info</h4>
 					<dl class="grid grid-cols-[auto,1fr] gap-x-4 gap-y-1 text-sm">

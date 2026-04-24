@@ -29,6 +29,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
+import activity
 import audit
 import safe_mode
 from db import execute, execute_returning, query_all, query_one
@@ -138,6 +139,18 @@ def create_request(
             "request_id": str(row["id"]),
             "request_type": body.request_type,
             "request_title": body.request_title,
+        },
+    )
+    # User-visible activity entry (dashboard Recent Activity widget).
+    # Separate from the admin-facing audit event above — this one is
+    # formatted for the requester to see "Used self-service: …" later.
+    activity.log_activity(
+        user_email=email,
+        action_type=activity.ACTION_SELF_SERVICE,
+        item_name=body.request_title or body.request_type,
+        metadata={
+            "request_id": str(row["id"]),
+            "request_type": body.request_type,
         },
     )
 
@@ -678,6 +691,27 @@ def _finish_completed(request_id: str, result_data: Dict[str, Any]) -> None:
             "request_type": (row or {}).get("request_type"),
         },
     )
+    # "Created project: X" activity entry — only for ADO project creation,
+    # which is the one self-service flow that produces a real external
+    # artefact worth surfacing in the user's activity feed. Other request
+    # types already logged a `self_service` entry at submission time.
+    request_type = str((row or {}).get("request_type") or "").upper()
+    if email and request_type == "ADO_PROJECT_CREATE":
+        project_name = ""
+        payload = (row or {}).get("request_payload") or {}
+        if isinstance(payload, dict):
+            project_name = str(payload.get("project_name") or "").strip()
+        if not project_name:
+            project_name = str((row or {}).get("request_title") or "").strip()
+        activity.log_activity(
+            user_email=email,
+            action_type=activity.ACTION_CREATE_PROJECT,
+            item_name=project_name or "Azure DevOps project",
+            metadata={
+                "request_id": str(request_id),
+                "project_url": (result_data or {}).get("project_url"),
+            },
+        )
     if email and row:
         create_notification(
             user_email=email,

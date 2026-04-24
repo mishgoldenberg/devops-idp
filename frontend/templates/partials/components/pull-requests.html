@@ -39,6 +39,31 @@
 		</div>
 		{% else %}
 		<!-- PR list -->
+		{% if not prs %}
+		<div
+			class="flex flex-1 flex-col items-center justify-center text-center gap-2 py-8 text-base-content/60"
+		>
+			<svg
+				class="w-10 h-10 text-base-content/30"
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="1.5"
+				stroke-linecap="round"
+				stroke-linejoin="round"
+				aria-hidden="true"
+			>
+				<circle cx="18" cy="18" r="3"></circle>
+				<circle cx="6" cy="6" r="3"></circle>
+				<path d="M13 6h3a2 2 0 012 2v7"></path>
+				<line x1="6" y1="9" x2="6" y2="21"></line>
+			</svg>
+			<p class="text-sm font-medium">No open pull requests</p>
+			<p class="text-xs text-base-content/50 max-w-xs">
+				New PRs you open in Azure DevOps will show up here.
+			</p>
+		</div>
+		{% else %}
 		<ul
 			class="flex flex-col gap-2 flex-1 min-h-0 overflow-y-auto overscroll-contain"
 		>
@@ -74,6 +99,7 @@
 			</li>
 			{% endfor %}
 		</ul>
+		{% endif %}
 		{% endif %}
 	</div>
 </div>

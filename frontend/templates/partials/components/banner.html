@@ -1,13 +1,111 @@
 <header
-	class="relative px-8 py-8 border-b border-base-300 bg-[url(../images/banner.svg)] flex items-center gap-3 bg-cover"
+	class="relative px-8 py-6 border-b border-base-300 bg-[url(../images/banner.svg)] flex items-center gap-3 bg-cover"
 >
 	<img
 		src="../static/images/idp-icon.svg"
 		alt="IDP logo"
-		class="w-12 h-12 rounded"
+		class="w-10 h-10 rounded"
 	/>
-	<div class="flex-1">
-		<h1 class="font-bold text-3xl text-white">DevOps Hub</h1>
+	<div class="min-w-0 shrink-0">
+		<h1 class="font-bold text-2xl text-white leading-tight">DevOps Hub</h1>
+	</div>
+
+	<!--
+		Global search. Queries three domains (Azure DevOps projects,
+		ServiceNow tickets, self-service requests) in parallel against
+		already-authenticated list endpoints and filters client-side —
+		there's no portal-wide search index to build. Results appear in
+		a simple absolute-positioned panel anchored to the input; we
+		don't use DaisyUI's dropdown here because we need typing focus
+		to stay on the input. The panel is keyboard-dismissable (Esc)
+		and closes on outside click.
+	-->
+	<div class="flex-1 flex justify-center px-4">
+		<div
+			class="relative w-full max-w-md"
+			data-global-search
+		>
+			<label class="input input-sm input-bordered w-full flex items-center gap-2 bg-base-100/90 text-base-content">
+				<svg
+					class="w-4 h-4 opacity-60"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					aria-hidden="true"
+				>
+					<circle cx="11" cy="11" r="7"></circle>
+					<path d="M21 21l-4.35-4.35"></path>
+				</svg>
+				<input
+					type="search"
+					class="grow bg-transparent outline-none"
+					placeholder="Search projects, tickets, requests…"
+					aria-label="Global search"
+					data-global-search-input
+					autocomplete="off"
+				/>
+				<kbd class="kbd kbd-xs hidden sm:inline-flex">/</kbd>
+			</label>
+			<div
+				class="hidden absolute left-0 right-0 mt-2 z-50 card card-compact bg-base-100 text-base-content shadow-xl border border-base-300 max-h-96 overflow-y-auto"
+				data-global-search-panel
+				role="listbox"
+			></div>
+		</div>
+	</div>
+
+	<!--
+		Quick Actions. A compact dropdown that shortcuts to the three
+		creation flows that already exist on their own pages — we just
+		surface them from the top bar so users don't have to hunt for
+		them in the sidebar. No new backend endpoints; every item is a
+		plain navigation link.
+	-->
+	<div class="dropdown dropdown-end" data-quick-actions>
+		<button
+			type="button"
+			tabindex="0"
+			class="btn btn-ghost btn-circle text-white hover:bg-white/10"
+			aria-label="Quick actions"
+			title="Quick actions"
+		>
+			<svg
+				viewBox="0 0 24 24"
+				class="w-6 h-6"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="2"
+				stroke-linecap="round"
+				stroke-linejoin="round"
+				aria-hidden="true"
+			>
+				<line x1="12" y1="5" x2="12" y2="19"></line>
+				<line x1="5" y1="12" x2="19" y2="12"></line>
+			</svg>
+		</button>
+		<ul
+			tabindex="0"
+			class="dropdown-content z-50 mt-3 menu menu-sm p-2 w-56 card-compact bg-base-100 text-base-content shadow-xl border border-base-300 rounded-box"
+		>
+			<li class="menu-title">
+				<span>Create</span>
+			</li>
+			<li>
+				<a href="/ui/automations">New automation request</a>
+			</li>
+			<li>
+				<a href="/ui/support">Open support ticket</a>
+			</li>
+			<li class="menu-title mt-1">
+				<span>Dashboard</span>
+			</li>
+			<li>
+				<a href="/ui/">Customize widgets</a>
+			</li>
+		</ul>
 	</div>
 
 	<!--
@@ -76,6 +174,13 @@
 		</div>
 	</div>
 </header>
+
+{# Breadcrumbs bar. Kept minimal (thin strip under the banner) so it
+   doesn't fight the hero banner for attention, and rendered here so
+   every page inherits it automatically without touching per-page
+   templates. `current_page` is already part of every TemplateResponse
+   context in backend/app/ui.py. #}
+{% include "partials/components/breadcrumbs.html" ignore missing %}
 
 <script>
 	// ── Notifications bell (banner, top-right) ──────────────────────────────
@@ -185,10 +290,12 @@
 		setInterval(refresh, 45_000);
 	})();
 
-	// ── Global error boundary ───────────────────────────────────────────────
-	// Mounted once per page via the banner include. Catches raw JS crashes,
-	// unhandled promise rejections, and HTMX failures, and shows a single
-	// friendly toast instead of letting the UI "disappear".
+	// ── Unified toast system (top-right) ────────────────────────────────────
+	// Single toast stack mounted once per page via the banner include. The
+	// error boundary below uses it internally; feature code can also call
+	// `window.portalToast({ kind, message })` with kind ∈ {success, info,
+	// warn, error}. Kept top-right but offset below the banner so toasts
+	// never cover the notifications bell or quick-actions button.
 	(function () {
 		if (window.__PORTAL_ERR_BOUNDARY__) return;
 		window.__PORTAL_ERR_BOUNDARY__ = true;
@@ -199,33 +306,53 @@
 			const el = document.createElement("div");
 			el.id = "portal-toast-root";
 			el.style.position = "fixed";
-			el.style.bottom = "1.5rem";
+			// Cleared below the banner so the notifications bell stays clickable.
+			el.style.top = "6rem";
 			el.style.right = "1.5rem";
 			el.style.zIndex = "9999";
 			el.style.display = "flex";
 			el.style.flexDirection = "column";
 			el.style.gap = "0.5rem";
+			el.style.pointerEvents = "none";
 			document.body.appendChild(el);
 			return el;
 		})();
 
-		function showToast(message, kind) {
+		const KIND_CLASS = {
+			success: "alert alert-success shadow-lg text-sm max-w-sm transition-all",
+			info: "alert alert-info shadow-lg text-sm max-w-sm transition-all",
+			warn: "alert alert-warning shadow-lg text-sm max-w-sm transition-all",
+			error: "alert alert-error shadow-lg text-sm max-w-sm transition-all",
+		};
+
+		function showToast(opts) {
+			const o = typeof opts === "string" ? { message: opts } : (opts || {});
+			const kind = KIND_CLASS[o.kind] ? o.kind : "error";
 			const t = document.createElement("div");
-			t.className = "alert alert-error shadow-lg text-sm max-w-sm transition-opacity";
-			if (kind === "warn") t.className = "alert alert-warning shadow-lg text-sm max-w-sm transition-opacity";
-			t.setAttribute("role", "alert");
-			t.textContent = message || "Something went wrong. Please try again.";
+			t.className = KIND_CLASS[kind];
+			// Individual toasts re-enable pointer events so the user can still
+			// dismiss them; the stack container itself is click-through so it
+			// never blocks underlying UI while the toast is animating out.
+			t.style.pointerEvents = "auto";
+			t.style.cursor = "pointer";
+			t.setAttribute("role", kind === "error" ? "alert" : "status");
+			t.textContent = o.message || "Something went wrong. Please try again.";
+			t.addEventListener("click", () => t.remove());
 			toastRoot.appendChild(t);
-			setTimeout(() => { t.style.opacity = "0"; }, 5000);
-			setTimeout(() => { t.remove(); }, 5800);
+			const ttl = Math.max(1500, Number(o.ttl) || 5000);
+			setTimeout(() => { t.style.opacity = "0"; }, ttl);
+			setTimeout(() => { t.remove(); }, ttl + 600);
 		}
+
+		// Public API — used by feature code (forms, admin actions, etc.).
+		window.portalToast = showToast;
 
 		let lastShownAt = 0;
 		function throttledToast(msg, kind) {
 			const now = Date.now();
 			if (now - lastShownAt < 1500) return;
 			lastShownAt = now;
-			showToast(msg, kind);
+			showToast({ kind: kind || "error", message: msg });
 		}
 
 		window.addEventListener("error", (evt) => {
@@ -253,6 +380,270 @@
 
 		document.body.addEventListener("htmx:timeout", () => {
 			throttledToast("The request took too long. Please try again.");
+		});
+	})();
+
+	// ── Global search ───────────────────────────────────────────────────────
+	// Queries three existing endpoints in parallel, filters client-side by
+	// the typed needle, and renders a grouped results panel. Results are
+	// plain links: clicking just navigates — there's no separate search
+	// results page to maintain. Debounced at 180ms so the three fetches
+	// don't fire on every keystroke.
+	(function () {
+		const root = document.querySelector("[data-global-search]");
+		if (!root) return;
+		const input = root.querySelector("[data-global-search-input]");
+		const panel = root.querySelector("[data-global-search-panel]");
+
+		function escapeHtml(s) {
+			return String(s ?? "").replace(/[&<>"']/g, (c) => ({
+				"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+			}[c]));
+		}
+
+		function highlight(text, needle) {
+			const t = String(text ?? "");
+			if (!needle) return escapeHtml(t);
+			const idx = t.toLowerCase().indexOf(needle.toLowerCase());
+			if (idx < 0) return escapeHtml(t);
+			const before = escapeHtml(t.slice(0, idx));
+			const hit = escapeHtml(t.slice(idx, idx + needle.length));
+			const after = escapeHtml(t.slice(idx + needle.length));
+			return `${before}<mark class="bg-primary/20 text-inherit rounded px-0.5">${hit}</mark>${after}`;
+		}
+
+		function open() { panel.classList.remove("hidden"); }
+		function close() { panel.classList.add("hidden"); }
+
+		async function fetchJson(url) {
+			try {
+				const res = await fetch(url, { credentials: "same-origin" });
+				if (!res.ok) return [];
+				const j = await res.json();
+				const d = j?.data;
+				return Array.isArray(d) ? d : (Array.isArray(d?.items) ? d.items : []);
+			} catch (_err) {
+				return [];
+			}
+		}
+
+		async function runSearch(needle) {
+			const [projects, tickets, requests] = await Promise.all([
+				fetchJson("/api/azure-devops/projects"),
+				fetchJson("/api/support/tickets"),
+				fetchJson("/api/approvals/requests?scope=mine"),
+			]);
+			const q = needle.toLowerCase();
+			const matches = (hay) =>
+				String(hay ?? "").toLowerCase().indexOf(q) >= 0;
+
+			const projHits = projects
+				.filter((p) => matches(p.name))
+				.slice(0, 5)
+				.map((p) => ({
+					group: "Azure DevOps",
+					label: p.name,
+					sub: p.id || "",
+					href: "/ui/azure-devops",
+					// Only ADO projects + SN tickets are favoritable today.
+					// Self-service rows omit these keys and thus render
+					// without a star icon.
+					favType: "ado_project",
+					favId: String(p.id || p.name || ""),
+					favName: String(p.name || p.id || ""),
+				}));
+			const tickHits = tickets
+				.filter((t) => matches(t.short_description) || matches(t.number))
+				.slice(0, 5)
+				.map((t) => ({
+					group: "ServiceNow",
+					label: t.short_description || t.number,
+					sub: t.number || "",
+					href: t.sys_id ? "/ui/support?ticket=" + encodeURIComponent(t.sys_id) : "/ui/support",
+					favType: "ticket",
+					favId: String(t.sys_id || ""),
+					favName: String(t.short_description || t.number || ""),
+				}));
+			const reqHits = requests
+				.filter((r) => matches(r.request_title) || matches(r.request_type))
+				.slice(0, 5)
+				.map((r) => ({
+					group: "Self-service",
+					label: r.request_title || r.request_type,
+					sub: String(r.status || "").replace("_", " "),
+					href: "/ui/my-requests",
+				}));
+
+			return [...projHits, ...tickHits, ...reqHits];
+		}
+
+		// Tiny in-memory cache of the user's favorited (type, id) pairs so
+		// the star on each search row can render pre-filled without the
+		// user opening the dashboard first. Refreshed lazily on each
+		// search open and after any toggle.
+		const favIndex = new Set();
+		const favKey = (type, id) => String(type) + "::" + String(id);
+		async function refreshFavIndex() {
+			try {
+				const res = await fetch("/api/favorites", { credentials: "same-origin" });
+				if (!res.ok) return;
+				const body = await res.json();
+				favIndex.clear();
+				(Array.isArray(body && body.data) ? body.data : []).forEach((f) => {
+					favIndex.add(favKey(f.item_type, f.item_id));
+				});
+			} catch (_e) { /* silent */ }
+		}
+
+		function renderEmpty(needle) {
+			panel.innerHTML = `
+				<div class="card-body p-4 text-center text-xs text-base-content/60">
+					No matches for “${escapeHtml(needle)}”.
+				</div>`;
+		}
+
+		function renderLoading() {
+			panel.innerHTML = `
+				<div class="card-body p-3 space-y-2">
+					<div class="sk-line h-4 w-3/4 rounded"></div>
+					<div class="sk-line h-4 w-1/2 rounded"></div>
+					<div class="sk-line h-4 w-2/3 rounded"></div>
+				</div>`;
+		}
+
+		function renderHits(hits, needle) {
+			const groups = new Map();
+			hits.forEach((h) => {
+				if (!groups.has(h.group)) groups.set(h.group, []);
+				groups.get(h.group).push(h);
+			});
+			const html = [];
+			groups.forEach((items, group) => {
+				html.push(`
+					<div class="py-1">
+						<div class="px-3 pt-2 pb-1 text-[10px] uppercase tracking-widest text-base-content/50">${escapeHtml(group)}</div>
+						<ul class="divide-y divide-base-200">
+							${items.map((h) => {
+								const hasFav = !!(h.favType && h.favId);
+								const pinned = hasFav && favIndex.has(favKey(h.favType, h.favId));
+								const favBtn = hasFav
+									? `<button type="button"
+										class="shrink-0 ml-2 ${pinned ? "text-warning" : "text-base-content/40"} hover:text-warning"
+										data-gs-fav
+										data-fav-type="${escapeHtml(h.favType)}"
+										data-fav-id="${escapeHtml(h.favId)}"
+										data-fav-name="${escapeHtml(h.favName || h.label)}"
+										aria-pressed="${pinned ? "true" : "false"}"
+										aria-label="${pinned ? "Remove from favorites" : "Add to favorites"}"
+										title="${pinned ? "Remove from favorites" : "Add to favorites"}">
+										<svg viewBox="0 0 24 24" class="w-4 h-4" fill="${pinned ? "currentColor" : "none"}" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+											<polygon points="12 2 15 8.5 22 9.3 17 14 18.2 21 12 17.8 5.8 21 7 14 2 9.3 9 8.5 12 2"></polygon>
+										</svg>
+									</button>`
+									: "";
+								return `
+								<li class="flex items-center">
+									<a href="${escapeHtml(h.href)}"
+									   class="flex-1 min-w-0 block px-3 py-2 hover:bg-base-200 transition-colors">
+										<div class="text-sm truncate">${highlight(h.label, needle)}</div>
+										${h.sub ? `<div class="text-[11px] text-base-content/50 truncate">${escapeHtml(h.sub)}</div>` : ""}
+									</a>
+									${favBtn ? `<span class="pr-2">${favBtn}</span>` : ""}
+								</li>`;
+							}).join("")}
+						</ul>
+					</div>`);
+			});
+			panel.innerHTML = html.join("");
+			panel.querySelectorAll("[data-gs-fav]").forEach((btn) => {
+				btn.addEventListener("click", async (e) => {
+					e.preventDefault();
+					e.stopPropagation();
+					const type = btn.dataset.favType;
+					const id = btn.dataset.favId;
+					const name = btn.dataset.favName;
+					const pressed = btn.getAttribute("aria-pressed") === "true";
+					try {
+						const res = await fetch("/api/favorites", {
+							method: pressed ? "DELETE" : "POST",
+							credentials: "same-origin",
+							headers: { "Content-Type": "application/json" },
+							body: JSON.stringify(
+								pressed
+									? { item_type: type, item_id: id }
+									: { item_type: type, item_id: id, item_name: name },
+							),
+						});
+						if (!res.ok) throw new Error("http " + res.status);
+						if (pressed) {
+							favIndex.delete(favKey(type, id));
+						} else {
+							favIndex.add(favKey(type, id));
+						}
+						const nowPinned = !pressed;
+						btn.setAttribute("aria-pressed", nowPinned ? "true" : "false");
+						btn.setAttribute("aria-label", nowPinned ? "Remove from favorites" : "Add to favorites");
+						btn.setAttribute("title", nowPinned ? "Remove from favorites" : "Add to favorites");
+						btn.classList.toggle("text-warning", nowPinned);
+						btn.classList.toggle("text-base-content/40", !nowPinned);
+						const svg = btn.querySelector("svg");
+						if (svg) svg.setAttribute("fill", nowPinned ? "currentColor" : "none");
+						window.portalToast?.({
+							kind: nowPinned ? "success" : "info",
+							message: nowPinned ? "Added to favorites." : "Removed from favorites.",
+						});
+						// Notify the dashboard Favorites section, if mounted.
+						if (window.portalFavorites) {
+							window.portalFavorites.load().catch(() => {});
+						}
+					} catch (_err) {
+						window.portalToast?.({ kind: "error", message: "Could not update favorite." });
+					}
+				});
+			});
+		}
+
+		let debounceTimer = null;
+		let currentToken = 0;
+		input.addEventListener("input", () => {
+			const needle = input.value.trim();
+			if (!needle) { close(); return; }
+			open();
+			renderLoading();
+			clearTimeout(debounceTimer);
+			const token = ++currentToken;
+			debounceTimer = setTimeout(async () => {
+				// Refresh the favorite index in parallel with the search;
+				// cheap endpoint, small response, and it keeps the stars
+				// on each row in sync with actions taken elsewhere.
+				const [hits] = await Promise.all([runSearch(needle), refreshFavIndex()]);
+				if (token !== currentToken) return; // newer keystroke won
+				if (!hits.length) renderEmpty(needle);
+				else renderHits(hits, needle);
+			}, 180);
+		});
+
+		input.addEventListener("focus", () => {
+			if (input.value.trim()) open();
+		});
+		input.addEventListener("keydown", (e) => {
+			if (e.key === "Escape") { input.blur(); close(); }
+		});
+		document.addEventListener("click", (e) => {
+			if (!root.contains(e.target)) close();
+		});
+
+		// "/" as a global focus shortcut, standard across GitHub / Linear /
+		// most developer portals. Ignored while the user is typing in
+		// another input so it doesn't hijack form fields.
+		document.addEventListener("keydown", (e) => {
+			if (e.key !== "/") return;
+			const target = e.target;
+			const tag = target?.tagName || "";
+			if (tag === "INPUT" || tag === "TEXTAREA" || target?.isContentEditable) return;
+			e.preventDefault();
+			input.focus();
+			input.select();
 		});
 	})();
 </script>

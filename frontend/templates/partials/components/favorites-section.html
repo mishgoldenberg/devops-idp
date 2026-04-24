@@ -1,0 +1,245 @@
+{# Favorites strip that sits above the widget grid on the dashboard.
+   Self-fetches from /api/favorites; hidden on first render until the
+   user actually has favorites (so there's no empty shell cluttering
+   the dashboard on fresh accounts).
+
+   A global `window.portalFavorites` helper is exposed so every other
+   page that wants to toggle a favorite (Support row, global-search
+   result) can call a single entry point without duplicating the fetch
+   wiring. Kept on window so it can be used from inline onclicks if we
+   ever need it, and so an external HTMX refresh can request a reload
+   of the section. #}
+<div
+	id="favorites-section"
+	class="w-full max-w-full hidden"
+	data-favorites-root
+>
+	<div class="section-card w-full">
+		<div class="card-body p-5 flex flex-col gap-3">
+			<div class="flex items-center gap-3">
+				<div
+					class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-warning/30 bg-warning/10"
+				>
+					<svg
+						viewBox="0 0 24 24"
+						class="h-4 w-4 text-warning"
+						fill="currentColor"
+						aria-hidden="true"
+					>
+						<path
+							d="M12 2.5l2.9 6.1 6.6.9-4.8 4.6 1.2 6.5-5.9-3.2-5.9 3.2 1.2-6.5-4.8-4.6 6.6-.9z"
+						/>
+					</svg>
+				</div>
+				<h3
+					class="text-sm font-bold uppercase tracking-widest text-base-content/70"
+				>
+					Favorites
+				</h3>
+				<span
+					class="text-xs text-base-content/50"
+					data-favorites-count
+				></span>
+			</div>
+			<ul
+				class="flex flex-wrap gap-2"
+				data-favorites-list
+				aria-label="Your favorites"
+			></ul>
+		</div>
+	</div>
+</div>
+
+<script>
+	(function () {
+		if (window.__PORTAL_FAVS_MOUNTED__) return;
+		window.__PORTAL_FAVS_MOUNTED__ = true;
+
+		const root = document.querySelector("[data-favorites-root]");
+		if (!root) return;
+		const list = root.querySelector("[data-favorites-list]");
+		const count = root.querySelector("[data-favorites-count]");
+
+		// Tracks the user's current favorites in memory so per-row toggles
+		// elsewhere (Support, global search) can flip their star icon
+		// without issuing a separate GET /api/favorites for each row.
+		const favKey = (type, id) => String(type) + "::" + String(id);
+		const state = new Map();
+
+		function escapeHtml(s) {
+			return String(s ?? "").replace(/[&<>"']/g, (c) => ({
+				"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+			}[c]));
+		}
+
+		function hrefFor(type, id) {
+			switch (type) {
+				case "ado_project":
+					return "/ui/azure-devops";
+				case "ticket":
+					return "/ui/support?ticket=" + encodeURIComponent(id);
+				default:
+					return "#";
+			}
+		}
+		function iconFor(type) {
+			if (type === "ado_project") {
+				return (
+					'<svg viewBox="0 0 24 24" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+					'<path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"></path>' +
+					'<polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>' +
+					'<line x1="12" y1="22.08" x2="12" y2="12"></line>' +
+					"</svg>"
+				);
+			}
+			return (
+				'<svg viewBox="0 0 24 24" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+				'<path d="M22 11.08V12a10 10 0 11-5.93-9.14"></path>' +
+				'<polyline points="22 4 12 14.01 9 11.01"></polyline>' +
+				"</svg>"
+			);
+		}
+
+		function render() {
+			const rows = Array.from(state.values());
+			if (!rows.length) {
+				root.classList.add("hidden");
+				list.innerHTML = "";
+				if (count) count.textContent = "";
+				return;
+			}
+			root.classList.remove("hidden");
+			if (count) count.textContent = String(rows.length) + " pinned";
+			list.innerHTML = rows
+				.map((f) => {
+					const href = hrefFor(f.item_type, f.item_id);
+					return (
+						'<li>' +
+						'<a href="' +
+						escapeHtml(href) +
+						'" class="group inline-flex items-center gap-2 rounded-full border border-base-300 bg-base-200/60 hover:border-primary/50 hover:bg-base-200 transition-colors px-3 py-1.5 text-sm">' +
+						'<span class="text-base-content/60">' +
+						iconFor(f.item_type) +
+						"</span>" +
+						'<span class="max-w-[14rem] truncate">' +
+						escapeHtml(f.item_name || f.item_id) +
+						"</span>" +
+						'<button type="button" class="opacity-0 group-hover:opacity-100 transition-opacity text-base-content/50 hover:text-error" data-favorite-remove data-item-type="' +
+						escapeHtml(f.item_type) +
+						'" data-item-id="' +
+						escapeHtml(f.item_id) +
+						'" aria-label="Remove favorite" title="Remove">' +
+						'<svg viewBox="0 0 24 24" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>' +
+						"</button>" +
+						"</a>" +
+						"</li>"
+					);
+				})
+				.join("");
+			list.querySelectorAll("[data-favorite-remove]").forEach((btn) => {
+				btn.addEventListener("click", (e) => {
+					e.preventDefault();
+					e.stopPropagation();
+					window.portalFavorites
+						.remove(btn.dataset.itemType, btn.dataset.itemId)
+						.catch(() => {});
+				});
+			});
+		}
+
+		async function load() {
+			try {
+				const res = await fetch("/api/favorites", {
+					credentials: "same-origin",
+				});
+				if (!res.ok) throw new Error("http " + res.status);
+				const body = await res.json();
+				state.clear();
+				(Array.isArray(body && body.data) ? body.data : []).forEach((f) => {
+					state.set(favKey(f.item_type, f.item_id), f);
+				});
+				render();
+				document.dispatchEvent(new CustomEvent("portal:favorites-changed"));
+			} catch (_err) {
+				/* silent — the section just stays hidden on failure */
+			}
+		}
+
+		async function add(type, id, name) {
+			try {
+				const res = await fetch("/api/favorites", {
+					method: "POST",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						item_type: String(type),
+						item_id: String(id),
+						item_name: String(name || id),
+					}),
+				});
+				if (!res.ok) throw new Error("http " + res.status);
+				state.set(favKey(type, id), {
+					item_type: String(type),
+					item_id: String(id),
+					item_name: String(name || id),
+				});
+				render();
+				document.dispatchEvent(new CustomEvent("portal:favorites-changed"));
+				window.portalToast?.({
+					kind: "success",
+					message: "Added to favorites.",
+				});
+			} catch (_err) {
+				window.portalToast?.({
+					kind: "error",
+					message: "Could not add favorite.",
+				});
+				throw _err;
+			}
+		}
+
+		async function remove(type, id) {
+			try {
+				const res = await fetch("/api/favorites", {
+					method: "DELETE",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ item_type: String(type), item_id: String(id) }),
+				});
+				if (!res.ok) throw new Error("http " + res.status);
+				state.delete(favKey(type, id));
+				render();
+				document.dispatchEvent(new CustomEvent("portal:favorites-changed"));
+				window.portalToast?.({
+					kind: "info",
+					message: "Removed from favorites.",
+				});
+			} catch (_err) {
+				window.portalToast?.({
+					kind: "error",
+					message: "Could not remove favorite.",
+				});
+				throw _err;
+			}
+		}
+
+		function has(type, id) {
+			return state.has(favKey(type, id));
+		}
+
+		window.portalFavorites = {
+			load,
+			add,
+			remove,
+			has,
+			toggle(type, id, name) {
+				return this.has(type, id) ? this.remove(type, id) : this.add(type, id, name);
+			},
+			snapshot() {
+				return Array.from(state.values());
+			},
+		};
+
+		load();
+	})();
+</script>

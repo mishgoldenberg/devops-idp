@@ -139,6 +139,24 @@
 
 		// ── list ──────────────────────────────────────────────────────────
 
+		// Cheap local mirror of the user's favorited ticket IDs — lets the
+		// Support page pre-fill the star state on first render without
+		// pulling in the whole Favorites section partial. Populated once
+		// per page load in loadTickets().
+		const favoritedTickets = new Set();
+
+		async function loadFavoritedTickets() {
+			try {
+				const res = await fetch("/api/favorites", { credentials: "same-origin" });
+				if (!res.ok) return;
+				const body = await res.json();
+				favoritedTickets.clear();
+				(Array.isArray(body && body.data) ? body.data : []).forEach((f) => {
+					if (f.item_type === "ticket") favoritedTickets.add(String(f.item_id));
+				});
+			} catch (_err) { /* silent — empty set is a safe default */ }
+		}
+
 		async function loadTickets() {
 			clearListError();
 			listEl.innerHTML = '<li class="px-4 py-3 text-sm opacity-60">Loading…</li>';
@@ -161,18 +179,92 @@
 				listEl.innerHTML = '<li class="px-4 py-6 text-sm text-center opacity-60">No tickets yet. Click <span class="font-semibold">New Ticket</span> to open one.</li>';
 				return;
 			}
-			listEl.innerHTML = tickets.map((t) => `
-				<li>
-					<button class="w-full text-left px-4 py-3 hover:bg-base-200 transition-colors" data-id="${esc(t.sys_id)}">
+			// Fire favorites + tickets in parallel; favorites is best-effort
+			// and doesn't block the initial render if it fails.
+			await loadFavoritedTickets();
+			listEl.innerHTML = tickets.map((t) => {
+				const id = esc(t.sys_id);
+				const name = esc(t.short_description || t.number || "Ticket");
+				const pinned = favoritedTickets.has(String(t.sys_id)) ||
+					!!(window.portalFavorites && window.portalFavorites.has("ticket", t.sys_id));
+				return `
+				<li class="flex items-stretch">
+					<button class="flex-1 text-left px-4 py-3 hover:bg-base-200 transition-colors" data-id="${id}">
 						<div class="text-xs text-primary font-semibold">${esc(t.number || "")}</div>
 						<div class="text-sm">${esc(t.short_description || "(no description)")}</div>
 						<div class="text-xs opacity-60">${esc(t.state || "")}</div>
 					</button>
-				</li>
-			`).join("");
-			listEl.querySelectorAll("button[data-id]").forEach((btn) => {
+					<button
+						type="button"
+						class="px-3 text-base-content/40 hover:text-warning hover:bg-base-200 transition-colors"
+						data-support-fav
+						data-id="${id}"
+						data-name="${name}"
+						aria-pressed="${pinned ? "true" : "false"}"
+						aria-label="${pinned ? "Remove from favorites" : "Add to favorites"}"
+						title="${pinned ? "Remove from favorites" : "Add to favorites"}"
+					>
+						<svg viewBox="0 0 24 24" class="w-4 h-4" fill="${pinned ? "currentColor" : "none"}" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+							<polygon points="12 2 15 8.5 22 9.3 17 14 18.2 21 12 17.8 5.8 21 7 14 2 9.3 9 8.5 12 2"></polygon>
+						</svg>
+					</button>
+				</li>`;
+			}).join("");
+			listEl.querySelectorAll("button[data-id]:not([data-support-fav])").forEach((btn) => {
 				btn.addEventListener("click", () => openTicket(btn.dataset.id));
 			});
+			listEl.querySelectorAll("button[data-support-fav]").forEach((btn) => {
+				btn.addEventListener("click", async (e) => {
+					e.stopPropagation();
+					const id = btn.dataset.id;
+					const pressed = btn.getAttribute("aria-pressed") === "true";
+					if (window.portalFavorites) {
+						try {
+							await window.portalFavorites.toggle("ticket", id, btn.dataset.name);
+							const nowPinned = window.portalFavorites.has("ticket", id);
+							setFavVisual(btn, nowPinned);
+							if (nowPinned) favoritedTickets.add(id); else favoritedTickets.delete(id);
+						} catch (_err) { /* toast already raised */ }
+						return;
+					}
+					// The favorites section only mounts on the dashboard; on
+					// the Support page we fall back to calling the API directly.
+					try {
+						const res = await fetch("/api/favorites", {
+							method: pressed ? "DELETE" : "POST",
+							credentials: "same-origin",
+							headers: { "Content-Type": "application/json" },
+							body: JSON.stringify(
+								pressed
+									? { item_type: "ticket", item_id: id }
+									: {
+											item_type: "ticket",
+											item_id: id,
+											item_name: btn.dataset.name,
+										},
+							),
+						});
+						if (!res.ok) throw new Error("http " + res.status);
+						setFavVisual(btn, !pressed);
+						if (pressed) favoritedTickets.delete(id); else favoritedTickets.add(id);
+						window.portalToast?.({
+							kind: pressed ? "info" : "success",
+							message: pressed ? "Removed from favorites." : "Added to favorites.",
+						});
+					} catch (_err) {
+						window.portalToast?.({ kind: "error", message: "Could not update favorite." });
+					}
+				});
+			});
+			function setFavVisual(btn, pinned) {
+				btn.setAttribute("aria-pressed", pinned ? "true" : "false");
+				btn.setAttribute("aria-label", pinned ? "Remove from favorites" : "Add to favorites");
+				btn.setAttribute("title", pinned ? "Remove from favorites" : "Add to favorites");
+				const svg = btn.querySelector("svg");
+				if (svg) svg.setAttribute("fill", pinned ? "currentColor" : "none");
+				btn.classList.toggle("text-warning", pinned);
+				btn.classList.toggle("text-base-content/40", !pinned);
+			}
 
 			// Deep-link support: /ui/support?ticket=<sys_id> auto-opens the ticket
 			// once tickets have loaded. Used by the ServiceNow dashboard widget.

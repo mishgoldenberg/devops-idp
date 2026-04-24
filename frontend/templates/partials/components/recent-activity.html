@@ -1,0 +1,167 @@
+<div class="section-card h-full flex flex-col">
+	<div class="card-body p-5 flex flex-col h-full gap-4">
+		<!-- Header: mirrors the visual pattern of every other dashboard
+		     widget so it slots into the same grid without standing out. -->
+		<div class="flex items-center gap-3">
+			<div
+				class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/30 bg-primary/10"
+			>
+				<svg
+					viewBox="0 0 24 24"
+					class="h-5 w-5 text-primary"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					aria-hidden="true"
+				>
+					<circle cx="12" cy="12" r="9"></circle>
+					<polyline points="12 7 12 12 15 14"></polyline>
+				</svg>
+			</div>
+			<h3
+				class="text-sm font-bold uppercase tracking-widest text-base-content/70"
+			>
+				Recent Activity
+			</h3>
+			<button
+				type="button"
+				class="btn btn-ghost btn-xs ml-auto"
+				data-activity-refresh
+				aria-label="Refresh activity"
+				title="Refresh"
+			>
+				&#8635;
+			</button>
+		</div>
+		<ul
+			class="flex flex-col gap-2 flex-1 min-h-0 overflow-y-auto overscroll-contain"
+			data-activity-list
+		>
+			<li class="p-4 text-xs text-base-content/50 text-center">Loading…</li>
+		</ul>
+	</div>
+</div>
+
+<script>
+	// Self-fetching widget: the backend endpoint that rendered this
+	// partial returns only the shell, then JS pulls the actual rows from
+	// /api/activity. Matches the pattern used by servicenow-tickets /
+	// azure-devops-tasks to keep observability/pinning consistent.
+	(function () {
+		const root = document.currentScript.previousElementSibling;
+		const list = root.querySelector("[data-activity-list]");
+		const refresh = root.querySelector("[data-activity-refresh]");
+		if (!list) return;
+
+		const ACTION_META = {
+			create_project: {
+				label: "Created project",
+				href: (a) => "/ui/azure-devops",
+			},
+			create_ticket: {
+				label: "Opened ticket",
+				href: (a) =>
+					a?.metadata?.sys_id
+						? "/ui/support?ticket=" + encodeURIComponent(a.metadata.sys_id)
+						: "/ui/support",
+			},
+			self_service: {
+				label: "Used self-service",
+				href: (_a) => "/ui/my-requests",
+			},
+		};
+
+		function escapeHtml(s) {
+			return String(s ?? "").replace(/[&<>"']/g, (c) => ({
+				"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+			}[c]));
+		}
+		function relTime(iso) {
+			if (!iso) return "";
+			try {
+				const d = new Date(iso);
+				const diff = (Date.now() - d.getTime()) / 1000;
+				if (diff < 60) return "just now";
+				if (diff < 3600) return Math.floor(diff / 60) + "m ago";
+				if (diff < 86400) return Math.floor(diff / 3600) + "h ago";
+				if (diff < 7 * 86400) return Math.floor(diff / 86400) + "d ago";
+				return d.toLocaleDateString();
+			} catch (_) {
+				return "";
+			}
+		}
+
+		function renderEmpty() {
+			list.innerHTML = `
+				<li class="flex flex-col items-center justify-center text-center gap-2 py-8 text-base-content/60 flex-1">
+					<svg class="w-10 h-10 text-base-content/30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+						<circle cx="12" cy="12" r="9"></circle>
+						<polyline points="12 7 12 12 15 14"></polyline>
+					</svg>
+					<p class="text-sm font-medium">No recent activity</p>
+					<p class="text-xs text-base-content/50 max-w-xs">
+						Projects, tickets, and self-service requests you create will appear here.
+					</p>
+				</li>`;
+		}
+
+		function render(rows) {
+			if (!rows || !rows.length) { renderEmpty(); return; }
+			list.innerHTML = rows
+				.map((row) => {
+					const meta = ACTION_META[row.action_type] || {
+						label: row.action_type,
+						href: () => null,
+					};
+					const href = meta.href ? meta.href(row) : null;
+					const labelLine =
+						'<div class="text-xs text-base-content/50 uppercase tracking-widest">' +
+						escapeHtml(meta.label) +
+						'</div>';
+					const titleLine =
+						'<div class="text-sm font-medium text-base-content truncate">' +
+						escapeHtml(row.item_name || "") +
+						'</div>';
+					const timeLine =
+						'<div class="text-[11px] text-base-content/40 mt-0.5">' +
+						escapeHtml(relTime(row.created_at)) +
+						"</div>";
+					const body = labelLine + titleLine + timeLine;
+					const cls = "rounded-lg bg-base-200/60 border border-base-300 px-3 py-2.5 block";
+					if (href) {
+						return (
+							'<li><a class="' +
+							cls +
+							' hover:border-primary/50 transition-colors" href="' +
+							escapeHtml(href) +
+							'">' +
+							body +
+							"</a></li>"
+						);
+					}
+					return '<li class="' + cls + '">' + body + "</li>";
+				})
+				.join("");
+		}
+
+		async function load() {
+			try {
+				const res = await fetch("/api/activity?limit=15", {
+					credentials: "same-origin",
+					headers: { Accept: "application/json" },
+				});
+				if (!res.ok) throw new Error("http " + res.status);
+				const body = await res.json();
+				render(Array.isArray(body && body.data) ? body.data : []);
+			} catch (_err) {
+				list.innerHTML =
+					'<li class="p-4 text-xs text-base-content/50 text-center">Service unavailable</li>';
+			}
+		}
+
+		refresh?.addEventListener("click", load);
+		load();
+	})();
+</script>
