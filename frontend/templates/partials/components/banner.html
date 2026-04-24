@@ -58,11 +58,11 @@
 	</div>
 
 	<!--
-		Quick Actions. A compact dropdown that shortcuts to the three
-		creation flows that already exist on their own pages — we just
-		surface them from the top bar so users don't have to hunt for
-		them in the sidebar. No new backend endpoints; every item is a
-		plain navigation link.
+		Quick Actions. A compact dropdown that shortcuts to the two
+		creation flows. Each link carries `?new=1` which the destination
+		page detects on load and uses to auto-open the matching modal,
+		so the user never has to click the New X button on the page
+		itself — a true one-click "create" path from anywhere.
 	-->
 	<div class="dropdown dropdown-end" data-quick-actions>
 		<button
@@ -94,16 +94,20 @@
 				<span>Create</span>
 			</li>
 			<li>
-				<a href="/ui/automations">New automation request</a>
+				<a
+					href="/ui/automations?new=1"
+					data-quick-open="ado-create"
+				>
+					New automation request
+				</a>
 			</li>
 			<li>
-				<a href="/ui/support">Open support ticket</a>
-			</li>
-			<li class="menu-title mt-1">
-				<span>Dashboard</span>
-			</li>
-			<li>
-				<a href="/ui/">Customize widgets</a>
+				<a
+					href="/ui/support?new=1"
+					data-quick-open="support-new"
+				>
+					Open support ticket
+				</a>
 			</li>
 		</ul>
 	</div>
@@ -644,6 +648,32 @@
 			e.preventDefault();
 			input.focus();
 			input.select();
+		});
+	})();
+
+	// Quick-actions "Create" items: if the user is already on the
+	// destination page, open the modal in place instead of reloading
+	// (`?new=1` still handles cross-page navigation via the target
+	// pages' own auto-open handlers).
+	(function () {
+		document.addEventListener("click", (e) => {
+			const link = e.target.closest("[data-quick-open]");
+			if (!link) return;
+			const kind = link.dataset.quickOpen;
+			const path = window.location.pathname;
+			if (kind === "ado-create" && path.startsWith("/ui/automations")) {
+				const modal = document.getElementById("ado-create-modal");
+				if (modal?.showModal) {
+					e.preventDefault();
+					modal.showModal();
+				}
+			} else if (kind === "support-new" && path.startsWith("/ui/support")) {
+				const btn = document.getElementById("support-new-ticket-btn");
+				if (btn) {
+					e.preventDefault();
+					btn.click();
+				}
+			}
 		});
 	})();
 </script>

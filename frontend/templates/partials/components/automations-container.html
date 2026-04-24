@@ -85,6 +85,19 @@
 		card.addEventListener("click", () => modal.showModal?.());
 		cancelBtn?.addEventListener("click", () => modal.close?.());
 
+		// Auto-open from the banner's Quick Actions → "New automation request".
+		// Consume the flag so a later refresh doesn't re-open the modal.
+		try {
+			const params = new URLSearchParams(window.location.search);
+			if (params.get("new") === "1") {
+				modal.showModal?.();
+				params.delete("new");
+				const qs = params.toString();
+				const clean = window.location.pathname + (qs ? "?" + qs : "");
+				window.history.replaceState({}, "", clean);
+			}
+		} catch (_) { /* silent — nav param is best-effort UX */ }
+
 		// ── Inline validation ─────────────────────────────────────────────
 		// Rules mirror backend checks in backend/app/api/approvals.py so
 		// users see the same constraints the server enforces without a

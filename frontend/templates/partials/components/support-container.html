@@ -378,6 +378,20 @@
 		document.getElementById("support-new-ticket-btn")?.addEventListener("click", openModal);
 		document.getElementById("support-cancel-ticket")?.addEventListener("click", closeModal);
 
+		// Auto-open from the banner's Quick Actions → "Open support ticket".
+		// Runs independently from the existing `?ticket=<sys_id>` deep-link
+		// handler further down (those two params are orthogonal).
+		try {
+			const qParams = new URLSearchParams(window.location.search);
+			if (qParams.get("new") === "1") {
+				openModal();
+				qParams.delete("new");
+				const qs = qParams.toString();
+				const clean = window.location.pathname + (qs ? "?" + qs : "");
+				window.history.replaceState({}, "", clean);
+			}
+		} catch (_) { /* silent */ }
+
 		document.getElementById("support-create-ticket")?.addEventListener("click", async () => {
 			const title = (document.getElementById("support-new-title")?.value || "").trim();
 			const description = (document.getElementById("support-new-description")?.value || "").trim();
