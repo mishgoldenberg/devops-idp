@@ -3,10 +3,16 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
+import httpx
 from pydantic import BaseModel, field_validator
 
 from db import execute_returning, query_all, query_one
 from security import AuthUser, get_current_user, has_effective_admin_access_live
+from sso_config import (
+    fetch_openid_configuration,
+    get_sso_config_redacted,
+    save_sso_config,
+)
 
 router = APIRouter()
 
@@ -24,6 +30,21 @@ class GrantRoleRequest(BaseModel):
         if not s or not _EMAIL_RE.match(s):
             raise ValueError("Invalid email format")
         return s.lower()
+
+
+class SsoConfigRequest(BaseModel):
+    issuer_uri: str
+    client_id: str
+    client_secret: str
+    enabled: bool = True
+
+    @field_validator("issuer_uri", "client_id", "client_secret")
+    @classmethod
+    def required_string(cls, v: str) -> str:
+        s = (v or "").strip()
+        if not s:
+            raise ValueError("Required")
+        return s
 
 
 def _require_app_admin(current_user: AuthUser) -> None:
@@ -49,6 +70,70 @@ def _platform_admin_role() -> Dict[str, Any]:
 
 def _is_platform_admin_role_name(role_name: str) -> bool:
     return (role_name or "").strip().lower() == "platform admin"
+
+
+@router.get("/sso/config")
+def get_sso_config(
+    current_user: AuthUser = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Return SSO config metadata without the client secret."""
+    _require_app_admin(current_user)
+    return {
+        "success": True,
+        "data": get_sso_config_redacted(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.post("/sso/test")
+def test_sso_connection(
+    body: SsoConfigRequest,
+    current_user: AuthUser = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Validate issuer discovery only; never stores or returns credentials."""
+    _require_app_admin(current_user)
+    try:
+        fetch_openid_configuration(body.issuer_uri)
+        return {
+            "success": True,
+            "message": "OpenID configuration is reachable and valid.",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+    except (httpx.HTTPError, ValueError) as exc:
+        return {
+            "success": False,
+            "message": f"Connection failed: {exc}",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+
+@router.post("/sso/config")
+def save_admin_sso_config(
+    body: SsoConfigRequest,
+    current_user: AuthUser = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Encrypt and save the active SSO configuration."""
+    _require_app_admin(current_user)
+    try:
+        # Validate before saving so a typo cannot lock users into a bad provider.
+        fetch_openid_configuration(body.issuer_uri)
+        save_sso_config(
+            issuer_uri=body.issuer_uri,
+            client_id=body.client_id,
+            client_secret=body.client_secret,
+            enabled=body.enabled,
+        )
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"SSO configuration is invalid: {exc}",
+        )
+    return {
+        "success": True,
+        "message": "SSO configuration saved.",
+        "data": get_sso_config_redacted(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 @router.get("/users")

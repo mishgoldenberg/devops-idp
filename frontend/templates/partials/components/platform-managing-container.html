@@ -34,6 +34,65 @@
 
 		<section class="section-card">
 			<div class="card-body gap-4">
+				<div class="flex items-start justify-between gap-4">
+					<div>
+						<h2 class="card-title text-lg">SSO Configuration</h2>
+						<p class="text-sm text-base-content/60">
+							Configure the portal's OpenID Connect provider. Client secrets are
+							encrypted server-side and never sent back to the browser.
+						</p>
+					</div>
+					<label class="flex items-center gap-2 text-sm">
+						<span>Enabled</span>
+						<input id="sso-enabled" type="checkbox" class="toggle toggle-primary" />
+					</label>
+				</div>
+
+				<div class="grid grid-cols-1 gap-3">
+					<label class="form-control">
+						<span class="label-text mb-1">Issuer URI</span>
+						<input
+							id="sso-issuer-uri"
+							type="url"
+							placeholder="https://sso.example.com/realms/devops"
+							class="input input-bordered w-full"
+						/>
+					</label>
+					<label class="form-control">
+						<span class="label-text mb-1">Client ID</span>
+						<input
+							id="sso-client-id"
+							type="text"
+							autocomplete="off"
+							class="input input-bordered w-full"
+						/>
+					</label>
+					<label class="form-control">
+						<span class="label-text mb-1">Client Secret</span>
+						<input
+							id="sso-client-secret"
+							type="password"
+							autocomplete="new-password"
+							placeholder="Stored encrypted; never displayed"
+							class="input input-bordered w-full"
+						/>
+					</label>
+				</div>
+
+				<div class="flex flex-wrap items-center gap-3">
+					<button id="sso-test-btn" type="button" class="btn btn-outline">
+						Test Connection
+					</button>
+					<button id="sso-save-btn" type="button" class="btn btn-primary">
+						Save & Enable
+					</button>
+					<span id="sso-config-state" class="badge badge-ghost">Loading…</span>
+				</div>
+			</div>
+		</section>
+
+		<section class="section-card">
+			<div class="card-body gap-4">
 				<div>
 					<h2 class="card-title text-lg">User Role Management</h2>
 					<p class="text-sm text-base-content/60">
@@ -352,6 +411,114 @@
 
 		// ── Init ──────────────────────────────────────────────────────────────
 		loadUsers();
+	})();
+
+	// ── SSO configuration ─────────────────────────────────────────────────
+	(function () {
+		const issuerInput = document.getElementById("sso-issuer-uri");
+		const clientIdInput = document.getElementById("sso-client-id");
+		const secretInput = document.getElementById("sso-client-secret");
+		const enabledInput = document.getElementById("sso-enabled");
+		const testBtn = document.getElementById("sso-test-btn");
+		const saveBtn = document.getElementById("sso-save-btn");
+		const stateBadge = document.getElementById("sso-config-state");
+		if (!issuerInput || !clientIdInput || !secretInput) return;
+
+		function toast(kind, message) {
+			window.portalToast?.({ kind, message });
+		}
+
+		function bodyFromInputs() {
+			return {
+				issuer_uri: issuerInput.value.trim(),
+				client_id: clientIdInput.value.trim(),
+				client_secret: secretInput.value,
+				enabled: !!enabledInput.checked,
+			};
+		}
+
+		function validateForSubmit() {
+			const body = bodyFromInputs();
+			if (!body.issuer_uri || !body.client_id || !body.client_secret) {
+				toast("error", "Issuer URI, Client ID, and Client Secret are required.");
+				return null;
+			}
+			return body;
+		}
+
+		function paintState(data) {
+			stateBadge.classList.remove("badge-success", "badge-warning", "badge-ghost");
+			if (!data || !data.client_id) {
+				stateBadge.textContent = "Not configured";
+				stateBadge.classList.add("badge-ghost");
+				return;
+			}
+			stateBadge.textContent = data.enabled ? "Enabled" : "Saved, disabled";
+			stateBadge.classList.add(data.enabled ? "badge-success" : "badge-warning");
+		}
+
+		async function loadConfig() {
+			try {
+				const res = await fetch("/api/admin/sso/config", { credentials: "same-origin" });
+				const json = await res.json();
+				if (!res.ok) throw new Error(json?.detail || "Failed to load SSO config");
+				const data = json.data || {};
+				issuerInput.value = data.issuer_uri || "";
+				clientIdInput.value = data.client_id || "";
+				enabledInput.checked = !!data.enabled;
+				secretInput.value = "";
+				paintState(data);
+			} catch (e) {
+				stateBadge.textContent = "Unavailable";
+				stateBadge.classList.add("badge-warning");
+			}
+		}
+
+		testBtn.addEventListener("click", async () => {
+			const body = validateForSubmit();
+			if (!body) return;
+			testBtn.disabled = true;
+			try {
+				const res = await fetch("/api/admin/sso/test", {
+					method: "POST",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify(body),
+				});
+				const json = await res.json();
+				toast(json.success ? "success" : "error", json.message || "SSO test finished.");
+			} catch {
+				toast("error", "Could not test SSO connection.");
+			} finally {
+				testBtn.disabled = false;
+			}
+		});
+
+		saveBtn.addEventListener("click", async () => {
+			const body = validateForSubmit();
+			if (!body) return;
+			saveBtn.disabled = true;
+			try {
+				const res = await fetch("/api/admin/sso/config", {
+					method: "POST",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ ...body, enabled: true }),
+				});
+				const json = await res.json();
+				if (!res.ok) throw new Error(json?.detail || "Could not save SSO config");
+				secretInput.value = "";
+				enabledInput.checked = true;
+				paintState(json.data || {});
+				toast("success", "SSO configuration saved.");
+			} catch (e) {
+				toast("error", e?.message || "Could not save SSO config.");
+			} finally {
+				saveBtn.disabled = false;
+			}
+		});
+
+		loadConfig();
 	})();
 
 	// ── Safe Mode toggle ──────────────────────────────────────────────────

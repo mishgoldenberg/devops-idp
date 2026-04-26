@@ -11,6 +11,11 @@ from fastapi.responses import RedirectResponse
 from config import get_settings
 from db import BOOTSTRAP_ADMIN_EMAIL, query_one, sync_bootstrap_admin_role_for_email
 from security import create_access_token, decode_access_token
+from sso_config import (
+    decrypt_client_secret,
+    fetch_openid_configuration,
+    get_enabled_sso_config,
+)
 
 
 router = APIRouter()
@@ -151,11 +156,70 @@ def _get_or_create_user_by_email(email: str, full_name: Optional[str]) -> Dict[s
     return refreshed or user_row
 
 
+def _set_auth_cookie(response: RedirectResponse, request: Request, token: str) -> RedirectResponse:
+    response.set_cookie(
+        key="auth_token",
+        value=token,
+        httponly=True,
+        samesite="lax",
+        secure=request.url.scheme == "https",
+        path="/",
+    )
+    return response
+
+
+def _auth_user_from_db_row(user_row: Dict[str, Any]) -> Dict[str, Any]:
+    hl = int(user_row["hierarchy_level"])
+    perms = _normalize_permissions(user_row.get("permissions"))
+    role_eff = _map_role_to_effective(str(user_row["role_name"]), None, hl)
+    return {
+        "id": str(user_row["id"]),
+        "username": user_row["username"],
+        "email": user_row["email"],
+        "role": role_eff,
+        "hierarchy_level": hl,
+        "permissions": perms,
+    }
+
+
 @router.get("/login")
-def oauth_login():
+def oauth_login(request: Request):
     """
-    Initiate Google OAuth2 login by redirecting to Google consent screen.
+    Initiate configured SSO when enabled; otherwise fall back to legacy OAuth.
     """
+    sso = get_enabled_sso_config()
+    if sso:
+        try:
+            discovery = fetch_openid_configuration(str(sso["issuer_uri"]))
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Configured SSO provider is unavailable",
+            )
+        state = secrets.token_urlsafe(32)
+        redirect_uri = str(request.url_for("sso_callback"))
+        params = {
+            "client_id": sso["client_id"],
+            "redirect_uri": redirect_uri,
+            "response_type": "code",
+            "scope": "openid email profile",
+            "state": state,
+        }
+        response = RedirectResponse(
+            f"{discovery['authorization_endpoint']}?{urlencode(params)}",
+            status_code=status.HTTP_302_FOUND,
+        )
+        response.set_cookie(
+            "sso_state",
+            state,
+            httponly=True,
+            samesite="lax",
+            secure=request.url.scheme == "https",
+            max_age=600,
+            path="/",
+        )
+        return response
+
     settings = get_settings()
     if not settings.oauth_client_id or not settings.oauth_redirect_uri:
         raise HTTPException(
@@ -178,6 +242,84 @@ def oauth_login():
 
     auth_url = f"{settings.oauth_auth_url}?{urlencode(params)}"
     return RedirectResponse(auth_url, status_code=status.HTTP_302_FOUND)
+
+
+@router.get("/sso/callback")
+async def sso_callback(request: Request, code: Optional[str] = None, state: Optional[str] = None):
+    """OIDC authorization-code callback for admin-managed SSO configuration."""
+    if not code:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing authorization code")
+    expected_state = request.cookies.get("sso_state")
+    if not expected_state or not state or not secrets.compare_digest(expected_state, state):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid SSO state")
+
+    sso = get_enabled_sso_config()
+    if not sso:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="SSO is not enabled")
+
+    discovery = fetch_openid_configuration(str(sso["issuer_uri"]))
+    redirect_uri = str(request.url_for("sso_callback"))
+    try:
+        client_secret = decrypt_client_secret(str(sso["client_secret_encrypted"]))
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="SSO secret is unavailable")
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        token_resp = await client.post(
+            discovery["token_endpoint"],
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": redirect_uri,
+                "client_id": sso["client_id"],
+                "client_secret": client_secret,
+            },
+            headers={"Accept": "application/json"},
+        )
+
+    if token_resp.status_code != 200:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Failed to exchange authorization code")
+
+    token_data = token_resp.json()
+    id_token = token_data.get("id_token")
+    if not id_token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="ID token not returned by provider")
+
+    try:
+        import jwt as pyjwt
+
+        signing_key = pyjwt.PyJWKClient(discovery["jwks_uri"]).get_signing_key_from_jwt(id_token)
+        payload = pyjwt.decode(
+            id_token,
+            signing_key.key,
+            algorithms=["RS256", "ES256"],
+            audience=sso["client_id"],
+            issuer=discovery.get("issuer") or str(sso["issuer_uri"]).rstrip("/"),
+        )
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid ID token")
+
+    email = str(payload.get("email") or "").strip().lower()
+    username = str(payload.get("preferred_username") or email).strip()
+    full_name = payload.get("name") or username or email
+    if not email:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Email not present in ID token")
+
+    user_row = _get_or_create_user_by_email(email, str(full_name))
+    if username and username != user_row.get("username"):
+        # Best-effort username refresh from the provider. Do not fail login for it.
+        try:
+            query_one(
+                "UPDATE users SET username = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s RETURNING id",
+                [username, user_row["id"]],
+            )
+            user_row["username"] = username
+        except Exception:
+            pass
+    token = create_access_token(_auth_user_from_db_row(user_row))
+    response = RedirectResponse(url="/ui/", status_code=status.HTTP_303_SEE_OTHER)
+    response.delete_cookie("sso_state", path="/")
+    return _set_auth_cookie(response, request, token)
 
 
 @router.get("/callback")

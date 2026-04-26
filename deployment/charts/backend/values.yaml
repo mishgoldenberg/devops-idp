@@ -39,6 +39,8 @@ secrets:
   jwtSecret: ""
   oauthClientSecret: ""
   oauthClientId: ""
+  hubAdminUsername: ""
+  hubAdminPassword: ""
   servicenowUrl: ""
   servicenowUsername: ""
   servicenowPassword: ""

@@ -20,6 +20,7 @@ instead.
 import os
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Body, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -38,7 +39,14 @@ from api.servicenow import get_tickets as _snow_get_tickets
 from api.sonarqube import get_projects as _sonar_get_projects
 from db import query_one
 from secrets_manager import delete_user_azure_devops_pat, get_user_azure_devops_pat, store_user_azure_devops_pat
-from security import AuthUser, decode_access_token, has_effective_admin_access, has_effective_admin_access_live
+from security import (
+    AuthUser,
+    create_access_token,
+    decode_access_token,
+    has_effective_admin_access,
+    has_effective_admin_access_live,
+    verify_password,
+)
 
 ui_router = APIRouter()
 
@@ -123,6 +131,47 @@ def _current_user_from_token(token: str) -> Optional[AuthUser]:
         return AuthUser(decode_access_token(token))
     except Exception:
         return None
+
+
+def _local_login_payload(username: str, password: str) -> Optional[Dict[str, Any]]:
+    """Authenticate the env bootstrap admin against the local password hash."""
+    if not username or not password:
+        return None
+    row = query_one(
+        """
+        SELECT u.id, u.username, u.email, u.password_hash,
+               r.name AS role_name, r.hierarchy_level, r.permissions
+        FROM users u
+        JOIN roles r ON u.role_id = r.id
+        WHERE LOWER(u.username) = %s
+          AND u.is_active = true
+          AND u.is_bootstrap_admin = true
+        LIMIT 1
+        """,
+        [username.strip().lower()],
+    )
+    if not row or not row.get("password_hash"):
+        return None
+    if not verify_password(password, str(row["password_hash"])):
+        return None
+    role_name = str(row.get("role_name") or "")
+    try:
+        hierarchy_level = int(row.get("hierarchy_level") or 99)
+    except (TypeError, ValueError):
+        hierarchy_level = 99
+    role = "Admin" if hierarchy_level == 1 or role_name.strip().lower() == "platform admin" else "User"
+    permissions = row.get("permissions") or []
+    if isinstance(permissions, str):
+        permissions = [permissions]
+    query_one("UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = %s RETURNING id", [row["id"]])
+    return {
+        "id": str(row["id"]),
+        "username": row["username"],
+        "email": row["email"],
+        "role": role,
+        "hierarchy_level": hierarchy_level,
+        "permissions": permissions,
+    }
 
 
 
@@ -766,14 +815,32 @@ def ui_auth_page(request: Request):
 
 
 @ui_router.get("/ui/auth/login")
-def ui_auth_login(
-    username: str = "",
-    password: str = "",
-):
-    """Redirect login requests to the API OAuth login endpoint."""
-    del username
-    del password
+def ui_auth_login():
+    """Redirect SSO button clicks to the API auth entrypoint."""
     return RedirectResponse(url="/api/auth/login", status_code=303)
+
+
+@ui_router.post("/ui/auth/login")
+def ui_auth_local_login(request: Request, username: str = Form(""), password: str = Form("")):
+    """Authenticate the local bootstrap admin, otherwise preserve SSO fallback."""
+    auth_user = _local_login_payload(username, password)
+    if not auth_user:
+        qs = urlencode({"error": "invalid_credentials", "username": (username or "").strip()})
+        return RedirectResponse(
+            url=f"/ui/auth?{qs}",
+            status_code=303,
+        )
+    token = create_access_token(auth_user)
+    response = RedirectResponse(url="/ui/", status_code=303)
+    response.set_cookie(
+        key="auth_token",
+        value=token,
+        httponly=True,
+        samesite="lax",
+        secure=request.url.scheme == "https",
+        path="/",
+    )
+    return response
 
 
 @ui_router.post("/ui/auth/logout")

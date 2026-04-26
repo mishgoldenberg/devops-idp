@@ -20,6 +20,7 @@ Anything that reads/writes the DB goes through here; don't open raw
 connections from API routers.
 """
 
+import os
 import threading
 from contextlib import contextmanager
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -373,6 +374,38 @@ def ensure_tables() -> None:
     ensure_suggestions_table()
     ensure_favorites_table()
     ensure_activity_log_table()
+    ensure_auth_tables()
+    ensure_sso_config_table()
+
+
+def ensure_auth_tables() -> None:
+    """Add local bootstrap-login columns to users without changing SSO users."""
+    for sql in (
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_bootstrap_admin BOOLEAN NOT NULL DEFAULT FALSE",
+    ):
+        try:
+            execute(sql)
+        except Exception:
+            pass
+
+
+def ensure_sso_config_table() -> None:
+    """Single-row OIDC provider configuration, managed by Platform Admins."""
+    execute(
+        """
+        CREATE TABLE IF NOT EXISTS sso_config (
+            id                    INTEGER PRIMARY KEY DEFAULT 1,
+            issuer_uri            TEXT NOT NULL,
+            client_id             TEXT NOT NULL,
+            client_secret_encrypted TEXT NOT NULL,
+            enabled               BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at            TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            updated_at            TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT sso_config_singleton CHECK (id = 1)
+        )
+        """
+    )
 
 
 def ensure_user_preference_columns() -> None:
@@ -635,8 +668,8 @@ def ensure_approval_workflow_tables() -> None:
             pass
 
 
-# Primary bootstrap admin (DB role Platform Admin). Single allowed hard-coded identity.
-BOOTSTRAP_ADMIN_EMAIL = "golden.mihel@gmail.com"
+# Env-provided bootstrap admin identity. Empty means "not configured".
+BOOTSTRAP_ADMIN_EMAIL = (os.getenv("HUB_ADMIN_USERNAME") or "").strip().lower()
 
 
 def sync_bootstrap_admin_role_for_email(email: str) -> None:
@@ -669,13 +702,39 @@ def sync_bootstrap_admin_role_for_email(email: str) -> None:
 
 def ensure_bootstrap_platform_admin() -> None:
     """
-    Ensure the bootstrap user exists and has Platform Admin (app role Admin).
-    Safe to run on every startup; no-ops if core tables or role seed are missing.
+    Create a bootstrap Platform Admin from HUB_ADMIN_* only when no admin exists.
+
+    This is intentionally one-shot: once any Platform Admin exists, startup does
+    not create or overwrite users. Password is hashed before storage and never
+    logged or returned.
     """
     import logging
+    from security import hash_password
 
     log = logging.getLogger(__name__)
     try:
+        admin_exists = query_one(
+            """
+            SELECT 1
+            FROM users u
+            JOIN roles r ON u.role_id = r.id
+            WHERE u.is_active = true
+              AND (r.hierarchy_level = 1 OR LOWER(TRIM(r.name)) = %s)
+            LIMIT 1
+            """,
+            ["platform admin"],
+        )
+        if admin_exists:
+            return
+
+        username = (os.getenv("HUB_ADMIN_USERNAME") or "").strip()
+        password = os.getenv("HUB_ADMIN_PASSWORD") or ""
+        if not username or not password:
+            log.warning(
+                "ensure_bootstrap_platform_admin: no admin exists and HUB_ADMIN_USERNAME/HUB_ADMIN_PASSWORD are not fully configured"
+            )
+            return
+
         role = query_one(
             "SELECT id FROM roles WHERE LOWER(TRIM(name)) = %s LIMIT 1",
             ["platform admin"],
@@ -686,20 +745,24 @@ def ensure_bootstrap_platform_admin() -> None:
         rid = role["id"]
         execute(
             """
-            INSERT INTO users (username, email, full_name, role_id)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO users (username, email, full_name, role_id, password_hash, is_bootstrap_admin)
+            VALUES (%s, %s, %s, %s, %s, TRUE)
             ON CONFLICT (email) DO UPDATE SET
               role_id = EXCLUDED.role_id,
+              password_hash = COALESCE(users.password_hash, EXCLUDED.password_hash),
+              is_bootstrap_admin = TRUE,
               is_active = true,
               updated_at = CURRENT_TIMESTAMP
             """,
             [
-                BOOTSTRAP_ADMIN_EMAIL,
-                BOOTSTRAP_ADMIN_EMAIL,
-                "Golden Mihel",
+                username,
+                username.lower(),
+                username,
                 rid,
+                hash_password(password),
             ],
         )
+        log.info("ensure_bootstrap_platform_admin: bootstrap admin created from HUB_ADMIN_USERNAME")
     except Exception as exc:
         log.warning("ensure_bootstrap_platform_admin failed: %s", exc)
 
