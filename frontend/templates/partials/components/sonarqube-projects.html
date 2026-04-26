@@ -16,7 +16,7 @@
 			</div>
 		</div>
 
-		<div class="flex items-center gap-2">
+		<div class="hidden items-center gap-2" data-sonar-controls>
 			<input
 				type="search"
 				class="input input-bordered input-sm w-full"
@@ -51,6 +51,7 @@
 		const panelEl = root.querySelector("[data-sonar-panel]");
 		const searchEl = root.querySelector("[data-sonar-search]");
 		const retryBtn = root.querySelector("[data-sonar-retry]");
+		const controlsEl = root.querySelector("[data-sonar-controls]");
 		const detailsCache = new Map();
 		let allProjects = [];
 		let searchTimer = null;
@@ -87,6 +88,8 @@
 		}
 
 		function showStatus(message) {
+			controlsEl?.classList.add("hidden");
+			controlsEl?.classList.remove("flex");
 			statusEl.classList.remove("hidden");
 			statusEl.classList.add("flex");
 			statusEl.innerHTML = message;
@@ -94,6 +97,8 @@
 		}
 
 		function connectPrompt() {
+			controlsEl?.classList.add("hidden");
+			controlsEl?.classList.remove("flex");
 			statusEl.classList.remove("hidden");
 			statusEl.classList.add("flex");
 			statusEl.innerHTML = `
@@ -111,9 +116,20 @@
 		}
 
 		function showList() {
+			controlsEl?.classList.remove("hidden");
+			controlsEl?.classList.add("flex");
 			statusEl.classList.add("hidden");
 			listEl.classList.remove("hidden");
 			listEl.classList.add("flex");
+		}
+
+		function showEmpty(message) {
+			controlsEl?.classList.remove("hidden");
+			controlsEl?.classList.add("flex");
+			statusEl.classList.remove("hidden");
+			statusEl.classList.add("flex");
+			statusEl.innerHTML = message;
+			listEl.classList.add("hidden");
 		}
 
 		function currentFilter() {
@@ -128,7 +144,7 @@
 
 		function render(projects) {
 			if (!projects.length) {
-				showStatus('<span class="text-base-content/50">No projects found</span>');
+				showEmpty('<span class="text-base-content/50">No projects found</span>');
 				return;
 			}
 			listEl.innerHTML = projects.map((p) => {

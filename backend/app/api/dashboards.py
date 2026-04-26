@@ -31,6 +31,7 @@ _ALLOWED_WIDGET_KEYS = {
     "artifactory_repos",
     "artifactory_storage",
     "service_health",
+    "recent_activity",
 }
 
 

@@ -6,12 +6,11 @@
 		</div>
 	</header>
 
-	<div class="page-content">
-		<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-		<section class="section-card">
-			<div class="card-body gap-4">
+	<div class="page-content space-y-6">
+		<section class="max-w-2xl section-card">
+			<div class="card-body p-5 gap-4">
 				<div class="flex items-center justify-between gap-4">
-					<h2 class="card-title text-lg">Safe Mode</h2>
+					<h2 class="section-title">Safe Mode</h2>
 					<input
 						id="safe-mode-toggle"
 						type="checkbox"
@@ -32,11 +31,11 @@
 			</div>
 		</section>
 
-		<section class="section-card">
-			<div class="card-body gap-4">
+		<section class="max-w-2xl section-card">
+			<div class="card-body p-5 gap-4">
 				<div class="flex items-start justify-between gap-4">
 					<div>
-						<h2 class="card-title text-lg">SSO Configuration</h2>
+						<h2 class="section-title">SSO Configuration</h2>
 						<p class="text-sm text-base-content/60">
 							Configure the portal's OpenID Connect provider. Client secrets are
 							encrypted server-side and never sent back to the browser.
@@ -91,10 +90,10 @@
 			</div>
 		</section>
 
-		<section class="section-card">
-			<div class="card-body gap-4">
+		<section class="max-w-2xl section-card">
+			<div class="card-body p-5 gap-4">
 				<div>
-					<h2 class="card-title text-lg">User Role Management</h2>
+					<h2 class="section-title mb-2">User Role Management</h2>
 					<p class="text-sm text-base-content/60">
 						Grant Admin access to a user who has already signed in at least once (account
 						must exist). They must sign out and sign in again for the new role to apply.
@@ -163,11 +162,11 @@
 			</div>
 		</section>
 
-		<section class="section-card lg:col-span-2">
-			<div class="card-body gap-4">
+		<section class="max-w-5xl section-card">
+			<div class="card-body p-5 gap-4">
 				<div class="flex items-start justify-between gap-4">
 					<div>
-						<h2 class="card-title text-lg">User Suggestions</h2>
+						<h2 class="section-title mb-2">User Suggestions</h2>
 						<p class="text-sm text-base-content/60">
 							Feedback submitted from the Settings page. Mark items as
 							reviewed once you've triaged them.
@@ -213,7 +212,6 @@
 				</div>
 			</div>
 		</section>
-		</div>
 	</div>
 </div>
 

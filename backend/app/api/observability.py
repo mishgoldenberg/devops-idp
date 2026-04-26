@@ -88,6 +88,7 @@ _ALLOWED_WIDGET_KEYS = {
     "artifactory_repos",
     "artifactory_storage",
     "service_health",
+    "recent_activity",
 }
 
 
@@ -283,6 +284,7 @@ def list_suggested_widgets_for_me(
         "artifactory_repos",
         "artifactory_storage",
         "service_health",
+        "recent_activity",
         "ado_prs_for_review",
     ]
     for key in _DEFAULT_ORDER:

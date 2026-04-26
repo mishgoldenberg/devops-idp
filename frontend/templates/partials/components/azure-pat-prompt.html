@@ -1,0 +1,62 @@
+<div
+	class="w-full rounded-xl border border-primary/30 bg-primary/5 p-4 text-left opacity-100 scale-100 translate-y-0 transform transition-all duration-150 ease-out"
+	data-ado-pat-prompt
+>
+	<h4 class="font-semibold text-sm">Connect to Azure DevOps</h4>
+	<p class="mt-1 text-xs text-base-content/60">
+		Generate a Personal Access Token in Azure DevOps → User settings → Personal access tokens
+	</p>
+	<input
+		type="password"
+		placeholder="Paste Azure DevOps Personal Access Token"
+		class="input input-bordered input-sm mt-3 w-full ado-pat-input"
+	/>
+	<div class="mt-3 flex gap-2">
+		<button type="button" class="btn btn-primary btn-xs ado-pat-save-btn">Save</button>
+		<button type="button" class="btn btn-ghost btn-xs ado-pat-cancel-btn">Cancel</button>
+	</div>
+</div>
+
+<script>
+	(function () {
+		if (window.__adoPatBinderAttached) return;
+		window.__adoPatBinderAttached = true;
+		document.addEventListener("click", async function (e) {
+			const cancelBtn = e.target.closest(".ado-pat-cancel-btn");
+			if (cancelBtn) {
+				cancelBtn.closest("[data-ado-pat-prompt]")?.classList.add("hidden");
+				return;
+			}
+			const btn = e.target.closest(".ado-pat-save-btn");
+			if (!btn) return;
+			const wrap = btn.closest("[data-ado-pat-prompt]");
+			const input = wrap?.querySelector(".ado-pat-input");
+			const pat = (input?.value || "").trim();
+			if (!pat) return;
+			btn.disabled = true;
+			try {
+				const res = await fetch("/ui/azure-devops/pat", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ pat }),
+					credentials: "same-origin",
+				});
+				if (res.ok) {
+					const statusRes = await fetch("/ui/azure-devops/pat", { credentials: "same-origin" });
+					const statusJson = await statusRes.json();
+					if (statusRes.ok && statusJson?.data?.configured) {
+						if (input) input.value = "";
+						window.portalToast?.({ kind: "success", message: "Azure DevOps connected." });
+						document.getElementById("refresh-btn")?.click();
+					} else {
+						window.portalToast?.({ kind: "error", message: "PAT did not persist. Please try again." });
+					}
+				} else {
+					window.portalToast?.({ kind: "error", message: "Invalid token or connection failed" });
+				}
+			} finally {
+				btn.disabled = false;
+			}
+		});
+	})();
+</script>

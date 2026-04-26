@@ -23,6 +23,7 @@ WIDGET_LABELS: dict[str, str] = {
     "artifactory_repos": "Artifactory — Repos",
     "artifactory_storage": "Artifactory — Storage",
     "service_health": "Service health",
+    "recent_activity": "Recent Activity",
 }
 
 

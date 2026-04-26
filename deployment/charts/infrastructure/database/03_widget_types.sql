@@ -1,4 +1,13 @@
 -- Seed available widget types
+DELETE FROM widget_types
+WHERE widget_key IN (
+    'sonar_code_coverage',
+    'sonar_technical_debt',
+    'sonar_security_hotspots',
+    'artifactory_latest_artifacts',
+    'artifactory_storage_usage',
+    'artifactory_download_stats'
+);
 
 INSERT INTO widget_types (widget_key, name, description, category, min_role_level, icon) VALUES
 -- Azure DevOps widgets
@@ -9,20 +18,17 @@ INSERT INTO widget_types (widget_key, name, description, category, min_role_leve
 
 -- SonarQube widgets
 ('sonar_projects', 'SonarQube Projects', 'Project metrics and status', 'sonarqube', 7, 'Shield'),
-('sonar_code_coverage', 'Code Coverage', 'Test coverage percentage and trend', 'sonarqube', 7, 'Target'),
-('sonar_technical_debt', 'Technical Debt', 'Estimated hours to fix issues', 'sonarqube', 6, 'AlertTriangle'),
-('sonar_security_hotspots', 'Security Hotspots', 'Critical security issues', 'sonarqube', 6, 'Lock'),
 
 -- Artifactory widgets
-('artifactory_latest_artifacts', 'Latest Artifacts', 'Recent builds per repository', 'artifactory', 7, 'Package'),
-('artifactory_storage_usage', 'Storage Usage', 'Quota consumption', 'artifactory', 6, 'HardDrive'),
-('artifactory_download_stats', 'Download Stats', 'Most downloaded artifacts', 'artifactory', 5, 'Download'),
+('artifactory_repos', 'Artifactory Repos', 'Repository browser and latest artifacts', 'artifactory', 7, 'Package'),
+('artifactory_storage', 'Artifactory Storage', 'Quota consumption and biggest repositories', 'artifactory', 7, 'HardDrive'),
 
 -- ServiceNow widgets
 ('snow_my_tickets', 'My Tickets', 'Open incidents and requests', 'servicenow', 7, 'Ticket'),
 ('snow_team_tickets', 'Team Tickets', 'Team workload overview', 'servicenow', 6, 'Users'),
 
 -- AI Chatbot widgets
+('recent_activity', 'Recent Activity', 'Latest user activity in the portal', 'dashboard', 7, 'Clock'),
 ('ai_chatbot', 'AI Assistant', 'Embedded conversational interface', 'ai_chatbot', 7, 'MessageSquare'),
 ('ai_recent_conversations', 'Recent Conversations', 'Quick access to chat history', 'ai_chatbot', 7, 'Clock'),
 
@@ -30,5 +36,11 @@ INSERT INTO widget_types (widget_key, name, description, category, min_role_leve
 ('executive_branch_dashboard', 'Branch Dashboard', 'Aggregated metrics per branch', 'executive', 3, 'BarChart'),
 ('executive_deployment_frequency', 'Deployment Frequency', 'Release velocity metrics', 'executive', 3, 'Zap'),
 ('executive_quality_trends', 'Quality Trends', 'Multi-project quality overview', 'executive', 2, 'TrendingUp'),
-('executive_resource_utilization', 'Resource Utilization', 'Cross-team capacity', 'executive', 2, 'PieChart');
+('executive_resource_utilization', 'Resource Utilization', 'Cross-team capacity', 'executive', 2, 'PieChart')
+ON CONFLICT (widget_key) DO UPDATE SET
+    name = EXCLUDED.name,
+    description = EXCLUDED.description,
+    category = EXCLUDED.category,
+    min_role_level = EXCLUDED.min_role_level,
+    icon = EXCLUDED.icon;
 

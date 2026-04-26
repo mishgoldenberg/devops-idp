@@ -64,22 +64,7 @@
 		</div>
 
 		{% if error %}
-		<div
-			class="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-base-content/80"
-		>
-			<p class="font-semibold text-warning">Azure DevOps unavailable</p>
-			<p class="mt-1">{{ error }}</p>
-			<div class="mt-3 grid grid-cols-1 gap-2">
-				<input
-					type="password"
-					placeholder="Paste Personal Access Token"
-					class="input input-bordered input-sm w-full ado-pat-input"
-				/>
-				<button type="button" class="btn btn-xs btn-primary ado-pat-save-btn">
-					Save PAT
-				</button>
-			</div>
-		</div>
+		{% include "partials/components/azure-pat-prompt.html" %}
 		{% else %}
 		<div
 			class="flex-1 min-h-0 flex flex-col relative"
@@ -471,9 +456,14 @@
 		if (window.__adoPatBinderAttached) return;
 		window.__adoPatBinderAttached = true;
 		document.addEventListener("click", async function (e) {
+			const cancelBtn = e.target.closest(".ado-pat-cancel-btn");
+			if (cancelBtn) {
+				cancelBtn.closest("[data-ado-pat-prompt]")?.classList.add("hidden");
+				return;
+			}
 			const btn = e.target.closest(".ado-pat-save-btn");
 			if (!btn) return;
-			const wrap = btn.closest("div");
+			const wrap = btn.closest("[data-ado-pat-prompt]");
 			const input = wrap?.querySelector(".ado-pat-input");
 			const pat = (input?.value || "").trim();
 			if (!pat) return;
@@ -489,12 +479,14 @@
 					const statusRes = await fetch("/ui/azure-devops/pat", { credentials: "same-origin" });
 					const statusJson = await statusRes.json();
 					if (statusRes.ok && statusJson?.data?.configured) {
+						if (input) input.value = "";
+						window.portalToast?.({ kind: "success", message: "Azure DevOps connected." });
 						document.getElementById("refresh-btn")?.click();
 					} else {
-						alert("PAT did not persist. Please try again.");
+						window.portalToast?.({ kind: "error", message: "PAT did not persist. Please try again." });
 					}
 				} else {
-					alert("Failed to save PAT. Please verify token permissions and try again.");
+					window.portalToast?.({ kind: "error", message: "Invalid token or connection failed" });
 				}
 			} finally {
 				btn.disabled = false;
