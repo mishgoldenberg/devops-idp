@@ -738,9 +738,9 @@ def ensure_bootstrap_platform_admin() -> None:
     """
     Ensure the env bootstrap Platform Admin is usable.
 
-    If a bootstrap row already exists, sync its username/password from
-    HUB_ADMIN_* so rotating GitHub Secrets updates the login on the next deploy.
-    If no bootstrap row exists, create one only when no admin exists.
+    Always upsert the HUB_ADMIN_USERNAME row so rotating GitHub Secrets updates
+    the local admin login on the next deploy, even if the database already had
+    a Platform Admin before the bootstrap flag existed.
     """
     import logging
     from security import hash_password
@@ -768,8 +768,11 @@ def ensure_bootstrap_platform_admin() -> None:
             SELECT id
             FROM users
             WHERE is_bootstrap_admin = true
+               OR LOWER(TRIM(username)) = %s
+               OR LOWER(TRIM(email)) = %s
             LIMIT 1
-            """
+            """,
+            [username.lower(), username.lower()],
         )
         if bootstrap:
             execute(
@@ -790,27 +793,15 @@ def ensure_bootstrap_platform_admin() -> None:
             log.info("Admin bootstrap updated")
             return
 
-        admin_exists = query_one(
-            """
-            SELECT 1
-            FROM users u
-            JOIN roles r ON u.role_id = r.id
-            WHERE u.is_active = true
-              AND (r.hierarchy_level = 1 OR LOWER(TRIM(r.name)) = %s)
-            LIMIT 1
-            """,
-            ["platform admin"],
-        )
-        if admin_exists:
-            return
-
         execute(
             """
             INSERT INTO users (username, email, full_name, role_id, password_hash, is_bootstrap_admin)
             VALUES (%s, %s, %s, %s, %s, TRUE)
             ON CONFLICT (email) DO UPDATE SET
+              username = EXCLUDED.username,
+              full_name = EXCLUDED.full_name,
               role_id = EXCLUDED.role_id,
-              password_hash = COALESCE(users.password_hash, EXCLUDED.password_hash),
+              password_hash = EXCLUDED.password_hash,
               is_bootstrap_admin = TRUE,
               is_active = true,
               updated_at = CURRENT_TIMESTAMP
