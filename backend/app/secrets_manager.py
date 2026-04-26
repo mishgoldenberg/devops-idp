@@ -3,6 +3,7 @@ import os
 from typing import Optional
 
 from db import query_one
+from sso_config import decrypt_secret, encrypt_secret
 
 _MEMORY_PATS: dict[str, str] = {}
 
@@ -53,6 +54,23 @@ def store_user_azure_devops_pat(user_id: str, pat: str) -> None:
         return
 
     # Fallback: encrypted configuration table (per-user key)
+    try:
+        query_one(
+            """
+            INSERT INTO user_integrations (user_id, system, token_encrypted)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (user_id, system) DO UPDATE SET
+              token_encrypted = EXCLUDED.token_encrypted,
+              updated_at = CURRENT_TIMESTAMP
+            RETURNING id
+            """,
+            [user_id, "azure", encrypt_secret(pat)],
+        )
+        return
+    except Exception:
+        pass
+
+    # Legacy fallback used before user_integrations existed.
     key = f"user:{user_id}:azure_devops_pat"
     value = json.dumps({"pat": pat})
     try:
@@ -90,6 +108,22 @@ def get_user_azure_devops_pat(user_id: str) -> Optional[str]:
         pat = data.get("azure_devops_pat")
         return str(pat) if pat else None
 
+    try:
+        row = query_one(
+            """
+            SELECT token_encrypted
+            FROM user_integrations
+            WHERE user_id = %s AND system = %s
+            """,
+            [user_id, "azure"],
+        )
+        if row and row.get("token_encrypted"):
+            token = decrypt_secret(str(row["token_encrypted"]))
+            if token:
+                return token
+    except Exception:
+        pass
+
     key = f"user:{user_id}:azure_devops_pat"
     try:
         row = query_one(
@@ -125,6 +159,14 @@ def delete_user_azure_devops_pat(user_id: str) -> None:
             # Best-effort cleanup; failing to delete should not break the app path
             return
         return
+
+    try:
+        query_one(
+            "DELETE FROM user_integrations WHERE user_id = %s AND system = %s RETURNING id",
+            [user_id, "azure"],
+        )
+    except Exception:
+        pass
 
     key = f"user:{user_id}:azure_devops_pat"
     try:

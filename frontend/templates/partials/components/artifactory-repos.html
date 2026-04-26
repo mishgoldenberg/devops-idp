@@ -12,8 +12,18 @@
 				<h3 class="text-sm font-bold uppercase tracking-widest text-base-content/70">
 					Artifactory Repos
 				</h3>
-				<p class="text-xs text-base-content/50">Mocked latest artifacts on hover</p>
+				<p class="text-xs text-base-content/50">Live latest artifacts on hover</p>
 			</div>
+		</div>
+
+		<div class="flex items-center gap-2">
+			<input
+				type="search"
+				class="input input-bordered input-sm w-full"
+				placeholder="Search repositories..."
+				data-arti-search
+			/>
+			<button type="button" class="btn btn-ghost btn-sm" data-arti-retry>Retry</button>
 		</div>
 
 		<div class="flex-1 min-h-0 relative">
@@ -39,7 +49,11 @@
 		const listEl = root.querySelector("[data-arti-list]");
 		const statusEl = root.querySelector("[data-arti-status]");
 		const panelEl = root.querySelector("[data-arti-panel]");
+		const searchEl = root.querySelector("[data-arti-search]");
+		const retryBtn = root.querySelector("[data-arti-retry]");
 		const detailsCache = new Map();
+		let allRepos = [];
+		let searchTimer = null;
 		let panelTimer = null;
 
 		function scheduleHidePanel() {
@@ -88,15 +102,42 @@
 			listEl.classList.add("hidden");
 		}
 
+		function connectPrompt() {
+			statusEl.classList.remove("hidden");
+			statusEl.classList.add("flex");
+			statusEl.innerHTML = `
+				<div class="w-full rounded-xl border border-info/30 bg-info/5 p-4 text-left">
+					<h4 class="font-semibold text-sm">Connect to Artifactory</h4>
+					<p class="mt-1 text-xs text-base-content/60">Generate an API Key or Access Token from your profile</p>
+					<input data-arti-token type="password" class="input input-bordered input-sm mt-3 w-full" placeholder="Paste API Key or Access Token" />
+					<div class="mt-3 flex gap-2">
+						<button type="button" class="btn btn-primary btn-xs" data-arti-save-token>Save</button>
+						<button type="button" class="btn btn-ghost btn-xs" data-arti-cancel-token>Cancel</button>
+					</div>
+				</div>
+			`;
+			listEl.classList.add("hidden");
+		}
+
 		function showList() {
 			statusEl.classList.add("hidden");
 			listEl.classList.remove("hidden");
 			listEl.classList.add("flex");
 		}
 
+		function currentFilter() {
+			return (searchEl?.value || "").trim().toLowerCase();
+		}
+
+		function filteredRepos() {
+			const q = currentFilter();
+			if (!q) return allRepos;
+			return allRepos.filter((repo) => `${repo.name || ""} ${repo.type || ""} ${repo.description || ""}`.toLowerCase().includes(q));
+		}
+
 		function render(repos) {
 			if (!repos.length) {
-				showStatus('<span class="text-base-content/50">No data available</span>');
+				showStatus('<span class="text-base-content/50">No repositories found</span>');
 				return;
 			}
 			listEl.innerHTML = repos.map((repo) => `
@@ -106,7 +147,11 @@
 				>
 					<a href="${escapeHtml(repo.url || "#")}" target="_blank" rel="noopener noreferrer" class="flex items-center justify-between gap-2 hover:text-info">
 						<span class="text-sm font-semibold truncate">${escapeHtml(repo.name)}</span>
-						<span class="badge badge-outline badge-xs">${escapeHtml(repo.type)}</span>
+						<span class="flex items-center gap-1">
+							${repo.pinned ? '<span class="badge badge-info badge-xs">Pinned</span>' : ""}
+							<button type="button" class="btn btn-ghost btn-xs px-1" title="${repo.pinned ? "Unpin" : "Pin"}" data-arti-pin="${escapeHtml(repo.name)}" data-pinned="${repo.pinned ? "1" : "0"}">${repo.pinned ? "★" : "☆"}</button>
+							<span class="badge badge-outline badge-xs">${escapeHtml(repo.type)}</span>
+						</span>
 					</a>
 					<p class="mt-1 text-xs text-base-content/50 truncate">${escapeHtml(repo.description || "Mock repository")}</p>
 				</li>
@@ -150,13 +195,36 @@
 			}
 			panelEl.innerHTML = '<div class="flex items-center gap-2 text-xs text-base-content/50"><span class="loading loading-spinner loading-xs"></span> Loading artifacts…</div>';
 			showPanel();
-			const res = await fetch(`/api/artifactory/repo-details?name=${encodeURIComponent(repoName)}`, { credentials: "same-origin" });
+			const res = await fetch(`/api/integrations/artifactory/repo-details?name=${encodeURIComponent(repoName)}`, { credentials: "same-origin" });
 			if (!res.ok) throw new Error("http " + res.status);
 			const body = await res.json();
 			const details = body && body.data ? body.data : {};
 			detailsCache.set(repoName, details);
 			renderPanel(details, anchor);
 		}
+
+		listEl.addEventListener("click", async (e) => {
+			const pinBtn = e.target.closest("[data-arti-pin]");
+			if (!pinBtn) return;
+			e.preventDefault();
+			e.stopPropagation();
+			const itemId = pinBtn.dataset.artiPin;
+			const pinned = pinBtn.dataset.pinned === "1";
+			try {
+				const res = await fetch("/api/integrations/artifactory/pins", {
+					method: pinned ? "DELETE" : "POST",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ item_id: itemId, item_name: itemId }),
+				});
+				if (!res.ok) throw new Error("pin");
+				allRepos = allRepos.map((r) => (r.name === itemId ? { ...r, pinned: !pinned } : r));
+				allRepos.sort((a, b) => (Number(!a.pinned) - Number(!b.pinned)) || String(a.name || "").localeCompare(String(b.name || "")));
+				render(filteredRepos());
+			} catch {
+				window.portalToast?.({ kind: "error", message: "Could not update pin." });
+			}
+		});
 
 		listEl.addEventListener("mouseover", (e) => {
 			const row = e.target.closest("[data-repo-name]");
@@ -175,12 +243,60 @@
 		panelEl.addEventListener("mouseenter", () => clearTimeout(panelTimer));
 		panelEl.addEventListener("mouseleave", scheduleHidePanel);
 
-		fetch("/api/artifactory/repos", { credentials: "same-origin" })
-			.then((res) => {
-				if (!res.ok) throw new Error("http " + res.status);
-				return res.json();
-			})
-			.then((body) => render(Array.isArray(body && body.data) ? body.data : []))
-			.catch(() => showStatus('<span class="text-base-content/50">No data available</span>'));
+		statusEl.addEventListener("click", async (e) => {
+			const saveBtn = e.target.closest("[data-arti-save-token]");
+			const cancelBtn = e.target.closest("[data-arti-cancel-token]");
+			if (cancelBtn) {
+				showStatus('<span class="text-base-content/50">Connection required</span>');
+				return;
+			}
+			if (!saveBtn) return;
+			const input = statusEl.querySelector("[data-arti-token]");
+			const token = (input?.value || "").trim();
+			if (!token) return;
+			saveBtn.disabled = true;
+			try {
+				const res = await fetch("/api/integrations/artifactory/token", {
+					method: "POST",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ token }),
+				});
+				if (!res.ok) throw new Error("Invalid token");
+				if (input) input.value = "";
+				window.portalToast?.({ kind: "success", message: "Artifactory connected." });
+				loadRepos();
+			} catch {
+				window.portalToast?.({ kind: "error", message: "Invalid token or connection failed" });
+			} finally {
+				saveBtn.disabled = false;
+			}
+		});
+
+		function loadRepos() {
+			showStatus('<span class="loading loading-spinner loading-sm text-base-content/30"></span>');
+			fetch("/api/integrations/artifactory/repos", { credentials: "same-origin" })
+				.then((res) => {
+					if (res.status === 428) {
+						connectPrompt();
+						return null;
+					}
+					if (!res.ok) throw new Error("http " + res.status);
+					return res.json();
+				})
+				.then((body) => {
+					if (!body) return;
+					allRepos = Array.isArray(body && body.data) ? body.data : [];
+					render(filteredRepos());
+				})
+				.catch(() => showStatus('<span class="text-error">Invalid token or connection failed</span>'));
+		}
+
+		searchEl?.addEventListener("input", () => {
+			clearTimeout(searchTimer);
+			searchTimer = setTimeout(() => render(filteredRepos()), 300);
+		});
+		retryBtn?.addEventListener("click", loadRepos);
+		loadRepos();
 	})();
 </script>

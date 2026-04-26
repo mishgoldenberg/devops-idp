@@ -34,6 +34,7 @@ from . import (
     system_urls,
     favorites,
     activity,
+    integrations,
 )
 
 
@@ -97,5 +98,8 @@ api_router.include_router(favorites.router, prefix="/favorites", tags=["favorite
 # from the client — writes happen server-side at the three tracked call
 # sites (ADO project created, ServiceNow ticket created, self-service).
 api_router.include_router(activity.router, prefix="/activity", tags=["activity"])
+
+# Per-user external integration credentials and real SonarQube/Artifactory reads.
+api_router.include_router(integrations.router, prefix="/integrations", tags=["integrations"])
 
 

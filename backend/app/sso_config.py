@@ -28,14 +28,25 @@ def _fernet() -> Fernet:
     return Fernet(key)
 
 
+def encrypt_secret(secret: str) -> str:
+    return _fernet().encrypt(secret.encode("utf-8")).decode("ascii")
+
+
+def decrypt_secret(ciphertext: str) -> str:
+    try:
+        return _fernet().decrypt(ciphertext.encode("ascii")).decode("utf-8")
+    except InvalidToken as exc:
+        raise ValueError("Secret cannot be decrypted with the current JWT_SECRET") from exc
+
+
 def encrypt_client_secret(client_secret: str) -> str:
-    return _fernet().encrypt(client_secret.encode("utf-8")).decode("ascii")
+    return encrypt_secret(client_secret)
 
 
 def decrypt_client_secret(ciphertext: str) -> str:
     try:
-        return _fernet().decrypt(ciphertext.encode("ascii")).decode("utf-8")
-    except InvalidToken as exc:
+        return decrypt_secret(ciphertext)
+    except ValueError as exc:
         raise ValueError("SSO client secret cannot be decrypted with the current JWT_SECRET") from exc
 
 

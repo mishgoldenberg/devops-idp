@@ -376,6 +376,7 @@ def ensure_tables() -> None:
     ensure_activity_log_table()
     ensure_auth_tables()
     ensure_sso_config_table()
+    ensure_user_integrations_tables()
 
 
 def ensure_auth_tables() -> None:
@@ -405,6 +406,39 @@ def ensure_sso_config_table() -> None:
             CONSTRAINT sso_config_singleton CHECK (id = 1)
         )
         """
+    )
+
+
+def ensure_user_integrations_tables() -> None:
+    """Per-user external-system tokens and pinned integration items."""
+    execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_integrations (
+            id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            user_id         TEXT NOT NULL,
+            system          VARCHAR(32) NOT NULL,
+            token_encrypted TEXT NOT NULL,
+            created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            updated_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (user_id, system)
+        )
+        """
+    )
+    execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_pins (
+            id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            user_id     TEXT NOT NULL,
+            system      VARCHAR(32) NOT NULL,
+            item_id     VARCHAR(255) NOT NULL,
+            item_name   VARCHAR(512) NOT NULL,
+            created_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (user_id, system, item_id)
+        )
+        """
+    )
+    execute(
+        "CREATE INDEX IF NOT EXISTS idx_user_pins_user_system ON user_pins (user_id, system, created_at DESC)"
     )
 
 

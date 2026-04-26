@@ -12,8 +12,18 @@
 				<h3 class="text-sm font-bold uppercase tracking-widest text-base-content/70">
 					SonarQube Projects
 				</h3>
-				<p class="text-xs text-base-content/50">Mocked project metrics on hover</p>
+				<p class="text-xs text-base-content/50">Live project metrics on hover</p>
 			</div>
+		</div>
+
+		<div class="flex items-center gap-2">
+			<input
+				type="search"
+				class="input input-bordered input-sm w-full"
+				placeholder="Search projects..."
+				data-sonar-search
+			/>
+			<button type="button" class="btn btn-ghost btn-sm" data-sonar-retry>Retry</button>
 		</div>
 
 		<div class="flex-1 min-h-0 relative">
@@ -39,7 +49,11 @@
 		const listEl = root.querySelector("[data-sonar-list]");
 		const statusEl = root.querySelector("[data-sonar-status]");
 		const panelEl = root.querySelector("[data-sonar-panel]");
+		const searchEl = root.querySelector("[data-sonar-search]");
+		const retryBtn = root.querySelector("[data-sonar-retry]");
 		const detailsCache = new Map();
+		let allProjects = [];
+		let searchTimer = null;
 		let panelTimer = null;
 
 		function scheduleHidePanel() {
@@ -79,15 +93,42 @@
 			listEl.classList.add("hidden");
 		}
 
+		function connectPrompt() {
+			statusEl.classList.remove("hidden");
+			statusEl.classList.add("flex");
+			statusEl.innerHTML = `
+				<div class="w-full rounded-xl border border-warning/30 bg-warning/5 p-4 text-left">
+					<h4 class="font-semibold text-sm">Connect to SonarQube</h4>
+					<p class="mt-1 text-xs text-base-content/60">Generate a User Token in your profile → Security</p>
+					<input data-sonar-token type="password" class="input input-bordered input-sm mt-3 w-full" placeholder="Paste SonarQube User Token" />
+					<div class="mt-3 flex gap-2">
+						<button type="button" class="btn btn-primary btn-xs" data-sonar-save-token>Save</button>
+						<button type="button" class="btn btn-ghost btn-xs" data-sonar-cancel-token>Cancel</button>
+					</div>
+				</div>
+			`;
+			listEl.classList.add("hidden");
+		}
+
 		function showList() {
 			statusEl.classList.add("hidden");
 			listEl.classList.remove("hidden");
 			listEl.classList.add("flex");
 		}
 
+		function currentFilter() {
+			return (searchEl?.value || "").trim().toLowerCase();
+		}
+
+		function filteredProjects() {
+			const q = currentFilter();
+			if (!q) return allProjects;
+			return allProjects.filter((p) => `${p.name || ""} ${p.project_key || p.key || ""}`.toLowerCase().includes(q));
+		}
+
 		function render(projects) {
 			if (!projects.length) {
-				showStatus('<span class="text-base-content/50">No data available</span>');
+				showStatus('<span class="text-base-content/50">No projects found</span>');
 				return;
 			}
 			listEl.innerHTML = projects.map((p) => {
@@ -95,14 +136,20 @@
 				const name = escapeHtml(p.name || key);
 				const lang = escapeHtml(p.language || "Unknown");
 				const branch = escapeHtml(p.main_branch || "main");
+				const pinned = !!p.pinned;
 				return `
 					<li
 						class="rounded-lg border border-base-300 bg-base-200/60 px-3 py-2.5 transition hover:border-warning/50 hover:bg-base-200"
 						data-sonar-project="${key}"
+						data-sonar-project-name="${name}"
 					>
 						<div class="flex items-center justify-between gap-2">
 							<span class="text-sm font-semibold truncate">${name}</span>
-							<span class="badge badge-outline badge-xs">${lang}</span>
+							<div class="flex items-center gap-1">
+								${pinned ? '<span class="badge badge-warning badge-xs">Pinned</span>' : ""}
+								<button type="button" class="btn btn-ghost btn-xs px-1" title="${pinned ? "Unpin" : "Pin"}" data-sonar-pin="${key}" data-pinned="${pinned ? "1" : "0"}">${pinned ? "★" : "☆"}</button>
+								<span class="badge badge-outline badge-xs">${lang}</span>
+							</div>
 						</div>
 						<div class="mt-1 flex items-center gap-2 text-xs text-base-content/50">
 							<span>${key}</span>
@@ -151,13 +198,38 @@
 			}
 			panelEl.innerHTML = '<div class="flex items-center gap-2 text-xs text-base-content/50"><span class="loading loading-spinner loading-xs"></span> Loading details…</div>';
 			showPanel();
-			const res = await fetch(`/api/sonarqube/project-details?project_key=${encodeURIComponent(key)}`, { credentials: "same-origin" });
+			const res = await fetch(`/api/integrations/sonarqube/project-details?project_key=${encodeURIComponent(key)}`, { credentials: "same-origin" });
 			if (!res.ok) throw new Error("http " + res.status);
 			const body = await res.json();
 			const details = body && body.data ? body.data : {};
 			detailsCache.set(key, details);
 			renderPanel(details, anchor);
 		}
+
+		listEl.addEventListener("click", async (e) => {
+			const pinBtn = e.target.closest("[data-sonar-pin]");
+			if (!pinBtn) return;
+			e.preventDefault();
+			e.stopPropagation();
+			const itemId = pinBtn.dataset.sonarPin;
+			const row = pinBtn.closest("[data-sonar-project]");
+			const itemName = row?.dataset.sonarProjectName || itemId;
+			const pinned = pinBtn.dataset.pinned === "1";
+			try {
+				const res = await fetch("/api/integrations/sonarqube/pins", {
+					method: pinned ? "DELETE" : "POST",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ item_id: itemId, item_name: itemName }),
+				});
+				if (!res.ok) throw new Error("pin");
+				allProjects = allProjects.map((p) => ((p.project_key || p.key) === itemId ? { ...p, pinned: !pinned } : p));
+				allProjects.sort((a, b) => (Number(!a.pinned) - Number(!b.pinned)) || String(a.name || "").localeCompare(String(b.name || "")));
+				render(filteredProjects());
+			} catch {
+				window.portalToast?.({ kind: "error", message: "Could not update pin." });
+			}
+		});
 
 		listEl.addEventListener("mouseover", (e) => {
 			const row = e.target.closest("[data-sonar-project]");
@@ -176,12 +248,60 @@
 		panelEl.addEventListener("mouseenter", () => clearTimeout(panelTimer));
 		panelEl.addEventListener("mouseleave", scheduleHidePanel);
 
-		fetch("/api/sonarqube/projects", { credentials: "same-origin" })
-			.then((res) => {
-				if (!res.ok) throw new Error("http " + res.status);
-				return res.json();
-			})
-			.then((body) => render(Array.isArray(body && body.data) ? body.data : []))
-			.catch(() => showStatus('<span class="text-base-content/50">No data available</span>'));
+		statusEl.addEventListener("click", async (e) => {
+			const saveBtn = e.target.closest("[data-sonar-save-token]");
+			const cancelBtn = e.target.closest("[data-sonar-cancel-token]");
+			if (cancelBtn) {
+				showStatus('<span class="text-base-content/50">Connection required</span>');
+				return;
+			}
+			if (!saveBtn) return;
+			const input = statusEl.querySelector("[data-sonar-token]");
+			const token = (input?.value || "").trim();
+			if (!token) return;
+			saveBtn.disabled = true;
+			try {
+				const res = await fetch("/api/integrations/sonarqube/token", {
+					method: "POST",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ token }),
+				});
+				if (!res.ok) throw new Error("Invalid token");
+				if (input) input.value = "";
+				window.portalToast?.({ kind: "success", message: "SonarQube connected." });
+				loadProjects();
+			} catch {
+				window.portalToast?.({ kind: "error", message: "Invalid token or connection failed" });
+			} finally {
+				saveBtn.disabled = false;
+			}
+		});
+
+		function loadProjects() {
+			showStatus('<span class="loading loading-spinner loading-sm text-base-content/30"></span>');
+			fetch("/api/integrations/sonarqube/projects", { credentials: "same-origin" })
+				.then((res) => {
+					if (res.status === 428) {
+						connectPrompt();
+						return null;
+					}
+					if (!res.ok) throw new Error("http " + res.status);
+					return res.json();
+				})
+				.then((body) => {
+					if (!body) return;
+					allProjects = Array.isArray(body && body.data) ? body.data : [];
+					render(filteredProjects());
+				})
+				.catch(() => showStatus('<span class="text-error">Invalid token or connection failed</span>'));
+		}
+
+		searchEl?.addEventListener("input", () => {
+			clearTimeout(searchTimer);
+			searchTimer = setTimeout(() => render(filteredProjects()), 300);
+		});
+		retryBtn?.addEventListener("click", loadProjects);
+		loadProjects();
 	})();
 </script>
