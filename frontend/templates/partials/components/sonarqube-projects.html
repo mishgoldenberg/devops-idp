@@ -25,7 +25,7 @@
 				data-sonar-list
 			></ul>
 			<div
-				class="hidden absolute right-2 top-2 z-10 w-72 rounded-xl border border-base-300 bg-base-100 p-4 shadow-xl transition-opacity"
+				class="hidden absolute right-2 top-2 z-10 w-96 max-w-[calc(100%-1rem)] origin-top-right rounded-xl border border-base-300 bg-base-100 p-4 shadow-xl opacity-0 scale-95 translate-y-1 transform transition-all duration-150 ease-out"
 				data-sonar-panel
 			></div>
 		</div>
@@ -44,7 +44,23 @@
 
 		function scheduleHidePanel() {
 			clearTimeout(panelTimer);
-			panelTimer = setTimeout(() => panelEl.classList.add("hidden"), 180);
+			panelTimer = setTimeout(hidePanel, 180);
+		}
+
+		function showPanel() {
+			panelEl.classList.remove("hidden");
+			requestAnimationFrame(() => {
+				panelEl.classList.remove("opacity-0", "scale-95", "translate-y-1");
+				panelEl.classList.add("opacity-100", "scale-100", "translate-y-0");
+			});
+		}
+
+		function hidePanel() {
+			panelEl.classList.remove("opacity-100", "scale-100", "translate-y-0");
+			panelEl.classList.add("opacity-0", "scale-95", "translate-y-1");
+			setTimeout(() => {
+				if (panelEl.classList.contains("opacity-0")) panelEl.classList.add("hidden");
+			}, 160);
 		}
 
 		function escapeHtml(value) {
@@ -112,6 +128,7 @@
 				<div class="mt-3 grid grid-cols-2 gap-2 text-xs">
 					<div class="rounded-lg bg-base-200 px-2 py-1.5"><span class="text-error font-bold">${escapeHtml(details.bugs)}</span> bugs</div>
 					<div class="rounded-lg bg-base-200 px-2 py-1.5"><span class="text-warning font-bold">${escapeHtml(details.vulnerabilities)}</span> vulns</div>
+					<div class="rounded-lg bg-base-200 px-2 py-1.5"><span class="text-info font-bold">${escapeHtml(details.code_smells)}</span> code smells</div>
 					<div class="rounded-lg bg-base-200 px-2 py-1.5"><span class="text-success font-bold">${escapeHtml(details.coverage)}%</span> coverage</div>
 					<div class="rounded-lg bg-base-200 px-2 py-1.5"><span class="font-bold">${escapeHtml(details.duplications)}%</span> duplicate</div>
 				</div>
@@ -124,7 +141,7 @@
 					${(details.branches || ["main", "dev"]).map((b) => `<option ${b === details.main_branch ? "selected" : ""}>${escapeHtml(b)}</option>`).join("")}
 				</select>
 			`;
-			panelEl.classList.remove("hidden");
+			showPanel();
 		}
 
 		async function loadDetails(key, anchor) {
@@ -133,7 +150,7 @@
 				return;
 			}
 			panelEl.innerHTML = '<div class="flex items-center gap-2 text-xs text-base-content/50"><span class="loading loading-spinner loading-xs"></span> Loading details…</div>';
-			panelEl.classList.remove("hidden");
+			showPanel();
 			const res = await fetch(`/api/sonarqube/project-details?project_key=${encodeURIComponent(key)}`, { credentials: "same-origin" });
 			if (!res.ok) throw new Error("http " + res.status);
 			const body = await res.json();
@@ -148,7 +165,7 @@
 			clearTimeout(panelTimer);
 			loadDetails(row.dataset.sonarProject, row).catch(() => {
 				panelEl.innerHTML = '<p class="text-xs text-error">Could not load details.</p>';
-				panelEl.classList.remove("hidden");
+				showPanel();
 			});
 		});
 

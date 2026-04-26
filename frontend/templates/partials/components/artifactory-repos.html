@@ -25,7 +25,7 @@
 				data-arti-list
 			></ul>
 			<div
-				class="hidden absolute right-2 top-2 z-10 w-80 rounded-xl border border-base-300 bg-base-100 p-4 shadow-xl"
+				class="hidden absolute right-2 top-2 z-10 w-80 origin-top-right rounded-xl border border-base-300 bg-base-100 p-4 shadow-xl opacity-0 scale-95 translate-y-1 transform transition-all duration-150 ease-out"
 				data-arti-panel
 			></div>
 		</div>
@@ -44,7 +44,23 @@
 
 		function scheduleHidePanel() {
 			clearTimeout(panelTimer);
-			panelTimer = setTimeout(() => panelEl.classList.add("hidden"), 180);
+			panelTimer = setTimeout(hidePanel, 180);
+		}
+
+		function showPanel() {
+			panelEl.classList.remove("hidden");
+			requestAnimationFrame(() => {
+				panelEl.classList.remove("opacity-0", "scale-95", "translate-y-1");
+				panelEl.classList.add("opacity-100", "scale-100", "translate-y-0");
+			});
+		}
+
+		function hidePanel() {
+			panelEl.classList.remove("opacity-100", "scale-100", "translate-y-0");
+			panelEl.classList.add("opacity-0", "scale-95", "translate-y-1");
+			setTimeout(() => {
+				if (panelEl.classList.contains("opacity-0")) panelEl.classList.add("hidden");
+			}, 160);
 		}
 
 		function escapeHtml(value) {
@@ -124,7 +140,7 @@
 						`).join("")}
 					</ul>` : '<p class="mt-3 text-xs text-base-content/50">No data available</p>'}
 			`;
-			panelEl.classList.remove("hidden");
+			showPanel();
 		}
 
 		async function loadDetails(repoName, anchor) {
@@ -133,7 +149,7 @@
 				return;
 			}
 			panelEl.innerHTML = '<div class="flex items-center gap-2 text-xs text-base-content/50"><span class="loading loading-spinner loading-xs"></span> Loading artifacts…</div>';
-			panelEl.classList.remove("hidden");
+			showPanel();
 			const res = await fetch(`/api/artifactory/repo-details?name=${encodeURIComponent(repoName)}`, { credentials: "same-origin" });
 			if (!res.ok) throw new Error("http " + res.status);
 			const body = await res.json();
@@ -148,7 +164,7 @@
 			clearTimeout(panelTimer);
 			loadDetails(row.dataset.repoName, row).catch(() => {
 				panelEl.innerHTML = '<p class="text-xs text-error">Could not load details.</p>';
-				panelEl.classList.remove("hidden");
+				showPanel();
 			});
 		});
 

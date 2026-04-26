@@ -96,7 +96,7 @@
 				data-ado-list
 			></ul>
 			<div
-				class="hidden absolute right-6 top-20 z-10 w-80 rounded-xl border border-base-300 bg-base-100 p-4 shadow-xl"
+				class="hidden absolute right-6 top-20 z-10 w-80 origin-top-right rounded-xl border border-base-300 bg-base-100 p-4 shadow-xl opacity-0 scale-95 translate-y-1 transform transition-all duration-150 ease-out"
 				data-ado-task-panel
 			></div>
 		</div>
@@ -184,7 +184,25 @@
 		function scheduleHideTaskPanel() {
 			if (!taskPanel) return;
 			clearTimeout(taskPanelTimer);
-			taskPanelTimer = setTimeout(() => taskPanel.classList.add("hidden"), 180);
+			taskPanelTimer = setTimeout(hideTaskPanel, 180);
+		}
+
+		function showTaskPanel() {
+			if (!taskPanel) return;
+			taskPanel.classList.remove("hidden");
+			requestAnimationFrame(() => {
+				taskPanel.classList.remove("opacity-0", "scale-95", "translate-y-1");
+				taskPanel.classList.add("opacity-100", "scale-100", "translate-y-0");
+			});
+		}
+
+		function hideTaskPanel() {
+			if (!taskPanel) return;
+			taskPanel.classList.remove("opacity-100", "scale-100", "translate-y-0");
+			taskPanel.classList.add("opacity-0", "scale-95", "translate-y-1");
+			setTimeout(() => {
+				if (taskPanel.classList.contains("opacity-0")) taskPanel.classList.add("hidden");
+			}, 160);
 		}
 
 		function renderPinSvg(pinned) {
@@ -264,7 +282,7 @@
 				</div>
 				${tasks.length ? `<ul class="mt-3 flex max-h-48 flex-col gap-2 overflow-y-auto pr-1">${rows}</ul>` : '<p class="mt-3 text-xs text-base-content/50">No child tasks.</p>'}
 			`;
-			taskPanel.classList.remove("hidden");
+			showTaskPanel();
 		}
 
 		async function loadTasksFor(itemId, anchor) {
@@ -274,7 +292,7 @@
 				return;
 			}
 			taskPanel.innerHTML = '<div class="flex items-center gap-2 text-xs text-base-content/50"><span class="loading loading-spinner loading-xs"></span> Loading child tasks…</div>';
-			taskPanel.classList.remove("hidden");
+			showTaskPanel();
 			const res = await fetch(`/api/azure-devops/workitem-tasks?id=${encodeURIComponent(itemId)}`, {
 				credentials: "same-origin",
 				headers: { Accept: "application/json" },
@@ -413,7 +431,7 @@
 			loadTasksFor(row.dataset.adoHoverId, row).catch(() => {
 				if (!taskPanel) return;
 				taskPanel.innerHTML = '<p class="text-xs text-error">Could not load child tasks.</p>';
-				taskPanel.classList.remove("hidden");
+				showTaskPanel();
 			});
 		});
 

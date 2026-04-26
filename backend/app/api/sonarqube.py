@@ -80,6 +80,7 @@ def _mock_project_details() -> Dict[str, Dict[str, object]]:
             "main_branch": project["main_branch"],
             "bugs": project["metrics"]["bugs"],
             "vulnerabilities": project["metrics"]["vulnerabilities"],
+            "code_smells": project["metrics"]["code_smells"],
             "coverage": project["metrics"]["coverage"],
             "duplications": project["metrics"]["duplications"],
             "lines_of_code": project["metrics"]["lines_of_code"],
