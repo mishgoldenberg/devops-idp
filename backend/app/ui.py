@@ -18,6 +18,7 @@ instead.
 """
 
 import os
+import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from urllib.parse import urlencode
@@ -25,7 +26,6 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Body, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from api.artifactory import get_storage as _art_get_storage
 from api.azure_devops import ProjectCreationPayload
 from api.azure_devops import create_ado_project as _ado_create_project
 from api.azure_devops import get_project_creation_status as _ado_project_status
@@ -36,7 +36,6 @@ from api.dashboards import DashboardUpdateRequest
 from api.dashboards import get_default_dashboard as _dash_get_default
 from api.dashboards import update_dashboard as _dash_update
 from api.servicenow import get_tickets as _snow_get_tickets
-from api.sonarqube import get_projects as _sonar_get_projects
 from db import query_one
 from secrets_manager import delete_user_azure_devops_pat, get_user_azure_devops_pat, store_user_azure_devops_pat
 from security import (
@@ -49,6 +48,7 @@ from security import (
 )
 
 ui_router = APIRouter()
+log = logging.getLogger(__name__)
 
 HOME_WIDGET_KEYS = {
     "quick_links": "quick-links-component",
@@ -57,7 +57,8 @@ HOME_WIDGET_KEYS = {
     "ado_my_pull_requests": "pull-requests-component",
     "ado_prs_for_review": "pull-requests-review-component",
     "ado_pipeline_status": "pipelines-component",
-    "sonar_quality_gate": "sonarqube-quality-component",
+    "sonar_projects": "sonarqube-projects-component",
+    "artifactory_repos": "artifactory-repos-component",
     "artifactory_storage": "artifactory-storage-component",
     "service_health": "service-health-component",
     "recent_activity": "recent-activity-component",
@@ -135,7 +136,9 @@ def _current_user_from_token(token: str) -> Optional[AuthUser]:
 
 def _local_login_payload(username: str, password: str) -> Optional[Dict[str, Any]]:
     """Authenticate the env bootstrap admin against the local password hash."""
+    log.debug("Login attempt")
     if not username or not password:
+        log.debug("Password match: false")
         return None
     row = query_one(
         """
@@ -151,8 +154,11 @@ def _local_login_payload(username: str, password: str) -> Optional[Dict[str, Any
         [username.strip().lower()],
     )
     if not row or not row.get("password_hash"):
+        log.debug("Password match: false")
         return None
-    if not verify_password(password, str(row["password_hash"])):
+    password_match = verify_password(password, str(row["password_hash"]))
+    log.debug("Password match: %s", str(password_match).lower())
+    if not password_match:
         return None
     role_name = str(row.get("role_name") or "")
     try:
@@ -1036,109 +1042,6 @@ def _get_pipeline_data(current_user: Optional[AuthUser]) -> Dict[str, Any]:
         return {"runs": [], "error": _describe_ado_error(exc)}
 
 
-def _mock_sonar_data() -> list:
-    return [
-        {"name": "my-app", "quality_gate_status": "OK", "bugs": 2, "vulnerabilities": 0, "coverage": 87},
-        {"name": "devops-idp", "quality_gate_status": "OK", "bugs": 5, "vulnerabilities": 1, "coverage": 72},
-        {"name": "pipeline-lib", "quality_gate_status": "ERROR", "bugs": 12, "vulnerabilities": 3, "coverage": 43},
-    ]
-
-
-def _get_sonar_data(current_user: Optional[AuthUser]) -> list:
-    if not current_user:
-        return _mock_sonar_data()
-    try:
-        result = _sonar_get_projects(current_user=current_user)
-        rows = result.get("data", []) if isinstance(result, dict) else []
-        return [
-            {
-                "name": p.get("name"),
-                "quality_gate_status": p.get("quality_gate", {}).get("status", "UNKNOWN"),
-                "bugs": p.get("metrics", {}).get("bugs", 0),
-                "vulnerabilities": p.get("metrics", {}).get("vulnerabilities", 0),
-                "coverage": p.get("metrics", {}).get("coverage", 0),
-            }
-            for p in rows
-        ]
-    except Exception:
-        return _mock_sonar_data()
-
-
-def _fmt_bytes(value: float) -> str:
-    units = ["B", "KB", "MB", "GB", "TB"]
-    v = float(value)
-    for unit in units:
-        if v < 1024:
-            return f"{v:.1f} {unit}"
-        v /= 1024
-    return f"{v:.1f} PB"
-
-
-def _normalize_artifactory_storage(data: Dict[str, Any]) -> Dict[str, Any]:
-    used = data.get("used", 0)
-    total = data.get("total", 0)
-    percentage = data.get("percentage", 0)
-
-    if isinstance(used, (int, float)):
-        used_out = _fmt_bytes(float(used))
-    else:
-        used_out = str(used)
-
-    if isinstance(total, (int, float)):
-        total_out = _fmt_bytes(float(total))
-    else:
-        total_out = str(total)
-
-    repos_out = []
-    for repo in data.get("repositories", []):
-        repo_used = repo.get("used", 0)
-        if isinstance(repo_used, (int, float)):
-            repo_used_out = _fmt_bytes(float(repo_used))
-        else:
-            repo_used_out = str(repo_used)
-        repos_out.append(
-            {
-                "name": repo.get("name", ""),
-                "used": repo_used_out,
-                "percentage": repo.get("percentage", 0),
-            }
-        )
-
-    return {
-        "used": used_out,
-        "total": total_out,
-        "percentage": percentage,
-        "repositories": repos_out,
-    }
-
-
-def _mock_artifactory_data() -> Dict[str, Any]:
-    return {
-        "used": "48.3 GB",
-        "total": "100 GB",
-        "percentage": 48,
-        "repositories": [
-            {"name": "docker-local", "used": "22.1 GB", "percentage": 46},
-            {"name": "npm-local", "used": "14.7 GB", "percentage": 30},
-            {"name": "pypi-local", "used": "8.3 GB", "percentage": 17},
-            {"name": "generic-local", "used": "3.2 GB", "percentage": 7},
-        ],
-    }
-
-
-def _get_artifactory_data(current_user: Optional[AuthUser]) -> Dict[str, Any]:
-    if not current_user:
-        return _mock_artifactory_data()
-    try:
-        result = _art_get_storage(current_user=current_user)
-        data = result.get("data", {}) if isinstance(result, dict) else {}
-        if not data:
-            return _mock_artifactory_data()
-        return _normalize_artifactory_storage(data)
-    except Exception:
-        return _mock_artifactory_data()
-
-
 def _get_service_health_data() -> list:
     """Return service health status data for the Service Health widget."""
     return [
@@ -1204,17 +1107,6 @@ def ui_pipelines_component(request: Request):
     )
 
 
-@ui_router.get("/ui/components/sonarqube-quality", response_class=HTMLResponse)
-def ui_sonarqube_quality_component(request: Request):
-    """Render the SonarQube Code Quality dashboard widget for HTMX partial loading."""
-    current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
-    templates = _get_templates(request)
-    return templates.TemplateResponse(
-        "partials/components/sonarqube-quality.html",
-        {"request": request, "projects": _get_sonar_data(current_user)},
-    )
-
-
 @ui_router.get("/ui/components/sonarqube-projects", response_class=HTMLResponse)
 def ui_sonarqube_projects_component(request: Request):
     """Render mocked SonarQube project list widget; details load client-side."""
@@ -1228,11 +1120,10 @@ def ui_sonarqube_projects_component(request: Request):
 @ui_router.get("/ui/components/artifactory-storage", response_class=HTMLResponse)
 def ui_artifactory_storage_component(request: Request):
     """Render the Artifactory Storage dashboard widget for HTMX partial loading."""
-    current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
     templates = _get_templates(request)
     return templates.TemplateResponse(
         "partials/components/artifactory-storage.html",
-        {"request": request, "storage": _get_artifactory_data(current_user)},
+        {"request": request},
     )
 
 

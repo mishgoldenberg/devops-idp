@@ -39,8 +39,8 @@ Lookup table of RBAC roles.
 
 #### `users`
 
-One row per authenticated user. Populated automatically on first
-successful Google login (`api/auth.py`).
+One row per authenticated user. Populated automatically on first OIDC login
+or by the env bootstrap admin startup path (`api/auth.py`, `db.py`).
 
 | Column           | Notes                                           |
 | ---------------- | ----------------------------------------------- |

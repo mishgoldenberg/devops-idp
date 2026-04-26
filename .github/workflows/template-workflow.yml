@@ -33,10 +33,6 @@ on:
         required: false
       JWT_SECRET:
         required: false
-      OAUTH_CLIENT_SECRET:
-        required: false
-      OAUTH_CLIENT_ID:
-        required: false
       AZURE_DEVOPS_PAT:
         required: false
       AZURE_DEVOPS_ADMIN_PAT:
@@ -118,8 +114,6 @@ jobs:
         env:
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
           REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
-          OAUTH_CLIENT_ID: ${{ secrets.OAUTH_CLIENT_ID }}
-          OAUTH_CLIENT_SECRET: ${{ secrets.OAUTH_CLIENT_SECRET }}
           HUB_ADMIN_USERNAME: ${{ secrets.HUB_ADMIN_USERNAME }}
           HUB_ADMIN_PASSWORD: ${{ secrets.HUB_ADMIN_PASSWORD }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
@@ -134,8 +128,6 @@ jobs:
           secrets = {
             "postgresPassword":    os.environ.get("POSTGRES_PASSWORD", ""),
             "redisPassword":       os.environ.get("REDIS_PASSWORD", ""),
-            "oauthClientId":       os.environ.get("OAUTH_CLIENT_ID", ""),
-            "oauthClientSecret":   os.environ.get("OAUTH_CLIENT_SECRET", ""),
             "hubAdminUsername":    os.environ.get("HUB_ADMIN_USERNAME", ""),
             "hubAdminPassword":    os.environ.get("HUB_ADMIN_PASSWORD", ""),
             "jwtSecret":           os.environ.get("JWT_SECRET", ""),

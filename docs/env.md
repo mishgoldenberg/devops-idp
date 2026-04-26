@@ -47,14 +47,8 @@ default behavior and whether they are required.
 | ---------------------- | --------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- | -------- |
 | `JWT_SECRET`           | HS256 signing secret for the portal's own session JWT.                                              | A 40+ char random string                                                | Yes      |
 | `JWT_EXPIRY`           | JWT TTL. Accepts `8h`, `1d`, etc. Drives the `auth_token` cookie `max_age`.                         | `8h`                                                                    | No       |
-| `OAUTH_CLIENT_ID`      | Google OAuth client ID.                                                                             | `…apps.googleusercontent.com`                                           | Yes      |
-| `OAUTH_CLIENT_SECRET`  | Google OAuth client secret.                                                                         | `GOCSPX-…`                                                              | Yes      |
-| `OAUTH_REDIRECT_URI`   | Where Google redirects after consent. Must exactly match a value registered in GCP.                 | `https://devops.internal.company/api/auth/callback`                     | Yes      |
-| `OAUTH_ISSUER`         | OIDC issuer URL.                                                                                    | `https://accounts.google.com`                                           | No       |
-| `OAUTH_AUTH_URL`       | OIDC authorization endpoint. Derived from issuer when unset.                                        | `https://accounts.google.com/o/oauth2/v2/auth`                          | No       |
-| `OAUTH_TOKEN_URL`      | OIDC token endpoint.                                                                                | `https://oauth2.googleapis.com/token`                                   | No       |
-| `OAUTH_JWKS_URL`       | OIDC JWKS endpoint.                                                                                 | `https://www.googleapis.com/oauth2/v3/certs`                            | No       |
-| `OAUTH_SCOPES`         | Space-separated scope list.                                                                         | `openid email profile`                                                  | No       |
+| `HUB_ADMIN_USERNAME`   | Bootstrap admin username/email used only when no admin exists.                                      | `admin@example.com`                                                     | Yes      |
+| `HUB_ADMIN_PASSWORD`   | Bootstrap admin password, bcrypt-hashed on first startup.                                           | From GitHub Secrets                                                     | Yes      |
 
 ## Azure DevOps integration
 

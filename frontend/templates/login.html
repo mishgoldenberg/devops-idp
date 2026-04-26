@@ -43,6 +43,8 @@
 							>Authentication service is unavailable. Check DB setup and try
 							again.</span
 						>
+						{% elif error == "sso_not_configured" %}
+						<span>SSO is not configured</span>
 						{% else %}
 						<span>Authentication failed. Try again.</span>
 						{% endif %}

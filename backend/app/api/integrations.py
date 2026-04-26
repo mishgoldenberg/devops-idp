@@ -280,6 +280,37 @@ def artifactory_repo_details(name: str, current_user: AuthUser = Depends(get_cur
     return {"success": True, "data": data, "timestamp": _now_iso()}
 
 
+@router.get("/artifactory/storage")
+def artifactory_storage(current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]:
+    token = _require_token(current_user, "artifactory")
+    base = _base_url("artifactory")
+    response = _artifactory_request("GET", f"{base}/api/storageinfo", token)
+    payload = response.json()
+    binaries = payload.get("binariesSummary") or {}
+    repos_raw = payload.get("repositoriesSummaryList") or []
+    repos = []
+    for repo in repos_raw:
+        percentage_raw = str(repo.get("percentage") or "0").strip().rstrip("%")
+        try:
+            percentage = float(percentage_raw)
+        except ValueError:
+            percentage = 0.0
+        repos.append(
+            {
+                "name": repo.get("repoKey") or repo.get("repo") or "",
+                "used": repo.get("usedSpace") or "0 B",
+                "percentage": percentage,
+            }
+        )
+    data = {
+        "used": binaries.get("binariesSize") or "0 B",
+        "total": binaries.get("fileStoreSummary", {}).get("totalSpace") or binaries.get("totalSpace") or "Unknown",
+        "percentage": _storage_percentage(binaries),
+        "repositories": repos,
+    }
+    return {"success": True, "data": data, "timestamp": _now_iso()}
+
+
 def _test_token(system: str, token: str) -> None:
     base = _base_url(system)
     try:
@@ -296,6 +327,37 @@ def _test_token(system: str, token: str) -> None:
         raise
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid token or connection failed")
+
+
+def _storage_percentage(binaries: Dict[str, Any]) -> float:
+    used = str(binaries.get("binariesSize") or "").lower()
+    total = str(binaries.get("fileStoreSummary", {}).get("totalSpace") or binaries.get("totalSpace") or "").lower()
+    used_bytes = _parse_size_to_bytes(used)
+    total_bytes = _parse_size_to_bytes(total)
+    if not used_bytes or not total_bytes:
+        return 0.0
+    return round(min(100.0, (used_bytes / total_bytes) * 100), 1)
+
+
+def _parse_size_to_bytes(value: str) -> float:
+    parts = str(value or "").strip().split()
+    if not parts:
+        return 0.0
+    try:
+        number = float(parts[0].replace(",", ""))
+    except ValueError:
+        return 0.0
+    unit = (parts[1].lower() if len(parts) > 1 else "b").rstrip("s")
+    multipliers = {
+        "b": 1,
+        "byte": 1,
+        "kb": 1024,
+        "mb": 1024**2,
+        "gb": 1024**3,
+        "tb": 1024**4,
+        "pb": 1024**5,
+    }
+    return number * multipliers.get(unit, 1)
 
 
 def _artifactory_headers(token: str) -> Dict[str, str]:

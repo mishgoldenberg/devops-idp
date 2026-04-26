@@ -57,9 +57,11 @@ docker compose logs api-gateway
 docker compose exec postgres psql -U devops_user -d devops_control_center -c "\dt"
 ```
 
-### Authentication (Google SSO)
+### Authentication (OIDC SSO)
 
-# The app uses **Google OAuth (SSO)** for sign-in. There are no seeded usernames/passwords; users sign in with their Google accounts and are created on first login. See [SSO_GOOGLE_OAUTH.md](SSO_GOOGLE_OAUTH.md) for configuration, environment variables, and GCP setup.
+The app uses admin-configured OIDC for sign-in. `HUB_ADMIN_USERNAME` and
+`HUB_ADMIN_PASSWORD` create the first Platform Admin when no admin exists; that
+admin configures RedHat SSO/OIDC from Platform Managing.
 
 Use these seeded accounts:
 

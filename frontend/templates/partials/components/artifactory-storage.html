@@ -1,8 +1,5 @@
-<div
-	class="section-card h-full flex flex-col"
->
+<div class="section-card h-full flex flex-col" data-arti-storage-root>
 	<div class="card-body p-5 flex flex-col h-full gap-4">
-		<!-- Header -->
 		<div class="flex items-center gap-3">
 			<div
 				class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-info/30 bg-info/10"
@@ -23,45 +20,134 @@
 				Artifactory Storage
 			</h3>
 		</div>
-		<!-- Overall usage gauge -->
-		<div class="flex flex-col items-center gap-1.5">
-			<span class="text-4xl font-bold text-info"
-				>{{ storage.percentage }}%</span
-			>
-			<span class="text-xs text-base-content/60"
-				>{{ storage.used }} of {{ storage.total }} used</span
-			>
-			<progress
-				class="progress progress-info w-full mt-1"
-				value="{{ storage.percentage }}"
-				max="100"
-			></progress>
+
+		<div class="flex-1 min-h-0 flex flex-col" data-arti-storage-body>
+			<div class="h-full flex items-center justify-center text-xs text-base-content/50" data-arti-storage-status>
+				<span class="loading loading-spinner loading-sm text-base-content/30"></span>
+			</div>
 		</div>
-		<!-- Per-repo breakdown -->
-		{% if not storage.repositories %}
-		<p class="text-xs text-base-content/50 text-center py-4">
-			No repositories reported yet.
-		</p>
-		{% else %}
-		<ul
-			class="flex flex-col gap-2 flex-1 min-h-0 overflow-y-auto overscroll-contain"
-		>
-			{% for repo in storage.repositories %}
-			<li class="flex items-center gap-2">
-				<span class="text-xs text-base-content/70 w-28 shrink-0 truncate"
-					>{{ repo.name }}</span
-				>
-				<progress
-					class="progress progress-info flex-1"
-					value="{{ repo.percentage }}"
-					max="100"
-				></progress>
-				<span class="text-xs text-base-content/60 shrink-0 w-14 text-right"
-					>{{ repo.used }}</span
-				>
-			</li>
-			{% endfor %}
-		</ul>
-		{% endif %}
 	</div>
 </div>
+
+<script>
+	(function () {
+		const root = document.querySelector("[data-arti-storage-root]");
+		if (!root) return;
+		const bodyEl = root.querySelector("[data-arti-storage-body]");
+		const statusEl = root.querySelector("[data-arti-storage-status]");
+
+		function esc(value) {
+			return String(value == null ? "" : value)
+				.replace(/&/g, "&amp;")
+				.replace(/</g, "&lt;")
+				.replace(/>/g, "&gt;")
+				.replace(/"/g, "&quot;");
+		}
+
+		function showStatus(html) {
+			bodyEl.innerHTML = `<div class="h-full flex items-center justify-center text-xs text-base-content/50" data-arti-storage-status>${html}</div>`;
+		}
+
+		function connectPrompt() {
+			showStatus(`
+				<div class="w-full rounded-xl border border-info/30 bg-info/5 p-4 text-left">
+					<h4 class="font-semibold text-sm">Connect to Artifactory</h4>
+					<p class="mt-1 text-xs text-base-content/60">Generate an API Key or Access Token from your profile</p>
+					<input data-arti-storage-token type="password" class="input input-bordered input-sm mt-3 w-full" placeholder="Paste API Key or Access Token" />
+					<div class="mt-3 flex gap-2">
+						<button type="button" class="btn btn-primary btn-xs" data-arti-storage-save-token>Save</button>
+						<button type="button" class="btn btn-ghost btn-xs" data-arti-storage-cancel-token>Cancel</button>
+					</div>
+				</div>
+			`);
+		}
+
+		function render(storage) {
+			const repos = Array.isArray(storage.repositories) ? storage.repositories : [];
+			bodyEl.innerHTML = `
+				<div class="flex flex-col items-center gap-1.5">
+					<span class="text-4xl font-bold text-info">${esc(storage.percentage || 0)}%</span>
+					<span class="text-xs text-base-content/60">${esc(storage.used || "0 B")} of ${esc(storage.total || "Unknown")} used</span>
+					<progress class="progress progress-info w-full mt-1" value="${esc(storage.percentage || 0)}" max="100"></progress>
+				</div>
+				${repos.length ? `
+					<label class="label py-1"><span class="label-text text-xs">Repository</span></label>
+					<select class="select select-bordered select-xs w-full mb-2" data-arti-storage-repo-select>
+						<option value="">All repositories</option>
+						${repos.map((repo) => `<option value="${esc(repo.name)}">${esc(repo.name)}</option>`).join("")}
+					</select>
+					<ul class="flex flex-col gap-2 flex-1 min-h-0 overflow-y-auto overscroll-contain" data-arti-storage-list>
+						${repoRows(repos)}
+					</ul>` : '<p class="text-xs text-base-content/50 text-center py-4">No repositories reported yet.</p>'}
+			`;
+			const select = bodyEl.querySelector("[data-arti-storage-repo-select]");
+			const list = bodyEl.querySelector("[data-arti-storage-list]");
+			select?.addEventListener("change", () => {
+				const selected = select.value;
+				const visible = selected ? repos.filter((repo) => repo.name === selected) : repos;
+				if (list) list.innerHTML = repoRows(visible);
+			});
+		}
+
+		function repoRows(repos) {
+			return repos.map((repo) => `
+				<li class="flex items-center gap-2">
+					<span class="text-xs text-base-content/70 w-28 shrink-0 truncate">${esc(repo.name)}</span>
+					<progress class="progress progress-info flex-1" value="${esc(repo.percentage || 0)}" max="100"></progress>
+					<span class="text-xs text-base-content/60 shrink-0 w-16 text-right">${esc(repo.used || "0 B")}</span>
+				</li>
+			`).join("");
+		}
+
+		async function loadStorage() {
+			showStatus('<span class="loading loading-spinner loading-sm text-base-content/30"></span>');
+			try {
+				const res = await fetch("/api/integrations/artifactory/storage", { credentials: "same-origin" });
+				if (res.status === 428) {
+					connectPrompt();
+					return;
+				}
+				if (!res.ok) throw new Error("Invalid token or connection failed");
+				const json = await res.json();
+				render(json.data || {});
+			} catch {
+				showStatus('<div class="text-center"><p class="text-error">Invalid token or connection failed</p><button type="button" class="btn btn-ghost btn-xs mt-2" data-arti-storage-retry>Retry</button></div>');
+			}
+		}
+
+		bodyEl.addEventListener("click", async (e) => {
+			if (e.target.closest("[data-arti-storage-retry]")) {
+				loadStorage();
+				return;
+			}
+			if (e.target.closest("[data-arti-storage-cancel-token]")) {
+				showStatus('<span class="text-base-content/50">Connection required</span>');
+				return;
+			}
+			const saveBtn = e.target.closest("[data-arti-storage-save-token]");
+			if (!saveBtn) return;
+			const input = bodyEl.querySelector("[data-arti-storage-token]");
+			const token = (input?.value || "").trim();
+			if (!token) return;
+			saveBtn.disabled = true;
+			try {
+				const res = await fetch("/api/integrations/artifactory/token", {
+					method: "POST",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ token }),
+				});
+				if (!res.ok) throw new Error("Invalid token");
+				if (input) input.value = "";
+				window.portalToast?.({ kind: "success", message: "Artifactory connected." });
+				loadStorage();
+			} catch {
+				window.portalToast?.({ kind: "error", message: "Invalid token or connection failed" });
+			} finally {
+				saveBtn.disabled = false;
+			}
+		});
+
+		loadStorage();
+	})();
+</script>

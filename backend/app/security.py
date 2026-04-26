@@ -1,8 +1,8 @@
 """
 Authentication, token handling, and RBAC helpers.
 
-The portal issues its own HS256 JWTs after Google OAuth completes (see
-``api/auth.py``) and stores them in an ``auth_token`` HttpOnly cookie.
+The portal issues its own HS256 JWTs after OIDC or bootstrap-admin login and
+stores them in an ``auth_token`` HttpOnly cookie.
 Every protected endpoint depends on :func:`get_current_user`, which
 accepts either the cookie or an ``Authorization: Bearer <token>`` header —
 the Bearer path exists so internal tools and tests don't have to
@@ -14,13 +14,10 @@ expiry, so the check reads the user's current role from Postgres on every
 call. The slight cost is worth the correctness.
 """
 
-import base64
 import datetime as dt
-import hashlib
-import hmac
-import secrets
 from typing import Any, Dict, List, Optional
 
+import bcrypt
 import jwt
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -70,33 +67,14 @@ def create_access_token(payload: Dict[str, Any]) -> str:
 
 
 def hash_password(password: str) -> str:
-    """Hash a local bootstrap-admin password with PBKDF2-SHA256.
-
-    The portal's normal login path is SSO. This is only for the environment
-    bootstrap admin, so using stdlib PBKDF2 avoids adding an auth framework or
-    logging/storing plaintext credentials.
-    """
-    salt = secrets.token_bytes(16)
-    rounds = 260_000
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, rounds)
-    return "pbkdf2_sha256${}${}${}".format(
-        rounds,
-        base64.b64encode(salt).decode("ascii"),
-        base64.b64encode(digest).decode("ascii"),
-    )
+    """Hash a local bootstrap-admin password with bcrypt."""
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(password: str, stored_hash: str) -> bool:
-    """Constant-time verification for hashes created by :func:`hash_password`."""
+    """Verify a bootstrap-admin password with bcrypt.checkpw."""
     try:
-        algorithm, rounds_raw, salt_raw, digest_raw = (stored_hash or "").split("$", 3)
-        if algorithm != "pbkdf2_sha256":
-            return False
-        rounds = int(rounds_raw)
-        salt = base64.b64decode(salt_raw)
-        expected = base64.b64decode(digest_raw)
-        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, rounds)
-        return hmac.compare_digest(actual, expected)
+        return bcrypt.checkpw(password.encode("utf-8"), stored_hash.encode("utf-8"))
     except Exception:
         return False
 

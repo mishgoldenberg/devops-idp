@@ -1,4 +1,3 @@
-import logging
 from typing import Any, Dict, Optional
 
 import secrets
@@ -8,8 +7,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 
-from config import get_settings
-from db import BOOTSTRAP_ADMIN_EMAIL, query_one, sync_bootstrap_admin_role_for_email
+from db import query_one
 from security import create_access_token, decode_access_token
 from sso_config import (
     decrypt_client_secret,
@@ -19,7 +17,6 @@ from sso_config import (
 
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
 
 
 def _now_iso() -> str:
@@ -183,65 +180,41 @@ def _auth_user_from_db_row(user_row: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @router.get("/login")
-def oauth_login(request: Request):
-    """
-    Initiate configured SSO when enabled; otherwise fall back to legacy OAuth.
-    """
+def oidc_login(request: Request):
+    """Initiate the admin-configured OIDC login flow."""
     sso = get_enabled_sso_config()
-    if sso:
-        try:
-            discovery = fetch_openid_configuration(str(sso["issuer_uri"]))
-        except Exception:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Configured SSO provider is unavailable",
-            )
-        state = secrets.token_urlsafe(32)
-        redirect_uri = str(request.url_for("sso_callback"))
-        params = {
-            "client_id": sso["client_id"],
-            "redirect_uri": redirect_uri,
-            "response_type": "code",
-            "scope": "openid email profile",
-            "state": state,
-        }
-        response = RedirectResponse(
-            f"{discovery['authorization_endpoint']}?{urlencode(params)}",
-            status_code=status.HTTP_302_FOUND,
-        )
-        response.set_cookie(
-            "sso_state",
-            state,
-            httponly=True,
-            samesite="lax",
-            secure=request.url.scheme == "https",
-            max_age=600,
-            path="/",
-        )
-        return response
-
-    settings = get_settings()
-    if not settings.oauth_client_id or not settings.oauth_redirect_uri:
+    if not sso:
+        return RedirectResponse(url="/ui/auth?error=sso_not_configured", status_code=status.HTTP_303_SEE_OTHER)
+    try:
+        discovery = fetch_openid_configuration(str(sso["issuer_uri"]))
+    except Exception:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="OAuth configuration is missing",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Configured SSO provider is unavailable",
         )
-
     state = secrets.token_urlsafe(32)
-
+    redirect_uri = str(request.url_for("sso_callback"))
     params = {
-        "client_id": settings.oauth_client_id,
-        "redirect_uri": settings.oauth_redirect_uri,
+        "client_id": sso["client_id"],
+        "redirect_uri": redirect_uri,
         "response_type": "code",
-        "scope": settings.oauth_scopes,
-        "access_type": "online",
-        "include_granted_scopes": "true",
+        "scope": "openid email profile",
         "state": state,
-        "prompt": "consent",
     }
-
-    auth_url = f"{settings.oauth_auth_url}?{urlencode(params)}"
-    return RedirectResponse(auth_url, status_code=status.HTTP_302_FOUND)
+    response = RedirectResponse(
+        f"{discovery['authorization_endpoint']}?{urlencode(params)}",
+        status_code=status.HTTP_302_FOUND,
+    )
+    response.set_cookie(
+        "sso_state",
+        state,
+        httponly=True,
+        samesite="lax",
+        secure=request.url.scheme == "https",
+        max_age=600,
+        path="/",
+    )
+    return response
 
 
 @router.get("/sso/callback")
@@ -320,126 +293,6 @@ async def sso_callback(request: Request, code: Optional[str] = None, state: Opti
     response = RedirectResponse(url="/ui/", status_code=status.HTTP_303_SEE_OTHER)
     response.delete_cookie("sso_state", path="/")
     return _set_auth_cookie(response, request, token)
-
-
-@router.get("/callback")
-async def oauth_callback(request: Request, code: Optional[str] = None, state: Optional[str] = None):
-    """
-    OAuth2 callback endpoint for Google. Exchanges code for tokens and issues app JWT.
-    """
-    settings = get_settings()
-    if not settings.oauth_client_id or not settings.oauth_client_secret or not settings.oauth_redirect_uri:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="OAuth configuration is missing",
-        )
-
-    if not code:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Missing authorization code",
-        )
-
-    async with httpx.AsyncClient(timeout=10) as client:
-        token_resp = await client.post(
-            settings.oauth_token_url,
-            data={
-                "code": code,
-                "client_id": settings.oauth_client_id,
-                "client_secret": settings.oauth_client_secret,
-                "redirect_uri": settings.oauth_redirect_uri,
-                "grant_type": "authorization_code",
-            },
-        )
-
-    if token_resp.status_code != 200:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Failed to exchange authorization code",
-        )
-
-    token_data = token_resp.json()
-    id_token = token_data.get("id_token")
-    if not id_token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="ID token not returned by provider",
-        )
-
-    try:
-        import jwt as pyjwt
-
-        payload = pyjwt.decode(id_token, options={"verify_signature": False})
-    except Exception:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid ID token",
-        )
-
-    email_raw: Optional[str] = payload.get("email")
-    email = (email_raw or "").strip().lower()
-    full_name: Optional[str] = payload.get("name")
-
-    if not email:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Email not present in ID token",
-        )
-
-    try:
-        user_row = _get_or_create_user_by_email(email, full_name)
-        hl = int(user_row["hierarchy_level"])
-        perms = _normalize_permissions(user_row.get("permissions"))
-        role_eff = _map_role_to_effective(str(user_row["role_name"]), None, hl)
-
-        # Bootstrap account: always issue full Platform Admin claims (JWT + APIs),
-        # even if role name text or a stale role_id in DB disagrees.
-        if email.strip().lower() == BOOTSTRAP_ADMIN_EMAIL.strip().lower():
-            pa = query_one(
-                """
-                SELECT hierarchy_level, permissions
-                FROM roles
-                WHERE LOWER(TRIM(name)) = %s
-                LIMIT 1
-                """,
-                ["platform admin"],
-            )
-            if pa:
-                role_eff = "Admin"
-                hl = int(pa["hierarchy_level"])
-                perms = _normalize_permissions(pa.get("permissions"))
-
-        auth_user: Dict[str, Any] = {
-            "id": str(user_row["id"]),
-            "username": user_row["username"],
-            "email": user_row["email"],
-            "role": role_eff,
-            "hierarchy_level": hl,
-            "permissions": perms,
-        }
-    except Exception as exc:
-        # Temporary resilience for schema drift during integration:
-        # allow login even if DB provisioning fails.
-        logger.exception("SSO user provisioning failed for %s: %s", email, exc)
-        auth_user = {
-            "id": email,
-            "username": email,
-            "email": email,
-            "role": "User",
-            "hierarchy_level": 7,
-            "permissions": [],
-        }
-    token = create_access_token(auth_user)
-    response = RedirectResponse(url="/ui/", status_code=status.HTTP_303_SEE_OTHER)
-    response.set_cookie(
-        key="auth_token",
-        value=token,
-        httponly=True,
-        samesite="lax",
-        secure=request.url.scheme == "https",
-        path="/",
-    )
-    return response
 
 
 @router.post("/verify")

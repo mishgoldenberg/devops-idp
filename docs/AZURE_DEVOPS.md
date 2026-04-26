@@ -74,8 +74,9 @@ Other users will see **"Connect via PAT"** in each Azure DevOps widget until the
 
 ### Why not OAuth / "Sign in with Microsoft"?
 
-Azure DevOps uses Microsoft accounts (Azure AD / MSA), not Google accounts.  
-There is **no automatic link** between a user's Google SSO session and their Azure DevOps identity.
+Azure DevOps uses Microsoft accounts (Azure AD / MSA), while the portal uses
+admin-configured OIDC for Hub sign-in. There is **no automatic link** between a
+user's Hub SSO session and their Azure DevOps identity.
 
 A proper Microsoft OAuth2 integration (Azure AD app registration, `499b84ac…/.default` scope) can be added as a future enhancement once an Azure AD Application is provisioned — it would replace PATs entirely with delegated access tokens.
 
@@ -262,7 +263,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:3000`. Log in via Google SSO, then:
+Open `http://localhost:3000`. Log in via configured SSO, then:
 
 - If your email is `golden.mihel@gmail.com` (admin), data loads automatically using the env PAT.
 - Other users see a "Connect via PAT" prompt inside each Azure DevOps widget.

@@ -8,7 +8,7 @@ INSERT INTO widget_types (widget_key, name, description, category, min_role_leve
 ('ado_sprint_progress', 'Sprint Progress', 'Current sprint burn-down', 'azure_devops', 6, 'TrendingUp'),
 
 -- SonarQube widgets
-('sonar_quality_gate', 'Quality Gate', 'Current project quality gate status', 'sonarqube', 7, 'Shield'),
+('sonar_projects', 'SonarQube Projects', 'Project metrics and status', 'sonarqube', 7, 'Shield'),
 ('sonar_code_coverage', 'Code Coverage', 'Test coverage percentage and trend', 'sonarqube', 7, 'Target'),
 ('sonar_technical_debt', 'Technical Debt', 'Estimated hours to fix issues', 'sonarqube', 6, 'AlertTriangle'),
 ('sonar_security_hotspots', 'Security Hotspots', 'Critical security issues', 'sonarqube', 6, 'Lock'),

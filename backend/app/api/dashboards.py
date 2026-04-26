@@ -27,7 +27,8 @@ _ALLOWED_WIDGET_KEYS = {
     "ado_my_pull_requests",
     "ado_prs_for_review",
     "ado_pipeline_status",
-    "sonar_quality_gate",
+    "sonar_projects",
+    "artifactory_repos",
     "artifactory_storage",
     "service_health",
 }
@@ -256,7 +257,8 @@ def _get_default_widgets_for_role(role_level: int) -> List[Dict[str, Any]]:
     common_widgets = [
         {"id": str(uuid4()), "widget_key": "ado_my_work_items", "config": {}},
         {"id": str(uuid4()), "widget_key": "ado_my_pull_requests", "config": {}},
-        {"id": str(uuid4()), "widget_key": "sonar_quality_gate", "config": {}},
+        {"id": str(uuid4()), "widget_key": "sonar_projects", "config": {}},
+        {"id": str(uuid4()), "widget_key": "artifactory_repos", "config": {}},
         {"id": str(uuid4()), "widget_key": "snow_my_tickets", "config": {}},
     ]
 

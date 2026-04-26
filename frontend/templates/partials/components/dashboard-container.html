@@ -153,16 +153,35 @@
 				</div>
 			</div>
 
-			<!-- SonarQube Code Quality -->
+			<!-- SonarQube Projects -->
 			<div
-				id="sonarqube-quality-component"
-				data-widget-key="sonar_quality_gate"
+				id="sonarqube-projects-component"
+				data-widget-key="sonar_projects"
 				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
-				hx-get="/ui/components/sonarqube-quality"
+				hx-get="/ui/components/sonarqube-projects"
 				hx-trigger="load, every 60s, click from:#refresh-btn"
 				hx-target="find .widget-content"
 				hx-swap="innerHTML"
-				{% if enabled_widgets is defined and 'sonar_quality_gate' not in enabled_widgets %}style="display:none"{% endif %}
+				{% if enabled_widgets is defined and 'sonar_projects' not in enabled_widgets %}style="display:none"{% endif %}
+			>
+				<div class="widget-loading h-full">
+					{% include "partials/components/widget-skeleton.html" %}
+				</div>
+				<div class="widget-content h-full">
+					{% include "partials/components/widget-skeleton.html" %}
+				</div>
+			</div>
+
+			<!-- Artifactory Repos -->
+			<div
+				id="artifactory-repos-component"
+				data-widget-key="artifactory_repos"
+				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
+				hx-get="/ui/components/artifactory-repos"
+				hx-trigger="load, every 60s, click from:#refresh-btn"
+				hx-target="find .widget-content"
+				hx-swap="innerHTML"
+				{% if enabled_widgets is defined and 'artifactory_repos' not in enabled_widgets %}style="display:none"{% endif %}
 			>
 				<div class="widget-loading h-full">
 					{% include "partials/components/widget-skeleton.html" %}
@@ -298,8 +317,12 @@
 						<span class="font-medium text-base-content">Pipelines</span>
 					</label>
 					<label class="label cursor-pointer justify-start gap-3 py-2">
-						<input type="checkbox" checked class="checkbox checkbox-primary dashboard-widget-toggle" data-widget-key="sonar_quality_gate" />
-						<span class="font-medium text-base-content">SonarQube Code Quality</span>
+						<input type="checkbox" checked class="checkbox checkbox-primary dashboard-widget-toggle" data-widget-key="sonar_projects" />
+						<span class="font-medium text-base-content">SonarQube Projects</span>
+					</label>
+					<label class="label cursor-pointer justify-start gap-3 py-2">
+						<input type="checkbox" checked class="checkbox checkbox-primary dashboard-widget-toggle" data-widget-key="artifactory_repos" />
+						<span class="font-medium text-base-content">Artifactory Repos</span>
 					</label>
 					<label class="label cursor-pointer justify-start gap-3 py-2">
 						<input type="checkbox" checked class="checkbox checkbox-primary dashboard-widget-toggle" data-widget-key="artifactory_storage" />
@@ -332,7 +355,8 @@
 			ado_my_pull_requests: "pull-requests-component",
 			ado_prs_for_review: "pull-requests-review-component",
 			ado_pipeline_status: "pipelines-component",
-			sonar_quality_gate: "sonarqube-quality-component",
+			sonar_projects: "sonarqube-projects-component",
+			artifactory_repos: "artifactory-repos-component",
 			artifactory_storage: "artifactory-storage-component",
 			service_health: "service-health-component",
 			recent_activity: "recent-activity-component",

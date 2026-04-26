@@ -47,9 +47,9 @@ data.
 
 ### Login
 
-With Google OAuth configured locally you need real credentials (see
-[`docs/SSO_GOOGLE_OAUTH.md`](./SSO_GOOGLE_OAUTH.md)). For quick local
-testing, set the dev bypass env (`DEV_MODE_BYPASS_AUTH=true`,
+Use `HUB_ADMIN_USERNAME` and `HUB_ADMIN_PASSWORD` to create the first local
+admin, then configure OIDC from Platform Managing. For quick local testing,
+set the dev bypass env (`DEV_MODE_BYPASS_AUTH=true`,
 `DEV_MODE_DEFAULT_USER=admin@internal`) in `.env` and restart — you'll be
 logged in as `admin@internal` with Platform Admin role. **Never** enable
 this flag anywhere except your laptop.

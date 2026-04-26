@@ -74,18 +74,16 @@ Self-service execution lives in its own runtime:
 
 ## 3. Authentication flow
 
-1. Browser hits `/ui/auth` (login page) and clicks "Continue with Google".
-2. Backend route `/api/auth/login` redirects to Google's consent screen.
-3. Google redirects to `/api/auth/callback` with a code.
-4. The backend exchanges the code for Google tokens, looks up or creates a
+1. Browser hits `/ui/auth` (login page) and clicks "Sign in with SSO".
+2. Backend route `/api/auth/login` reads the enabled `sso_config` row.
+3. The configured OIDC provider redirects to `/api/auth/sso/callback` with a code.
+4. The backend exchanges the code, validates the ID token, looks up or creates a
    user row in Postgres, and issues an **internal HS256 JWT**
    (`security.create_access_token`).
 5. The JWT is stored in an `auth_token` cookie (HttpOnly, SameSite=Lax,
    Secure on HTTPS, `max_age` driven by `JWT_EXPIRY`).
 6. Every subsequent request goes through `security.get_current_user`, which
    accepts either the cookie or an `Authorization: Bearer <token>` header.
-
-See `docs/SSO_GOOGLE_OAUTH.md` for the GCP side.
 
 ## 4. Frontend ↔ backend communication
 

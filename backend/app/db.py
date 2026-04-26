@@ -796,7 +796,7 @@ def ensure_bootstrap_platform_admin() -> None:
                 hash_password(password),
             ],
         )
-        log.info("ensure_bootstrap_platform_admin: bootstrap admin created from HUB_ADMIN_USERNAME")
+        log.info("Admin bootstrap created")
     except Exception as exc:
         log.warning("ensure_bootstrap_platform_admin failed: %s", exc)
 

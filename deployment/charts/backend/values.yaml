@@ -37,8 +37,6 @@ secrets:
   azureDevopsPat: ""
   azureDevopsAdminPat: ""
   jwtSecret: ""
-  oauthClientSecret: ""
-  oauthClientId: ""
   hubAdminUsername: ""
   hubAdminPassword: ""
   servicenowUrl: ""
