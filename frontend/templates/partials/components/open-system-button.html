@@ -6,13 +6,10 @@
 			{% include "partials/components/open-system-button.html" %}
 		{% endwith %}
 
-	Behavior (per spec — scoped to Azure DevOps for now):
-	  * Azure DevOps: renders a primary button that opens the configured org
-	    URL in a new tab. If the URL isn't configured the button stays visible
-	    but disabled, so the header layout never shifts between deployments.
-	  * Every other system: renders a disabled placeholder button with the
-	    same dimensions (primary + btn-sm) so the header doesn't reflow if an
-	    admin enables it later via env var.
+	Behavior:
+	  * Every system renders an enabled primary button.
+	  * Real env/config URLs win; otherwise backend/app/api/system_urls.py
+	    provides mock fallback URLs so the UX is testable everywhere.
 
 	Hiding the button entirely was considered but would cause layout shifts
 	when toggling densities/themes, which the acceptance criteria explicitly
@@ -31,9 +28,7 @@
 	'internal_aws': 'Internal AWS',
 } %}
 {% set _system_name = _names.get(system_key, 'System') %}
-{% set _is_live = system_key == 'azure_devops' and _url %}
 
-{% if _is_live %}
 <a
 	href="{{ _url }}"
 	target="_blank"
@@ -57,28 +52,3 @@
 	</svg>
 	Go to {{ _system_name }}
 </a>
-{% else %}
-<button
-	type="button"
-	class="btn btn-primary btn-sm"
-	disabled
-	title="Coming soon"
-	aria-disabled="true"
->
-	<svg
-		viewBox="0 0 24 24"
-		class="w-4 h-4"
-		fill="none"
-		stroke="currentColor"
-		stroke-width="2"
-		stroke-linecap="round"
-		stroke-linejoin="round"
-		aria-hidden="true"
-	>
-		<path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"></path>
-		<polyline points="15 3 21 3 21 9"></polyline>
-		<line x1="10" y1="14" x2="21" y2="3"></line>
-	</svg>
-	Go to {{ _system_name }}
-</button>
-{% endif %}

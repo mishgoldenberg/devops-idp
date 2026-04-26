@@ -42,6 +42,11 @@
 		const detailsCache = new Map();
 		let panelTimer = null;
 
+		function scheduleHidePanel() {
+			clearTimeout(panelTimer);
+			panelTimer = setTimeout(() => panelEl.classList.add("hidden"), 180);
+		}
+
 		function escapeHtml(value) {
 			return String(value == null ? "" : value)
 				.replace(/&/g, "&amp;")
@@ -148,8 +153,11 @@
 		});
 
 		listEl.addEventListener("mouseleave", () => {
-			panelTimer = setTimeout(() => panelEl.classList.add("hidden"), 120);
+			scheduleHidePanel();
 		});
+
+		panelEl.addEventListener("mouseenter", () => clearTimeout(panelTimer));
+		panelEl.addEventListener("mouseleave", scheduleHidePanel);
 
 		fetch("/api/sonarqube/projects", { credentials: "same-origin" })
 			.then((res) => {

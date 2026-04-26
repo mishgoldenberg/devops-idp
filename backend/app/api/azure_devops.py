@@ -274,20 +274,29 @@ def get_workitem_tasks(
     dashboard work-items list.
     """
     if USE_MOCK:
+        def _mock_task(task_id: int, title: str, state: str) -> dict:
+            return {
+                "id": task_id,
+                "title": title,
+                "state": state,
+                "url": f"https://dev.azure.com/DevCollection-Inheritance/DevOps/_workitems/edit/{task_id}",
+            }
+
         state_sets = {
             1001: [
-                {"id": 5101, "title": "Add API validation", "state": "In Progress"},
-                {"id": 5102, "title": "Write dashboard tests", "state": "To Do"},
-                {"id": 5103, "title": "Update deployment docs", "state": "Done"},
+                _mock_task(5101, "Add API validation", "In Progress"),
+                _mock_task(5102, "Write dashboard tests", "To Do"),
+                _mock_task(5103, "Update deployment docs", "Done"),
             ],
         }
+        fallback = [
+            _mock_task(int(id) * 10 + 1, "Review acceptance criteria", "To Do"),
+            _mock_task(int(id) * 10 + 2, "Implement backend changes", "In Progress"),
+            _mock_task(int(id) * 10 + 3, "QA verification", "Done"),
+        ]
         return {
             "success": True,
-            "data": state_sets.get(int(id), [
-                {"id": int(id) * 10 + 1, "title": "Review acceptance criteria", "state": "To Do"},
-                {"id": int(id) * 10 + 2, "title": "Implement backend changes", "state": "In Progress"},
-                {"id": int(id) * 10 + 3, "title": "QA verification", "state": "Done"},
-            ]),
+            "data": state_sets.get(int(id), fallback),
             "timestamp": _now_iso(),
         }
 
@@ -334,6 +343,7 @@ def get_workitem_tasks(
                             "title": fields.get("System.Title") or f"Task #{item.get('id')}",
                             "state": fields.get("System.State") or "",
                             "type": fields.get("System.WorkItemType") or "",
+                            "url": f"{ADO_BASE}/_workitems/edit/{item.get('id')}",
                         }
                     )
         return {"success": True, "data": tasks, "timestamp": _now_iso()}

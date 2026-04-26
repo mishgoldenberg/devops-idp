@@ -181,6 +181,12 @@
 			return "badge-ghost";
 		}
 
+		function scheduleHideTaskPanel() {
+			if (!taskPanel) return;
+			clearTimeout(taskPanelTimer);
+			taskPanelTimer = setTimeout(() => taskPanel.classList.add("hidden"), 180);
+		}
+
 		function renderPinSvg(pinned) {
 			return pinned
 				? '<svg viewBox="0 0 20 20" class="h-4 w-4 fill-current text-warning" aria-hidden="true"><path d="M11.7 1.7a1 1 0 011.4 0l5.2 5.2a1 1 0 010 1.4l-1.4 1.4a1 1 0 01-1 .26l-2.9-.82-3.6 3.6.73 3a1 1 0 01-1.67.94l-2.65-2.65-3.3 3.3a1 1 0 01-1.41-1.41l3.3-3.3L1.78 9.97a1 1 0 01.94-1.67l3 .73 3.6-3.6-.82-2.9a1 1 0 01.26-1L11.7 1.7z"/></svg>'
@@ -245,10 +251,10 @@
 			taskPanel.style.top = `${Math.max(72, rowRect.top - rootRect.top)}px`;
 			const rows = tasks.map((task) => `
 				<li class="rounded-lg bg-base-200 px-2 py-1.5">
-					<div class="flex items-center gap-2">
+					<a href="${escapeHtml(task.url || "#")}" target="_blank" rel="noopener noreferrer" class="flex items-center gap-2 hover:text-primary">
 						<span class="truncate text-xs font-medium">${escapeHtml(task.title || "")}</span>
 						<span class="badge badge-xs ${taskStateClass(task.state)} ml-auto">${escapeHtml(task.state || "")}</span>
-					</div>
+					</a>
 				</li>
 			`).join("");
 			taskPanel.innerHTML = `
@@ -412,9 +418,11 @@
 		});
 
 		body.addEventListener("mouseleave", () => {
-			if (!taskPanel) return;
-			taskPanelTimer = setTimeout(() => taskPanel.classList.add("hidden"), 120);
+			scheduleHideTaskPanel();
 		});
+
+		taskPanel?.addEventListener("mouseenter", () => clearTimeout(taskPanelTimer));
+		taskPanel?.addEventListener("mouseleave", scheduleHideTaskPanel);
 
 		filterBtns.forEach((btn) => {
 			btn.addEventListener("click", () => {

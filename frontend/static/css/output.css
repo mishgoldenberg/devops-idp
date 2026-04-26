@@ -4769,6 +4769,13 @@
       }
     }
   }
+  .hover\:text-info {
+    &:hover {
+      @media (hover: hover) {
+        color: var(--color-info);
+      }
+    }
+  }
   .hover\:text-primary {
     &:hover {
       @media (hover: hover) {

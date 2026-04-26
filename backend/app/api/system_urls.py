@@ -38,6 +38,13 @@ router = APIRouter()
 # entry-points deep-link to the same organisation.
 _DEFAULT_URLS: Dict[str, str] = {
     "azure_devops": "https://dev.azure.com/DevCollection-Inheritance",
+    "servicenow": "https://mock.service-now.example/nav_to.do",
+    "sonarqube": "https://mock.sonarqube.example/projects",
+    "artifactory": "https://mock.artifactory.example/ui/repos/tree/General",
+    "confluence": "https://mock.confluence.example/wiki",
+    "openshift": "https://mock.openshift.example/console",
+    "grafana": "https://mock.grafana.example/dashboards",
+    "internal_aws": "https://mock.aws.example/console",
 }
 
 
@@ -76,13 +83,13 @@ def _resolve_system_urls() -> Dict[str, Optional[str]]:
 
     return {
         "azure_devops": ado,
-        "servicenow": snow,
-        "sonarqube": sonar,
-        "artifactory": artifactory,
-        "confluence": confluence,
-        "openshift": openshift,
-        "grafana": grafana,
-        "internal_aws": aws,
+        "servicenow": snow or _DEFAULT_URLS["servicenow"],
+        "sonarqube": sonar or _DEFAULT_URLS["sonarqube"],
+        "artifactory": artifactory or _DEFAULT_URLS["artifactory"],
+        "confluence": confluence or _DEFAULT_URLS["confluence"],
+        "openshift": openshift or _DEFAULT_URLS["openshift"],
+        "grafana": grafana or _DEFAULT_URLS["grafana"],
+        "internal_aws": aws or _DEFAULT_URLS["internal_aws"],
     }
 
 

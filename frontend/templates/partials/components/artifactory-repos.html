@@ -42,6 +42,11 @@
 		const detailsCache = new Map();
 		let panelTimer = null;
 
+		function scheduleHidePanel() {
+			clearTimeout(panelTimer);
+			panelTimer = setTimeout(() => panelEl.classList.add("hidden"), 180);
+		}
+
 		function escapeHtml(value) {
 			return String(value == null ? "" : value)
 				.replace(/&/g, "&amp;")
@@ -83,10 +88,10 @@
 					class="rounded-lg border border-base-300 bg-base-200/60 px-3 py-2.5 transition hover:border-info/50 hover:bg-base-200"
 					data-repo-name="${escapeHtml(repo.name)}"
 				>
-					<div class="flex items-center justify-between gap-2">
+					<a href="${escapeHtml(repo.url || "#")}" target="_blank" rel="noopener noreferrer" class="flex items-center justify-between gap-2 hover:text-info">
 						<span class="text-sm font-semibold truncate">${escapeHtml(repo.name)}</span>
 						<span class="badge badge-outline badge-xs">${escapeHtml(repo.type)}</span>
-					</div>
+					</a>
 					<p class="mt-1 text-xs text-base-content/50 truncate">${escapeHtml(repo.description || "Mock repository")}</p>
 				</li>
 			`).join("");
@@ -101,7 +106,7 @@
 			panelEl.innerHTML = `
 				<div class="flex items-start justify-between gap-2">
 					<div>
-						<p class="text-sm font-semibold">${escapeHtml(details.name || "")}</p>
+						<a href="${escapeHtml(details.url || "#")}" target="_blank" rel="noopener noreferrer" class="text-sm font-semibold hover:text-info">${escapeHtml(details.name || "")}</a>
 						<p class="text-xs text-base-content/50">Latest artifacts</p>
 					</div>
 					<span class="badge badge-info badge-sm">${escapeHtml(details.type || "")}</span>
@@ -110,10 +115,10 @@
 					<ul class="mt-3 flex max-h-48 flex-col gap-2 overflow-y-auto pr-1">
 						${artifacts.map((a) => `
 							<li class="rounded-lg bg-base-200 px-2 py-1.5">
-								<div class="flex items-center gap-2">
+								<a href="${escapeHtml(a.url || "#")}" target="_blank" rel="noopener noreferrer" class="flex items-center gap-2 hover:text-info">
 									<span class="truncate text-xs font-medium">${escapeHtml(a.name)}</span>
 									<span class="badge badge-outline badge-xs ml-auto">${escapeHtml(a.type)}</span>
-								</div>
+								</a>
 								<p class="mt-0.5 text-[10px] text-base-content/50">${escapeHtml(timeAgo(a.last_updated))}</p>
 							</li>
 						`).join("")}
@@ -148,8 +153,11 @@
 		});
 
 		listEl.addEventListener("mouseleave", () => {
-			panelTimer = setTimeout(() => panelEl.classList.add("hidden"), 120);
+			scheduleHidePanel();
 		});
+
+		panelEl.addEventListener("mouseenter", () => clearTimeout(panelTimer));
+		panelEl.addEventListener("mouseleave", scheduleHidePanel);
 
 		fetch("/api/artifactory/repos", { credentials: "same-origin" })
 			.then((res) => {
