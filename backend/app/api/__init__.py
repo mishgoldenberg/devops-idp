@@ -29,6 +29,11 @@ from . import (
     notifications,
     audit_logs,
     safe_mode,
+    suggestions,
+    user_prefs,
+    system_urls,
+    favorites,
+    activity,
 )
 
 
@@ -74,5 +79,23 @@ api_router.include_router(notifications.router, prefix="/notifications", tags=["
 # Admin-only: portal audit log read API + Safe Mode toggle.
 api_router.include_router(audit_logs.router, prefix="/audit-logs", tags=["audit-logs"])
 api_router.include_router(safe_mode.router, prefix="/safe-mode", tags=["safe-mode"])
+
+# Per-user preferences (/api/me/*): theme, display density, avatar, display name.
+api_router.include_router(user_prefs.router, prefix="/me", tags=["user-prefs"])
+
+# External console URLs consumed by every system page's "Open" button.
+api_router.include_router(system_urls.router, tags=["system-urls"])
+
+# User-submitted suggestions (POST from Settings page, GET/PATCH admin only).
+api_router.include_router(suggestions.router, prefix="/suggestions", tags=["suggestions"])
+
+# Per-user favorites (dashboard ⭐ Favorites section). Item-level bookmark
+# list; orthogonal to /api/pins (which is the widget-local sort store).
+api_router.include_router(favorites.router, prefix="/favorites", tags=["favorites"])
+
+# Per-user activity feed (dashboard Recent Activity widget). Read-only
+# from the client — writes happen server-side at the three tracked call
+# sites (ADO project created, ServiceNow ticket created, self-service).
+api_router.include_router(activity.router, prefix="/activity", tags=["activity"])
 
 

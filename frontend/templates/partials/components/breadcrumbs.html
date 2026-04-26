@@ -1,0 +1,66 @@
+{# Thin breadcrumbs strip rendered under the banner on every page. The
+   trail is static and driven off `current_page` (already set on every
+   route in backend/app/ui.py), which keeps this partial zero-JS and
+   doesn't require any new routing primitives. Hidden on the home page
+   because a single "Home" crumb is just noise.
+
+   Layout is kept intentionally narrow (py-2, text-xs) so it reads as a
+   navigation aid, not a second header competing with the banner. #}
+{% set _bc_labels = {
+	"home": "Home",
+	"azure-devops": "Azure DevOps",
+	"artifactory": "Artifactory",
+	"sonarqube": "SonarQube",
+	"servicenow": "ServiceNow",
+	"support": "Support",
+	"confluence": "Confluence",
+	"openshift": "OpenShift",
+	"internal-aws": "Internal AWS",
+	"grafana": "Grafana",
+	"automations": "Automations",
+	"my-requests": "My Requests",
+	"approvals": "Approvals",
+	"observability": "Observability",
+	"platform-managing": "Platform Managing",
+	"audit-logs": "Audit Logs",
+	"profile": "Profile",
+	"settings": "Settings"
+} %}
+{% set _bc_groups = {
+	"azure-devops": "Systems",
+	"artifactory": "Systems",
+	"sonarqube": "Systems",
+	"servicenow": "Systems",
+	"confluence": "Systems",
+	"openshift": "Systems",
+	"internal-aws": "Systems",
+	"grafana": "Systems",
+	"automations": "Platform",
+	"my-requests": "Platform",
+	"support": "Platform",
+	"approvals": "Admin",
+	"observability": "Admin",
+	"platform-managing": "Admin",
+	"audit-logs": "Admin"
+} %}
+{% set _page = current_page | default('') %}
+{% if _page and _page != 'home' %}
+<nav
+	aria-label="Breadcrumb"
+	class="px-8 py-2 border-b border-base-300 bg-base-100 text-xs"
+>
+	<ol class="flex items-center gap-1.5 flex-wrap text-base-content/60">
+		<li>
+			<a href="/ui/" class="hover:text-base-content transition-colors">Home</a>
+		</li>
+		{% if _bc_groups.get(_page) %}
+		<li aria-hidden="true" class="text-base-content/30">/</li>
+		<li class="text-base-content/60">{{ _bc_groups[_page] }}</li>
+		{% endif %}
+		<li aria-hidden="true" class="text-base-content/30">/</li>
+		<li class="text-base-content font-medium" aria-current="page">
+			{{ _bc_labels.get(_page, _page | replace('-', ' ') | title) }}
+		</li>
+	</ol>
+</nav>
+{% endif %}

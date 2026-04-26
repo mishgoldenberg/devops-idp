@@ -5,19 +5,20 @@
 			<p class="page-subtitle">Display name and sidebar avatar.</p>
 		</div>
 	</header>
-	<div class="page-content">
-		<div class="max-w-2xl section-card">
-			<div class="card-body gap-5">
-				{% if saved %}
-				<div class="alert alert-success alert-soft text-sm">
-					<span>Profile updated.</span>
-				</div>
-				{% endif %}
+	<div class="page-content space-y-6">
+		{% if saved %}
+		<div class="max-w-2xl alert alert-success alert-soft text-sm">
+			<span>Profile updated.</span>
+		</div>
+		{% endif %}
 
-				<!-- Avatar -->
-				<div class="flex items-center gap-4">
+		<!-- Profile picture -->
+		<section class="max-w-2xl section-card">
+			<div class="card-body p-5">
+				<h2 class="section-title mb-4">Profile picture</h2>
+				<div class="flex items-center gap-5">
 					<div
-						class="w-20 h-20 rounded-full overflow-hidden border border-base-300 bg-base-200 flex items-center justify-center"
+						class="w-24 h-24 rounded-full overflow-hidden border border-base-300 bg-base-200 flex items-center justify-center shrink-0"
 					>
 						<img
 							id="profile-avatar-preview"
@@ -27,7 +28,7 @@
 						/>
 						<svg
 							id="profile-avatar-placeholder"
-							class="w-10 h-10 text-base-content/40 {% if user.avatar_url %}hidden{% endif %}"
+							class="w-12 h-12 text-base-content/40 {% if user.avatar_url %}hidden{% endif %}"
 							viewBox="0 0 15 15"
 							fill="currentColor"
 							aria-hidden="true"
@@ -39,12 +40,11 @@
 							/>
 						</svg>
 					</div>
-					<div class="flex-1">
-						<p class="font-medium">Profile picture</p>
-						<p class="text-xs text-base-content/60 mb-2">
-							Shown in the sidebar. PNG or JPG, up to ~450 KB.
+					<div class="flex-1 min-w-0">
+						<p class="text-xs text-base-content/60 mb-3">
+							Shown in the sidebar. PNG, JPG, or WEBP — up to 8&nbsp;MB.
 						</p>
-						<div class="flex gap-2">
+						<div class="flex flex-wrap gap-2">
 							<label class="btn btn-sm btn-outline cursor-pointer">
 								<input
 									id="profile-avatar-file"
@@ -69,11 +69,16 @@
 						></p>
 					</div>
 				</div>
+			</div>
+		</section>
 
-				<!-- Display name + email -->
+		<!-- Display name + email -->
+		<section class="max-w-2xl section-card">
+			<div class="card-body p-5">
+				<h2 class="section-title mb-4">Account</h2>
 				<form action="/ui/profile" method="post" class="space-y-4">
 					<div>
-						<label class="label"><span class="label-text">Display name</span></label>
+						<label class="label pb-1"><span class="label-text text-xs">Display name</span></label>
 						<input
 							class="input input-bordered w-full"
 							name="display_name"
@@ -81,15 +86,27 @@
 						/>
 					</div>
 					<div>
-						<label class="label"><span class="label-text">Email (from SSO)</span></label>
-						<input class="input input-bordered w-full" value="{{ email }}" readonly />
+						<label class="label pb-1"><span class="label-text text-xs">Email (from SSO)</span></label>
+						<input class="input input-bordered w-full bg-base-200 cursor-not-allowed" value="{{ email }}" readonly />
+						{% set role_label = user.role or 'User' %}
+						{% if role_label == 'Admin' %}
+							{% set role_badge_class = 'badge-primary' %}
+						{% elif role_label == 'TeamLead' %}
+							{% set role_badge_class = 'badge-info' %}
+						{% else %}
+							{% set role_badge_class = 'badge-ghost' %}
+						{% endif %}
+						<div class="mt-2 flex items-center gap-2">
+							<span class="text-xs text-base-content/60">Role</span>
+							<span class="badge badge-sm {{ role_badge_class }}">{{ role_label }}</span>
+						</div>
 					</div>
-					<div class="flex justify-end">
+					<div class="flex justify-end pt-1">
 						<button class="btn btn-primary" type="submit">Save</button>
 					</div>
 				</form>
 			</div>
-		</div>
+		</section>
 	</div>
 </div>
 

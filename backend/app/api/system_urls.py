@@ -1,15 +1,19 @@
 """
 Exposes the external URLs for each third-party system the portal links out to.
 
-The portal header shows an "Open" button on each system page that deep-links
-into the real external console (Azure DevOps, ServiceNow, etc.). We want those
-URLs to be driven by configuration rather than hardcoded in templates so the
-same build can target different environments.
+The portal header shows a "Go to <System>" button on each system page that
+deep-links into the real external console (Azure DevOps, ServiceNow, etc.).
+We want those URLs to be driven by configuration rather than hardcoded in
+templates so the same build can target different environments.
 
 Resolution order for each system:
   1. Dedicated UI URL env var (e.g. ``AZURE_DEVOPS_URL``) — preferred.
   2. Existing API URL env var, with ``/rest`` or ``/_apis`` stripped — best-effort fallback.
-  3. ``None`` — the frontend hides the button when no URL is configured.
+  3. Baked-in default for the organisation (see ``_DEFAULT_URLS``). For Azure
+     DevOps we mirror the URL the "Quick Links" widget hardcodes, so the
+     header button and the dashboard quick link always point to the same
+     place even without env vars.
+  4. ``None`` — the frontend renders the button disabled when no URL resolves.
 
 The endpoint is authenticated (any logged-in user) because the URLs themselves
 are not secrets, but we don't want unauthenticated visitors probing the
@@ -27,6 +31,14 @@ from security import AuthUser, get_current_user
 
 
 router = APIRouter()
+
+
+# Baked-in fallbacks. Keep ``azure_devops`` in sync with the Quick Links widget
+# (``frontend/templates/partials/components/quick-links.html``) so both
+# entry-points deep-link to the same organisation.
+_DEFAULT_URLS: Dict[str, str] = {
+    "azure_devops": "https://dev.azure.com/DevCollection-Inheritance",
+}
 
 
 def _first_env(*names: str) -> Optional[str]:
@@ -51,6 +63,8 @@ def _resolve_system_urls() -> Dict[str, Optional[str]]:
     if not ado:
         api = _first_env("AZURE_DEVOPS_API_URL")
         ado = _strip_api_suffix(api) if api else None
+    if not ado:
+        ado = _DEFAULT_URLS.get("azure_devops")
 
     snow = _first_env("SERVICENOW_URL", "SERVICENOW_INSTANCE_URL")
     sonar = _first_env("SONARQUBE_URL")

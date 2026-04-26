@@ -442,9 +442,9 @@
 		</div>
 		{% endif %}
 	</nav>
-	<!-- Footer: profile avatar, in-app notifications bell, settings -->
+	<!-- Footer: profile, theme toggle, settings. Notifications bell lives in the top banner. -->
 	<div
-		class="py-4 px-4 border-t border-base-300 flex items-center justify-between gap-2"
+		class="py-4 px-4 border-t border-base-300 flex items-center justify-around"
 	>
 		<a href="/ui/profile" class="btn btn-ghost btn-circle btn-sm" title="Profile">
 			{% if user.avatar_url %}
@@ -469,65 +469,43 @@
 			{% endif %}
 		</a>
 
-		<!-- Notifications bell: dropdown opens upward so it stays on-screen -->
-		<div class="dropdown dropdown-top dropdown-end" data-notif-root>
-			<button
-				type="button"
-				tabindex="0"
-				class="btn btn-ghost btn-circle btn-sm"
-				aria-label="Notifications"
-				title="Notifications"
-				data-notif-toggle
+		<button
+			id="sidebar-theme-toggle"
+			type="button"
+			class="btn btn-ghost btn-circle btn-sm"
+			title="Toggle theme"
+			aria-label="Toggle theme"
+		>
+			<!-- Sun — shown in dark mode to invite switching to light -->
+			<svg
+				data-theme-icon="sun"
+				viewBox="0 0 24 24"
+				class="w-5 h-5 hidden"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="2"
+				stroke-linecap="round"
+				stroke-linejoin="round"
+				aria-hidden="true"
 			>
-				<div class="indicator">
-					<svg
-						viewBox="0 0 24 24"
-						class="w-5 h-5"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="2"
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						aria-hidden="true"
-					>
-						<path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
-						<path d="M13.73 21a2 2 0 01-3.46 0"></path>
-					</svg>
-					<span
-						class="indicator-item badge badge-error badge-xs hidden"
-						data-notif-count
-						>0</span
-					>
-				</div>
-			</button>
-			<div
-				tabindex="0"
-				class="dropdown-content z-[1] mb-3 w-80 max-w-[90vw] card card-compact bg-base-100 text-base-content shadow-xl border border-base-300"
+				<circle cx="12" cy="12" r="4" />
+				<path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+			</svg>
+			<!-- Moon — shown in light mode to invite switching to dark -->
+			<svg
+				data-theme-icon="moon"
+				viewBox="0 0 24 24"
+				class="w-5 h-5 hidden"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="2"
+				stroke-linecap="round"
+				stroke-linejoin="round"
+				aria-hidden="true"
 			>
-				<div class="card-body p-0">
-					<div
-						class="flex items-center justify-between px-4 py-3 border-b border-base-300"
-					>
-						<h3 class="font-semibold text-sm">Notifications</h3>
-						<button
-							type="button"
-							class="btn btn-ghost btn-xs"
-							data-notif-read-all
-						>
-							Mark all read
-						</button>
-					</div>
-					<ul
-						class="max-h-80 overflow-y-auto divide-y divide-base-200"
-						data-notif-list
-					>
-						<li class="p-4 text-xs text-base-content/50 text-center">
-							Loading…
-						</li>
-					</ul>
-				</div>
-			</div>
-		</div>
+				<path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" />
+			</svg>
+		</button>
 
 		<a href="/ui/settings" class="btn btn-ghost btn-circle btn-sm" title="Settings">
 			<svg
@@ -547,117 +525,64 @@
 	</div>
 </aside>
 <script>
-	// --- Theme initializer (moved from UI toggle to Settings page) ---------
-	// Runs on every page load to apply the persisted theme before first paint.
-	// The toggle UI now lives in Settings; this script only reads the saved
-	// value and optionally hydrates from the server-side preferred_theme that
-	// the UI route plumbs onto `user.preferred_theme`.
+	// --- Theme + display-density initializer --------------------------------
+	// Runs on every page load to apply the persisted theme and UI density
+	// before first paint. Both preferences hydrate from localStorage for a
+	// flash-free F5, with server-side values as the cross-device fallback.
+	// The sidebar theme toggle (bottom-left) and the Settings page both drive
+	// the same ``portal-theme`` / ``portal-density`` LS keys, so changes stay
+	// in sync across tabs and pages.
 	(function () {
-		const key = "portal-theme";
 		const root = document.documentElement;
-		const serverPreferred = {{ (user.preferred_theme or '')|tojson }};
-		let saved = localStorage.getItem(key);
-		if (!saved && serverPreferred) {
-			saved = serverPreferred;
-			try { localStorage.setItem(key, serverPreferred); } catch (_) {}
-		}
-		root.setAttribute("data-theme", saved || "night");
-	})();
+		const serverTheme = {{ (user.preferred_theme or '')|tojson }};
+		const serverDensity = {{ (user.preferred_density or '')|tojson }};
 
-	// --- Notifications bell (sidebar footer) -------------------------------
-	(function () {
-		const root = document.querySelector("[data-notif-root]");
-		if (!root) return;
-		const badge = root.querySelector("[data-notif-count]");
-		const list = root.querySelector("[data-notif-list]");
-		const markAllBtn = root.querySelector("[data-notif-read-all]");
-
-		function escapeHtml(s) {
-			return String(s ?? "").replace(/[&<>"']/g, (c) => ({
-				"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-			}[c]));
+		const themeKey = "portal-theme";
+		let theme = localStorage.getItem(themeKey);
+		if (!theme && serverTheme) {
+			theme = serverTheme;
+			try { localStorage.setItem(themeKey, serverTheme); } catch (_) {}
 		}
-		function fmtRelative(iso) {
-			if (!iso) return "";
+		theme = theme === "light" ? "light" : "night";
+		root.setAttribute("data-theme", theme);
+
+		const densityKey = "portal-density";
+		let density = localStorage.getItem(densityKey);
+		if (!density && serverDensity) {
+			density = serverDensity;
+			try { localStorage.setItem(densityKey, serverDensity); } catch (_) {}
+		}
+		if (density !== "compact") density = "comfortable";
+		root.setAttribute("data-density", density);
+
+		// Sidebar theme toggle (sun/moon button between Profile and Settings).
+		const toggleBtn = document.getElementById("sidebar-theme-toggle");
+		if (!toggleBtn) return;
+		const sunIcon = toggleBtn.querySelector('[data-theme-icon="sun"]');
+		const moonIcon = toggleBtn.querySelector('[data-theme-icon="moon"]');
+
+		function paintIcon() {
+			const dark = root.getAttribute("data-theme") !== "light";
+			sunIcon?.classList.toggle("hidden", !dark);
+			moonIcon?.classList.toggle("hidden", dark);
+		}
+		paintIcon();
+
+		toggleBtn.addEventListener("click", async () => {
+			const next = root.getAttribute("data-theme") === "light" ? "night" : "light";
+			root.setAttribute("data-theme", next);
+			try { localStorage.setItem(themeKey, next); } catch (_) {}
+			paintIcon();
 			try {
-				const d = new Date(iso);
-				const diff = (Date.now() - d.getTime()) / 1000;
-				if (diff < 60) return "just now";
-				if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-				if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-				return d.toLocaleDateString();
-			} catch (_) {
-				return "";
-			}
-		}
-
-		async function refresh() {
-			try {
-				const [countRes, listRes] = await Promise.all([
-					fetch("/api/notifications/unread-count", { credentials: "same-origin" }),
-					fetch("/api/notifications", { credentials: "same-origin" }),
-				]);
-				if (countRes.ok) {
-					const cj = await countRes.json();
-					const n = Number(cj?.data?.count || 0);
-					if (n > 0) {
-						badge.textContent = n > 99 ? "99+" : String(n);
-						badge.classList.remove("hidden");
-					} else {
-						badge.classList.add("hidden");
-					}
-				}
-				if (listRes.ok) {
-					const lj = await listRes.json();
-					const items = Array.isArray(lj?.data) ? lj.data : [];
-					if (!items.length) {
-						list.innerHTML = `<li class="p-6 text-xs text-base-content/50 text-center">
-							<div class="mb-1">No notifications yet.</div>
-							<div class="opacity-70">Approvals and system alerts will show up here.</div>
-						</li>`;
-					} else {
-						list.innerHTML = items.map((n) => {
-							const unread = !n.is_read;
-							return `
-								<li class="p-3 ${unread ? "bg-primary/5" : ""} hover:bg-base-200 cursor-pointer" data-notif-item data-id="${escapeHtml(n.id)}">
-									<div class="flex items-start gap-2">
-										<span class="mt-1 h-2 w-2 rounded-full ${unread ? "bg-primary" : "bg-transparent"}"></span>
-										<div class="flex-1 min-w-0">
-											<p class="text-xs leading-snug">${escapeHtml(n.message || "")}</p>
-											<p class="text-[10px] text-base-content/50 mt-1">${fmtRelative(n.created_at)}</p>
-										</div>
-									</div>
-								</li>`;
-						}).join("");
-						list.querySelectorAll("[data-notif-item]").forEach((el) => {
-							el.addEventListener("click", async () => {
-								const id = el.dataset.id;
-								if (!id) return;
-								await fetch(`/api/notifications/${encodeURIComponent(id)}/read`, {
-									method: "POST",
-									credentials: "same-origin",
-								}).catch(() => {});
-								refresh();
-							});
-						});
-					}
-				}
+				await fetch("/api/me/theme", {
+					method: "PUT",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ theme: next }),
+				});
 			} catch (_err) {
-				/* silent — keep last known state */
+				// Non-fatal: LS already reflects the new value; sync resumes next change.
 			}
-		}
-
-		markAllBtn?.addEventListener("click", async (e) => {
-			e.stopPropagation();
-			await fetch("/api/notifications/read-all", {
-				method: "POST",
-				credentials: "same-origin",
-			}).catch(() => {});
-			refresh();
 		});
-
-		refresh();
-		// 45s matches the existing cadence from the top-bar bell we replaced.
-		setInterval(refresh, 45_000);
 	})();
 </script>

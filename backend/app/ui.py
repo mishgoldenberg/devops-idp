@@ -52,6 +52,7 @@ HOME_WIDGET_KEYS = {
     "sonar_quality_gate": "sonarqube-quality-component",
     "artifactory_storage": "artifactory-storage-component",
     "service_health": "service-health-component",
+    "recent_activity": "recent-activity-component",
 }
 
 
@@ -70,21 +71,23 @@ def _get_ui_user(token: str) -> Dict[str, Any]:
     """Resolve the authenticated user's display info for the UI layer.
 
     Returns display_name (with DB override if present) plus the per-user
-    preferences the sidebar + base template rely on (avatar + theme). The DB
-    lookup is best-effort so that a missing ``avatar_url``/``preferred_theme``
-    column never breaks page rendering.
+    preferences the sidebar + base template rely on (avatar + theme + display
+    density) and the effective role from the JWT. The DB lookup is best-effort
+    so that missing preference columns never break page rendering.
     """
     payload = decode_access_token(token)
     username = str(payload.get("username", "User"))
     display_name = _format_display_name(username)
     avatar_url: Optional[str] = None
     preferred_theme: Optional[str] = None
+    preferred_density: Optional[str] = None
 
     user_id = payload.get("id")
     if user_id:
         try:
             user_row = query_one(
-                "SELECT full_name, avatar_url, preferred_theme FROM users WHERE id = %s",
+                "SELECT full_name, avatar_url, preferred_theme, preferred_density "
+                "FROM users WHERE id = %s",
                 [user_id],
             )
             if user_row:
@@ -94,7 +97,11 @@ def _get_ui_user(token: str) -> Dict[str, Any]:
                     avatar_url = str(user_row["avatar_url"])
                 if user_row.get("preferred_theme"):
                     preferred_theme = str(user_row["preferred_theme"])
+                if user_row.get("preferred_density"):
+                    preferred_density = str(user_row["preferred_density"])
         except Exception:
+            # Column may not yet exist on older DBs — the startup migration in
+            # ``ensure_user_preference_columns`` adds it, but we stay resilient.
             pass
 
     return {
@@ -102,7 +109,9 @@ def _get_ui_user(token: str) -> Dict[str, Any]:
         "display_name": display_name,
         "avatar_url": avatar_url,
         "preferred_theme": preferred_theme,
+        "preferred_density": preferred_density,
         "email": payload.get("email", ""),
+        "role": payload.get("role") or "User",
     }
 
 
@@ -414,8 +423,14 @@ def ui_my_requests_page(request: Request):
         return RedirectResponse(url="/ui/auth", status_code=303)
     try:
         user = _get_ui_user(token)
+        payload = decode_access_token(token)
     except HTTPException:
         return RedirectResponse(url="/ui/auth", status_code=303)
+
+    # Admin capability flag — powers the force-fail / delete buttons in the
+    # detail modal for stuck requests. Uses the same live DB check as the
+    # Approvals page so we don't drift from the backend authorization.
+    is_admin = has_effective_admin_access_live(AuthUser(payload))
 
     templates = _get_templates(request)
     return templates.TemplateResponse(
@@ -425,6 +440,7 @@ def ui_my_requests_page(request: Request):
             "user": user,
             "current_page": "my-requests",
             "now": datetime.utcnow().isoformat() + "Z",
+            "is_admin": is_admin,
         },
     )
 
@@ -1077,6 +1093,23 @@ def ui_pull_requests_component(request: Request):
     return templates.TemplateResponse(
         "partials/components/pull-requests.html",
         {"request": request, "prs": widget_state["prs"], "error": widget_state["error"]},
+    )
+
+
+@ui_router.get("/ui/components/recent-activity", response_class=HTMLResponse)
+def ui_recent_activity_component(request: Request):
+    """
+    Render the Recent Activity dashboard widget.
+
+    The partial self-fetches from ``/api/activity`` on mount, so this
+    handler just returns the shell — no server-side DB hit — keeping
+    parity with how servicenow-tickets.html / azure-devops-tasks.html
+    load their data after the skeleton swap.
+    """
+    templates = _get_templates(request)
+    return templates.TemplateResponse(
+        "partials/components/recent-activity.html",
+        {"request": request},
     )
 
 

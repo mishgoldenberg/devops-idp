@@ -2,47 +2,79 @@
 	<header class="page-header">
 		<div>
 			<h1 class="page-title">Settings</h1>
-			<p class="page-subtitle">Portal preferences, suggestions, and account session</p>
+			<p class="page-subtitle">Portal preferences, suggestions, and account session.</p>
 		</div>
 	</header>
-	<div class="flex-1 min-h-0 overflow-y-auto p-6 space-y-6">
+	<!--
+		Layout mirrors the Profile page: a left-aligned stack of
+		`max-w-2xl section-card` blocks with padded `card-body p-5` and
+		the section title inline (no bordered header strip, no
+		divide-y rows). Keeps the shared spacing/typography system
+		while making the two pages feel like siblings.
+	-->
+	<div class="page-content space-y-6">
+
 		<!-- Appearance -->
 		<section class="max-w-2xl section-card">
-			<div class="card-body gap-4">
-				<h2 class="card-title text-lg">Appearance</h2>
-				<p class="text-sm text-base-content/60">
-					Choose how the portal looks. The setting is saved to your account and
-					applied on every device after you sign in.
-				</p>
-				<div class="flex items-center justify-between py-2">
-					<div>
-						<p class="font-medium">Dark mode</p>
-						<p class="text-xs text-base-content/50" data-theme-caption>
-							Using the saved preference on this device.
-						</p>
+			<div class="card-body p-5">
+				<h2 class="section-title mb-4">Appearance</h2>
+				<div class="space-y-4">
+					<div class="flex items-center justify-between gap-4">
+						<div class="min-w-0">
+							<p class="font-medium">Dark mode</p>
+							<p class="text-xs text-base-content/60 mt-0.5">
+								Saved to your account and applied on every device.
+							</p>
+						</div>
+						<input
+							type="checkbox"
+							class="toggle toggle-primary shrink-0"
+							id="settings-theme-toggle"
+							aria-label="Toggle dark mode"
+						/>
 					</div>
-					<input
-						type="checkbox"
-						class="toggle toggle-primary"
-						id="settings-theme-toggle"
-						aria-label="Toggle dark mode"
-					/>
+					<div class="flex items-center justify-between gap-4">
+						<div class="min-w-0">
+							<p class="font-medium">Display mode</p>
+							<p class="text-xs text-base-content/60 mt-0.5">
+								Comfortable gives widgets more breathing room. Compact
+								fits more on screen.
+							</p>
+						</div>
+						<div
+							class="join shrink-0"
+							role="radiogroup"
+							aria-label="Display mode"
+							id="settings-density-group"
+						>
+							<button
+								type="button"
+								class="join-item btn btn-sm"
+								data-density-option="comfortable"
+							>
+								Comfortable
+							</button>
+							<button
+								type="button"
+								class="join-item btn btn-sm"
+								data-density-option="compact"
+							>
+								Compact
+							</button>
+						</div>
+					</div>
 				</div>
 			</div>
 		</section>
 
 		<!-- Suggestions -->
 		<section class="max-w-2xl section-card">
-			<div class="card-body gap-4">
-				<h2 class="card-title text-lg">Send a suggestion</h2>
-				<p class="text-sm text-base-content/60">
-					Spotted something we should add or fix? Drop a quick note below and the
-					platform team will see it.
-				</p>
-				<form id="suggestion-form" class="space-y-3">
+			<div class="card-body p-5">
+				<h2 class="section-title mb-4">Suggestions</h2>
+				<form id="suggestion-form" class="space-y-4">
 					<div>
-						<label class="label" for="suggestion-title">
-							<span class="label-text">Title</span>
+						<label class="label pb-1" for="suggestion-title">
+							<span class="label-text text-xs">Title</span>
 						</label>
 						<input
 							id="suggestion-title"
@@ -54,8 +86,8 @@
 						/>
 					</div>
 					<div>
-						<label class="label" for="suggestion-description">
-							<span class="label-text">Details (optional)</span>
+						<label class="label pb-1" for="suggestion-description">
+							<span class="label-text text-xs">Description</span>
 						</label>
 						<textarea
 							id="suggestion-description"
@@ -70,16 +102,24 @@
 						class="alert alert-success alert-soft text-sm hidden"
 						data-suggestion-success
 					>
-						<span>Thanks! Your suggestion was sent to the platform team.</span>
+						<span>
+							Thanks! Your suggestion was sent to the platform team.
+						</span>
 					</div>
 					<div
 						class="alert alert-error alert-soft text-sm hidden"
 						data-suggestion-error
 					>
-						<span data-suggestion-error-message>Could not submit suggestion.</span>
+						<span data-suggestion-error-message>
+							Could not submit suggestion.
+						</span>
 					</div>
-					<div class="flex justify-end">
-						<button class="btn btn-primary" type="submit" data-suggestion-submit>
+					<div class="flex justify-end pt-1">
+						<button
+							class="btn btn-primary"
+							type="submit"
+							data-suggestion-submit
+						>
 							Send suggestion
 						</button>
 					</div>
@@ -89,27 +129,29 @@
 
 		<!-- Session -->
 		<section class="max-w-2xl section-card">
-			<div class="card-body gap-4">
-				<h2 class="card-title text-lg">Session</h2>
-				<p class="text-sm text-base-content/60">
-					You are signed in as
-					<span class="font-medium text-base-content">{{ user.display_name }}</span>
-					{% if user.username %}
-					<span class="text-base-content/50">({{ user.username }})</span>
-					{% endif %}
-				</p>
-				<p class="text-sm text-base-content/60">
-					<strong>Sign out</strong> clears your session and sends you to the sign-in page. To
-					<strong>sign in</strong> again, use the same options shown there (e.g.
-					<em>Sign in with SSO</em>).
-				</p>
-				<div class="pt-2">
-					<form method="post" action="/ui/auth/logout">
-						<button type="submit" class="btn btn-outline btn-error">Sign out</button>
+			<div class="card-body p-5">
+				<h2 class="section-title mb-4">Session</h2>
+				<div class="flex items-center justify-between gap-4">
+					<div class="min-w-0">
+						<p class="font-medium truncate">{{ user.display_name }}</p>
+						{% if user.username %}
+						<p class="text-xs text-base-content/60 mt-0.5 truncate">
+							{{ user.username }}
+						</p>
+						{% endif %}
+					</div>
+					<form method="post" action="/ui/auth/logout" class="shrink-0">
+						<button
+							type="submit"
+							class="btn btn-outline btn-error btn-sm"
+						>
+							Sign out
+						</button>
 					</form>
 				</div>
 			</div>
 		</section>
+
 	</div>
 </div>
 
@@ -144,7 +186,58 @@
 		});
 	})();
 
+	// --- Display density selector ------------------------------------------
+	// Applies the density class to <html> immediately for flash-free feedback,
+	// mirrors the choice into localStorage so other tabs agree on next nav,
+	// and persists to the server for cross-device sync.
+	(function () {
+		const group = document.getElementById("settings-density-group");
+		if (!group) return;
+		const key = "portal-density";
+		const root = document.documentElement;
+
+		function paint(active) {
+			group.querySelectorAll("[data-density-option]").forEach((btn) => {
+				const isActive = btn.dataset.densityOption === active;
+				btn.classList.toggle("btn-primary", isActive);
+				btn.setAttribute("aria-pressed", isActive ? "true" : "false");
+			});
+		}
+
+		const serverDensity = {{ (user.preferred_density or '')|tojson }};
+		let current = localStorage.getItem(key) || serverDensity || "comfortable";
+		if (current !== "compact") current = "comfortable";
+		root.setAttribute("data-density", current);
+		paint(current);
+
+		group.addEventListener("click", async (e) => {
+			const btn = e.target.closest("[data-density-option]");
+			if (!btn) return;
+			const next = btn.dataset.densityOption === "compact" ? "compact" : "comfortable";
+			if (next === current) return;
+			current = next;
+			root.setAttribute("data-density", current);
+			try { localStorage.setItem(key, current); } catch (_) {}
+			paint(current);
+			try {
+				await fetch("/api/me/density", {
+					method: "PUT",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ density: current }),
+				});
+			} catch (_err) {
+				// Non-fatal — LS already reflects the change; sync resumes next time.
+			}
+		});
+	})();
+
 	// --- Suggestions form --------------------------------------------------
+	// Live validation rules: title must be 3+ chars, description must not
+	// exceed its maxlength. Errors render under the specific field so the
+	// user can fix inline without scanning a summary panel. The existing
+	// success/error alert blocks inside the form are preserved so nothing
+	// that used to render still does.
 	(function () {
 		const form = document.getElementById("suggestion-form");
 		if (!form) return;
@@ -152,15 +245,67 @@
 		const errorEl = form.querySelector("[data-suggestion-error]");
 		const errorMsg = form.querySelector("[data-suggestion-error-message]");
 		const submitBtn = form.querySelector("[data-suggestion-submit]");
+		const titleInput = form.querySelector("#suggestion-title");
+		const descInput = form.querySelector("#suggestion-description");
+
+		function ensureErrorEl(input, id) {
+			let el = document.getElementById(id);
+			if (el) return el;
+			el = document.createElement("p");
+			el.id = id;
+			el.className = "text-xs text-error mt-1 hidden";
+			input.parentElement.appendChild(el);
+			return el;
+		}
+		const titleErr = ensureErrorEl(titleInput, "suggestion-title-err");
+		const descErr = ensureErrorEl(descInput, "suggestion-description-err");
+
+		function setFieldError(input, errEl, msg) {
+			if (msg) {
+				errEl.textContent = msg;
+				errEl.classList.remove("hidden");
+				input.classList.add("input-error", "textarea-error");
+			} else {
+				errEl.textContent = "";
+				errEl.classList.add("hidden");
+				input.classList.remove("input-error", "textarea-error");
+			}
+		}
+		function validateTitle(v) {
+			const t = String(v || "").trim();
+			if (!t) return "Title is required.";
+			if (t.length < 3) return "Title must be at least 3 characters.";
+			if (t.length > 255) return "Title must be 255 characters or less.";
+			return "";
+		}
+		function validateDesc(v) {
+			const t = String(v || "");
+			if (t.length > 5000) return "Description must be 5000 characters or less.";
+			return "";
+		}
+
+		titleInput?.addEventListener("input", () =>
+			setFieldError(titleInput, titleErr, validateTitle(titleInput.value))
+		);
+		descInput?.addEventListener("input", () =>
+			setFieldError(descInput, descErr, validateDesc(descInput.value))
+		);
 
 		form.addEventListener("submit", async (e) => {
 			e.preventDefault();
 			successEl?.classList.add("hidden");
 			errorEl?.classList.add("hidden");
 
-			const title = form.querySelector("#suggestion-title").value.trim();
-			const description = form.querySelector("#suggestion-description").value.trim();
-			if (!title) return;
+			const title = titleInput.value.trim();
+			const description = descInput.value.trim();
+			const titleProblem = validateTitle(title);
+			const descProblem = validateDesc(description);
+			setFieldError(titleInput, titleErr, titleProblem);
+			setFieldError(descInput, descErr, descProblem);
+			if (titleProblem || descProblem) {
+				(titleProblem ? titleInput : descInput)?.focus();
+				return;
+			}
 
 			submitBtn.disabled = true;
 			submitBtn.classList.add("btn-disabled");
@@ -175,13 +320,27 @@
 					const msg = await res.text();
 					if (errorMsg) errorMsg.textContent = `Could not submit: ${msg || res.status}`;
 					errorEl?.classList.remove("hidden");
+					window.portalToast?.({
+						kind: "error",
+						message: "Could not submit suggestion.",
+					});
 					return;
 				}
 				form.reset();
+				setFieldError(titleInput, titleErr, "");
+				setFieldError(descInput, descErr, "");
 				successEl?.classList.remove("hidden");
+				window.portalToast?.({
+					kind: "success",
+					message: "Thanks! Your suggestion was sent.",
+				});
 			} catch (err) {
 				if (errorMsg) errorMsg.textContent = "Network error while submitting.";
 				errorEl?.classList.remove("hidden");
+				window.portalToast?.({
+					kind: "error",
+					message: "Network error while submitting.",
+				});
 			} finally {
 				submitBtn.disabled = false;
 				submitBtn.classList.remove("btn-disabled");

@@ -35,6 +35,7 @@ router = APIRouter()
 # for a sidebar avatar and small enough to keep the `users` row readable.
 _AVATAR_MAX_CHARS = 600_000
 _ALLOWED_THEMES = {"light", "night"}
+_ALLOWED_DENSITIES = {"comfortable", "compact"}
 
 
 def _caller_id(user: AuthUser) -> str:
@@ -56,7 +57,7 @@ def get_me(current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]
         row = query_one(
             """
             SELECT id::text AS id, username, email, full_name,
-                   avatar_url, preferred_theme
+                   avatar_url, preferred_theme, preferred_density
             FROM users
             WHERE id = %s
             """,
@@ -75,8 +76,10 @@ def get_me(current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]
             "display_name": row.get("full_name")
                 or current_user.get("display_name")
                 or current_user.get("username"),
+            "role": current_user.get("role") or "User",
             "avatar_url": row.get("avatar_url"),
             "preferred_theme": row.get("preferred_theme"),
+            "preferred_density": row.get("preferred_density"),
         },
     }
 
@@ -106,6 +109,33 @@ def set_theme(
         log.debug("set_theme failed: %s", exc)
         raise HTTPException(status_code=500, detail="Failed to save theme")
     return {"success": True, "data": {"preferred_theme": theme}}
+
+
+class DensityBody(BaseModel):
+    density: str = Field(..., description="UI density: 'comfortable' or 'compact'")
+
+
+@router.put("/density")
+def set_density(
+    body: DensityBody,
+    current_user: AuthUser = Depends(get_current_user),
+) -> Dict[str, Any]:
+    density = (body.density or "").strip().lower()
+    if density not in _ALLOWED_DENSITIES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"density must be one of {sorted(_ALLOWED_DENSITIES)}",
+        )
+    user_id = _caller_id(current_user)
+    try:
+        execute(
+            "UPDATE users SET preferred_density = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
+            [density, user_id],
+        )
+    except Exception as exc:
+        log.debug("set_density failed: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to save density")
+    return {"success": True, "data": {"preferred_density": density}}
 
 
 class AvatarBody(BaseModel):

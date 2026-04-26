@@ -30,6 +30,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
+import activity
 import db
 import cache
 from security import AuthUser, get_current_user
@@ -537,6 +538,16 @@ def create_ticket(
                 )
             except Exception:
                 pass
+            activity.log_activity(
+                user_email=user_email,
+                action_type=activity.ACTION_CREATE_TICKET,
+                item_name=title_clean or simulated.get("number") or "Ticket",
+                metadata={
+                    "sys_id": simulated.get("sys_id"),
+                    "number": simulated.get("number"),
+                    "safe_mode": True,
+                },
+            )
             return {"success": True, "data": simulated, "timestamp": _now_iso()}
     except Exception:
         pass
@@ -601,6 +612,16 @@ def create_ticket(
             )
         except Exception:
             pass
+        activity.log_activity(
+            user_email=user_email,
+            action_type=activity.ACTION_CREATE_TICKET,
+            item_name=title_clean or ticket_number or "Ticket",
+            metadata={
+                "sys_id": new_sys_id,
+                "number": ticket_number,
+                "mock": True,
+            },
+        )
         return {"success": True, "data": new_ticket, "timestamp": _now_iso()}
 
     # ServiceNow derives 'priority' from impact × urgency via a lookup matrix —
@@ -691,6 +712,16 @@ def create_ticket(
         )
     except Exception:
         pass
+
+    activity.log_activity(
+        user_email=user_email,
+        action_type=activity.ACTION_CREATE_TICKET,
+        item_name=title_clean or str(ticket.get("number") or "") or "Ticket",
+        metadata={
+            "sys_id": ticket.get("sys_id"),
+            "number": ticket.get("number"),
+        },
+    )
 
     return {"success": True, "data": ticket, "timestamp": _now_iso()}
 

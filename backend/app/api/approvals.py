@@ -29,6 +29,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
+import activity
 import audit
 import safe_mode
 from db import execute, execute_returning, query_all, query_one
@@ -138,6 +139,18 @@ def create_request(
             "request_id": str(row["id"]),
             "request_type": body.request_type,
             "request_title": body.request_title,
+        },
+    )
+    # User-visible activity entry (dashboard Recent Activity widget).
+    # Separate from the admin-facing audit event above — this one is
+    # formatted for the requester to see "Used self-service: …" later.
+    activity.log_activity(
+        user_email=email,
+        action_type=activity.ACTION_SELF_SERVICE,
+        item_name=body.request_title or body.request_type,
+        metadata={
+            "request_id": str(row["id"]),
+            "request_type": body.request_type,
         },
     )
 
@@ -356,6 +369,134 @@ def reject_request(
     return {"success": True, "message": "Request rejected", "timestamp": _now_iso()}
 
 
+# ─── Admin recovery: force-fail / delete stuck requests ────────────────
+#
+# The happy path always ends in COMPLETED / FAILED / REJECTED. In practice
+# requests can get stuck in APPROVED or IN_PROGRESS when the execution
+# thread crashed before finishing (pod restart, DB connection drop, etc.).
+# These two endpoints give admins a manual escape hatch so the My Requests
+# page doesn't accumulate perpetually "In Progress" cards.
+
+class ForceFailBody(BaseModel):
+    reason: Optional[str] = None
+
+
+# Statuses an admin is allowed to manually flip to FAILED. PENDING is
+# included so a very old, forgotten request can be force-closed without
+# first going through APPROVE. Terminal statuses are intentionally excluded
+# — flipping a COMPLETED back to FAILED would rewrite history.
+_FORCE_FAILABLE_STATUSES = ("PENDING", "APPROVED", "IN_PROGRESS")
+
+
+@router.post("/requests/{request_id}/force-fail")
+def force_fail_request(
+    request_id: str,
+    body: ForceFailBody,
+    current_user: AuthUser = Depends(get_current_user),
+):
+    """Admin-only: mark a stuck request as FAILED with a manual reason."""
+    if not _can_approve_any(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="Admin access required to force-fail requests.",
+        )
+
+    request_row = query_one("SELECT * FROM approval_requests WHERE id = %s", [request_id])
+    if not request_row:
+        raise HTTPException(status_code=404, detail="Request not found")
+
+    current_status = str(request_row.get("status") or "").upper()
+    if current_status not in _FORCE_FAILABLE_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot force-fail a request in status '{current_status}'.",
+        )
+
+    reason = (body.reason or "").strip() or "Manually failed by administrator."
+    result_data = {"error": reason, "force_failed_by": str(current_user.get("email") or "")}
+
+    updated = execute_returning(
+        """
+        UPDATE approval_requests
+           SET status = 'FAILED',
+               execution_result = %s,
+               executed_at = CURRENT_TIMESTAMP
+         WHERE id = %s
+           AND status = ANY(%s)
+        RETURNING *
+        """,
+        [result_data, request_id, list(_FORCE_FAILABLE_STATUSES)],
+    )
+    if not updated:
+        # Someone else (or the executor thread) beat us to a terminal state.
+        raise HTTPException(status_code=409, detail="Request was already processed")
+
+    _log_audit(current_user["id"], "FORCE_FAIL_REQUEST", "approval_request", request_id)
+    audit.log(
+        audit.Action.TERRAFORM_FAILED,
+        user_email=str(current_user.get("email") or ""),
+        metadata={
+            "request_id": str(request_id),
+            "request_type": request_row.get("request_type"),
+            "error": reason[:500],
+            "manual": True,
+        },
+    )
+
+    requester_email = _requester_email(request_row)
+    if requester_email:
+        create_notification(
+            user_email=requester_email,
+            message=(
+                f"Your request '{request_row.get('request_title')}' was manually "
+                f"marked as failed by an administrator. Reason: {reason}"
+            ),
+            notif_type="REQUEST_FAILED",
+            related_id=str(request_id),
+            link=_notification_link(request_row),
+            group_key=f"request:{request_id}",
+        )
+
+    return {"success": True, "message": "Request marked as failed", "timestamp": _now_iso()}
+
+
+@router.delete("/requests/{request_id}")
+def delete_request(
+    request_id: str,
+    current_user: AuthUser = Depends(get_current_user),
+):
+    """Admin-only: hard-delete a request row (used to clean stuck/abandoned requests)."""
+    if not _can_approve_any(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="Admin access required to delete requests.",
+        )
+
+    request_row = query_one(
+        "SELECT id, request_type, request_title, status FROM approval_requests WHERE id = %s",
+        [request_id],
+    )
+    if not request_row:
+        raise HTTPException(status_code=404, detail="Request not found")
+
+    execute("DELETE FROM approval_requests WHERE id = %s", [request_id])
+
+    _log_audit(current_user["id"], "DELETE_REQUEST", "approval_request", request_id)
+    # Action label is free-form (see audit.Action docstring); we use a
+    # namespaced string so this event can be distinguished from creates.
+    audit.log(
+        "self_service.request_deleted",
+        user_email=str(current_user.get("email") or ""),
+        metadata={
+            "request_id": str(request_id),
+            "request_type": request_row.get("request_type"),
+            "previous_status": request_row.get("status"),
+        },
+    )
+
+    return {"success": True, "message": "Request deleted", "timestamp": _now_iso()}
+
+
 # ─── Execution engine ───────────────────────────────────────────────────
 
 def _run_execution_safely(request_id: str) -> None:
@@ -550,6 +691,27 @@ def _finish_completed(request_id: str, result_data: Dict[str, Any]) -> None:
             "request_type": (row or {}).get("request_type"),
         },
     )
+    # "Created project: X" activity entry — only for ADO project creation,
+    # which is the one self-service flow that produces a real external
+    # artefact worth surfacing in the user's activity feed. Other request
+    # types already logged a `self_service` entry at submission time.
+    request_type = str((row or {}).get("request_type") or "").upper()
+    if email and request_type == "ADO_PROJECT_CREATE":
+        project_name = ""
+        payload = (row or {}).get("request_payload") or {}
+        if isinstance(payload, dict):
+            project_name = str(payload.get("project_name") or "").strip()
+        if not project_name:
+            project_name = str((row or {}).get("request_title") or "").strip()
+        activity.log_activity(
+            user_email=email,
+            action_type=activity.ACTION_CREATE_PROJECT,
+            item_name=project_name or "Azure DevOps project",
+            metadata={
+                "request_id": str(request_id),
+                "project_url": (result_data or {}).get("project_url"),
+            },
+        )
     if email and row:
         create_notification(
             user_email=email,

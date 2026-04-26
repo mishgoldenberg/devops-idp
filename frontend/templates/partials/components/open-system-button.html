@@ -1,23 +1,45 @@
 {#
-	Reusable "Open external system" button.
+	"Go to <System>" header button.
 
 	Usage:
 		{% with system_key = 'azure_devops' %}
 			{% include "partials/components/open-system-button.html" %}
 		{% endwith %}
 
-	Renders nothing if the URL for the given key is not configured — admins can
-	drop a new env var in without editing templates.
+	Behavior (per spec — scoped to Azure DevOps for now):
+	  * Azure DevOps: renders a primary button that opens the configured org
+	    URL in a new tab. If the URL isn't configured the button stays visible
+	    but disabled, so the header layout never shifts between deployments.
+	  * Every other system: renders a disabled placeholder button with the
+	    same dimensions (primary + btn-sm) so the header doesn't reflow if an
+	    admin enables it later via env var.
+
+	Hiding the button entirely was considered but would cause layout shifts
+	when toggling densities/themes, which the acceptance criteria explicitly
+	forbid.
 #}
 {% set _urls = request.state.portal_system_urls or {} %}
 {% set _url = _urls.get(system_key) %}
-{% if _url %}
+{% set _names = {
+	'azure_devops': 'Azure DevOps',
+	'servicenow': 'ServiceNow',
+	'sonarqube': 'SonarQube',
+	'artifactory': 'Artifactory',
+	'confluence': 'Confluence',
+	'openshift': 'OpenShift',
+	'grafana': 'Grafana',
+	'internal_aws': 'Internal AWS',
+} %}
+{% set _system_name = _names.get(system_key, 'System') %}
+{% set _is_live = system_key == 'azure_devops' and _url %}
+
+{% if _is_live %}
 <a
 	href="{{ _url }}"
 	target="_blank"
 	rel="noopener noreferrer"
 	class="btn btn-primary btn-sm"
-	title="Open in a new tab"
+	title="Open {{ _system_name }} in a new tab"
 >
 	<svg
 		viewBox="0 0 24 24"
@@ -33,6 +55,30 @@
 		<polyline points="15 3 21 3 21 9"></polyline>
 		<line x1="10" y1="14" x2="21" y2="3"></line>
 	</svg>
-	Open
+	Go to {{ _system_name }}
 </a>
+{% else %}
+<button
+	type="button"
+	class="btn btn-primary btn-sm"
+	disabled
+	title="Coming soon"
+	aria-disabled="true"
+>
+	<svg
+		viewBox="0 0 24 24"
+		class="w-4 h-4"
+		fill="none"
+		stroke="currentColor"
+		stroke-width="2"
+		stroke-linecap="round"
+		stroke-linejoin="round"
+		aria-hidden="true"
+	>
+		<path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"></path>
+		<polyline points="15 3 21 3 21 9"></polyline>
+		<line x1="10" y1="14" x2="21" y2="3"></line>
+	</svg>
+	Go to {{ _system_name }}
+</button>
 {% endif %}

@@ -27,14 +27,37 @@
 	</div>
 </div>
 
-<dialog id="my-requests-modal" class="modal">
+<dialog id="my-requests-modal" class="modal" data-is-admin="{% if is_admin %}1{% else %}0{% endif %}">
 	<div class="modal-box max-w-2xl">
 		<form method="dialog" class="absolute right-2 top-2">
 			<button class="btn btn-sm btn-circle btn-ghost" aria-label="Close">&#10005;</button>
 		</form>
 		<h3 class="font-bold text-lg" data-my-detail-title>Request</h3>
 		<div class="mt-4 space-y-4" data-my-detail-body></div>
-		<div class="modal-action">
+		<!--
+			Admin-only recovery actions for stuck requests. Hidden by default
+			and only surfaced when (1) the viewer is admin and (2) the active
+			request is in a non-terminal state (PENDING / APPROVED / IN_PROGRESS).
+			Keeping these in the detail modal — not on each card — preserves
+			the existing My Requests layout and avoids accidental clicks.
+		-->
+		<div class="modal-action justify-between flex-wrap gap-2">
+			<div class="flex items-center gap-2" data-my-admin-actions hidden>
+				<button
+					type="button"
+					class="btn btn-outline btn-warning btn-sm"
+					data-my-force-fail
+				>
+					Mark as Failed
+				</button>
+				<button
+					type="button"
+					class="btn btn-outline btn-error btn-sm"
+					data-my-delete
+				>
+					Delete request
+				</button>
+			</div>
 			<form method="dialog"><button class="btn">Close</button></form>
 		</div>
 	</div>
@@ -52,6 +75,14 @@
 		const modalTitle = modal?.querySelector("[data-my-detail-title]");
 		const modalBody = modal?.querySelector("[data-my-detail-body]");
 		const refreshBtn = document.getElementById("my-requests-refresh");
+		const adminActionsEl = modal?.querySelector("[data-my-admin-actions]");
+		const forceFailBtn = modal?.querySelector("[data-my-force-fail]");
+		const deleteBtn = modal?.querySelector("[data-my-delete]");
+		const isAdmin = modal?.dataset.isAdmin === "1";
+		// Non-terminal statuses we allow admins to recover from. Kept in
+		// sync with _FORCE_FAILABLE_STATUSES in backend/app/api/approvals.py.
+		const RECOVERABLE = new Set(["PENDING", "APPROVED", "IN_PROGRESS"]);
+		let activeRequestId = null;
 
 		const STATUS_BADGE = {
 			PENDING: "badge-warning",
@@ -135,6 +166,94 @@
 			}
 		}
 
+		// Build a four-step vertical timeline (Submitted → Approved →
+		// Running → Completed) driven entirely off fields we already have
+		// on the approval_requests row — no new API. Steps ahead of the
+		// current status render as pending; a request that ended in
+		// REJECTED/FAILED terminates on that step with an error tone.
+		function renderTimeline(r) {
+			const status = String(r.status || "").toUpperCase();
+			const okTerminal = status === "COMPLETED" || status === "EXECUTED";
+			const failed = status === "FAILED";
+			const rejected = status === "REJECTED";
+
+			// Each step: { label, doneAt, state }
+			// state ∈ "done" | "current" | "pending" | "skipped" | "failed"
+			const submitted = {
+				label: "Submitted",
+				at: r.created_at,
+				state: "done",
+			};
+			let approved;
+			if (rejected) {
+				approved = {
+					label: "Rejected",
+					at: r.approved_at,
+					state: "failed",
+				};
+			} else if (status === "PENDING") {
+				approved = { label: "Awaiting approval", at: null, state: "current" };
+			} else {
+				approved = { label: "Approved", at: r.approved_at, state: "done" };
+			}
+			let running;
+			if (rejected) {
+				running = { label: "Execution", at: null, state: "skipped" };
+			} else if (status === "PENDING") {
+				running = { label: "Execution", at: null, state: "pending" };
+			} else if (status === "APPROVED" || status === "IN_PROGRESS") {
+				running = { label: "Running", at: null, state: "current" };
+			} else {
+				running = { label: "Running", at: null, state: "done" };
+			}
+			let finished;
+			if (rejected) {
+				finished = { label: "Closed", at: r.approved_at, state: "failed" };
+			} else if (failed) {
+				finished = { label: "Failed", at: r.executed_at, state: "failed" };
+			} else if (okTerminal) {
+				finished = { label: "Completed", at: r.executed_at, state: "done" };
+			} else {
+				finished = { label: "Completed", at: null, state: "pending" };
+			}
+
+			const steps = [submitted, approved, running, finished];
+			const dotClass = (s) => {
+				if (s === "done") return "bg-success border-success";
+				if (s === "current") return "bg-primary border-primary animate-pulse";
+				if (s === "failed") return "bg-error border-error";
+				if (s === "skipped") return "bg-base-300 border-base-300";
+				return "bg-transparent border-base-content/30";
+			};
+			const lineClass = (s) => {
+				if (s === "done") return "bg-success";
+				if (s === "failed") return "bg-error";
+				return "bg-base-300";
+			};
+			const labelClass = (s) => {
+				if (s === "current") return "text-base-content font-medium";
+				if (s === "failed") return "text-error font-medium";
+				if (s === "pending" || s === "skipped") return "text-base-content/50";
+				return "text-base-content";
+			};
+
+			return `
+				<ol class="relative pl-5 space-y-4">
+					${steps.map((st, i) => {
+						const isLast = i === steps.length - 1;
+						return `
+							<li class="relative">
+								<span class="absolute -left-5 top-1 h-3 w-3 rounded-full border-2 ${dotClass(st.state)}"></span>
+								${isLast ? "" : `<span class="absolute -left-[14px] top-4 w-0.5 h-[calc(100%+0.25rem)] ${lineClass(st.state)}"></span>`}
+								<div class="flex items-center justify-between gap-3">
+									<span class="text-sm ${labelClass(st.state)}">${escapeHtml(st.label)}</span>
+									<span class="text-[11px] text-base-content/50">${st.at ? fmtDate(st.at) : ""}</span>
+								</div>
+							</li>`;
+					}).join("")}
+				</ol>`;
+		}
+
 		function renderPayloadFields(payload) {
 			if (!payload || typeof payload !== "object") return `<p class="text-sm text-base-content/60">No inputs.</p>`;
 			const entries = Object.entries(payload);
@@ -151,10 +270,22 @@
 		function openDetail(id) {
 			const r = cache.find((x) => String(x.id) === String(id));
 			if (!r || !modal) return;
+			activeRequestId = String(r.id);
 			modalTitle.textContent = r.request_title || r.request_type || "Request";
 			const statusStr = String(r.status || "").toUpperCase();
 			const badge = STATUS_BADGE[statusStr] || "badge-ghost";
+			// Admin recovery controls: only shown when the viewer is admin
+			// AND the request is still in a non-terminal state. Force-fail
+			// is pointless for COMPLETED/FAILED/REJECTED rows.
+			if (adminActionsEl) {
+				const show = isAdmin && RECOVERABLE.has(statusStr);
+				adminActionsEl.hidden = !show;
+			}
 			modalBody.innerHTML = `
+				<section>
+					<h4 class="text-xs font-semibold uppercase tracking-widest text-base-content/50 mb-3">Progress</h4>
+					${renderTimeline(r)}
+				</section>
 				<section>
 					<h4 class="text-xs font-semibold uppercase tracking-widest text-base-content/50 mb-2">Request Info</h4>
 					<dl class="grid grid-cols-[auto,1fr] gap-x-4 gap-y-1 text-sm">
@@ -190,6 +321,60 @@
 		}
 
 		refreshBtn?.addEventListener("click", load);
+
+		// ── Admin recovery handlers ────────────────────────────────────────
+		// Both actions require a confirmation because they're irreversible
+		// (force-fail writes a terminal state; delete drops the row entirely).
+		// After success we close the modal and reload the list so the card
+		// disappears / updates in place.
+		async function runAdminAction(kind) {
+			if (!isAdmin || !activeRequestId) return;
+			const id = activeRequestId;
+			if (kind === "fail") {
+				const reason = window.prompt(
+					"Mark this request as FAILED?\n\nOptional reason (shown to the requester):",
+					"Manually failed by administrator."
+				);
+				if (reason === null) return;
+				const trimmed = (reason || "").trim();
+				try {
+					const res = await fetch(
+						`/api/approvals/requests/${encodeURIComponent(id)}/force-fail`,
+						{
+							method: "POST",
+							credentials: "same-origin",
+							headers: { "Content-Type": "application/json" },
+							body: JSON.stringify({ reason: trimmed || null }),
+						}
+					);
+					if (!res.ok) throw new Error("HTTP " + res.status);
+				} catch (_err) {
+					window.alert("Could not mark request as failed.");
+					return;
+				}
+			} else if (kind === "delete") {
+				if (!window.confirm(
+					"Delete this request permanently?\n\nThis cannot be undone."
+				)) return;
+				try {
+					const res = await fetch(
+						`/api/approvals/requests/${encodeURIComponent(id)}`,
+						{ method: "DELETE", credentials: "same-origin" }
+					);
+					if (!res.ok) throw new Error("HTTP " + res.status);
+				} catch (_err) {
+					window.alert("Could not delete request.");
+					return;
+				}
+			}
+			activeRequestId = null;
+			try { modal.close(); } catch (_) {}
+			load();
+		}
+
+		forceFailBtn?.addEventListener("click", () => runAdminAction("fail"));
+		deleteBtn?.addEventListener("click", () => runAdminAction("delete"));
+
 		load();
 	})();
 </script>

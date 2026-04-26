@@ -371,13 +371,16 @@ def ensure_tables() -> None:
     ensure_approval_workflow_tables()
     ensure_user_preference_columns()
     ensure_suggestions_table()
+    ensure_favorites_table()
+    ensure_activity_log_table()
 
 
 def ensure_user_preference_columns() -> None:
     """
     Extend ``users`` with per-user UI preferences that the portal persists:
-      * ``avatar_url``       — data URL (base64) or URL of the sidebar avatar.
-      * ``preferred_theme``  — "light" or "night" (DaisyUI theme name).
+      * ``avatar_url``         — data URL (base64) or URL of the sidebar avatar.
+      * ``preferred_theme``    — "light" or "night" (DaisyUI theme name).
+      * ``preferred_density``  — "comfortable" or "compact" (dashboard spacing).
 
     Added via ALTER TABLE ... ADD COLUMN IF NOT EXISTS so the baseline schema
     in deployment/charts/.../00_schema.sql can stay untouched and dev DBs keep
@@ -386,6 +389,7 @@ def ensure_user_preference_columns() -> None:
     for sql in (
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_theme VARCHAR(32)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_density VARCHAR(32)",
     ):
         try:
             execute(sql)
@@ -414,6 +418,65 @@ def ensure_suggestions_table() -> None:
     execute(
         "CREATE INDEX IF NOT EXISTS idx_suggestions_created "
         "ON suggestions (created_at DESC)"
+    )
+
+
+def ensure_favorites_table() -> None:
+    """
+    Per-user favorites — the "⭐ Favorites" section on the dashboard.
+
+    Deliberately separate from ``user_item_pins``: that table is a
+    widget-local sort hint (a pinned ServiceNow row floats to the top of
+    the SN widget) and only stores ``(user_id, source, item_id)``. The
+    favorites concept here is a *global* bookmark list the dashboard reads
+    without re-hitting Azure DevOps / ServiceNow, so we denormalize the
+    display name alongside the pointer.
+    """
+    execute(
+        """
+        CREATE TABLE IF NOT EXISTS favorites (
+            id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            user_email  VARCHAR(255) NOT NULL,
+            item_type   VARCHAR(32)  NOT NULL,
+            item_id     VARCHAR(255) NOT NULL,
+            item_name   VARCHAR(512) NOT NULL,
+            created_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (user_email, item_type, item_id)
+        )
+        """
+    )
+    execute(
+        "CREATE INDEX IF NOT EXISTS idx_favorites_user "
+        "ON favorites (user_email, created_at DESC)"
+    )
+
+
+def ensure_activity_log_table() -> None:
+    """
+    Per-user activity feed — powers the "Recent Activity" dashboard widget.
+
+    Separate from ``audit_logs`` / ``audit_events`` on purpose: those are
+    append-only admin-facing records with free-form action strings and
+    detailed metadata. ``activity_log`` is a small, user-facing stream of
+    the three actions that have a sensible "display card" (create project,
+    open ticket, self-service submit) with pre-formatted display fields so
+    the widget renders without joins.
+    """
+    execute(
+        """
+        CREATE TABLE IF NOT EXISTS activity_log (
+            id          BIGSERIAL PRIMARY KEY,
+            user_email  VARCHAR(255) NOT NULL,
+            action_type VARCHAR(64)  NOT NULL,
+            item_name   VARCHAR(512) NOT NULL,
+            metadata    JSONB,
+            created_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    execute(
+        "CREATE INDEX IF NOT EXISTS idx_activity_log_user_created "
+        "ON activity_log (user_email, created_at DESC)"
     )
 
 

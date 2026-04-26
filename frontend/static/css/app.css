@@ -104,3 +104,152 @@
 		@apply transition-all duration-150;
 	}
 }
+
+/*
+ * Display density.
+ * Selector lives on <html data-density="comfortable|compact">. `comfortable`
+ * keeps the stylesheet's defaults (page-header py-6, widget grids gap-6,
+ * card-body p-5, widget h3 text-sm, etc.) — so we only need to *override*
+ * inside `[data-density="compact"]`. The compact rules below intentionally
+ * touch padding, gaps, typography, AND the internals of widget lists so the
+ * mode has an obvious visual effect on the dashboard and system pages (not
+ * just a grid re-flow).
+ */
+
+/* ── Page chrome ───────────────────────────────────────────────────────── */
+html[data-density="compact"] .page-header {
+	padding: 0.75rem 1.25rem;
+}
+html[data-density="compact"] .page-title {
+	font-size: 1.25rem;
+}
+html[data-density="compact"] .page-subtitle {
+	font-size: 0.75rem;
+	margin-top: 0.125rem;
+}
+html[data-density="compact"] .page-content {
+	padding: 0.75rem;
+}
+
+/* ── Widget grids (system pages + dashboard) ───────────────────────────── */
+html[data-density="compact"] .widget-grid {
+	gap: 0.75rem;
+	padding: 0.75rem;
+}
+/* Dashboard root uses an ad-hoc grid instead of `.widget-grid`. */
+html[data-density="compact"] main .grid.gap-6 {
+	gap: 0.75rem;
+}
+/* Dashboard root `.page-content` uses `flex flex-col gap-6` — override the
+   Tailwind `gap-6` utility so the stacked widgets sit closer together. */
+html[data-density="compact"] .page-content.gap-6,
+html[data-density="compact"] .page-content .flex.flex-col.gap-6 {
+	gap: 0.75rem;
+}
+/* Pages using `space-y-6` for vertical rhythm (settings, profile, …). */
+html[data-density="compact"] .page-content.space-y-6 > * + * {
+	margin-top: 0.75rem;
+}
+
+/* ── Card internals (widgets + generic sections) ───────────────────────── */
+html[data-density="compact"] .section-card .card-body {
+	padding: 0.75rem;
+	gap: 0.5rem;
+}
+html[data-density="compact"] .section-card h3.text-sm {
+	font-size: 0.6875rem;
+	letter-spacing: 0.08em;
+}
+/* Shrink the colored icon bubble in front of widget titles. */
+html[data-density="compact"] .section-card .card-body > .flex.items-center.gap-3 > .h-9.w-9 {
+	height: 2rem;
+	width: 2rem;
+}
+
+/* ── Lists inside widgets (work items, tickets, PRs, pipelines …) ───── */
+html[data-density="compact"] .section-card ul > li {
+	padding-top: 0.375rem;
+	padding-bottom: 0.375rem;
+	padding-left: 0.5rem;
+	padding-right: 0.5rem;
+}
+html[data-density="compact"] .section-card ul.gap-2,
+html[data-density="compact"] .section-card ul.flex.flex-col.gap-2 {
+	gap: 0.25rem;
+}
+
+/* ── Dashboard: fit an extra column on very wide screens so the same data
+   is visible without scrolling — this is what makes "compact" tangible on
+   the dashboard rather than a cosmetic tweak. The selector is scoped to the
+   dashboard widget grid (unique `items-start` + `gap-6` combo on the root
+   grid container). ─────────────────────────────────────────────────────── */
+@media (min-width: 1280px) {
+	html[data-density="compact"] main .grid.items-start {
+		grid-template-columns: repeat(4, minmax(0, 1fr));
+	}
+}
+
+/*
+ * Subtle motion + hover polish.
+ * Scoped additions so the portal feels smoother without mass-touching
+ * component styles. Everything respects prefers-reduced-motion.
+ */
+
+/* Dropdown menus / search panels / notification panels fade in when they
+   open instead of flash-appearing. DaisyUI toggles `.dropdown-content` via
+   :focus-within, so we piggy-back on that for a single animation trigger. */
+@keyframes portal-fade-in {
+	from { opacity: 0; transform: translateY(-2px); }
+	to   { opacity: 1; transform: translateY(0); }
+}
+.dropdown-content,
+[data-global-search-panel]:not(.hidden) {
+	animation: portal-fade-in 120ms ease-out;
+}
+
+/* Modal/dialog fade-in for native <dialog> elements (used by My Requests,
+   ADO self-service, etc.). :modal matches the currently-open one. */
+@keyframes portal-modal-in {
+	from { opacity: 0; transform: translateY(4px) scale(0.99); }
+	to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+dialog.modal[open] > .modal-box {
+	animation: portal-modal-in 140ms ease-out;
+}
+
+/* Slight press feedback on every btn so clicks feel grounded. */
+.btn:not(.btn-disabled):not([disabled]):active {
+	transform: translateY(1px);
+}
+
+/* Cards already transition via `.section-card-interactive`; give the
+   non-interactive `.section-card` the same smoothness when it's hovered
+   inside clickable contexts (e.g. the My Requests cards that attach a
+   click handler in JS) without forcing every card to lift. Scoped to
+   cursor-pointer so it only lights up when the element is actually
+   interactive. */
+.section-card.cursor-pointer {
+	transition: box-shadow 150ms ease, border-color 150ms ease, transform 150ms ease;
+}
+.section-card.cursor-pointer:hover {
+	border-color: var(--color-primary, theme(colors.primary));
+	box-shadow: 0 4px 14px -8px rgba(0, 0, 0, 0.25);
+}
+
+/* Hoverable list rows inside widgets — reinforces which rows are clickable
+   without requiring every partial to opt in manually. */
+.section-card ul > li a:hover,
+.section-card ul > li:hover > a {
+	color: var(--color-primary, theme(colors.primary));
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.dropdown-content,
+	[data-global-search-panel]:not(.hidden),
+	dialog.modal[open] > .modal-box {
+		animation: none !important;
+	}
+	.btn:not(.btn-disabled):not([disabled]):active {
+		transform: none !important;
+	}
+}

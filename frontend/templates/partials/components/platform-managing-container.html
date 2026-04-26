@@ -7,21 +7,23 @@
 	</header>
 
 	<div class="page-content">
-		<section class="section-card max-w-xl mb-6">
+		<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+		<section class="section-card">
 			<div class="card-body gap-4">
-				<div class="flex items-start justify-between gap-4">
-					<div>
-						<h2 class="card-title text-lg">Safe Mode</h2>
-						<p class="text-sm text-base-content/60">
-							When Safe Mode is enabled, self-services (Azure DevOps project creation,
-							ServiceNow tickets, etc.) simulate success without touching real
-							systems. Use it to verify workflows without affecting production.
-						</p>
-					</div>
-					<label class="swap swap-flip">
-						<input id="safe-mode-toggle" type="checkbox" class="toggle toggle-warning" />
-					</label>
+				<div class="flex items-center justify-between gap-4">
+					<h2 class="card-title text-lg">Safe Mode</h2>
+					<input
+						id="safe-mode-toggle"
+						type="checkbox"
+						class="toggle toggle-warning"
+						aria-label="Toggle Safe Mode"
+					/>
 				</div>
+				<p class="text-sm text-base-content/60">
+					When Safe Mode is enabled, self-services (Azure DevOps project creation,
+					ServiceNow tickets, etc.) simulate success without touching real
+					systems. Use it to verify workflows without affecting production.
+				</p>
 				<div class="flex items-center gap-3 text-sm">
 					<span class="text-base-content/70">Current state:</span>
 					<span id="safe-mode-state" class="badge badge-ghost">Loading…</span>
@@ -30,7 +32,7 @@
 			</div>
 		</section>
 
-		<section class="section-card max-w-xl">
+		<section class="section-card">
 			<div class="card-body gap-4">
 				<div>
 					<h2 class="card-title text-lg">User Role Management</h2>
@@ -101,6 +103,58 @@
 				></div>
 			</div>
 		</section>
+
+		<section class="section-card lg:col-span-2">
+			<div class="card-body gap-4">
+				<div class="flex items-start justify-between gap-4">
+					<div>
+						<h2 class="card-title text-lg">User Suggestions</h2>
+						<p class="text-sm text-base-content/60">
+							Feedback submitted from the Settings page. Mark items as
+							reviewed once you've triaged them.
+						</p>
+					</div>
+					<button
+						id="suggestions-refresh-btn"
+						type="button"
+						class="btn btn-ghost btn-sm"
+						title="Reload suggestions"
+					>
+						&#8635; Refresh
+					</button>
+				</div>
+
+				<div
+					id="suggestions-empty"
+					class="hidden text-sm text-base-content/60 py-6 text-center"
+				>
+					No suggestions yet.
+				</div>
+
+				<div
+					id="suggestions-loading"
+					class="text-sm text-base-content/50 py-2"
+				>
+					Loading…
+				</div>
+
+				<div class="overflow-x-auto max-h-[28rem] overflow-y-auto hidden" id="suggestions-wrap">
+					<table class="table table-sm">
+						<thead class="sticky top-0 bg-base-100 z-10">
+							<tr>
+								<th class="w-1/5">Title</th>
+								<th>Description</th>
+								<th class="w-40">From</th>
+								<th class="w-32">When</th>
+								<th class="w-28 text-right">Reviewed</th>
+							</tr>
+						</thead>
+						<tbody id="suggestions-tbody"></tbody>
+					</table>
+				</div>
+			</div>
+		</section>
+		</div>
 	</div>
 </div>
 
@@ -357,5 +411,106 @@
 
 		toggle.addEventListener("change", () => setState(toggle.checked));
 		loadStatus();
+	})();
+
+	// ── User Suggestions admin viewer ────────────────────────────────────
+	// Fetches /api/suggestions, renders rows, and lets admins toggle the
+	// "reviewed" state in place. Mirrors the observability viewer style.
+	(function () {
+		const tbody = document.getElementById("suggestions-tbody");
+		const wrap = document.getElementById("suggestions-wrap");
+		const loadingEl = document.getElementById("suggestions-loading");
+		const emptyEl = document.getElementById("suggestions-empty");
+		const refreshBtn = document.getElementById("suggestions-refresh-btn");
+		if (!tbody) return;
+
+		function esc(str) {
+			return String(str == null ? "" : str)
+				.replace(/&/g, "&amp;")
+				.replace(/</g, "&lt;")
+				.replace(/>/g, "&gt;")
+				.replace(/"/g, "&quot;");
+		}
+
+		function fmtWhen(iso) {
+			if (!iso) return "";
+			try {
+				const d = new Date(iso);
+				return d.toLocaleString();
+			} catch {
+				return iso;
+			}
+		}
+
+		function render(rows) {
+			tbody.innerHTML = "";
+			if (!rows || rows.length === 0) {
+				wrap.classList.add("hidden");
+				emptyEl.classList.remove("hidden");
+				return;
+			}
+			emptyEl.classList.add("hidden");
+			wrap.classList.remove("hidden");
+			rows.forEach((r) => {
+				const tr = document.createElement("tr");
+				tr.innerHTML = `
+					<td class="font-medium align-top">${esc(r.title)}</td>
+					<td class="text-sm text-base-content/70 whitespace-pre-wrap align-top">${esc(r.description || "")}</td>
+					<td class="text-xs text-base-content/60 align-top">${esc(r.user_email)}</td>
+					<td class="text-xs text-base-content/60 align-top">${esc(fmtWhen(r.created_at))}</td>
+					<td class="text-right align-top">
+						<input
+							type="checkbox"
+							class="toggle toggle-sm toggle-success"
+							data-suggestion-id="${esc(r.id)}"
+							${r.reviewed ? "checked" : ""}
+						/>
+					</td>
+				`;
+				tbody.appendChild(tr);
+			});
+		}
+
+		async function load() {
+			loadingEl.classList.remove("hidden");
+			wrap.classList.add("hidden");
+			emptyEl.classList.add("hidden");
+			try {
+				const res = await fetch("/api/suggestions", { credentials: "same-origin" });
+				const json = await res.json();
+				if (!res.ok) throw new Error(json?.detail || "Failed to load suggestions");
+				render(json.data || []);
+			} catch (e) {
+				tbody.innerHTML = "";
+				emptyEl.textContent = e?.message || "Failed to load suggestions.";
+				emptyEl.classList.remove("hidden");
+			} finally {
+				loadingEl.classList.add("hidden");
+			}
+		}
+
+		tbody.addEventListener("change", async (e) => {
+			const input = e.target.closest("input[data-suggestion-id]");
+			if (!input) return;
+			const id = input.dataset.suggestionId;
+			const reviewed = !!input.checked;
+			input.disabled = true;
+			try {
+				const res = await fetch(`/api/suggestions/${encodeURIComponent(id)}`, {
+					method: "PATCH",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ reviewed }),
+				});
+				if (!res.ok) throw new Error("Failed");
+			} catch {
+				input.checked = !reviewed;
+			} finally {
+				input.disabled = false;
+			}
+		});
+
+		refreshBtn?.addEventListener("click", load);
+		load();
 	})();
 </script>
