@@ -736,17 +736,60 @@ def sync_bootstrap_admin_role_for_email(email: str) -> None:
 
 def ensure_bootstrap_platform_admin() -> None:
     """
-    Create a bootstrap Platform Admin from HUB_ADMIN_* only when no admin exists.
+    Ensure the env bootstrap Platform Admin is usable.
 
-    This is intentionally one-shot: once any Platform Admin exists, startup does
-    not create or overwrite users. Password is hashed before storage and never
-    logged or returned.
+    If a bootstrap row already exists, sync its username/password from
+    HUB_ADMIN_* so rotating GitHub Secrets updates the login on the next deploy.
+    If no bootstrap row exists, create one only when no admin exists.
     """
     import logging
     from security import hash_password
 
     log = logging.getLogger(__name__)
     try:
+        username = (os.getenv("HUB_ADMIN_USERNAME") or "").strip()
+        password = os.getenv("HUB_ADMIN_PASSWORD") or ""
+        if not username or not password:
+            log.warning("ensure_bootstrap_platform_admin: HUB_ADMIN_USERNAME/HUB_ADMIN_PASSWORD are not fully configured")
+            return
+
+        role = query_one(
+            "SELECT id FROM roles WHERE LOWER(TRIM(name)) = %s LIMIT 1",
+            ["platform admin"],
+        )
+        if not role:
+            log.warning("ensure_bootstrap_platform_admin: Platform Admin role not found")
+            return
+        rid = role["id"]
+        password_hash = hash_password(password)
+
+        bootstrap = query_one(
+            """
+            SELECT id
+            FROM users
+            WHERE is_bootstrap_admin = true
+            LIMIT 1
+            """
+        )
+        if bootstrap:
+            execute(
+                """
+                UPDATE users
+                SET username = %s,
+                    email = %s,
+                    full_name = %s,
+                    role_id = %s,
+                    password_hash = %s,
+                    is_bootstrap_admin = true,
+                    is_active = true,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+                """,
+                [username, username.lower(), username, rid, password_hash, bootstrap["id"]],
+            )
+            log.info("Admin bootstrap updated")
+            return
+
         admin_exists = query_one(
             """
             SELECT 1
@@ -761,22 +804,6 @@ def ensure_bootstrap_platform_admin() -> None:
         if admin_exists:
             return
 
-        username = (os.getenv("HUB_ADMIN_USERNAME") or "").strip()
-        password = os.getenv("HUB_ADMIN_PASSWORD") or ""
-        if not username or not password:
-            log.warning(
-                "ensure_bootstrap_platform_admin: no admin exists and HUB_ADMIN_USERNAME/HUB_ADMIN_PASSWORD are not fully configured"
-            )
-            return
-
-        role = query_one(
-            "SELECT id FROM roles WHERE LOWER(TRIM(name)) = %s LIMIT 1",
-            ["platform admin"],
-        )
-        if not role:
-            log.warning("ensure_bootstrap_platform_admin: Platform Admin role not found")
-            return
-        rid = role["id"]
         execute(
             """
             INSERT INTO users (username, email, full_name, role_id, password_hash, is_bootstrap_admin)
@@ -793,7 +820,7 @@ def ensure_bootstrap_platform_admin() -> None:
                 username.lower(),
                 username,
                 rid,
-                hash_password(password),
+                password_hash,
             ],
         )
         log.info("Admin bootstrap created")
