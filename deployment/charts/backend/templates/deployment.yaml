@@ -47,8 +47,6 @@ spec:
                 name: infra-config
             - configMapRef:
                 name: azure-devops-config
-            - configMapRef:
-                name: sso-config
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           livenessProbe:
