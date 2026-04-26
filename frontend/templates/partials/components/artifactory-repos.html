@@ -1,0 +1,162 @@
+<div class="section-card h-full flex flex-col" data-arti-repos-root>
+	<div class="card-body p-5 flex flex-col h-full gap-3">
+		<div class="flex items-center gap-3">
+			<div
+				class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-info/30 bg-info/10"
+			>
+				<svg viewBox="0 0 24 24" class="h-5 w-5 fill-current text-info" aria-hidden="true">
+					<path d="M3 3h18a1 1 0 011 1v3a1 1 0 01-1 1h-1v11a1 1 0 01-1 1H5a1 1 0 01-1-1V8H3a1 1 0 01-1-1V4a1 1 0 011-1zm5 8a1 1 0 000 2h8a1 1 0 000-2H8z" />
+				</svg>
+			</div>
+			<div>
+				<h3 class="text-sm font-bold uppercase tracking-widest text-base-content/70">
+					Artifactory Repos
+				</h3>
+				<p class="text-xs text-base-content/50">Mocked latest artifacts on hover</p>
+			</div>
+		</div>
+
+		<div class="flex-1 min-h-0 relative">
+			<div class="h-full flex items-center justify-center text-xs text-base-content/50" data-arti-status>
+				<span class="loading loading-spinner loading-sm text-base-content/30"></span>
+			</div>
+			<ul
+				class="hidden h-full overflow-y-auto overscroll-contain flex-col gap-2 pr-1"
+				data-arti-list
+			></ul>
+			<div
+				class="hidden absolute right-2 top-2 z-10 w-80 rounded-xl border border-base-300 bg-base-100 p-4 shadow-xl"
+				data-arti-panel
+			></div>
+		</div>
+	</div>
+</div>
+
+<script>
+	(function () {
+		const root = document.querySelector("[data-arti-repos-root]");
+		if (!root) return;
+		const listEl = root.querySelector("[data-arti-list]");
+		const statusEl = root.querySelector("[data-arti-status]");
+		const panelEl = root.querySelector("[data-arti-panel]");
+		const detailsCache = new Map();
+		let panelTimer = null;
+
+		function escapeHtml(value) {
+			return String(value == null ? "" : value)
+				.replace(/&/g, "&amp;")
+				.replace(/</g, "&lt;")
+				.replace(/>/g, "&gt;")
+				.replace(/"/g, "&quot;")
+				.replace(/'/g, "&#39;");
+		}
+
+		function timeAgo(iso) {
+			const t = Date.parse(iso || "");
+			if (isNaN(t)) return "";
+			const secs = Math.max(1, Math.floor((Date.now() - t) / 1000));
+			if (secs < 3600) return Math.floor(secs / 60) + "m ago";
+			if (secs < 86400) return Math.floor(secs / 3600) + "h ago";
+			return Math.floor(secs / 86400) + "d ago";
+		}
+
+		function showStatus(message) {
+			statusEl.classList.remove("hidden");
+			statusEl.classList.add("flex");
+			statusEl.innerHTML = message;
+			listEl.classList.add("hidden");
+		}
+
+		function showList() {
+			statusEl.classList.add("hidden");
+			listEl.classList.remove("hidden");
+			listEl.classList.add("flex");
+		}
+
+		function render(repos) {
+			if (!repos.length) {
+				showStatus('<span class="text-base-content/50">No data available</span>');
+				return;
+			}
+			listEl.innerHTML = repos.map((repo) => `
+				<li
+					class="rounded-lg border border-base-300 bg-base-200/60 px-3 py-2.5 transition hover:border-info/50 hover:bg-base-200"
+					data-repo-name="${escapeHtml(repo.name)}"
+				>
+					<div class="flex items-center justify-between gap-2">
+						<span class="text-sm font-semibold truncate">${escapeHtml(repo.name)}</span>
+						<span class="badge badge-outline badge-xs">${escapeHtml(repo.type)}</span>
+					</div>
+					<p class="mt-1 text-xs text-base-content/50 truncate">${escapeHtml(repo.description || "Mock repository")}</p>
+				</li>
+			`).join("");
+			showList();
+		}
+
+		function renderPanel(details, anchor) {
+			const rect = anchor.getBoundingClientRect();
+			const rootRect = root.getBoundingClientRect();
+			panelEl.style.top = `${Math.max(8, rect.top - rootRect.top)}px`;
+			const artifacts = Array.isArray(details.artifacts) ? details.artifacts : [];
+			panelEl.innerHTML = `
+				<div class="flex items-start justify-between gap-2">
+					<div>
+						<p class="text-sm font-semibold">${escapeHtml(details.name || "")}</p>
+						<p class="text-xs text-base-content/50">Latest artifacts</p>
+					</div>
+					<span class="badge badge-info badge-sm">${escapeHtml(details.type || "")}</span>
+				</div>
+				${artifacts.length ? `
+					<ul class="mt-3 flex max-h-48 flex-col gap-2 overflow-y-auto pr-1">
+						${artifacts.map((a) => `
+							<li class="rounded-lg bg-base-200 px-2 py-1.5">
+								<div class="flex items-center gap-2">
+									<span class="truncate text-xs font-medium">${escapeHtml(a.name)}</span>
+									<span class="badge badge-outline badge-xs ml-auto">${escapeHtml(a.type)}</span>
+								</div>
+								<p class="mt-0.5 text-[10px] text-base-content/50">${escapeHtml(timeAgo(a.last_updated))}</p>
+							</li>
+						`).join("")}
+					</ul>` : '<p class="mt-3 text-xs text-base-content/50">No data available</p>'}
+			`;
+			panelEl.classList.remove("hidden");
+		}
+
+		async function loadDetails(repoName, anchor) {
+			if (detailsCache.has(repoName)) {
+				renderPanel(detailsCache.get(repoName), anchor);
+				return;
+			}
+			panelEl.innerHTML = '<div class="flex items-center gap-2 text-xs text-base-content/50"><span class="loading loading-spinner loading-xs"></span> Loading artifacts…</div>';
+			panelEl.classList.remove("hidden");
+			const res = await fetch(`/api/artifactory/repo-details?name=${encodeURIComponent(repoName)}`, { credentials: "same-origin" });
+			if (!res.ok) throw new Error("http " + res.status);
+			const body = await res.json();
+			const details = body && body.data ? body.data : {};
+			detailsCache.set(repoName, details);
+			renderPanel(details, anchor);
+		}
+
+		listEl.addEventListener("mouseover", (e) => {
+			const row = e.target.closest("[data-repo-name]");
+			if (!row) return;
+			clearTimeout(panelTimer);
+			loadDetails(row.dataset.repoName, row).catch(() => {
+				panelEl.innerHTML = '<p class="text-xs text-error">Could not load details.</p>';
+				panelEl.classList.remove("hidden");
+			});
+		});
+
+		listEl.addEventListener("mouseleave", () => {
+			panelTimer = setTimeout(() => panelEl.classList.add("hidden"), 120);
+		});
+
+		fetch("/api/artifactory/repos", { credentials: "same-origin" })
+			.then((res) => {
+				if (!res.ok) throw new Error("http " + res.status);
+				return res.json();
+			})
+			.then((body) => render(Array.isArray(body && body.data) ? body.data : []))
+			.catch(() => showStatus('<span class="text-base-content/50">No data available</span>'));
+	})();
+</script>

@@ -2,7 +2,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
 from pydantic import BaseModel
 from uuid import uuid4
 
@@ -378,7 +378,10 @@ def _apply_user_flags(
 
 
 @router.get("/ado-items")
-def get_ado_items(current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]:
+def get_ado_items(
+    project: Optional[str] = Query(None),
+    current_user: AuthUser = Depends(get_current_user),
+) -> Dict[str, Any]:
     """Latest Azure DevOps work items assigned to the current user, normalized."""
     from api.azure_devops import get_work_items as _ado_work_items
 
@@ -386,7 +389,7 @@ def get_ado_items(current_user: AuthUser = Depends(get_current_user)) -> Dict[st
     error = ""
     items: List[Dict[str, Any]] = []
     try:
-        result = _ado_work_items(project=None, current_user=current_user)
+        result = _ado_work_items(project=project, current_user=current_user)
         rows = result.get("data", []) if isinstance(result, dict) else []
         for wi in rows:
             assigned = wi.get("assigned_to")

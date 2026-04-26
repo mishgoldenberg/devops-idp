@@ -6,6 +6,87 @@ from security import AuthUser, get_current_user
 router = APIRouter()
 
 
+def _mock_repos():
+    return [
+        {"name": "docker-dev", "type": "docker", "description": "Development Docker images"},
+        {"name": "libs-release", "type": "maven", "description": "Release binaries"},
+        {"name": "npm-release", "type": "npm", "description": "NPM packages"},
+        {"name": "generic-dev", "type": "generic", "description": "Zip and utility artifacts"},
+    ]
+
+
+def _mock_repo_details():
+    return {
+        "docker-dev": {
+            "name": "docker-dev",
+            "type": "docker",
+            "artifacts": [
+                {"name": "payment-service:1.8.2", "type": "image", "last_updated": "2024-01-18T09:20:00Z"},
+                {"name": "devops-portal:2.3.0", "type": "image", "last_updated": "2024-01-17T14:05:00Z"},
+                {"name": "worker-api:0.9.7", "type": "image", "last_updated": "2024-01-17T11:40:00Z"},
+                {"name": "nginx-base:1.25.4", "type": "image", "last_updated": "2024-01-16T19:15:00Z"},
+                {"name": "terraform-runner:1.1.1", "type": "image", "last_updated": "2024-01-15T08:35:00Z"},
+            ],
+        },
+        "libs-release": {
+            "name": "libs-release",
+            "type": "maven",
+            "artifacts": [
+                {"name": "backend-api-1.2.5.jar", "type": "jar", "last_updated": "2024-01-15T10:00:00Z"},
+                {"name": "shared-lib-0.9.2.jar", "type": "jar", "last_updated": "2024-01-14T16:45:00Z"},
+                {"name": "billing-sdk-3.4.1.jar", "type": "jar", "last_updated": "2024-01-12T12:30:00Z"},
+                {"name": "events-client-2.0.0.jar", "type": "jar", "last_updated": "2024-01-11T09:10:00Z"},
+                {"name": "common-test-fixtures-1.1.0.jar", "type": "jar", "last_updated": "2024-01-10T08:00:00Z"},
+            ],
+        },
+        "npm-release": {
+            "name": "npm-release",
+            "type": "npm",
+            "artifacts": [
+                {"name": "@company/ui-kit@4.1.0", "type": "npm", "last_updated": "2024-01-18T07:50:00Z"},
+                {"name": "@company/auth-client@2.6.3", "type": "npm", "last_updated": "2024-01-17T09:10:00Z"},
+                {"name": "@company/forms@1.8.0", "type": "npm", "last_updated": "2024-01-16T13:25:00Z"},
+                {"name": "frontend-app-2.1.3.tar.gz", "type": "zip", "last_updated": "2024-01-15T09:30:00Z"},
+                {"name": "@company/theme@3.0.2", "type": "npm", "last_updated": "2024-01-12T10:55:00Z"},
+            ],
+        },
+        "generic-dev": {
+            "name": "generic-dev",
+            "type": "generic",
+            "artifacts": [
+                {"name": "terraform-plan-payment.zip", "type": "zip", "last_updated": "2024-01-18T15:05:00Z"},
+                {"name": "release-notes-2024.01.md", "type": "doc", "last_updated": "2024-01-17T17:20:00Z"},
+                {"name": "load-test-report.html", "type": "html", "last_updated": "2024-01-16T21:35:00Z"},
+                {"name": "db-migration-bundle.zip", "type": "zip", "last_updated": "2024-01-15T10:15:00Z"},
+                {"name": "helm-values-snapshot.yaml", "type": "yaml", "last_updated": "2024-01-13T08:45:00Z"},
+            ],
+        },
+    }
+
+
+@router.get("/repos")
+def get_repos(current_user: AuthUser = Depends(get_current_user)):
+    """Return mock Artifactory repositories for the new repos widget."""
+    return {
+        "success": True,
+        "data": _mock_repos(),
+        "timestamp": _now_iso(),
+    }
+
+
+@router.get("/repo-details")
+def get_repo_details(name: str, current_user: AuthUser = Depends(get_current_user)):
+    """Return mock latest artifacts for a single repo, loaded lazily on hover."""
+    details = _mock_repo_details().get(name)
+    if not details:
+        details = {"name": name, "type": "", "artifacts": []}
+    return {
+        "success": True,
+        "data": details,
+        "timestamp": _now_iso(),
+    }
+
+
 @router.get("/artifacts")
 def get_artifacts(current_user: AuthUser = Depends(get_current_user)):
     artifacts = [

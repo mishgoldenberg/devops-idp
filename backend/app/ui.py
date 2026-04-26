@@ -1148,6 +1148,16 @@ def ui_sonarqube_quality_component(request: Request):
     )
 
 
+@ui_router.get("/ui/components/sonarqube-projects", response_class=HTMLResponse)
+def ui_sonarqube_projects_component(request: Request):
+    """Render mocked SonarQube project list widget; details load client-side."""
+    templates = _get_templates(request)
+    return templates.TemplateResponse(
+        "partials/components/sonarqube-projects.html",
+        {"request": request},
+    )
+
+
 @ui_router.get("/ui/components/artifactory-storage", response_class=HTMLResponse)
 def ui_artifactory_storage_component(request: Request):
     """Render the Artifactory Storage dashboard widget for HTMX partial loading."""
@@ -1156,6 +1166,16 @@ def ui_artifactory_storage_component(request: Request):
     return templates.TemplateResponse(
         "partials/components/artifactory-storage.html",
         {"request": request, "storage": _get_artifactory_data(current_user)},
+    )
+
+
+@ui_router.get("/ui/components/artifactory-repos", response_class=HTMLResponse)
+def ui_artifactory_repos_component(request: Request):
+    """Render mocked Artifactory repositories widget; storage widget is untouched."""
+    templates = _get_templates(request)
+    return templates.TemplateResponse(
+        "partials/components/artifactory-repos.html",
+        {"request": request},
     )
 
 

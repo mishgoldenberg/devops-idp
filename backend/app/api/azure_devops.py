@@ -261,6 +261,90 @@ def get_work_items(
         return _fetch_work_items_live(project, current_user)
 
 
+@router.get("/workitem-tasks")
+def get_workitem_tasks(
+    id: int = Query(..., description="Parent Azure DevOps work item id"),
+    current_user: AuthUser = Depends(get_current_user),
+):
+    """Return child tasks for a work item.
+
+    In mock mode this is static. In real mode we first fetch the parent item's
+    hierarchy-forward relations and then batch-load those children. The frontend
+    calls this lazily on hover, so we avoid adding extra weight to the normal
+    dashboard work-items list.
+    """
+    if USE_MOCK:
+        state_sets = {
+            1001: [
+                {"id": 5101, "title": "Add API validation", "state": "In Progress"},
+                {"id": 5102, "title": "Write dashboard tests", "state": "To Do"},
+                {"id": 5103, "title": "Update deployment docs", "state": "Done"},
+            ],
+        }
+        return {
+            "success": True,
+            "data": state_sets.get(int(id), [
+                {"id": int(id) * 10 + 1, "title": "Review acceptance criteria", "state": "To Do"},
+                {"id": int(id) * 10 + 2, "title": "Implement backend changes", "state": "In Progress"},
+                {"id": int(id) * 10 + 3, "title": "QA verification", "state": "Done"},
+            ]),
+            "timestamp": _now_iso(),
+        }
+
+    if not ADO_BASE or ADO_BASE.rstrip("/") == "https://dev.azure.com":
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="AZURE_DEVOPS_ORG is not configured on the server",
+        )
+
+    try:
+        pat = _get_pat_for_user(current_user)
+        auth = httpx.BasicAuth("", pat)
+        with httpx.Client(auth=auth, timeout=20.0) as client:
+            parent = client.get(
+                f"{ADO_BASE}/_apis/wit/workitems/{id}?$expand=relations&api-version=7.0"
+            )
+            parent.raise_for_status()
+            child_ids = []
+            for rel in parent.json().get("relations", []) or []:
+                if rel.get("rel") != "System.LinkTypes.Hierarchy-Forward":
+                    continue
+                url = rel.get("url", "")
+                child_id = url.rstrip("/").split("/")[-1]
+                if child_id.isdigit():
+                    child_ids.append(child_id)
+
+            if not child_ids:
+                return {"success": True, "data": [], "timestamp": _now_iso()}
+
+            tasks = []
+            for i in range(0, len(child_ids), 200):
+                chunk = ",".join(child_ids[i : i + 200])
+                res = client.get(
+                    f"{ADO_BASE}/_apis/wit/workitems?ids={chunk}"
+                    "&fields=System.Id,System.Title,System.State,System.WorkItemType"
+                    "&api-version=7.0"
+                )
+                res.raise_for_status()
+                for item in res.json().get("value", []):
+                    fields = item.get("fields", {})
+                    tasks.append(
+                        {
+                            "id": item.get("id"),
+                            "title": fields.get("System.Title") or f"Task #{item.get('id')}",
+                            "state": fields.get("System.State") or "",
+                            "type": fields.get("System.WorkItemType") or "",
+                        }
+                    )
+        return {"success": True, "data": tasks, "timestamp": _now_iso()}
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=502, detail=f"Azure DevOps API error: {exc.response.status_code}")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Azure DevOps request failed: {exc!s}")
+
+
 def _fetch_work_items_live(
     project: Optional[str],
     current_user: AuthUser,
