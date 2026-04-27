@@ -8,7 +8,7 @@
 			{% with system_key = 'servicenow' %}
 				{% include "partials/components/open-system-button.html" %}
 			{% endwith %}
-			<button id="support-new-ticket-btn" class="btn btn-primary btn-sm">New Ticket</button>
+			<button id="support-new-ticket-btn" class="btn btn-primary btn-sm">Open a Ticket</button>
 		</div>
 	</header>
 
@@ -37,7 +37,7 @@
 	<div class="w-full max-w-4xl max-h-[92vh] rounded-xl border border-base-300 bg-base-100 shadow-2xl flex flex-col">
 		<div class="px-5 py-4 border-b border-base-300 flex items-center justify-between gap-3">
 			<div>
-				<h3 class="font-bold text-lg">Create ServiceNow Ticket</h3>
+				<h3 class="font-bold text-lg">Open a Ticket</h3>
 				<p id="support-step-label" class="text-xs opacity-70">Step 1 of 4 — Navy User Info</p>
 			</div>
 			<button id="support-cancel-ticket" class="btn btn-ghost btn-sm">Close</button>
@@ -65,21 +65,21 @@
 				<a class="btn btn-primary" href="/ui/support">Go to Support</a>
 			</div>
 
-			<form id="support-ticket-flow-form" class="space-y-5">
-				<section data-support-step="0" class="space-y-4 transition-all duration-200">
+			<form id="support-ticket-flow-form" class="space-y-6">
+				<section data-support-step="0" class="section-card p-5 space-y-5 transition-all duration-200">
 					<div class="section-title">Navy User Info</div>
-					<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-						<label class="form-control">
-							<span class="label-text">Full name</span>
-							<input name="full_name" class="input input-bordered" value="{{ user.display_name or user.username or '' }}" required />
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+						<label class="form-control w-full">
+							<span class="label-text">Full Name (שם מלא)</span>
+							<input name="full_name" class="input input-bordered w-full" value="{{ user.display_name or user.username or '' }}" required />
 						</label>
-						<label class="form-control">
-							<span class="label-text">Phone number</span>
-							<input name="phone_number" class="input input-bordered" inputmode="numeric" pattern="[0-9]+" required />
+						<label class="form-control w-full">
+							<span class="label-text">Phone Number (טלפון)</span>
+							<input name="phone_number" class="input input-bordered w-full" inputmode="numeric" pattern="[0-9]+" required />
 						</label>
-						<label class="form-control">
-							<span class="label-text">Branch</span>
-							<select name="branch" class="select select-bordered" required>
+						<label class="form-control w-full">
+							<span class="label-text">Branch (ענף)</span>
+							<select name="branch" class="select select-bordered w-full" required>
 								<option value="">Select branch</option>
 								<option>משוב</option>
 								<option>פיתוח תוכנה</option>
@@ -89,35 +89,35 @@
 								<option>סייבר ושתפ</option>
 							</select>
 						</label>
-						<label class="form-control">
-							<span class="label-text">Team</span>
-							<input name="team" class="input input-bordered" required />
+						<label class="form-control w-full">
+							<span class="label-text">Team (צוות)</span>
+							<input name="team" class="input input-bordered w-full" required />
 						</label>
-						<label class="form-control">
-							<span class="label-text">Section</span>
-							<input name="section" class="input input-bordered" required />
+						<label class="form-control w-full">
+							<span class="label-text">Section (מדור)</span>
+							<input name="section" class="input input-bordered w-full" required />
 						</label>
-						<label class="form-control">
-							<span class="label-text">Role</span>
-							<input name="role" class="input input-bordered" required />
+						<label class="form-control w-full">
+							<span class="label-text">Role (תפקיד)</span>
+							<input name="role" class="input input-bordered w-full" required />
 						</label>
 					</div>
 				</section>
 
-				<section data-support-step="1" class="hidden space-y-4 transition-all duration-200">
+				<section data-support-step="1" class="hidden section-card p-5 space-y-5 transition-all duration-200">
 					<div class="section-title">Service Info</div>
-					<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-						<label class="form-control">
-							<span class="label-text">Network</span>
-							<select name="network" class="select select-bordered" required>
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+						<label class="form-control w-full">
+							<span class="label-text">Network (רשת)</span>
+							<select name="network" class="select select-bordered w-full" required>
 								<option value="">Select network</option>
 								<option>סודי ביותר</option>
 								<option>סודי ומדן</option>
 							</select>
 						</label>
-						<label class="form-control">
-							<span class="label-text">DevOps service</span>
-							<select name="devops_services" class="select select-bordered" required>
+						<label class="form-control w-full">
+							<span class="label-text">DevOps Services (שירותים)</span>
+							<select name="devops_services" class="select select-bordered w-full" required>
 								<option value="">Select service</option>
 								<option>artifactory</option>
 								<option>azure devops</option>
@@ -129,12 +129,12 @@
 							</select>
 						</label>
 					</div>
-					<div id="support-azure-fields" class="hidden rounded-xl border border-base-300 bg-base-200/50 p-4 space-y-3 transition-all duration-200">
+					<div id="support-azure-fields" class="hidden rounded-xl border border-base-300 bg-base-200/50 p-4 space-y-4 transition-all duration-200">
 						<div class="section-title text-sm">Azure DevOps details</div>
-						<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-							<label class="form-control">
-								<span class="label-text">Support type</span>
-								<select name="azure_devops_support_type" class="select select-bordered">
+						<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+							<label class="form-control w-full">
+								<span class="label-text">Azure DevOps Support Type (סוג תמיכה Azure DevOps)</span>
+								<select name="azure_devops_support_type" class="select select-bordered w-full">
 									<option value="">Select support type</option>
 									<option>pipelines</option>
 									<option>repository</option>
@@ -142,9 +142,9 @@
 									<option>others</option>
 								</select>
 							</label>
-							<label class="form-control">
-								<span class="label-text">Collection</span>
-								<select name="azure_devops_collection" class="select select-bordered">
+							<label class="form-control w-full">
+								<span class="label-text">Azure DevOps Collection (אוסף Azure DevOps)</span>
+								<select name="azure_devops_collection" class="select select-bordered w-full">
 									<option value="">Select collection</option>
 									<option>devcollection-inheritance</option>
 									<option>devcollection</option>
@@ -153,79 +153,85 @@
 									<option>tikshuvcollection</option>
 								</select>
 							</label>
-							<label id="support-azure-project-select-wrap" class="form-control hidden">
-								<span class="label-text">Project</span>
-								<select name="azure_devops_project_select" class="select select-bordered">
+							<label id="support-azure-project-select-wrap" class="form-control w-full hidden">
+								<span class="label-text">Azure DevOps Project (פרויקט Azure DevOps)</span>
+								<select name="azure_devops_project_select" class="select select-bordered w-full">
 									<option value="">Select project</option>
 								</select>
 							</label>
-							<label id="support-azure-project-input-wrap" class="form-control hidden">
-								<span class="label-text">Project</span>
-								<input name="azure_devops_project_input" class="input input-bordered" />
+							<label id="support-azure-project-input-wrap" class="form-control w-full hidden">
+								<span class="label-text">Azure DevOps Project (פרויקט Azure DevOps)</span>
+								<input name="azure_devops_project_input" class="input input-bordered w-full" placeholder="Enter project name manually" />
 							</label>
-							<label id="support-pipeline-url-wrap" class="form-control hidden md:col-span-2">
-								<span class="label-text">Pipeline URL</span>
-								<input name="pipeline_url" class="input input-bordered" />
+							<label id="support-pipeline-url-wrap" class="form-control w-full hidden md:col-span-2">
+								<span class="label-text">Pipeline URL (קישור Pipeline)</span>
+								<input name="pipeline_url" class="input input-bordered w-full" />
 							</label>
 						</div>
 					</div>
-					<label class="form-control">
-						<span class="label-text">Reason</span>
-						<select name="reason" class="select select-bordered" required>
-							<option value="">Select reason</option>
-							<option>customer issue</option>
-							<option>usage/configuration issue</option>
-							<option>data importing</option>
-							<option>performance issue</option>
-							<option>bug</option>
-							<option>feature request</option>
-							<option>question</option>
-							<option>other</option>
-						</select>
-					</label>
-					<label id="support-reason-other-wrap" class="form-control hidden transition-all duration-200">
-						<span class="label-text">Other reason <span class="opacity-60">(optional)</span></span>
-						<input name="reason_other" class="input input-bordered" />
-					</label>
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+						<label class="form-control w-full">
+							<span class="label-text">Reason (סיבת פתיחת הקריאה)</span>
+							<select name="reason" class="select select-bordered w-full" required>
+								<option value="">Select reason</option>
+								<option>customer issue</option>
+								<option>usage/configuration issue</option>
+								<option>data importing</option>
+								<option>performance issue</option>
+								<option>bug</option>
+								<option>feature request</option>
+								<option>question</option>
+								<option>other</option>
+							</select>
+						</label>
+						<label id="support-reason-other-wrap" class="form-control w-full hidden transition-all duration-200">
+							<span class="label-text">Please specify (נא לפרט) <span class="opacity-60">(optional)</span></span>
+							<input name="reason_other" class="input input-bordered w-full" />
+						</label>
+					</div>
 				</section>
 
-				<section data-support-step="2" class="hidden space-y-4 transition-all duration-200">
+				<section data-support-step="2" class="hidden section-card p-5 space-y-5 transition-all duration-200">
 					<div class="section-title">Ticket Info</div>
-					<label class="form-control">
-						<span class="label-text">Title</span>
-						<input name="title" class="input input-bordered" required />
-					</label>
-					<label class="form-control">
-						<span class="label-text">Urgency</span>
-						<select name="urgency" class="select select-bordered" required>
-							<option value="">Select urgency</option>
-							<option value="4">low (4)</option>
-							<option value="3">medium (3)</option>
-							<option value="2">high (2)</option>
-							<option value="1">urgent (1)</option>
-						</select>
-					</label>
-					<label class="form-control">
-						<span class="label-text">Description</span>
-						<textarea name="description" class="textarea textarea-bordered min-h-28" required></textarea>
-					</label>
-					<label class="form-control">
-						<span class="label-text">Work impact</span>
-						<textarea name="work_impact" class="textarea textarea-bordered min-h-24" required></textarea>
-					</label>
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+						<label class="form-control w-full">
+							<span class="label-text">Title (כותרת)</span>
+							<input name="title" class="input input-bordered w-full" required />
+						</label>
+						<label class="form-control w-full">
+							<span class="label-text">Urgency (דחיפות)</span>
+							<select name="urgency" class="select select-bordered w-full" required>
+								<option value="">Select urgency</option>
+								<option value="4">low (4)</option>
+								<option value="3">medium (3)</option>
+								<option value="2">high (2)</option>
+								<option value="1">urgent (1)</option>
+							</select>
+						</label>
+						<label class="form-control w-full md:col-span-2">
+							<span class="label-text">Description (תיאור)</span>
+							<textarea name="description" class="textarea textarea-bordered w-full min-h-28" required></textarea>
+						</label>
+						<label class="form-control w-full md:col-span-2">
+							<span class="label-text">Work Impact (השפעה על העבודה)</span>
+							<textarea name="work_impact" class="textarea textarea-bordered w-full min-h-24" required></textarea>
+						</label>
+					</div>
 				</section>
 
-				<section data-support-step="3" class="hidden space-y-4 transition-all duration-200">
+				<section data-support-step="3" class="hidden section-card p-5 space-y-5 transition-all duration-200">
 					<div class="section-title">Attachments + Summary</div>
-					<div id="support-ticket-summary" class="rounded-xl border border-base-300 bg-base-200/50 p-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm"></div>
-					<label class="form-control">
-						<span class="label-text">Help text</span>
-						<textarea name="help_text" class="textarea textarea-bordered min-h-24" required></textarea>
-					</label>
-					<label class="form-control">
-						<span class="label-text">Attachments <span class="opacity-60">(optional)</span></span>
-						<input name="attachments" type="file" class="file-input file-input-bordered" multiple />
-					</label>
+					<div id="support-ticket-summary" class="rounded-xl border border-base-300 bg-base-200/50 p-4 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm"></div>
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+						<label class="form-control w-full md:col-span-2">
+							<span class="label-text">Help Text (איך נוכל לעזור?)</span>
+							<textarea name="help_text" class="textarea textarea-bordered w-full min-h-24" required></textarea>
+						</label>
+						<label class="form-control w-full md:col-span-2">
+							<span class="label-text">Attachments (קבצים מצורפים) <span class="opacity-60">(optional)</span></span>
+							<input name="attachments" type="file" class="file-input file-input-bordered w-full" multiple />
+						</label>
+					</div>
 				</section>
 			</form>
 		</div>
@@ -234,7 +240,7 @@
 			<button id="support-ticket-back" class="btn">Back</button>
 			<div class="flex items-center gap-2">
 				<button id="support-ticket-next" class="btn btn-primary">Next</button>
-				<button id="support-create-ticket" class="btn btn-primary hidden">Create Ticket</button>
+				<button id="support-create-ticket" class="btn btn-primary hidden">Open a Ticket</button>
 			</div>
 		</div>
 	</div>
@@ -561,6 +567,7 @@
 		const stepTitles = ["Navy User Info", "Service Info", "Ticket Info", "Attachments + Summary"];
 		let currentStep = 0;
 		let azureProjectsLoaded = false;
+		let azureProjectManualFallback = false;
 
 		function openModal() {
 			clearModalError();
@@ -619,11 +626,14 @@
 			const supportType = flowForm.elements.azure_devops_support_type?.value || "";
 			const reason = flowForm.elements.reason?.value || "";
 			const azureVisible = service === "azure devops";
+			if (!azureVisible || network !== "סודי ביותר") {
+				azureProjectManualFallback = false;
+			}
 			document.getElementById("support-azure-fields")?.classList.toggle("hidden", !azureVisible);
 			document.getElementById("support-pipeline-url-wrap")?.classList.toggle("hidden", !(azureVisible && supportType === "pipelines"));
 			document.getElementById("support-reason-other-wrap")?.classList.toggle("hidden", reason !== "other");
 
-			const useProjectSelect = azureVisible && network === "סודי ביותר";
+			const useProjectSelect = azureVisible && network === "סודי ביותר" && !azureProjectManualFallback;
 			document.getElementById("support-azure-project-select-wrap")?.classList.toggle("hidden", !useProjectSelect);
 			document.getElementById("support-azure-project-input-wrap")?.classList.toggle("hidden", !azureVisible || useProjectSelect);
 
@@ -649,14 +659,25 @@
 				const json = await parseJsonSafe(res);
 				if (!res.ok) throw new Error(extractErrorMessage(json, "Failed to load Azure DevOps projects."));
 				const projects = Array.isArray(json?.data) ? json.data : [];
+				if (!projects.length) throw new Error("No Azure DevOps projects were returned.");
 				select.innerHTML = '<option value="">Select project</option>' + projects
 					.map((p) => `<option value="${esc(p.name || p.id || "")}">${esc(p.name || p.id || "")}</option>`)
 					.join("");
 			} catch (err) {
+				// Never block ticket creation on the project-list API: classified
+				// network users get the dropdown when it works, otherwise the same
+				// manual project-name input used by other networks.
+				azureProjectManualFallback = true;
 				select.innerHTML = '<option value="">Could not load projects</option>';
+				document.getElementById("support-azure-project-select-wrap")?.classList.add("hidden");
+				document.getElementById("support-azure-project-input-wrap")?.classList.remove("hidden");
+				setRequired("azure_devops_project_select", false);
+				setRequired("azure_devops_project_input", true);
 				window.portalToast?.({ kind: "error", message: err?.message || "Could not load Azure DevOps projects." });
 			}
 			updateNavState();
+			renderSummary();
+			saveTicketDraft();
 		}
 
 		function visibleStepControls() {
@@ -681,7 +702,7 @@
 			const service = flowForm.elements.devops_services?.value || "";
 			if (service !== "azure devops") return "";
 			const network = flowForm.elements.network?.value || "";
-			return network === "סודי ביותר"
+			return network === "סודי ביותר" && !azureProjectManualFallback
 				? (flowForm.elements.azure_devops_project_select?.value || "")
 				: (flowForm.elements.azure_devops_project_input?.value || "");
 		}
