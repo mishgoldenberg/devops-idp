@@ -46,33 +46,57 @@
 			Quick Links
 		</h3>
 		<ul
+			id="quick-links-list"
 			class="menu menu-horizontal w-full max-w-full flex-nowrap items-start justify-start gap-8 overflow-x-auto overflow-y-hidden p-0 pb-2"
 		>
-			{% for link in quick_links %}
-			<li class="shrink-0">
-				<a
-					href="{{ link.url }}"
-					{% if link.url != "#" %}target="_blank" rel="noopener noreferrer"{% endif %}
-					class="flex flex-col items-center gap-4 bg-transparent p-0 hover:bg-transparent focus:bg-transparent"
-				>
-					<div class="avatar">
-						<div
-							class="flex h-16 w-16 items-center justify-center rounded-full border border-base-content/25 bg-base-200/30"
-						>
-							<svg viewBox="{{ link.viewBox }}" class="h-8 w-8" aria-hidden="true">
-								<use href="#{{ link.icon }}" class="{{ link.color }}" />
-							</svg>
-						</div>
-					</div>
-					<span class="text-sm font-semibold text-base-content/60">
-						{{ link.name }}
-					</span>
-				</a>
-			</li>
-			{% endfor %}
+			<li class="shrink-0 text-sm opacity-60">Loading quick links…</li>
 		</ul>
 	</div>
 </div>
+
+{% if is_admin %}
+<div id="quick-link-modal" class="hidden fixed inset-0 z-50 items-center justify-center bg-black/50 p-4">
+	<div class="w-full max-w-lg rounded-xl border border-base-300 bg-base-100 shadow-2xl">
+		<div class="px-5 py-4 border-b border-base-300">
+			<h3 class="font-bold text-lg">Add Quick Link</h3>
+			<p class="text-sm opacity-70">This link will be visible to all users.</p>
+		</div>
+		<form id="quick-link-form" class="p-5 space-y-4">
+			<label class="form-control w-full">
+				<span class="label-text">System Name</span>
+				<input name="name" class="input input-bordered w-full" required />
+			</label>
+			<label class="form-control w-full">
+				<span class="label-text">URL</span>
+				<input name="url" class="input input-bordered w-full" placeholder="https://example.internal" required />
+			</label>
+			<label class="form-control w-full">
+				<span class="label-text">Icon URL</span>
+				<input name="icon_url" class="input input-bordered w-full" placeholder="https://example.internal/icon.png" />
+			</label>
+			<label class="form-control w-full">
+				<span class="label-text">Icon image upload <span class="opacity-60">(optional preview)</span></span>
+				<input id="quick-link-icon-file" type="file" accept="image/*" class="file-input file-input-bordered w-full" />
+			</label>
+			<div class="flex items-center gap-3 rounded-xl border border-base-300 bg-base-200/50 p-3">
+				<div class="flex h-16 w-16 items-center justify-center rounded-full border border-base-content/25 bg-base-200/30 overflow-hidden">
+					<img id="quick-link-preview" class="hidden h-10 w-10 object-contain" alt="Icon preview" />
+					<span id="quick-link-preview-fallback" class="text-2xl font-bold text-primary">+</span>
+				</div>
+				<div>
+					<div class="text-sm font-semibold">Preview</div>
+					<div class="text-xs opacity-60">The icon appears inside the same circle style.</div>
+				</div>
+			</div>
+			<div id="quick-link-error" class="hidden alert alert-error alert-soft text-xs"></div>
+		</form>
+		<div class="px-5 pb-5 flex justify-end gap-2">
+			<button id="quick-link-cancel" type="button" class="btn">Cancel</button>
+			<button id="quick-link-submit" type="button" class="btn btn-primary">Add Link</button>
+		</div>
+	</div>
+</div>
+{% endif %}
 
 <svg class="hidden" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
 	<symbol id="quicklink-azure-devops" viewBox="0 0 16 16">
@@ -97,3 +121,166 @@
 		/>
 	</symbol>
 </svg>
+
+<script>
+	(function () {
+		const isAdmin = {{ is_admin | tojson }};
+		const fallbackLinks = {{ quick_links | tojson }};
+		const listEl = document.getElementById("quick-links-list");
+		const modal = document.getElementById("quick-link-modal");
+		const form = document.getElementById("quick-link-form");
+		const errorEl = document.getElementById("quick-link-error");
+		const preview = document.getElementById("quick-link-preview");
+		const previewFallback = document.getElementById("quick-link-preview-fallback");
+		const iconFile = document.getElementById("quick-link-icon-file");
+
+		function esc(value) {
+			return String(value ?? "")
+				.replace(/&/g, "&amp;")
+				.replace(/</g, "&lt;")
+				.replace(/>/g, "&gt;")
+				.replace(/"/g, "&quot;")
+				.replace(/'/g, "&#39;");
+		}
+
+		function linkIcon(link) {
+			if (link.icon_url) {
+				return `<img src="${esc(link.icon_url)}" alt="" class="h-10 w-10 object-contain" />`;
+			}
+			return `<svg viewBox="${esc(link.viewBox || "0 0 24 24")}" class="h-8 w-8" aria-hidden="true">
+				<use href="#${esc(link.icon || "quicklink-azure-devops")}" class="${esc(link.color || "fill-primary")}" />
+			</svg>`;
+		}
+
+		function linkItem(link) {
+			const external = link.url && link.url !== "#";
+			return `<li class="shrink-0">
+				<a
+					href="${esc(link.url || "#")}"
+					${external ? 'target="_blank" rel="noopener noreferrer"' : ""}
+					class="flex flex-col items-center gap-4 bg-transparent p-0 hover:bg-transparent focus:bg-transparent"
+				>
+					<div class="avatar">
+						<div class="flex h-16 w-16 items-center justify-center rounded-full border border-base-content/25 bg-base-200/30 overflow-hidden">
+							${linkIcon(link)}
+						</div>
+					</div>
+					<span class="text-sm font-semibold text-base-content/60">${esc(link.name)}</span>
+				</a>
+			</li>`;
+		}
+
+		function addButton() {
+			if (!isAdmin) return "";
+			return `<li class="shrink-0">
+				<button
+					type="button"
+					id="quick-link-add"
+					class="flex flex-col items-center gap-4 bg-transparent p-0 hover:bg-transparent focus:bg-transparent"
+					aria-label="Add quick link"
+				>
+					<div class="avatar">
+						<div class="flex h-16 w-16 items-center justify-center rounded-full border border-dashed border-primary/60 bg-primary/10 text-primary text-3xl font-semibold">
+							+
+						</div>
+					</div>
+					<span class="text-sm font-semibold text-base-content/60">Add</span>
+				</button>
+			</li>`;
+		}
+
+		function render(links) {
+			const safeLinks = Array.isArray(links) && links.length ? links : fallbackLinks;
+			listEl.innerHTML = safeLinks.map(linkItem).join("") + addButton();
+			document.getElementById("quick-link-add")?.addEventListener("click", openModal);
+		}
+
+		function openModal() {
+			errorEl?.classList.add("hidden");
+			form?.reset();
+			setPreview("");
+			modal?.classList.remove("hidden");
+			modal?.classList.add("flex");
+		}
+
+		function closeModal() {
+			modal?.classList.add("hidden");
+			modal?.classList.remove("flex");
+			errorEl?.classList.add("hidden");
+		}
+
+		function setPreview(src) {
+			if (!preview || !previewFallback) return;
+			if (src) {
+				preview.src = src;
+				preview.classList.remove("hidden");
+				previewFallback.classList.add("hidden");
+			} else {
+				preview.removeAttribute("src");
+				preview.classList.add("hidden");
+				previewFallback.classList.remove("hidden");
+			}
+		}
+
+		async function loadLinks() {
+			try {
+				const res = await fetch("/api/quick-links", { credentials: "same-origin" });
+				const json = await res.json();
+				if (!res.ok) throw new Error("Failed to load quick links");
+				render(Array.isArray(json?.data) ? json.data : []);
+			} catch (_) {
+				render(fallbackLinks);
+			}
+		}
+
+		iconFile?.addEventListener("change", () => {
+			const file = iconFile.files && iconFile.files[0];
+			if (!file) return;
+			const reader = new FileReader();
+			reader.onload = () => {
+				const dataUrl = String(reader.result || "");
+				const iconInput = form?.elements.icon_url;
+				if (iconInput) iconInput.value = dataUrl;
+				setPreview(dataUrl);
+			};
+			reader.readAsDataURL(file);
+		});
+		form?.elements.icon_url?.addEventListener("input", (event) => {
+			setPreview(event.target.value.trim());
+		});
+		document.getElementById("quick-link-cancel")?.addEventListener("click", closeModal);
+		document.getElementById("quick-link-submit")?.addEventListener("click", async () => {
+			const name = (form?.elements.name?.value || "").trim();
+			const url = (form?.elements.url?.value || "").trim();
+			const iconUrl = (form?.elements.icon_url?.value || "").trim();
+			if (!name || !url) {
+				if (errorEl) {
+					errorEl.textContent = "System Name and URL are required.";
+					errorEl.classList.remove("hidden");
+				}
+				return;
+			}
+			try {
+				const res = await fetch("/api/admin/quick-links", {
+					method: "POST",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ name, url, icon_url: iconUrl }),
+				});
+				const json = await res.json().catch(() => ({}));
+				if (!res.ok) throw new Error(json?.detail || "Could not add quick link");
+				closeModal();
+				window.portalToast?.({ kind: "success", message: "Quick link added" });
+				loadLinks();
+			} catch (err) {
+				if (errorEl) {
+					errorEl.textContent = err?.message || "Could not add quick link";
+					errorEl.classList.remove("hidden");
+				}
+			}
+		});
+
+		render(fallbackLinks);
+		loadLinks();
+	})();
+</script>

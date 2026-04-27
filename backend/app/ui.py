@@ -880,11 +880,14 @@ def ui_sidebar_component(request: Request):
 @ui_router.get("/ui/components/quick-links", response_class=HTMLResponse)
 def ui_quick_links_component(request: Request):
     """Render the Quick Links dashboard component for HTMX partial loading."""
+    current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
+    is_admin = bool(current_user and has_effective_admin_access_live(current_user))
     templates = _get_templates(request)
     return templates.TemplateResponse(
         "partials/components/quick-links.html",
         {
             "request": request,
+            "is_admin": is_admin,
             "now": datetime.utcnow().isoformat() + "Z",
         },
     )

@@ -35,6 +35,7 @@ from . import (
     favorites,
     activity,
     integrations,
+    quick_links,
 )
 
 
@@ -101,5 +102,8 @@ api_router.include_router(activity.router, prefix="/activity", tags=["activity"]
 
 # Per-user external integration credentials and real SonarQube/Artifactory reads.
 api_router.include_router(integrations.router, prefix="/integrations", tags=["integrations"])
+
+# Globally visible Quick Links for the dashboard. Admin CRUD lives under /api/admin.
+api_router.include_router(quick_links.router, prefix="/quick-links", tags=["quick-links"])
 
 

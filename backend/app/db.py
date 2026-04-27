@@ -377,6 +377,28 @@ def ensure_tables() -> None:
     ensure_auth_tables()
     ensure_sso_config_table()
     ensure_user_integrations_tables()
+    ensure_quick_links_table()
+
+
+def ensure_quick_links_table() -> None:
+    """Create admin-managed Quick Links shown to every dashboard user."""
+    execute(
+        """
+        CREATE TABLE IF NOT EXISTS quick_links (
+            id          SERIAL PRIMARY KEY,
+            name        VARCHAR(255) NOT NULL,
+            url         TEXT NOT NULL,
+            icon_url    TEXT,
+            sort_order  INTEGER NOT NULL DEFAULT 0,
+            is_active   BOOLEAN NOT NULL DEFAULT true,
+            created_by  VARCHAR(255),
+            created_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    execute(
+        "CREATE INDEX IF NOT EXISTS idx_quick_links_active_order ON quick_links (is_active, sort_order, id)"
+    )
 
 
 def ensure_auth_tables() -> None:

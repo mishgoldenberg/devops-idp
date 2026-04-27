@@ -1,12 +1,12 @@
 import re
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Literal
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 import httpx
 from pydantic import BaseModel, field_validator
 
-from db import execute_returning, query_all, query_one
+from db import execute, execute_returning, query_all, query_one
 from security import AuthUser, get_current_user, has_effective_admin_access_live
 from sso_config import (
     fetch_openid_configuration,
@@ -47,12 +47,56 @@ class SsoConfigRequest(BaseModel):
         return s
 
 
+class QuickLinkRequest(BaseModel):
+    name: str
+    url: str
+    icon_url: Optional[str] = ""
+
+    @field_validator("name", "url")
+    @classmethod
+    def required_string(cls, v: str) -> str:
+        s = (v or "").strip()
+        if not s:
+            raise ValueError("Required")
+        return s
+
+    @field_validator("icon_url")
+    @classmethod
+    def optional_string(cls, v: Optional[str]) -> str:
+        return (v or "").strip()
+
+
+class QuickLinkPatchRequest(BaseModel):
+    name: Optional[str] = None
+    url: Optional[str] = None
+    icon_url: Optional[str] = None
+
+    @field_validator("name", "url", "icon_url")
+    @classmethod
+    def normalize_optional_string(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        return v.strip()
+
+
 def _require_app_admin(current_user: AuthUser) -> None:
     if not has_effective_admin_access_live(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Insufficient permissions",
         )
+
+
+def _quick_link_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": str(row.get("id")),
+        "name": row.get("name") or "",
+        "url": row.get("url") or "",
+        "icon_url": row.get("icon_url") or "",
+        "sort_order": int(row.get("sort_order") or 0),
+        "is_active": bool(row.get("is_active")),
+        "created_by": row.get("created_by") or "",
+    }
 
 
 def _platform_admin_role() -> Dict[str, Any]:
@@ -132,6 +176,92 @@ def save_admin_sso_config(
         "success": True,
         "message": "SSO configuration saved.",
         "data": get_sso_config_redacted(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.post("/quick-links")
+def create_quick_link(
+    body: QuickLinkRequest,
+    current_user: AuthUser = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Create a globally visible Quick Link. Admin-only on the backend."""
+    _require_app_admin(current_user)
+    max_order = query_one("SELECT COALESCE(MAX(sort_order), 0) AS n FROM quick_links")
+    next_order = int((max_order or {}).get("n") or 0) + 10
+    rows = execute_returning(
+        """
+        INSERT INTO quick_links (name, url, icon_url, sort_order, is_active, created_by)
+        VALUES (%s, %s, %s, %s, true, %s)
+        RETURNING id, name, url, icon_url, sort_order, is_active, created_by
+        """,
+        [
+            body.name,
+            body.url,
+            body.icon_url or None,
+            next_order,
+            str(current_user.get("email") or current_user.get("username") or ""),
+        ],
+    )
+    return {
+        "success": True,
+        "data": _quick_link_row(rows[0]),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.patch("/quick-links/{quick_link_id}")
+def update_quick_link(
+    quick_link_id: int,
+    body: QuickLinkPatchRequest,
+    current_user: AuthUser = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Update a Quick Link without changing visibility. Admin-only."""
+    _require_app_admin(current_user)
+    existing = query_one(
+        "SELECT id FROM quick_links WHERE id = %s AND is_active = true",
+        [quick_link_id],
+    )
+    if not existing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quick link not found")
+    current = query_one(
+        "SELECT name, url, icon_url FROM quick_links WHERE id = %s",
+        [quick_link_id],
+    ) or {}
+    name = body.name if body.name is not None else str(current.get("name") or "")
+    url = body.url if body.url is not None else str(current.get("url") or "")
+    icon_url = body.icon_url if body.icon_url is not None else str(current.get("icon_url") or "")
+    if not name or not url:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Name and URL are required")
+    rows = execute_returning(
+        """
+        UPDATE quick_links
+        SET name = %s, url = %s, icon_url = %s
+        WHERE id = %s
+        RETURNING id, name, url, icon_url, sort_order, is_active, created_by
+        """,
+        [name, url, icon_url or None, quick_link_id],
+    )
+    return {
+        "success": True,
+        "data": _quick_link_row(rows[0]),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.delete("/quick-links/{quick_link_id}")
+def delete_quick_link(
+    quick_link_id: int,
+    current_user: AuthUser = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Soft-delete a Quick Link so existing IDs do not need to be reused."""
+    _require_app_admin(current_user)
+    execute(
+        "UPDATE quick_links SET is_active = false WHERE id = %s",
+        [quick_link_id],
+    )
+    return {
+        "success": True,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
