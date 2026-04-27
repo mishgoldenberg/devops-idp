@@ -27,6 +27,7 @@ ENDPOINTS:
 
 from typing import Any, Dict, List, Optional
 import os
+from urllib.parse import quote, urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
@@ -59,6 +60,57 @@ def _now_iso() -> str:
     from datetime import datetime, timezone
 
     return datetime.now(timezone.utc).isoformat()
+
+
+def _is_devops_cloud_root(base: str) -> bool:
+    parsed = urlparse(base)
+    return parsed.netloc.lower() == "dev.azure.com" and not parsed.path.strip("/")
+
+
+def _discover_ado_bases(client: httpx.Client) -> List[str]:
+    """
+    Resolve the Azure DevOps organization/collection URLs available to the PAT.
+
+    `AZURE_DEVOPS_BASE_URL=https://dev.azure.com/` is a service root, not an API
+    scope. In that case we ask Azure DevOps for the accounts the PAT can access
+    and query each one. If a concrete org/collection URL is configured, use it
+    directly.
+    """
+    if not ADO_BASE:
+        raise HTTPException(status_code=500, detail="AZURE_DEVOPS_BASE_URL is not configured")
+
+    if not _is_devops_cloud_root(ADO_BASE):
+        return [ADO_BASE]
+
+    try:
+        profile = client.get("https://app.vssps.visualstudio.com/_apis/profile/profiles/me?api-version=7.1")
+        profile.raise_for_status()
+        member_id = profile.json().get("id")
+        if not member_id:
+            raise ValueError("profile id missing")
+
+        accounts = client.get(
+            f"https://app.vssps.visualstudio.com/_apis/accounts?memberId={member_id}&api-version=7.1"
+        )
+        accounts.raise_for_status()
+        names = [
+            str(account.get("accountName") or "").strip()
+            for account in accounts.json().get("value", [])
+            if account.get("accountName")
+        ]
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=(
+                "Could not discover Azure DevOps organizations for this PAT. "
+                "Check that the PAT has access, or set AZURE_DEVOPS_BASE_URL to a specific organization URL."
+            ),
+        ) from exc
+
+    bases = [f"https://dev.azure.com/{name}" for name in names]
+    if not bases:
+        raise HTTPException(status_code=404, detail="No Azure DevOps organizations are accessible with this PAT")
+    return bases
 
 
 def _get_pat_for_user(current_user: AuthUser) -> str:
@@ -119,7 +171,7 @@ def remove_pat(current_user: AuthUser = Depends(get_current_user)):
     return Response(status_code=204)
 
 
-def _fetch_state_categories(client: httpx.Client, project: str, work_item_type: str) -> dict:
+def _fetch_state_categories(client: httpx.Client, base_url: str, project: str, work_item_type: str) -> dict:
     """
     Returns a mapping of {state_name: state_category} for a given project + work item type.
     State categories are ADO-standard strings: 'Proposed', 'InProgress', 'Resolved',
@@ -127,10 +179,8 @@ def _fetch_state_categories(client: httpx.Client, project: str, work_item_type: 
     Returns an empty dict (not None) on failure so callers can fall back to name heuristics.
     """
     import logging
-    from urllib.parse import quote
-
     url = (
-        f"{ADO_BASE}/{quote(project, safe='')}/_apis/wit/workitemtypes"
+        f"{base_url}/{quote(project, safe='')}/_apis/wit/workitemtypes"
         f"/{quote(work_item_type, safe='')}/"
         f"states?api-version=7.0"
     )
@@ -167,12 +217,19 @@ def get_projects(current_user: AuthUser = Depends(get_current_user)):
     auth = httpx.BasicAuth("", pat)
     try:
         with httpx.Client(auth=auth, timeout=20.0) as client:
-            r = client.get(f"{ADO_BASE}/_apis/projects?$top=200&api-version=7.0")
-            r.raise_for_status()
-            projects = [
-                {"id": p.get("id"), "name": p.get("name")}
-                for p in r.json().get("value", [])
-            ]
+            projects = []
+            for base_url in _discover_ado_bases(client):
+                r = client.get(f"{base_url}/_apis/projects?$top=200&api-version=7.0")
+                r.raise_for_status()
+                collection = base_url.rstrip("/").split("/")[-1]
+                projects.extend(
+                    {
+                        "id": p.get("id"),
+                        "name": p.get("name"),
+                        "collection": collection,
+                    }
+                    for p in r.json().get("value", [])
+                )
         return {"success": True, "data": projects, "timestamp": _now_iso()}
     except httpx.HTTPStatusError as exc:
         raise HTTPException(status_code=502, detail=f"Azure DevOps API error: {exc.response.status_code}")
@@ -295,10 +352,19 @@ def get_workitem_tasks(
         pat = _get_pat_for_user(current_user)
         auth = httpx.BasicAuth("", pat)
         with httpx.Client(auth=auth, timeout=20.0) as client:
-            parent = client.get(
-                f"{ADO_BASE}/_apis/wit/workitems/{id}?$expand=relations&api-version=7.0"
-            )
-            parent.raise_for_status()
+            bases = _discover_ado_bases(client)
+            parent = None
+            parent_base = ""
+            for base_url in bases:
+                res = client.get(
+                    f"{base_url}/_apis/wit/workitems/{id}?$expand=relations&api-version=7.0"
+                )
+                if res.status_code == 200:
+                    parent = res
+                    parent_base = base_url
+                    break
+            if parent is None:
+                raise HTTPException(status_code=404, detail="Azure DevOps work item was not found in accessible organizations")
             child_ids = []
             for rel in parent.json().get("relations", []) or []:
                 if rel.get("rel") != "System.LinkTypes.Hierarchy-Forward":
@@ -315,7 +381,7 @@ def get_workitem_tasks(
             for i in range(0, len(child_ids), 200):
                 chunk = ",".join(child_ids[i : i + 200])
                 res = client.get(
-                    f"{ADO_BASE}/_apis/wit/workitems?ids={chunk}"
+                    f"{parent_base}/_apis/wit/workitems?ids={chunk}"
                     "&fields=System.Id,System.Title,System.State,System.WorkItemType"
                     "&api-version=7.0"
                 )
@@ -328,7 +394,7 @@ def get_workitem_tasks(
                             "title": fields.get("System.Title") or f"Task #{item.get('id')}",
                             "state": fields.get("System.State") or "",
                             "type": fields.get("System.WorkItemType") or "",
-                            "url": f"{ADO_BASE}/_workitems/edit/{item.get('id')}",
+                            "url": f"{parent_base}/_workitems/edit/{item.get('id')}",
                         }
                     )
         return {"success": True, "data": tasks, "timestamp": _now_iso()}
@@ -365,63 +431,65 @@ def _fetch_work_items_live(
                 "Order By [System.ChangedDate] Desc"
             )
         }
-        wiql_url = f"{ADO_BASE}/_apis/wit/wiql?api-version=7.0"
         with httpx.Client(auth=auth, timeout=30.0) as client:
-            r = client.post(wiql_url, json=query)
-            r.raise_for_status()
-            ids = [str(item["id"]) for item in r.json().get("workItems", [])]
-            if not ids:
-                return {"success": True, "data": [], "timestamp": _now_iso()}
-
-            # Fetch full details in batches of 200 (API limit)
-            items: list = []
-            for i in range(0, len(ids), 200):
-                chunk = ",".join(ids[i : i + 200])
-                r2 = client.get(
-                    f"{ADO_BASE}/_apis/wit/workitems?ids={chunk}"
-                    "&fields=System.Id,System.Title,System.State,System.WorkItemType,"
-                    "System.TeamProject,System.AssignedTo,System.CreatedDate,System.ChangedDate"
-                    "&api-version=7.0"
-                )
-                r2.raise_for_status()
-                items.extend(r2.json().get("value", []))
-
-            # Build state-category map per (project, type) – one API call each, minimal overhead
-            _cat_cache: dict = {}
-            org = ADO_BASE.split("/")[-1]
-
             work_items = []
-            for it in items:
-                fields = it.get("fields", {})
-                wi_id = it.get("id")
-                wi_state = fields.get("System.State") or ""
-                wi_type = fields.get("System.WorkItemType") or ""
-                wi_project = fields.get("System.TeamProject") or ""
+            for base_url in _discover_ado_bases(client):
+                wiql_url = f"{base_url}/_apis/wit/wiql?api-version=7.0"
+                r = client.post(wiql_url, json=query)
+                if r.status_code in (401, 403, 404):
+                    continue
+                r.raise_for_status()
+                ids = [str(item["id"]) for item in r.json().get("workItems", [])]
+                if not ids:
+                    continue
 
-                cache_key = (wi_project, wi_type)
-                if cache_key not in _cat_cache:
-                    _cat_cache[cache_key] = _fetch_state_categories(client, wi_project, wi_type)
-                state_category = _cat_cache[cache_key].get(wi_state, "")
+                # Fetch full details in batches of 200 (API limit)
+                items: list = []
+                for i in range(0, len(ids), 200):
+                    chunk = ",".join(ids[i : i + 200])
+                    r2 = client.get(
+                        f"{base_url}/_apis/wit/workitems?ids={chunk}"
+                        "&fields=System.Id,System.Title,System.State,System.WorkItemType,"
+                        "System.TeamProject,System.AssignedTo,System.CreatedDate,System.ChangedDate"
+                        "&api-version=7.0"
+                    )
+                    r2.raise_for_status()
+                    items.extend(r2.json().get("value", []))
 
-                portal_url = (
-                    f"https://dev.azure.com/{org}/{wi_project}/_workitems/edit/{wi_id}"
-                    if wi_project
-                    else f"https://dev.azure.com/{org}/_workitems/edit/{wi_id}"
-                )
-                work_items.append(
-                    {
-                        "id": wi_id,
-                        "title": fields.get("System.Title"),
-                        "state": wi_state,
-                        "state_category": state_category,
-                        "type": wi_type,
-                        "project": wi_project,
-                        "assigned_to": fields.get("System.AssignedTo"),
-                        "created_date": fields.get("System.CreatedDate"),
-                        "changed_date": fields.get("System.ChangedDate"),
-                        "url": portal_url,
-                    }
-                )
+                # Build state-category map per (project, type) – one API call each, minimal overhead
+                _cat_cache: dict = {}
+
+                for it in items:
+                    fields = it.get("fields", {})
+                    wi_id = it.get("id")
+                    wi_state = fields.get("System.State") or ""
+                    wi_type = fields.get("System.WorkItemType") or ""
+                    wi_project = fields.get("System.TeamProject") or ""
+
+                    cache_key = (base_url, wi_project, wi_type)
+                    if cache_key not in _cat_cache:
+                        _cat_cache[cache_key] = _fetch_state_categories(client, base_url, wi_project, wi_type)
+                    state_category = _cat_cache[cache_key].get(wi_state, "")
+
+                    portal_url = (
+                        f"{base_url}/{wi_project}/_workitems/edit/{wi_id}"
+                        if wi_project
+                        else f"{base_url}/_workitems/edit/{wi_id}"
+                    )
+                    work_items.append(
+                        {
+                            "id": wi_id,
+                            "title": fields.get("System.Title"),
+                            "state": wi_state,
+                            "state_category": state_category,
+                            "type": wi_type,
+                            "project": wi_project,
+                            "assigned_to": fields.get("System.AssignedTo"),
+                            "created_date": fields.get("System.CreatedDate"),
+                            "changed_date": fields.get("System.ChangedDate"),
+                            "url": portal_url,
+                        }
+                    )
 
         return {"success": True, "data": work_items, "timestamp": _now_iso()}
     except httpx.HTTPStatusError as exc:
@@ -513,15 +581,19 @@ def _fetch_pull_requests_live(effective_username: str, current_user: AuthUser) -
     try:
         pat = _get_pat_for_user(current_user)
         auth = httpx.BasicAuth("", pat)
-        projects_url = f"{ADO_BASE}/_apis/projects?api-version=7.0"
         with httpx.Client(auth=auth, timeout=30.0) as client:
-            r_projects = client.get(projects_url)
-            r_projects.raise_for_status()
-            projects = r_projects.json().get("value", [])
+            projects: List[Dict[str, Any]] = []
+            for base_url in _discover_ado_bases(client):
+                r_projects = client.get(f"{base_url}/_apis/projects?api-version=7.0")
+                if r_projects.status_code in (401, 403, 404):
+                    continue
+                r_projects.raise_for_status()
+                projects.extend({**p, "_ado_base_url": base_url} for p in r_projects.json().get("value", []))
 
             def _repos_for_project(proj: Dict[str, Any]):
+                base_url = proj.get("_ado_base_url") or ADO_BASE
                 project_id = proj.get("id")
-                repos_url = f"{ADO_BASE}/{project_id}/_apis/git/repositories?api-version=7.0"
+                repos_url = f"{base_url}/{project_id}/_apis/git/repositories?api-version=7.0"
                 try:
                     r_repos = client.get(repos_url)
                     if r_repos.status_code != 200:
@@ -531,10 +603,11 @@ def _fetch_pull_requests_live(effective_username: str, current_user: AuthUser) -
                     return proj, []
 
             def _prs_for_repo(proj: Dict[str, Any], repo: Dict[str, Any]):
+                base_url = proj.get("_ado_base_url") or ADO_BASE
                 project_id = proj.get("id")
                 repo_id = repo.get("id")
                 prs_url = (
-                    f"{ADO_BASE}/{project_id}/_apis/git/repositories/{repo_id}"
+                    f"{base_url}/{project_id}/_apis/git/repositories/{repo_id}"
                     "/pullrequests?searchCriteria.status=active&api-version=7.0"
                 )
                 try:
@@ -567,14 +640,11 @@ def _fetch_pull_requests_live(effective_username: str, current_user: AuthUser) -
                         is_reviewer = any(rev.get("uniqueName", "").lower() == query_user_lower for rev in pr.get("reviewers", []))
                         
                         if is_creator or is_reviewer:
-                            # Extract org and project
-                            org = ADO_BASE.split("/")[-1]
+                            base_url = proj.get("_ado_base_url") or ADO_BASE
                             project_name = proj.get("name")
                             repo_name = repo.get("name")
                             pr_id = pr.get("pullRequestId")
-                            
-                            # Construct proper portal URL for PR
-                            portal_url = f"https://dev.azure.com/{org}/{project_name}/_git/{repo_name}/pullrequest/{pr_id}"
+                            portal_url = f"{base_url}/{project_name}/_git/{repo_name}/pullrequest/{pr_id}"
                             
                             pull_requests.append({
                                 "id": pr_id,
@@ -636,12 +706,15 @@ def get_pipelines(
         from concurrent.futures import ThreadPoolExecutor
         pat = _get_pat_for_user(current_user)
         auth = httpx.BasicAuth("", pat)
-        # Query all projects in the org and get their recent builds
-        projects_url = f"{ADO_BASE}/_apis/projects?api-version=7.0"
+        # Query all accessible projects and get their recent builds.
         with httpx.Client(auth=auth, timeout=30.0) as client:
-            r_projects = client.get(projects_url)
-            r_projects.raise_for_status()
-            projects = r_projects.json().get("value", [])
+            projects: List[Dict[str, Any]] = []
+            for base_url in _discover_ado_bases(client):
+                r_projects = client.get(f"{base_url}/_apis/projects?api-version=7.0")
+                if r_projects.status_code in (401, 403, 404):
+                    continue
+                r_projects.raise_for_status()
+                projects.extend({**p, "_ado_base_url": base_url} for p in r_projects.json().get("value", []))
 
             target_projects = [
                 p for p in projects
@@ -649,8 +722,9 @@ def get_pipelines(
             ]
 
             def _builds_for(proj):
+                base_url = proj.get("_ado_base_url") or ADO_BASE
                 pid = proj.get("id")
-                url = f"{ADO_BASE}/{pid}/_apis/build/builds?$top=20&api-version=7.0"
+                url = f"{base_url}/{pid}/_apis/build/builds?$top=20&api-version=7.0"
                 try:
                     r = client.get(url)
                     if r.status_code != 200:
@@ -672,12 +746,9 @@ def get_pipelines(
                     requested_for_email = str(requested_for.get("uniqueName", "")).lower()
                     if query_user_lower and requested_for_email != query_user_lower:
                         continue
-                    # Extract org and construct portal URL
-                    org = ADO_BASE.split("/")[-1]
+                    base_url = proj.get("_ado_base_url") or ADO_BASE
                     build_id = build.get("id")
-                    
-                    # Construct proper portal URL for build
-                    portal_url = f"https://dev.azure.com/{org}/{project_name}/_build/results?buildId={build_id}"
+                    portal_url = f"{base_url}/{project_name}/_build/results?buildId={build_id}"
                     
                     pipelines.append({
                         "id": build_id,
