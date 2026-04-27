@@ -48,10 +48,14 @@
 			bodyEl.innerHTML = `<div class="h-full flex items-center justify-center text-xs text-base-content/50" data-arti-storage-status>${html}</div>`;
 		}
 
+		function showConnectStatus(html) {
+			bodyEl.innerHTML = `<div class="block text-xs text-base-content" data-arti-storage-status>${html}</div>`;
+		}
+
 		function connectPrompt() {
-			showStatus(`
+			showConnectStatus(`
 				<div class="w-full rounded-xl border border-primary/30 bg-primary/5 p-4 text-left opacity-100 scale-100 translate-y-0 transform transition-all duration-150 ease-out">
-					<h4 class="font-semibold text-sm">Connect to Artifactory</h4>
+					<h4 class="font-semibold text-sm text-base-content">Connect to Artifactory</h4>
 					<p class="mt-1 text-xs text-base-content/60">Generate an API Key or Access Token from your profile</p>
 					<input data-arti-storage-token type="password" class="input input-bordered input-sm mt-3 w-full" placeholder="Paste API Key or Access Token" />
 					<div class="mt-3 flex gap-2">
