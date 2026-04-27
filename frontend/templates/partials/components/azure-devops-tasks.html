@@ -63,8 +63,12 @@
 			</div>
 		</div>
 
-		{% if error %}
+		{% if error and needs_pat %}
 		{% include "partials/components/azure-pat-prompt.html" %}
+		{% elif error %}
+		<div class="flex flex-1 items-center justify-center rounded-xl border border-error/20 bg-error/5 p-4 text-center text-xs text-error">
+			{{ error }}
+		</div>
 		{% else %}
 		<div
 			class="flex-1 min-h-0 flex flex-col relative"

@@ -21,8 +21,12 @@
 				Latest My Pipeline Run
 			</h3>
 		</div>
-		{% if error %}
+		{% if error and needs_pat %}
 		{% include "partials/components/azure-pat-prompt.html" %}
+		{% elif error %}
+		<div class="flex flex-1 items-center justify-center rounded-xl border border-error/20 bg-error/5 p-4 text-center text-xs text-error">
+			{{ error }}
+		</div>
 		{% else %}
 		{% if not runs %}
 		<div class="flex flex-1 flex-col items-center justify-center text-center gap-2 py-8 text-base-content/60">

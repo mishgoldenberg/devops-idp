@@ -904,6 +904,11 @@ def _describe_ado_error(exc: Exception) -> str:
     return "Unable to load Azure DevOps data right now."
 
 
+def _ado_needs_pat(error: str) -> bool:
+    """Only show the PAT prompt for the actual missing-token error."""
+    return "not connected" in (error or "").lower() or "personal access token" in (error or "").lower()
+
+
 def _get_ado_task_counts(current_user: Optional[AuthUser]) -> Dict[str, Any]:
     empty_counts: Dict[str, int] = {"todo": 0, "in_progress": 0, "blocked": 0, "done": 0}
     if not current_user:
@@ -948,6 +953,7 @@ def ui_azure_devops_tasks_component(request: Request):
             "request": request,
             "counts": widget_state["counts"],
             "error": widget_state["error"],
+            "needs_pat": _ado_needs_pat(widget_state["error"]),
             "now": datetime.utcnow().isoformat() + "Z",
         },
     )
@@ -1052,7 +1058,12 @@ def ui_pull_requests_component(request: Request):
     widget_state = _get_pr_created_data(current_user)
     return templates.TemplateResponse(
         "partials/components/pull-requests.html",
-        {"request": request, "prs": widget_state["prs"], "error": widget_state["error"]},
+        {
+            "request": request,
+            "prs": widget_state["prs"],
+            "error": widget_state["error"],
+            "needs_pat": _ado_needs_pat(widget_state["error"]),
+        },
     )
 
 
@@ -1081,7 +1092,12 @@ def ui_pull_requests_review_component(request: Request):
     widget_state = _get_pr_review_data(current_user)
     return templates.TemplateResponse(
         "partials/components/pull-requests-review.html",
-        {"request": request, "prs": widget_state["prs"], "error": widget_state["error"]},
+        {
+            "request": request,
+            "prs": widget_state["prs"],
+            "error": widget_state["error"],
+            "needs_pat": _ado_needs_pat(widget_state["error"]),
+        },
     )
 
 
@@ -1093,7 +1109,12 @@ def ui_pipelines_component(request: Request):
     widget_state = _get_pipeline_data(current_user)
     return templates.TemplateResponse(
         "partials/components/pipelines.html",
-        {"request": request, "runs": widget_state["runs"], "error": widget_state["error"]},
+        {
+            "request": request,
+            "runs": widget_state["runs"],
+            "error": widget_state["error"],
+            "needs_pat": _ado_needs_pat(widget_state["error"]),
+        },
     )
 
 
