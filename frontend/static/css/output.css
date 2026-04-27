@@ -4046,50 +4046,20 @@
   .bg-no-repeat {
     background-repeat: no-repeat;
   }
-  .fill-amber-500 {
-    fill: var(--color-amber-500);
-  }
-  .fill-blue-500 {
-    fill: var(--color-blue-500);
-  }
   .fill-blue-600 {
     fill: var(--color-blue-600);
   }
   .fill-current {
     fill: currentcolor;
   }
-  .fill-cyan-500 {
-    fill: var(--color-cyan-500);
-  }
   .fill-emerald-500 {
     fill: var(--color-emerald-500);
-  }
-  .fill-fuchsia-500 {
-    fill: var(--color-fuchsia-500);
   }
   .fill-green-500 {
     fill: var(--color-green-500);
   }
-  .fill-orange-500 {
-    fill: var(--color-orange-500);
-  }
-  .fill-red-600 {
-    fill: var(--color-red-600);
-  }
-  .fill-rose-600 {
-    fill: var(--color-rose-600);
-  }
-  .fill-sky-500 {
-    fill: var(--color-sky-500);
-  }
   .fill-slate-600 {
     fill: var(--color-slate-600);
-  }
-  .fill-violet-500 {
-    fill: var(--color-violet-500);
-  }
-  .fill-zinc-700 {
-    fill: var(--color-zinc-700);
   }
   .object-contain {
     object-fit: contain;

@@ -1,3 +1,43 @@
+{#
+	Quick Links are intentionally data-driven so a non-specialist can add a new
+	circle without copying HTML. Add one object below with:
+	- name: label shown under the circle
+	- url: target URL
+	- icon: one of the symbol IDs defined at the bottom of this file
+	- color: Tailwind fill class for the icon
+	- viewBox: SVG viewBox for that icon
+#}
+{% set quick_links = [
+	{
+		"name": "Azure DevOps",
+		"url": "https://dev.azure.com/DevCollection-Inheritance",
+		"icon": "quicklink-azure-devops",
+		"color": "fill-blue-600",
+		"viewBox": "0 0 16 16",
+	},
+	{
+		"name": "Artifactory",
+		"url": "#",
+		"icon": "quicklink-artifactory",
+		"color": "fill-green-500",
+		"viewBox": "0 0 48 48",
+	},
+	{
+		"name": "SonarQube",
+		"url": "#",
+		"icon": "quicklink-sonarqube",
+		"color": "fill-slate-600",
+		"viewBox": "0 0 24 24",
+	},
+	{
+		"name": "ServiceNow",
+		"url": "#",
+		"icon": "quicklink-servicenow",
+		"color": "fill-emerald-500",
+		"viewBox": "0 0 71.1 63.6",
+	},
+] %}
+
 <div class="section-card w-full max-w-full">
 	<div class="card-body gap-6 p-6">
 		<h3
@@ -8,270 +48,28 @@
 		<ul
 			class="menu menu-horizontal w-full max-w-full flex-nowrap items-start justify-start gap-8 overflow-x-auto overflow-y-hidden p-0 pb-2"
 		>
+			{% for link in quick_links %}
 			<li class="shrink-0">
 				<a
-					href="https://dev.azure.com/DevCollection-Inheritance"
-					target="_blank"
-					rel="noopener noreferrer"
+					href="{{ link.url }}"
+					{% if link.url != "#" %}target="_blank" rel="noopener noreferrer"{% endif %}
 					class="flex flex-col items-center gap-4 bg-transparent p-0 hover:bg-transparent focus:bg-transparent"
 				>
 					<div class="avatar">
 						<div
 							class="flex h-16 w-16 items-center justify-center rounded-full border border-base-content/25 bg-base-200/30"
 						>
-							<svg viewBox="0 0 16 16" class="h-8 w-8" aria-hidden="true">
-								<use href="#quicklink-azure-devops" class="fill-blue-600" />
+							<svg viewBox="{{ link.viewBox }}" class="h-8 w-8" aria-hidden="true">
+								<use href="#{{ link.icon }}" class="{{ link.color }}" />
 							</svg>
 						</div>
 					</div>
-					<span class="text-sm font-semibold text-base-content/60"
-						>Azure DevOps</span
-					>
+					<span class="text-sm font-semibold text-base-content/60">
+						{{ link.name }}
+					</span>
 				</a>
 			</li>
-			<li class="shrink-0">
-				<a
-					href="https://dev269960.service-now.com/login.do?user_name=admin&sys_action=sysverb_login&user_password=MrHc6l0wI-%5EX"
-					target="_blank"
-					rel="noopener noreferrer"
-					class="flex flex-col items-center gap-4 bg-transparent p-0 hover:bg-transparent focus:bg-transparent"
-				>
-					<div class="avatar">
-						<div
-							class="flex h-16 w-16 items-center justify-center rounded-full border border-base-content/25 bg-base-200/30"
-						>
-							<svg viewBox="0 0 48 48" class="h-8 w-8" aria-hidden="true">
-								<use href="#quicklink-artifactory" class="fill-green-500" />
-							</svg>
-						</div>
-					</div>
-					<span class="text-sm font-semibold text-base-content/60"
-						>Artifactory</span
-					>
-				</a>
-			</li>
-			<li class="shrink-0">
-				<a
-					href="#"
-					class="flex flex-col items-center gap-4 bg-transparent p-0 hover:bg-transparent focus:bg-transparent"
-				>
-					<div class="avatar">
-						<div
-							class="flex h-16 w-16 items-center justify-center rounded-full border border-base-content/25 bg-base-200/30"
-						>
-							<svg viewBox="0 0 24 24" class="h-8 w-8" aria-hidden="true">
-								<use href="#quicklink-sonarqube" class="fill-slate-600" />
-							</svg>
-						</div>
-					</div>
-					<span class="text-sm font-semibold text-base-content/60"
-						>SonarQube</span
-					>
-				</a>
-			</li>
-			<li class="shrink-0">
-				<a
-					href="#"
-					class="flex flex-col items-center gap-4 bg-transparent p-0 hover:bg-transparent focus:bg-transparent"
-				>
-					<div class="avatar">
-						<div
-							class="flex h-16 w-16 items-center justify-center rounded-full border border-base-content/25 bg-base-200/30"
-						>
-							<svg viewBox="0 0 71.1 63.6" class="h-8 w-8" aria-hidden="true">
-								<use href="#quicklink-servicenow" class="fill-emerald-500" />
-							</svg>
-						</div>
-					</div>
-					<span class="text-sm font-semibold text-base-content/60"
-						>ServiceNow</span
-					>
-				</a>
-			</li>
-			<li class="shrink-0">
-				<a
-					href="#"
-					class="flex flex-col items-center gap-4 bg-transparent p-0 hover:bg-transparent focus:bg-transparent"
-				>
-					<div class="avatar">
-						<div
-							class="flex h-16 w-16 items-center justify-center rounded-full border border-base-content/25 bg-base-200/30"
-						>
-							<svg viewBox="0 0 50 50" class="h-8 w-8" aria-hidden="true">
-								<use href="#quicklink-confluence" class="fill-blue-500" />
-							</svg>
-						</div>
-					</div>
-					<span class="text-sm font-semibold text-base-content/60"
-						>Confluence</span
-					>
-				</a>
-			</li>
-			<li class="shrink-0">
-				<a
-					href="#"
-					class="flex flex-col items-center gap-4 bg-transparent p-0 hover:bg-transparent focus:bg-transparent"
-				>
-					<div class="avatar">
-						<div
-							class="flex h-16 w-16 items-center justify-center rounded-full border border-base-content/25 bg-base-200/30"
-						>
-							<svg viewBox="0 0 14 14" class="h-8 w-8" aria-hidden="true">
-								<use href="#quicklink-openshift" class="fill-red-600" />
-							</svg>
-						</div>
-					</div>
-					<span class="text-sm font-semibold text-base-content/60"
-						>OpenShift</span
-					>
-				</a>
-			</li>
-			<li class="shrink-0">
-				<a
-					href="#"
-					class="flex flex-col items-center gap-4 bg-transparent p-0 hover:bg-transparent focus:bg-transparent"
-				>
-					<div class="avatar">
-						<div
-							class="flex h-16 w-16 items-center justify-center rounded-full border border-base-content/25 bg-base-200/30"
-						>
-							<svg viewBox="0 0 16 16" class="h-8 w-8" aria-hidden="true">
-								<use href="#quicklink-internal-aws" class="fill-amber-500" />
-							</svg>
-						</div>
-					</div>
-					<span class="text-sm font-semibold text-base-content/60"
-						>Internal AWS</span
-					>
-				</a>
-			</li>
-			<li class="shrink-0">
-				<a
-					href="#"
-					class="flex flex-col items-center gap-4 bg-transparent p-0 hover:bg-transparent focus:bg-transparent"
-				>
-					<div class="avatar">
-						<div
-							class="flex h-16 w-16 items-center justify-center rounded-full border border-base-content/25 bg-base-200/30"
-						>
-							<svg viewBox="0 0 16 16" class="h-8 w-8" aria-hidden="true">
-								<use href="#quicklink-grafana" class="fill-orange-500" />
-							</svg>
-						</div>
-					</div>
-					<span class="text-sm font-semibold text-base-content/60"
-						>Grafana</span
-					>
-				</a>
-			</li>
-			<li class="shrink-0">
-				<a
-					href="#"
-					class="flex flex-col items-center gap-4 bg-transparent p-0 hover:bg-transparent focus:bg-transparent"
-				>
-					<div class="avatar">
-						<div
-							class="flex h-16 w-16 items-center justify-center rounded-full border border-base-content/25 bg-base-200/30"
-						>
-							<svg viewBox="0 0 16 16" class="h-8 w-8" aria-hidden="true">
-								<use href="#quicklink-azure-devops" class="fill-sky-500" />
-							</svg>
-						</div>
-					</div>
-					<span class="text-sm font-semibold text-base-content/60">Jira</span>
-				</a>
-			</li>
-			<li class="shrink-0">
-				<a
-					href="#"
-					class="flex flex-col items-center gap-4 bg-transparent p-0 hover:bg-transparent focus:bg-transparent"
-				>
-					<div class="avatar">
-						<div
-							class="flex h-16 w-16 items-center justify-center rounded-full border border-base-content/25 bg-base-200/30"
-						>
-							<svg viewBox="0 0 24 24" class="h-8 w-8" aria-hidden="true">
-								<use href="#quicklink-sonarqube" class="fill-zinc-700" />
-							</svg>
-						</div>
-					</div>
-					<span class="text-sm font-semibold text-base-content/60">GitHub</span>
-				</a>
-			</li>
-			<li class="shrink-0">
-				<a
-					href="#"
-					class="flex flex-col items-center gap-4 bg-transparent p-0 hover:bg-transparent focus:bg-transparent"
-				>
-					<div class="avatar">
-						<div
-							class="flex h-16 w-16 items-center justify-center rounded-full border border-base-content/25 bg-base-200/30"
-						>
-							<svg viewBox="0 0 50 50" class="h-8 w-8" aria-hidden="true">
-								<use href="#quicklink-confluence" class="fill-fuchsia-500" />
-							</svg>
-						</div>
-					</div>
-					<span class="text-sm font-semibold text-base-content/60">Slack</span>
-				</a>
-			</li>
-			<li class="shrink-0">
-				<a
-					href="#"
-					class="flex flex-col items-center gap-4 bg-transparent p-0 hover:bg-transparent focus:bg-transparent"
-				>
-					<div class="avatar">
-						<div
-							class="flex h-16 w-16 items-center justify-center rounded-full border border-base-content/25 bg-base-200/30"
-						>
-							<svg viewBox="0 0 14 14" class="h-8 w-8" aria-hidden="true">
-								<use href="#quicklink-openshift" class="fill-rose-600" />
-							</svg>
-						</div>
-					</div>
-					<span class="text-sm font-semibold text-base-content/60"
-						>PagerDuty</span
-					>
-				</a>
-			</li>
-			<li class="shrink-0">
-				<a
-					href="#"
-					class="flex flex-col items-center gap-4 bg-transparent p-0 hover:bg-transparent focus:bg-transparent"
-				>
-					<div class="avatar">
-						<div
-							class="flex h-16 w-16 items-center justify-center rounded-full border border-base-content/25 bg-base-200/30"
-						>
-							<svg viewBox="0 0 16 16" class="h-8 w-8" aria-hidden="true">
-								<use href="#quicklink-grafana" class="fill-violet-500" />
-							</svg>
-						</div>
-					</div>
-					<span class="text-sm font-semibold text-base-content/60"
-						>Datadog</span
-					>
-				</a>
-			</li>
-			<li class="shrink-0">
-				<a
-					href="#"
-					class="flex flex-col items-center gap-4 bg-transparent p-0 hover:bg-transparent focus:bg-transparent"
-				>
-					<div class="avatar">
-						<div
-							class="flex h-16 w-16 items-center justify-center rounded-full border border-base-content/25 bg-base-200/30"
-						>
-							<svg viewBox="0 0 16 16" class="h-8 w-8" aria-hidden="true">
-								<use href="#quicklink-internal-aws" class="fill-cyan-500" />
-							</svg>
-						</div>
-					</div>
-					<span class="text-sm font-semibold text-base-content/60"
-						>Kubernetes</span
-					>
-				</a>
-			</li>
+			{% endfor %}
 		</ul>
 	</div>
 </div>
@@ -296,29 +94,6 @@
 	<symbol id="quicklink-servicenow" viewBox="0 0 71.1 63.6">
 		<path
 			d="M35.8,0C16.1,0,0,15.9,0,35.6c0,9.8,4,19.3,11.2,26c2.5,2.4,6.4,2.6,9.2,0.5c9-6.7,21.4-6.7,30.4,0c2.8,2.1,6.7,1.9,9.2-0.5C74.3,48,74.9,25.4,61.3,11.1C54.7,4.1,45.4,0.1,35.8,0 M35.6,53.5C26,53.8,18,46.2,17.8,36.7c0-0.3,0-0.6,0-0.9c0-9.8,8-17.8,17.8-17.8s17.8,8,17.8,17.8c0.3,9.6-7.3,17.5-16.8,17.8C36.2,53.5,35.9,53.5,35.6,53.5"
-		/>
-	</symbol>
-	<symbol id="quicklink-confluence" viewBox="0 0 50 50">
-		<path
-			d="M36.988281 2.9902344 C 36.519863 3.0093652 36.069688 3.2528906 35.804688 3.6816406 C 35.800688 3.6886406 35.795016 3.6941719 35.791016 3.7011719 C 35.411016 4.3361719 34.921672 5.1619219 34.388672 6.0449219 C 30.470672 13.059922 26.844437 11.486422 20.023438 8.2324219 L 10.609375 4.1308594 C 9.881375 3.7848594 9.0091094 4.0933125 8.6621094 4.8203125 C 8.6541094 4.8343125 8.6485781 4.846375 8.6425781 4.859375 L 4.1210938 14.705078 C 3.8020938 15.435078 4.1275625 16.285188 4.8515625 16.617188 C 6.8375625 17.551188 10.789703 19.411953 14.345703 21.126953 C 27.142703 27.335953 38.016938 26.934063 46.335938 13.414062 C 46.810938 12.641063 47.343875 11.742344 47.796875 11.027344 C 48.201875 10.343344 47.985594 9.4609687 47.308594 9.0429688 L 37.814453 3.2050781 C 37.557203 3.0464531 37.269332 2.9787559 36.988281 2.9902344 z M 21.050781 25.003906 C 14.442609 25.143818 8.6034688 28.546719 3.6640625 36.574219 C 3.1890625 37.347219 2.656125 38.245938 2.203125 38.960938 C 1.798125 39.644937 2.0144063 40.527312 2.6914062 40.945312 L 12.185547 46.783203 C 12.871547 47.206203 13.771312 46.994594 14.195312 46.308594 C 14.199312 46.301594 14.204984 46.294109 14.208984 46.287109 C 14.588984 45.652109 15.078328 44.828312 15.611328 43.945312 C 19.529328 36.930312 23.155563 38.501859 29.976562 41.755859 L 39.390625 45.859375 C 40.118625 46.205375 40.990891 45.896922 41.337891 45.169922 L 41.355469 45.130859 L 45.876953 35.285156 C 46.195953 34.555156 45.870484 33.705047 45.146484 33.373047 C 43.160484 32.439047 39.208344 30.578281 35.652344 28.863281 C 30.454375 26.340062 25.572162 24.908177 21.050781 25.003906 z"
-		/>
-	</symbol>
-	<symbol id="quicklink-openshift" viewBox="0 0 14 14">
-		<path
-			d="m 11.289248,4.9235517 -1.830475,0.666392 c 0.339875,0.609004 0.50066,1.310521 0.448219,2.015996 l 1.922493,-0.699538 c -0.05491,-0.690139 -0.238951,-1.363456 -0.540237,-1.98285 z m -0.47345,2.352408 c -0.03067,0.417051 -0.136049,0.835587 -0.323549,1.236807 C 9.657652,10.30218 7.523417,11.078401 5.7344987,10.244298 5.3332784,10.056798 4.9835092,9.8039937 4.6916227,9.5041917 L 2.7691293,10.204225 c 0.5323219,0.748516 1.2585752,1.374835 2.1495712,1.790403 2.7541225,1.283806 6.0390835,0.08806 7.3233835,-2.6655683 0.416062,-0.890501 0.569427,-1.836906 0.495713,-2.752638 l -1.922494,0.699538 z M 2.8304749,8.0022127 1,8.6690997 c 0.1682058,0.667381 0.4600923,1.301616 0.8608179,1.8660953 L 3.7833113,9.8356567 C 3.2900726,9.3285657 2.9615765,8.6874047 2.8304749,8.0027077 Z M 8.761214,3.7555107 c 0.400725,0.187006 0.748021,0.442283 1.040897,0.741095 l 1.926451,-0.701022 C 11.194756,3.0470677 10.468008,2.4212437 9.577507,2.0056757 6.823384,0.72137567 3.5379288,1.9171257 2.253628,4.6707487 1.8380607,5.5617447 1.6837071,6.5086447 1.7559367,7.4248717 L 3.6828826,6.7238487 C 3.7150396,6.3063027 3.8169525,5.8882617 4.0034631,5.4870417 4.8380607,3.6976287 6.972296,2.9214087 8.761214,3.7555107 Z M 13,4.3011907 c -0.134565,-0.277045 -0.289908,-0.545185 -0.469987,-0.797493 l -1.926451,0.701022 c 0.22411,0.229551 0.412104,0.487302 0.565963,0.762863 L 13,4.3011907 Z m -8.5151715,2.130277 -1.9269459,0.701022 c 0.024736,0.308708 0.078166,0.613952 0.1528694,0.913259 l 1.8304749,-0.666392 c -0.059367,-0.309202 -0.08064,-0.628298 -0.056398,-0.947889 z"
-		/>
-	</symbol>
-	<symbol id="quicklink-internal-aws" viewBox="0 0 16 16">
-		<path
-			d="M2.67 10.73a3.52 3.52 0 0 0-.94 1.93 5 5 0 0 0-.07 1.1v.58h.8a5.05 5.05 0 0 0 .88-.08 3.46 3.46 0 0 0 1.93-.94 1.76 1.76 0 0 0-.14-2.48 1.76 1.76 0 0 0-2.46-.11zm1.74 1.73a2.26 2.26 0 0 1-1.26.6h-.22v-.22a2.26 2.26 0 0 1 .6-1.26.36.36 0 0 1 .24-.08.67.67 0 0 1 .47.22.54.54 0 0 1 .17.74zM14.65 2.24a.91.91 0 0 0-.89-.89A8.75 8.75 0 0 0 7.27 3.5L5.64 5.4l-2.4-.5a1 1 0 0 0-.92.27l-.68.68a1 1 0 0 0-.28.81 1 1 0 0 0 .45.74l2.06 1.32.13.08 3.2 3.25.08.08 1.32 2.06a1 1 0 0 0 .74.45h.11a1 1 0 0 0 .7-.29l.68-.68a1 1 0 0 0 .27-.92l-.5-2.39 1.84-1.58a8.79 8.79 0 0 0 2.21-6.54zM3.11 6.15l1.32.28-.64.75-1-.67zm6.38 7.1-.67-1 .75-.64.28 1.32zm2.39-5.11.18.17zm-.28-.28L7.92 11 5 8.08 8.14 4.4a7.44 7.44 0 0 1 5.26-1.8 7.48 7.48 0 0 1-1.8 5.26z"
-		/>
-		<path
-			d="M11.13 6.63a1.19 1.19 0 0 0-.06-1.7 1.16 1.16 0 1 0-1.64 1.63 1.2 1.2 0 0 0 1.7.07z"
-		/>
-	</symbol>
-	<symbol id="quicklink-grafana" viewBox="0 0 16 16">
-		<path
-			d="M13.985 7.175a4.408 4.408 0 00-.138-.802 5.035 5.035 0 00-1.054-1.998 2.96 2.96 0 00-.366-.393c.198-.787-.245-1.468-.245-1.468-.764-.046-1.237.227-1.42.363-.031-.015-.062-.03-.092-.03-.122-.046-.26-.106-.397-.137-.138-.045-.275-.075-.413-.12-.137-.031-.29-.061-.443-.092-.03 0-.046 0-.076-.015C9.005 1.44 8.058 1 8.058 1 7.004 1.666 6.79 2.604 6.79 2.604s0 .015-.016.06l-.183.046c-.076.03-.168.06-.244.076-.077.03-.168.06-.245.09-.153.076-.32.152-.473.228-.153.09-.306.181-.443.272-.016-.015-.03-.015-.03-.015-1.467-.545-2.766.136-2.766.136-.122 1.544.58 2.528.733 2.71-.03.09-.06.196-.091.287a8.104 8.104 0 00-.245 1.09c0 .06-.015.106-.015.166C1.397 8.386 1 9.748 1 9.748c1.13 1.287 2.46 1.377 2.46 1.377.167.303.366.575.58.848.092.106.183.212.29.318a3.014 3.014 0 00.061 2.149c1.268.045 2.093-.545 2.261-.681.122.045.26.076.382.106.382.106.78.151 1.176.181h.49c.595.848 1.634.954 1.634.954.748-.772.779-1.544.779-1.71v-.015-.03-.03c.153-.107.305-.228.443-.35a5.37 5.37 0 00.779-.892c.015-.03.046-.06.061-.09.84.045 1.436-.515 1.436-.515-.138-.863-.642-1.287-.749-1.378l-.015-.015h-.015s-.015 0-.015-.015c0-.045.015-.106.015-.151 0-.091.015-.182.015-.288V9.4v-.166-.076-.152l-.015-.075c-.015-.091-.03-.197-.061-.288a3.506 3.506 0 00-.428-1.044 3.856 3.856 0 00-.718-.848 3.784 3.784 0 00-.901-.575 3.347 3.347 0 00-.993-.272c-.168-.015-.336-.03-.504-.03H9.37 9.204c-.092.015-.169.015-.26.03-.336.06-.642.181-.932.348-.275.166-.52.363-.718.605a2.579 2.579 0 00-.459.757 2.63 2.63 0 00-.183.817v.393c.015.137.046.273.077.394.076.258.183.485.336.666.137.197.32.348.504.485.183.12.382.212.58.272.199.06.382.076.565.076h.244c.031 0 .047 0 .062-.015.015 0 .046-.015.061-.015.046-.016.076-.016.122-.03l.23-.092a.869.869 0 00.198-.12c.015-.016.03-.03.046-.03a.129.129 0 00.015-.198c-.046-.06-.122-.075-.183-.03-.015.015-.03.015-.046.03-.046.03-.107.046-.168.06l-.183.046c-.03 0-.061.015-.092.015H8.73a1.519 1.519 0 01-.825-.378 1.452 1.452 0 01-.306-.378 1.655 1.655 0 01-.168-.485c-.015-.09-.015-.166-.015-.257v-.106-.03c0-.046.015-.091.015-.136.061-.364.26-.727.55-1 .077-.075.153-.136.23-.181.076-.06.167-.106.259-.151.092-.046.183-.076.29-.106a.993.993 0 01.306-.046h.321c.107.015.229.03.336.046.214.045.427.12.626.242.397.212.733.56.947.969.107.211.183.423.214.65.015.06.015.121.015.167v.363c0 .06-.015.121-.015.182 0 .06-.015.12-.03.181l-.046.182c-.03.121-.077.242-.123.363a3.183 3.183 0 01-.366.666 3.002 3.002 0 01-1.91 1.18c-.122.016-.26.03-.382.046h-.198c-.061 0-.138 0-.199-.015a3.637 3.637 0 01-.81-.151 4.068 4.068 0 0 1-.748-.303 4.098 4.098 0 0 1-1.696-1.695 4.398 4.398 0 0 1-.29-.742c-.076-.257-.107-.514-.137-.772v-.302-.091c0-.136.015-.258.03-.394s.046-.272.061-.393c.03-.137.061-.258.092-.394a5.33 5.33 0 0 1 .275-.741c.214-.47.504-.893.855-1.226.092-.091.184-.167.275-.243.092-.075.184-.136.29-.211a5.39 5.39 0 0 1 .306-.182c.046-.03.107-.045.153-.076a.26.26 0 0 1 .076-.03.26.26 0 0 1 .077-.03c.107-.046.229-.091.336-.121.03-.015.06-.015.091-.03.03-.016.061-.016.092-.03.061-.016.122-.031.168-.046.03-.015.061-.015.092-.015.03 0 .06-.016.091-.016.03 0 .061-.015.092-.015l.046-.015h.046c.03 0 .06-.015.091-.015.03 0 .061-.015.107-.015.03 0 .077-.015.107-.015h.764c.23.015.443.03.657.075.428.076.84.212 1.207.394.366.182.702.393.977.636l.046.045.046.045c.03.03.061.061.107.091l.092.091.091.09c.123.122.23.258.336.394.199.258.367.515.49.772.014.015.014.03.03.046.015.015.015.03.015.045l.046.09.046.092.045.09c.046.122.092.228.123.333.06.167.107.318.137.455.015.045.061.09.122.075a.104.104 0 0 0 .107-.106c.092-.227.092-.393.077-.575z"
 		/>
 	</symbol>
 </svg>

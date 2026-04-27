@@ -340,7 +340,7 @@
 			</div>
 
 			<div class="p-4 border-t border-base-300 bg-base-100 flex items-center justify-end gap-2">
-				<label for="dashboard-customize-drawer" class="btn btn-ghost btn-sm">Cancel</label>
+				<button id="dashboard-cancel-btn" type="button" class="btn btn-ghost btn-sm">Cancel</button>
 				<button id="dashboard-save-btn" type="button" class="btn btn-primary btn-sm">Save</button>
 			</div>
 		</aside>
@@ -369,6 +369,8 @@
 		const toggles = Array.from(document.querySelectorAll(".dashboard-widget-toggle"));
 		const drawer = document.getElementById("dashboard-customize-drawer");
 		const saveBtn = document.getElementById("dashboard-save-btn");
+		const cancelBtn = document.getElementById("dashboard-cancel-btn");
+		let savedEnabled = [...initialEnabled];
 
 		// --- Observability: session id + per-widget render tracking ---
 		function getSessionId() {
@@ -434,9 +436,9 @@
 		}
 
 		// Sync checkboxes + fire initial render-tracking events.
-		apply(initialEnabled);
+		apply(savedEnabled);
 		// Initial sync: make sure DB matches what the user actually sees.
-		syncUserWidgets(initialEnabled);
+		syncUserWidgets(savedEnabled);
 
 		toggles.forEach((cb) =>
 			cb.addEventListener("change", () => {
@@ -458,8 +460,14 @@
 				alert("Could not save preferences: " + (e?.message || e));
 				return;
 			}
+			savedEnabled = [...enabled];
 			// Observability: full-state sync after save (handles both add & remove).
 			syncUserWidgets(enabled);
+			if (drawer) drawer.checked = false;
+		});
+
+		cancelBtn?.addEventListener("click", () => {
+			apply(savedEnabled);
 			if (drawer) drawer.checked = false;
 		});
 
