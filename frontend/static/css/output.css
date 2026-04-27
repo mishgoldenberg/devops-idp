@@ -2820,6 +2820,9 @@
       gap: calc(0.25rem * 2);
     }
   }
+  .-mt-1 {
+    margin-top: calc(var(--spacing) * -1);
+  }
   .mt-0\.5 {
     margin-top: calc(var(--spacing) * 0.5);
   }
@@ -4315,6 +4318,10 @@
   }
   .text-\[14px\] {
     font-size: 14px;
+  }
+  .leading-none {
+    --tw-leading: 1;
+    line-height: 1;
   }
   .leading-relaxed {
     --tw-leading: var(--leading-relaxed);

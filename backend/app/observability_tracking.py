@@ -22,7 +22,6 @@ WIDGET_LABELS: dict[str, str] = {
     "sonar_projects": "SonarQube — Projects",
     "artifactory_repos": "Artifactory — Repos",
     "artifactory_storage": "Artifactory — Storage",
-    "service_health": "Service health",
     "recent_activity": "Recent Activity",
 }
 

@@ -60,7 +60,6 @@ HOME_WIDGET_KEYS = {
     "sonar_projects": "sonarqube-projects-component",
     "artifactory_repos": "artifactory-repos-component",
     "artifactory_storage": "artifactory-storage-component",
-    "service_health": "service-health-component",
     "recent_activity": "recent-activity-component",
 }
 
@@ -1045,18 +1044,6 @@ def _get_pipeline_data(current_user: Optional[AuthUser]) -> Dict[str, Any]:
         return {"runs": [], "error": _describe_ado_error(exc)}
 
 
-def _get_service_health_data() -> list:
-    """Return service health status data for the Service Health widget."""
-    return [
-        {"name": "Azure DevOps", "status": "healthy"},
-        {"name": "SonarQube", "status": "healthy"},
-        {"name": "Artifactory", "status": "healthy"},
-        {"name": "ServiceNow", "status": "unhealthy"},
-        {"name": "Database", "status": "healthy"},
-        {"name": "Redis", "status": "healthy"},
-    ]
-
-
 @ui_router.get("/ui/components/pull-requests", response_class=HTMLResponse)
 def ui_pull_requests_component(request: Request):
     """Render the Pull Requests dashboard widget for HTMX partial loading."""
@@ -1137,16 +1124,6 @@ def ui_artifactory_repos_component(request: Request):
     return templates.TemplateResponse(
         "partials/components/artifactory-repos.html",
         {"request": request},
-    )
-
-
-@ui_router.get("/ui/components/service-health", response_class=HTMLResponse)
-def ui_service_health_component(request: Request):
-    """Render the Service Health dashboard widget for HTMX partial loading."""
-    templates = _get_templates(request)
-    return templates.TemplateResponse(
-        "partials/components/service-health.html",
-        {"request": request, "services": _get_service_health_data()},
     )
 
 

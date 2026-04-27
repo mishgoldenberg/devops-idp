@@ -30,7 +30,6 @@ _ALLOWED_WIDGET_KEYS = {
     "sonar_projects",
     "artifactory_repos",
     "artifactory_storage",
-    "service_health",
     "recent_activity",
 }
 

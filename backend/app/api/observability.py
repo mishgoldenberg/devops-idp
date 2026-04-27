@@ -87,7 +87,6 @@ _ALLOWED_WIDGET_KEYS = {
     "sonar_projects",
     "artifactory_repos",
     "artifactory_storage",
-    "service_health",
     "recent_activity",
 }
 
@@ -283,7 +282,6 @@ def list_suggested_widgets_for_me(
         "sonar_projects",
         "artifactory_repos",
         "artifactory_storage",
-        "service_health",
         "recent_activity",
         "ado_prs_for_review",
     ]
