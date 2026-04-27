@@ -166,7 +166,7 @@ Submit a Terraform job to provision a new Azure DevOps project. Returns immediat
 | `400` | `process_type` not in allowed list, or blank fields after sanitisation |
 | `409` | A project with `project_name` already exists in the Azure DevOps organisation |
 | `422` | `admin_username` not found in the Azure DevOps organisation |
-| `500` | `AZURE_DEVOPS_ORG` not configured on the server |
+| `500` | `AZURE_DEVOPS_BASE_URL` not configured on the server |
 
 ---
 

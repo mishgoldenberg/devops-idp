@@ -35,16 +35,14 @@ To switch from mock to real integration:
 ### Quick-start configuration
 
 ```bash
-USE_MOCK_AZURE_DEVOPS=false
-AZURE_DEVOPS_ORG=YourOrgName          # organisation name only, NOT the full URL
-AZURE_DEVOPS_PAT=your-pat-here        # server-level fallback for the admin account
+AZURE_DEVOPS_BASE_URL=https://dev.azure.com/YourOrgName
+AZURE_DEVOPS_ADMIN_PAT=your-admin-pat
 ```
 
 ### Authentication model
 
 - Each user saves their own PAT via the "Connect via PAT" prompt in the Azure DevOps widgets.
 - PATs are stored server-side in the `system_config` PostgreSQL table (`is_sensitive = true`), never returned to the browser or written to logs.
-- If `AZURE_DEVOPS_PAT` is set in the environment, it acts as a fallback for users who have not yet configured a personal PAT (primarily the admin account).
 - Vault storage is supported — set `USE_VAULT=true` (see full docs for details).
 
 ### What's implemented
@@ -73,9 +71,7 @@ AZURE_DEVOPS_PAT=your-pat-here        # server-level fallback for the admin acco
 ### Configuration
 
 ```bash
-USE_MOCK_SONARQUBE=false
-SONARQUBE_URL=https://sonarqube.internal.company
-SONARQUBE_TOKEN=your-sonarqube-token
+SONARQUBE_BASE_URL=https://sonarqube.internal.company
 ```
 
 ### Implementation
@@ -94,10 +90,7 @@ and keep the response structure aligned with the existing widgets.
 ### Configuration
 
 ```bash
-USE_MOCK_ARTIFACTORY=false
-ARTIFACTORY_URL=https://artifactory.internal.company
-ARTIFACTORY_API_KEY=your-api-key
-ARTIFACTORY_USERNAME=your-username
+ARTIFACTORY_BASE_URL=https://artifactory.internal.company
 ```
 
 ### Implementation
@@ -116,7 +109,6 @@ to Artifactory, mapping responses into the current JSON fields.
 ### Configuration
 
 ```bash
-USE_MOCK_SERVICENOW=false
 SNOW_BASE_URL=https://your-instance.service-now.com
 SNOW_API_USERNAME=your-username
 SNOW_API_PASSWORD=your-password
@@ -189,8 +181,8 @@ Update service health status from the Python backend by writing to the
 # Test network connectivity
 curl -v https://dev.azure.com
 
-# Test authentication
-curl -u :$AZURE_DEVOPS_PAT https://dev.azure.com/{org}/_apis/projects
+# Test authentication with your personal PAT
+curl -u :<pat> "$AZURE_DEVOPS_BASE_URL/_apis/projects"
 ```
 
 ### Authentication Errors

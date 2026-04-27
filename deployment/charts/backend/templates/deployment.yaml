@@ -29,10 +29,56 @@ spec:
               value: "production"
             - name: PORT
               value: "8000"
-            - name: USE_MOCK_AZURE_DEVOPS
-              value: "false"
-            - name: USE_MOCK_SERVICENOW
-              value: "false"
+            - name: HUB_ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: all-secrets
+                  key: HUB_ADMIN_USERNAME
+            - name: HUB_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: all-secrets
+                  key: HUB_ADMIN_PASSWORD
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: all-secrets
+                  key: JWT_SECRET
+            - name: AZURE_DEVOPS_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: all-secrets
+                  key: AZURE_DEVOPS_BASE_URL
+            - name: AZURE_DEVOPS_ADMIN_PAT
+              valueFrom:
+                secretKeyRef:
+                  name: all-secrets
+                  key: AZURE_DEVOPS_ADMIN_PAT
+            - name: SNOW_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: all-secrets
+                  key: SNOW_BASE_URL
+            - name: SNOW_API_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: all-secrets
+                  key: SNOW_API_USERNAME
+            - name: SNOW_API_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: all-secrets
+                  key: SNOW_API_PASSWORD
+            - name: ARTIFACTORY_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: all-secrets
+                  key: ARTIFACTORY_BASE_URL
+            - name: SONARQUBE_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: all-secrets
+                  key: SONARQUBE_BASE_URL
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -41,12 +87,8 @@ spec:
             - name: DATABASE_URL
               value: "postgresql://{{ .Values.global.endpoints.postgresUser }}:$(POSTGRES_PASSWORD)@{{ .Values.global.endpoints.postgresHost }}:{{ .Values.global.endpoints.postgresPort }}/{{ .Values.global.endpoints.postgresDB }}"
           envFrom:
-            - secretRef:
-                name: all-secrets
             - configMapRef:
                 name: infra-config
-            - configMapRef:
-                name: azure-devops-config
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           livenessProbe:

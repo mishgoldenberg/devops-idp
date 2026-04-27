@@ -8,11 +8,8 @@ This module provides FastAPI endpoints for Azure DevOps integration, including:
 - Mock implementations for local development
 
 CONFIGURATION:
-  - USE_MOCK_AZURE_DEVOPS: Set to 'false' to use real Azure DevOps API (default: 'true' for dev)
-  - AZURE_DEVOPS_ORGANIZATION or AZURE_DEVOPS_ORG: Organization name (e.g. MyOrg). Base URL becomes https://dev.azure.com/MyOrg. Required for real API.
-  - AZURE_DEVOPS_API_URL: Optional; if set and no org above, used as-is. Otherwise org is required.
-  - AZURE_DEVOPS_PAT: Personal Access Token (required for real API calls)
-  - AZURE_DEVOPS_QUERY_USER: Optional test user for local development
+  - AZURE_DEVOPS_BASE_URL: Azure DevOps organization URL, e.g. https://dev.azure.com/MyOrg.
+  - AZURE_DEVOPS_ADMIN_PAT: Admin PAT used for self-service write operations.
 
 SELF-SERVICE FEATURE:
   POST /api/azure-devops/projects/create
@@ -47,26 +44,15 @@ router = APIRouter()
 
 # Configuration from environment variables (read at import so env is respected in K8s/local)
 def _get_ado_base() -> str:
-    """Build Azure DevOps API base URL. Must include organization: https://dev.azure.com/{org}."""
-    org = (os.getenv("AZURE_DEVOPS_ORGANIZATION") or os.getenv("AZURE_DEVOPS_ORG") or "").strip()
-    if org:
-        return f"https://dev.azure.com/{org}".rstrip("/")
-    base = (os.getenv("AZURE_DEVOPS_API_URL") or "https://dev.azure.com").strip().rstrip("/")
-    # If URL is still just https://dev.azure.com with no org, we cannot call the API
-    if base == "https://dev.azure.com":
-        return base  # Caller will get 404/401 until org is set
-    return base
+    """Return the configured Azure DevOps organization base URL."""
+    return (os.getenv("AZURE_DEVOPS_BASE_URL") or "").strip().rstrip("/")
 
 
-USE_MOCK = os.getenv("USE_MOCK_AZURE_DEVOPS", "true").lower() in ("true", "1")
+USE_MOCK = False
 ADO_BASE = _get_ado_base()
-# Shared server-level PAT (env). Used as fallback only for admin users so they
-# can test immediately without entering a per-user PAT.
-_ENV_PAT = os.getenv("AZURE_DEVOPS_PAT", "")
 # Admin PAT used for write operations (process creation).
 # Requires scope: Process (Read & Manage) — or Full Access.
 _ENV_ADMIN_PAT = os.getenv("AZURE_DEVOPS_ADMIN_PAT", "")
-ADO_QUERY_USER = os.getenv("AZURE_DEVOPS_QUERY_USER", "")
 
 
 def _now_iso() -> str:
@@ -80,9 +66,8 @@ def _get_pat_for_user(current_user: AuthUser) -> str:
     Resolve the Azure DevOps PAT for the requesting user.
 
     Only the per-user PAT stored in Vault / system_config (set via the dashboard
-    UI) is accepted for widget/read endpoints.  The server-level env PATs
-    (_ENV_PAT, _ENV_ADMIN_PAT) are intentionally NOT used here — they are
-    reserved for self-service write operations (project creation).
+    UI) is accepted for widget/read endpoints. The server-level admin PAT is
+    intentionally NOT used here; it is reserved for self-service write operations.
 
     The PAT is never returned to the frontend or written to logs.
     """
@@ -175,8 +160,8 @@ def get_projects(current_user: AuthUser = Depends(get_current_user)):
             ],
             "timestamp": _now_iso(),
         }
-    if not ADO_BASE or ADO_BASE.rstrip("/") == "https://dev.azure.com":
-        raise HTTPException(status_code=500, detail="AZURE_DEVOPS_ORG is not configured")
+    if not ADO_BASE:
+        raise HTTPException(status_code=500, detail="AZURE_DEVOPS_BASE_URL is not configured")
 
     pat = _get_pat_for_user(current_user)
     auth = httpx.BasicAuth("", pat)
@@ -226,10 +211,10 @@ def get_work_items(
         ]
         return {"success": True, "data": work_items, "timestamp": _now_iso()}
 
-    if not ADO_BASE or ADO_BASE.rstrip("/") == "https://dev.azure.com":
+    if not ADO_BASE:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="AZURE_DEVOPS_ORG is not configured on the server",
+            detail="AZURE_DEVOPS_BASE_URL is not configured on the server",
         )
 
     # ── 60s per-user cache ────────────────────────────────────────────────
@@ -300,10 +285,10 @@ def get_workitem_tasks(
             "timestamp": _now_iso(),
         }
 
-    if not ADO_BASE or ADO_BASE.rstrip("/") == "https://dev.azure.com":
+    if not ADO_BASE:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="AZURE_DEVOPS_ORG is not configured on the server",
+            detail="AZURE_DEVOPS_BASE_URL is not configured on the server",
         )
 
     try:
@@ -380,13 +365,6 @@ def _fetch_work_items_live(
                 "Order By [System.ChangedDate] Desc"
             )
         }
-        # Use test override if configured (helpful when local PAT belongs to a service account)
-        if ADO_QUERY_USER:
-            query["query"] = query["query"].replace(
-                "[System.AssignedTo] = @Me",
-                f"[System.AssignedTo] = '{ADO_QUERY_USER}'",
-            )
-
         wiql_url = f"{ADO_BASE}/_apis/wit/wiql?api-version=7.0"
         with httpx.Client(auth=auth, timeout=30.0) as client:
             r = client.post(wiql_url, json=query)
@@ -451,7 +429,7 @@ def _fetch_work_items_live(
         logging.warning("Azure DevOps API error: %s %s", exc.response.status_code, exc.response.text[:200])
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Azure DevOps API error: {exc.response.status_code}. Check AZURE_DEVOPS_ORGANIZATION and PAT.",
+            detail=f"Azure DevOps API error: {exc.response.status_code}. Check AZURE_DEVOPS_BASE_URL and PAT.",
         )
     except Exception as exc:
         import logging
@@ -474,10 +452,6 @@ def get_pull_requests(
             detail="Username required",
         )
 
-    # If a test ADO account is provided via env, use that
-    if ADO_QUERY_USER:
-        effective_username = ADO_QUERY_USER
-
     if USE_MOCK:
         # Mock data
         pull_requests = [
@@ -495,10 +469,10 @@ def get_pull_requests(
         ]
         return {"success": True, "data": pull_requests, "timestamp": _now_iso()}
 
-    if not ADO_BASE or ADO_BASE.rstrip("/") == "https://dev.azure.com":
+    if not ADO_BASE:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="AZURE_DEVOPS_ORG is not configured on the server",
+            detail="AZURE_DEVOPS_BASE_URL is not configured on the server",
         )
 
     # 60s per-(user, effective_username) cache. PR listing iterates every repo
@@ -622,7 +596,7 @@ def _fetch_pull_requests_live(effective_username: str, current_user: AuthUser) -
         logging.warning("Azure DevOps API error: %s %s", exc.response.status_code, exc.response.text[:200])
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Azure DevOps API error: {exc.response.status_code}. Check AZURE_DEVOPS_ORGANIZATION and PAT.",
+            detail=f"Azure DevOps API error: {exc.response.status_code}. Check AZURE_DEVOPS_BASE_URL and PAT.",
         )
     except Exception as exc:
         import logging
@@ -653,10 +627,10 @@ def get_pipelines(
         ]
         return {"success": True, "data": pipelines, "timestamp": _now_iso()}
 
-    if not ADO_BASE or ADO_BASE.rstrip("/") == "https://dev.azure.com":
+    if not ADO_BASE:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="AZURE_DEVOPS_ORG is not configured on the server",
+            detail="AZURE_DEVOPS_BASE_URL is not configured on the server",
         )
     try:
         from concurrent.futures import ThreadPoolExecutor
@@ -690,7 +664,7 @@ def get_pipelines(
             with ThreadPoolExecutor(max_workers=max_workers) as pool:
                 builds_by_project = list(pool.map(_builds_for, target_projects))
 
-            query_user_lower = (ADO_QUERY_USER or current_user.get("username", "")).lower()
+            query_user_lower = str(current_user.get("username") or "").lower()
             for proj, builds in builds_by_project:
                 project_name = proj.get("name")
                 for build in builds:
@@ -725,7 +699,7 @@ def get_pipelines(
         logging.warning("Azure DevOps API error: %s %s", exc.response.status_code, exc.response.text[:200])
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Azure DevOps API error: {exc.response.status_code}. Check AZURE_DEVOPS_ORGANIZATION and PAT.",
+            detail=f"Azure DevOps API error: {exc.response.status_code}. Check AZURE_DEVOPS_BASE_URL and PAT.",
         )
     except Exception as exc:
         import logging
@@ -806,8 +780,8 @@ def ensure_custom_ado_process(project_name: str, process_type: str) -> str:
     if USE_MOCK:
         return f"{project_name}-{process_type}"
 
-    if not ADO_BASE or ADO_BASE.rstrip("/") == "https://dev.azure.com":
-        raise RuntimeError("AZURE_DEVOPS_ORG is not configured.")
+    if not ADO_BASE:
+        raise RuntimeError("AZURE_DEVOPS_BASE_URL is not configured.")
     if not _ENV_ADMIN_PAT:
         raise RuntimeError(
             "AZURE_DEVOPS_ADMIN_PAT is not configured. Cannot create the "
@@ -838,7 +812,7 @@ def ensure_custom_ado_process(project_name: str, process_type: str) -> str:
             _logging.error("Network error reaching Azure DevOps: %s", exc)
             raise RuntimeError(
                 "Could not connect to Azure DevOps. Check network connectivity "
-                "and AZURE_DEVOPS_ORGANIZATION."
+                "and AZURE_DEVOPS_BASE_URL."
             )
 
         parent_proc = next(
@@ -979,8 +953,8 @@ def create_ado_project(
         }
 
     # ── Real mode ──────────────────────────────────────────────────────────
-    if not ADO_BASE or ADO_BASE.rstrip("/") == "https://dev.azure.com":
-        raise HTTPException(status_code=500, detail="AZURE_DEVOPS_ORG is not configured.")
+    if not ADO_BASE:
+        raise HTTPException(status_code=500, detail="AZURE_DEVOPS_BASE_URL is not configured.")
 
     pat = _get_pat_for_user(current_user)
     auth = httpx.BasicAuth("", pat)
@@ -1006,7 +980,7 @@ def create_ado_project(
                     status_code=502,
                     detail=(
                         f"Could not reach Azure DevOps (projects API returned {exc.response.status_code}). "
-                        "Verify AZURE_DEVOPS_PAT has 'Project and Team (Read & Write)' scope."
+                        "Verify your Azure DevOps PAT has 'Project and Team (Read & Write)' scope."
                     ),
                 )
 
@@ -1144,7 +1118,7 @@ def create_ado_project(
         _logging.error("Network error reaching Azure DevOps: %s", exc)
         raise HTTPException(
             status_code=502,
-            detail="Could not connect to Azure DevOps. Check network connectivity and AZURE_DEVOPS_ORGANIZATION.",
+            detail="Could not connect to Azure DevOps. Check network connectivity and AZURE_DEVOPS_BASE_URL.",
         )
 
     # 5. Submit Terraform job
@@ -1259,7 +1233,7 @@ def _assign_admin_post_terraform(job_id: str, current_user: AuthUser) -> None:
     if USE_MOCK:
         return
 
-    if not ADO_BASE or ADO_BASE.rstrip("/") == "https://dev.azure.com":
+    if not ADO_BASE:
         return
 
     pat = _get_pat_for_user(current_user)

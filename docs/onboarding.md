@@ -77,16 +77,15 @@ Spend ~10 min opening each of those files and reading the top of them.
 
 ### Azure DevOps
 
-By default `USE_MOCK_AZURE_DEVOPS=true`. To hit a real dev org:
+To hit a real dev org:
 
 1. Create a PAT in your personal ADO org (scope: `Project & Team
    (Read/Write)`, `Work Items (Read)`, `Code (Read)`, `Build (Read)`).
 2. In your running container's `.env`:
 
    ```env
-   USE_MOCK_AZURE_DEVOPS=false
-   AZURE_DEVOPS_ORGANIZATION=yourorg
-   AZURE_DEVOPS_PAT=<your PAT>
+   AZURE_DEVOPS_BASE_URL=https://dev.azure.com/yourorg
+   AZURE_DEVOPS_ADMIN_PAT=<your PAT>
    ```
 
 3. Restart the backend:
@@ -101,7 +100,6 @@ By default `USE_MOCK_AZURE_DEVOPS=true`. To hit a real dev org:
 - Add to `.env`:
 
   ```env
-  USE_MOCK_SERVICENOW=false
   SNOW_BASE_URL=https://devXXXXXX.service-now.com
   SNOW_API_USERNAME=admin
   SNOW_API_PASSWORD=<your dev instance password>

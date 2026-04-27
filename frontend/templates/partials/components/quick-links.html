@@ -7,31 +7,32 @@
 	- color: Tailwind fill class for the icon
 	- viewBox: SVG viewBox for that icon
 #}
+{% set system_urls = request.state.portal_system_urls if request is defined and request.state.portal_system_urls is defined else {} %}
 {% set quick_links = [
 	{
 		"name": "Azure DevOps",
-		"url": "https://dev.azure.com/DevCollection-Inheritance",
+		"url": system_urls.get("azure_devops") or "#",
 		"icon": "quicklink-azure-devops",
 		"color": "fill-blue-600",
 		"viewBox": "0 0 16 16",
 	},
 	{
 		"name": "Artifactory",
-		"url": "#",
+		"url": system_urls.get("artifactory") or "#",
 		"icon": "quicklink-artifactory",
 		"color": "fill-green-500",
 		"viewBox": "0 0 48 48",
 	},
 	{
 		"name": "SonarQube",
-		"url": "#",
+		"url": system_urls.get("sonarqube") or "#",
 		"icon": "quicklink-sonarqube",
 		"color": "fill-slate-600",
 		"viewBox": "0 0 24 24",
 	},
 	{
 		"name": "ServiceNow",
-		"url": "#",
+		"url": system_urls.get("servicenow") or "#",
 		"icon": "quicklink-servicenow",
 		"color": "fill-emerald-500",
 		"viewBox": "0 0 71.1 63.6",

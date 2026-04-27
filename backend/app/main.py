@@ -22,8 +22,7 @@ ENVIRONMENT VARIABLES:
 - PORT: Server port (default: 8000)
 - DATABASE_URL: PostgreSQL connection string
 - REDIS_HOST, REDIS_PORT, REDIS_PASSWORD: Cache configuration
-- AZURE_DEVOPS_PAT, AZURE_DEVOPS_API_URL: Azure DevOps integration
-- USE_MOCK_AZURE_DEVOPS: Enable mock implementations for dev
+- AZURE_DEVOPS_BASE_URL, AZURE_DEVOPS_ADMIN_PAT: Azure DevOps integration
 
 STARTUP:
   uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload

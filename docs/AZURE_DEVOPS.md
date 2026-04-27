@@ -43,10 +43,9 @@ FastAPI backend
   └── GET  /api/azure-devops/pipelines
 
   _get_pat_for_user()
-    ├── 1. per-user PAT from system_config / Vault
-    └── 2. server env fallback (AZURE_DEVOPS_PAT) — admin convenience only
+    └── per-user PAT from system_config / Vault
 
-Azure DevOps REST API  (https://dev.azure.com/{AZURE_DEVOPS_ORG})
+Azure DevOps REST API  (AZURE_DEVOPS_BASE_URL)
 ```
 
 ---
@@ -65,20 +64,7 @@ Storage backends (selected via `USE_VAULT`):
 | `false` (default) | PostgreSQL `system_config` table, key `user:{id}:azure_devops_pat`, `is_sensitive = true` |
 | `true` | HashiCorp Vault KV v2 at `{VAULT_PATH}/azure-devops/{user_id}` |
 
-### Server PAT fallback (admin convenience)
-
-If `AZURE_DEVOPS_PAT` is set in the environment and the user has no personal PAT stored, the server-level PAT is used automatically.  
-This means the admin account (`golden.mihel@gmail.com`) works immediately after deployment without pasting anything in the UI — the PAT from `.env` / the Kubernetes secret acts as the default.
-
-Other users will see **"Connect via PAT"** in each Azure DevOps widget until they save their own token.
-
-### Why not OAuth / "Sign in with Microsoft"?
-
-Azure DevOps uses Microsoft accounts (Azure AD / MSA), while the portal uses
-admin-configured OIDC for Hub sign-in. There is **no automatic link** between a
-user's Hub SSO session and their Azure DevOps identity.
-
-A proper Microsoft OAuth2 integration (Azure AD app registration, `499b84ac…/.default` scope) can be added as a future enhancement once an Azure AD Application is provisioned — it would replace PATs entirely with delegated access tokens.
+Users see **"Connect via PAT"** in each Azure DevOps widget until they save their own token.
 
 ---
 
@@ -88,25 +74,19 @@ A proper Microsoft OAuth2 integration (Azure AD app registration, `499b84ac…/.
 
 | Variable | Example | Description |
 |---|---|---|
-| `AZURE_DEVOPS_ORG` | `DevCollection-Inheritance` | Organisation name in `https://dev.azure.com/{org}` |
-| `USE_MOCK_AZURE_DEVOPS` | `false` | Set to `false` to call the real API |
+| `AZURE_DEVOPS_BASE_URL` | `https://dev.azure.com/DevCollection-Inheritance` | Azure DevOps organization URL |
+| `AZURE_DEVOPS_ADMIN_PAT` | `5P6m3Ay…` | Admin PAT used for self-service write actions |
 
 ### Optional
 
 | Variable | Example | Description |
 |---|---|---|
-| `AZURE_DEVOPS_PAT` | `5P6m3Ay…` | Server-level PAT used as fallback for admin users |
-| `AZURE_DEVOPS_QUERY_USER` | `test-user@company.com` | Override the WIQL `@Me` identity (useful for service accounts) |
 | `USE_VAULT` | `false` | Store PATs in HashiCorp Vault instead of PostgreSQL |
 | `VAULT_ADDR` | `https://vault.internal.company` | Vault server URL (only when `USE_VAULT=true`) |
 | `VAULT_TOKEN` | `s.xxx` | Vault token (only when `USE_VAULT=true`) |
 | `VAULT_PATH` | `secret/devops-control-center` | Vault KV base path |
 
-> The backend builds the API base URL from `AZURE_DEVOPS_ORG`:
-> ```
-> https://dev.azure.com/{AZURE_DEVOPS_ORG}
-> ```
-> A 500 error is raised at request time if `AZURE_DEVOPS_ORG` is missing and `USE_MOCK_AZURE_DEVOPS=false`.
+> A 500 error is raised at request time if `AZURE_DEVOPS_BASE_URL` is missing.
 
 ---
 
@@ -233,9 +213,8 @@ The backend loads `.env` files in this priority order (first file wins):
 Create or edit whichever is most convenient. The minimum required for real Azure DevOps data:
 
 ```bash
-USE_MOCK_AZURE_DEVOPS=false
-AZURE_DEVOPS_ORG=YourOrgName
-AZURE_DEVOPS_PAT=your-personal-access-token   # admin fallback; other users enter theirs in the UI
+AZURE_DEVOPS_BASE_URL=https://dev.azure.com/YourOrgName
+AZURE_DEVOPS_ADMIN_PAT=your-admin-pat
 ```
 
 ### 2. PAT scopes
@@ -265,8 +244,7 @@ npm run dev
 
 Open `http://localhost:3000`. Log in via configured SSO, then:
 
-- If your email is `golden.mihel@gmail.com` (admin), data loads automatically using the env PAT.
-- Other users see a "Connect via PAT" prompt inside each Azure DevOps widget.
+- Users see a "Connect via PAT" prompt inside each Azure DevOps widget until they save their own PAT.
 
 ---
 
@@ -274,11 +252,11 @@ Open `http://localhost:3000`. Log in via configured SSO, then:
 
 ### Secrets
 
-The Azure DevOps PAT is stored in the `all-secrets` Kubernetes Secret:
+The Azure DevOps admin PAT is stored in the `all-secrets` Kubernetes Secret:
 
 ```yaml
 # infrastructure/k8s/base/secrets/secrets.example.yaml
-AZURE_DEVOPS_PAT: <base64-encoded-pat>
+AZURE_DEVOPS_ADMIN_PAT: <base64-encoded-pat>
 ```
 
 Apply secrets:
@@ -287,34 +265,21 @@ Apply secrets:
 kubectl apply -k infrastructure/k8s/overlays/dev
 ```
 
-### ConfigMap
-
-Organisation name is stored in `azure-devops-config`:
-
-```yaml
-# infrastructure/k8s/base/configmaps/azure-devops-config.yaml
-data:
-  organization: DevCollection-Inheritance
-  query-user: ""
-```
-
 ### Backend deployment env vars
 
 `infrastructure/k8s/base/deployments/backend.yaml` maps these to the pod:
 
 ```yaml
-- name: USE_MOCK_AZURE_DEVOPS
-  value: "false"
-- name: AZURE_DEVOPS_ORGANIZATION
-  valueFrom:
-    configMapKeyRef:
-      name: azure-devops-config
-      key: organization
-- name: AZURE_DEVOPS_PAT
+- name: AZURE_DEVOPS_BASE_URL
   valueFrom:
     secretKeyRef:
       name: all-secrets
-      key: AZURE_DEVOPS_PAT
+      key: AZURE_DEVOPS_BASE_URL
+- name: AZURE_DEVOPS_ADMIN_PAT
+  valueFrom:
+    secretKeyRef:
+      name: all-secrets
+      key: AZURE_DEVOPS_ADMIN_PAT
 ```
 
 ### Per-user PAT storage in production
@@ -375,18 +340,9 @@ git push
 
 ## 9. Troubleshooting
 
-### Widgets show "Using shared token" but data looks wrong
-
-The server-level `AZURE_DEVOPS_PAT` is being used. Verify the PAT in your `.env` / Kubernetes secret is valid and has the required scopes. Test directly:
-
-```bash
-curl -u ":$AZURE_DEVOPS_PAT" \
-  "https://dev.azure.com/$AZURE_DEVOPS_ORG/_apis/projects?api-version=7.0"
-```
-
 ### Work items show items for all users, not just me
 
-The `@Me` macro in WIQL resolves to the identity that owns the PAT. If a shared/service-account PAT is used (server fallback), all users see that account's items. Each user should save their own PAT via the widget UI to see their personal items.
+The `@Me` macro in WIQL resolves to the identity that owns the PAT. Each user should save their own PAT via the widget UI to see their personal items.
 
 ### "Doing" state counted as To Do
 

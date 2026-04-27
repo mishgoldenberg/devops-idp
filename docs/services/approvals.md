@@ -34,7 +34,7 @@ The engine behind the self-service workflow:
 
 - `K8S_NAMESPACE`, `TERRAFORM_JOB_TIMEOUT_SECONDS` — used indirectly via
   `terraform_runner`.
-- `AZURE_DEVOPS_PAT` / `AZURE_DEVOPS_ADMIN_PAT` — required for real ADO
+- `AZURE_DEVOPS_BASE_URL` / `AZURE_DEVOPS_ADMIN_PAT` — required for real ADO
   project creation.
 - `SAFE_MODE` — if truthy (env or DB flag), the executor short-circuits
   with a simulated-success payload.

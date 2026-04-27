@@ -18,7 +18,7 @@ here.
 
   Renders `main.tf` (ADO provider, backend = GCS, resources), creates a
   `ConfigMap` with the module, creates a `Job`, returns an opaque job
-  id. In-memory mock mode kicks in when `USE_MOCK_AZURE_DEVOPS=true`.
+  id. Callers may explicitly request in-memory mock execution for tests.
 
 - `get_job_status(job_id) -> {status, error?}`
 

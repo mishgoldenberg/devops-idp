@@ -29,7 +29,6 @@ Env vars used:
 
 - `SNOW_BASE_URL` — full instance URL.
 - `SNOW_API_USERNAME` + `SNOW_API_PASSWORD` — service-account credentials.
-- `USE_MOCK_SERVICENOW` — `true` (default) returns canned data.
 
 ## Endpoints
 

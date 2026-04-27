@@ -34,7 +34,6 @@ service:
 secrets:
   postgresPassword: ""
   redisPassword: ""
-  azureDevopsPat: ""
   azureDevopsAdminPat: ""
   jwtSecret: ""
   hubAdminUsername: ""
@@ -42,6 +41,9 @@ secrets:
   snowBaseUrl: ""
   snowApiUsername: ""
   snowApiPassword: ""
+  azureDevopsBaseUrl: ""
+  artifactoryBaseUrl: ""
+  sonarqubeBaseUrl: ""
 
 ingress:
   enabled: true

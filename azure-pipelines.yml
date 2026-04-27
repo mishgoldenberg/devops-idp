@@ -1,0 +1,95 @@
+trigger:
+  branches:
+    include:
+      - dev
+      - main
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: $(VARIABLE_GROUP_NAME)
+  - name: localImageName
+    value: hub:$(Build.BuildId)
+  - name: remoteImageName
+    value: $(ARTIFACTORY_DOCKER_REGISTRY)/$(ARTIFACTORY_DOCKER_REPOSITORY)/hub:$(Build.BuildId)
+
+stages:
+  - stage: Build
+    displayName: Build
+    jobs:
+      - job: frontend_build
+        displayName: frontend-build
+        steps:
+          - checkout: self
+          - script: npm ci
+            displayName: npm ci
+            workingDirectory: frontend
+          - script: npm run build
+            displayName: npm run build
+            workingDirectory: frontend
+
+      - job: backend_build
+        displayName: backend-build
+        steps:
+          - checkout: self
+          - script: pip install -r backend/app/requirements.txt
+            displayName: pip install requirements
+
+      - job: docker_build
+        displayName: docker-build
+        dependsOn:
+          - frontend_build
+          - backend_build
+        steps:
+          - checkout: self
+          - script: |
+              set -euo pipefail
+              docker build -t $(localImageName) .
+              docker save $(localImageName) -o $(Pipeline.Workspace)/hub-image.tar
+            displayName: docker build
+          - publish: $(Pipeline.Workspace)/hub-image.tar
+            artifact: hub-image
+            displayName: Publish Docker image artifact
+
+  - stage: Push
+    displayName: Push
+    dependsOn: Build
+    jobs:
+      - job: push_image
+        displayName: Push image
+        steps:
+          - checkout: self
+          - download: current
+            artifact: hub-image
+          - script: |
+              set -euo pipefail
+              echo "$(ARTIFACTORY_DOCKER_PASSWORD)" | docker login "$(ARTIFACTORY_DOCKER_REGISTRY)" --username "$(ARTIFACTORY_DOCKER_USERNAME)" --password-stdin
+              docker load -i "$(Pipeline.Workspace)/hub-image/hub-image.tar"
+              docker tag "$(localImageName)" "$(remoteImageName)"
+              docker push "$(remoteImageName)"
+            displayName: Login, tag, and push image
+
+  - stage: Deploy
+    displayName: Deploy
+    dependsOn: Push
+    jobs:
+      - job: deploy
+        displayName: Deploy to OpenShift
+        steps:
+          - checkout: self
+          - script: |
+              set -euo pipefail
+              oc apply -f deployment/charts/backend/templates/deployment.yaml
+            displayName: Deploy with existing manifest
+            env:
+              HUB_ADMIN_USERNAME: $(HUB_ADMIN_USERNAME)
+              HUB_ADMIN_PASSWORD: $(HUB_ADMIN_PASSWORD)
+              JWT_SECRET: $(JWT_SECRET)
+              AZURE_DEVOPS_BASE_URL: $(AZURE_DEVOPS_BASE_URL)
+              AZURE_DEVOPS_ADMIN_PAT: $(AZURE_DEVOPS_ADMIN_PAT)
+              SNOW_BASE_URL: $(SNOW_BASE_URL)
+              SNOW_API_USERNAME: $(SNOW_API_USERNAME)
+              SNOW_API_PASSWORD: $(SNOW_API_PASSWORD)
+              ARTIFACTORY_BASE_URL: $(ARTIFACTORY_BASE_URL)
+              SONARQUBE_BASE_URL: $(SONARQUBE_BASE_URL)

@@ -31,9 +31,13 @@ on:
         required: false
       REDIS_PASSWORD:
         required: false
+      HUB_ADMIN_USERNAME:
+        required: false
+      HUB_ADMIN_PASSWORD:
+        required: false
       JWT_SECRET:
         required: false
-      AZURE_DEVOPS_PAT:
+      AZURE_DEVOPS_BASE_URL:
         required: false
       AZURE_DEVOPS_ADMIN_PAT:
         required: false
@@ -42,6 +46,10 @@ on:
       SNOW_API_USERNAME:
         required: false
       SNOW_API_PASSWORD:
+        required: false
+      ARTIFACTORY_BASE_URL:
+        required: false
+      SONARQUBE_BASE_URL:
         required: false
 
 jobs:
@@ -117,11 +125,13 @@ jobs:
           HUB_ADMIN_USERNAME: ${{ secrets.HUB_ADMIN_USERNAME }}
           HUB_ADMIN_PASSWORD: ${{ secrets.HUB_ADMIN_PASSWORD }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
-          AZURE_DEVOPS_PAT: ${{ secrets.AZURE_DEVOPS_PAT }}
+          AZURE_DEVOPS_BASE_URL: ${{ secrets.AZURE_DEVOPS_BASE_URL }}
           AZURE_DEVOPS_ADMIN_PAT: ${{ secrets.AZURE_DEVOPS_ADMIN_PAT }}
           SNOW_BASE_URL: ${{ secrets.SNOW_BASE_URL }}
           SNOW_API_USERNAME: ${{ secrets.SNOW_API_USERNAME }}
           SNOW_API_PASSWORD: ${{ secrets.SNOW_API_PASSWORD }}
+          ARTIFACTORY_BASE_URL: ${{ secrets.ARTIFACTORY_BASE_URL }}
+          SONARQUBE_BASE_URL: ${{ secrets.SONARQUBE_BASE_URL }}
         run: |
           python3 - <<'EOF'
           import yaml, os
@@ -131,11 +141,13 @@ jobs:
             "hubAdminUsername":    os.environ.get("HUB_ADMIN_USERNAME", ""),
             "hubAdminPassword":    os.environ.get("HUB_ADMIN_PASSWORD", ""),
             "jwtSecret":           os.environ.get("JWT_SECRET", ""),
-            "azureDevopsPat":      os.environ.get("AZURE_DEVOPS_PAT", ""),
+            "azureDevopsBaseUrl":  os.environ.get("AZURE_DEVOPS_BASE_URL", ""),
             "azureDevopsAdminPat": os.environ.get("AZURE_DEVOPS_ADMIN_PAT", ""),
             "snowBaseUrl":         os.environ.get("SNOW_BASE_URL", ""),
             "snowApiUsername":     os.environ.get("SNOW_API_USERNAME", ""),
             "snowApiPassword":     os.environ.get("SNOW_API_PASSWORD", ""),
+            "artifactoryBaseUrl":  os.environ.get("ARTIFACTORY_BASE_URL", ""),
+            "sonarqubeBaseUrl":    os.environ.get("SONARQUBE_BASE_URL", ""),
           }
           # Scope under "backend:" so the umbrella chart passes values to the
           # backend subchart's .Values.secrets context (not the parent chart).

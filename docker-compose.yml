@@ -32,7 +32,7 @@
 # ENVIRONMENT:
 #   - Configured via .env file (copy from env.example)
 #   - All services use docker-compose network DNS for inter-service communication
-#   - Mock Azure DevOps by default (USE_MOCK_AZURE_DEVOPS=true)
+#   - Integration endpoints come from the required *_BASE_URL variables
 #
 
 version: "3.9"
@@ -97,17 +97,10 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_secure_password}
       JWT_SECRET: ${JWT_SECRET}
       # External integrations (passed from host .env)
-      USE_MOCK_AZURE_DEVOPS: ${USE_MOCK_AZURE_DEVOPS:-true}
-      AZURE_DEVOPS_API_URL: ${AZURE_DEVOPS_API_URL:-https://dev.azure.com}
-      AZURE_DEVOPS_PAT: ${AZURE_DEVOPS_PAT:-}
-      AZURE_DEVOPS_QUERY_USER: ${AZURE_DEVOPS_QUERY_USER:-}
-      USE_MOCK_SONARQUBE: ${USE_MOCK_SONARQUBE:-true}
-      SONARQUBE_URL: ${SONARQUBE_URL:-https://sonarqube.internal.company}
-      SONARQUBE_TOKEN: ${SONARQUBE_TOKEN:-}
-      USE_MOCK_ARTIFACTORY: ${USE_MOCK_ARTIFACTORY:-true}
-      ARTIFACTORY_URL: ${ARTIFACTORY_URL:-https://artifactory.internal.company}
-      ARTIFACTORY_API_KEY: ${ARTIFACTORY_API_KEY:-}
-      USE_MOCK_SERVICENOW: ${USE_MOCK_SERVICENOW:-true}
+      AZURE_DEVOPS_BASE_URL: ${AZURE_DEVOPS_BASE_URL:-}
+      AZURE_DEVOPS_ADMIN_PAT: ${AZURE_DEVOPS_ADMIN_PAT:-}
+      SONARQUBE_BASE_URL: ${SONARQUBE_BASE_URL:-}
+      ARTIFACTORY_BASE_URL: ${ARTIFACTORY_BASE_URL:-}
       SNOW_BASE_URL: ${SNOW_BASE_URL:-}
       SNOW_API_USERNAME: ${SNOW_API_USERNAME:-}
       SNOW_API_PASSWORD: ${SNOW_API_PASSWORD:-}

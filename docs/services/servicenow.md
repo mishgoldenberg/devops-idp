@@ -36,7 +36,6 @@ Authentication: HTTP Basic (`SNOW_API_USERNAME` / `SNOW_API_PASSWORD`).
 
 ## Environment variables
 
-- `USE_MOCK_SERVICENOW` — default `true`; returns canned data.
 - `SNOW_BASE_URL` — instance URL.
 - `SNOW_API_USERNAME` + `SNOW_API_PASSWORD`.
 

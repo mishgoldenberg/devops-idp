@@ -52,38 +52,25 @@ default behavior and whether they are required.
 
 ## Azure DevOps integration
 
-| Name                          | Description                                                                                    | Example                       | Required |
-| ----------------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------- | -------- |
-| `USE_MOCK_AZURE_DEVOPS`       | `true` (default) returns canned data without calling ADO. Set to `false` in production.         | `false`                       | No       |
-| `AZURE_DEVOPS_ORGANIZATION`   | ADO organization name. Preferred.                                                              | `myorg`                       | Yes (real) |
-| `AZURE_DEVOPS_ORG`            | Alias for `AZURE_DEVOPS_ORGANIZATION`.                                                         | `myorg`                       | No       |
-| `AZURE_DEVOPS_API_URL`        | Override base URL. Only used if neither of the org vars is set.                                | `https://dev.azure.com`       | No       |
-| `AZURE_DEVOPS_PAT`            | Fallback PAT used only for self-service (project creation) when a user hasn't connected theirs. | PAT                           | Yes (real) |
-| `AZURE_DEVOPS_ADMIN_PAT`      | PAT with `Process (Read & Manage)` scope used for custom process creation.                      | PAT                           | Yes (real) |
-| `AZURE_DEVOPS_QUERY_USER`     | Dev-only: query work items/PRs as this user instead of the caller.                              | `service-account@company.com` | No       |
+| Name                     | Description                                                               | Example                         | Required |
+| ------------------------ | ------------------------------------------------------------------------- | ------------------------------- | -------- |
+| `AZURE_DEVOPS_BASE_URL`  | Azure DevOps organization URL used for API calls and external links.       | `https://dev.azure.com/myorg`   | Yes      |
+| `AZURE_DEVOPS_ADMIN_PAT` | PAT with project/process permissions used for self-service write actions.  | PAT                             | Yes      |
 
 ## ServiceNow integration
 
 | Name                   | Description                                                                          | Example                                 | Required |
 | ---------------------- | ------------------------------------------------------------------------------------ | --------------------------------------- | -------- |
-| `USE_MOCK_SERVICENOW`  | `true` (default) returns canned tickets without calling SNOW.                         | `false`                                 | No       |
 | `SNOW_BASE_URL`        | Full instance URL used for all ServiceNow API calls.                                  | `https://mycompany.service-now.com`     | Yes (real) |
 | `SNOW_API_USERNAME`    | Service-account user for incident and attachment APIs.                                | `portal_bot`                            | Yes (real) |
 | `SNOW_API_PASSWORD`    | Password for the service account.                                                     | `********`                              | Yes (real) |
 
 ## SonarQube / Artifactory
 
-Both integrations are currently **mock-only** in code. The env vars below
-exist in `env.example` for future real integrations.
-
-| Name                   | Description                                        | Example                                   | Required |
-| ---------------------- | -------------------------------------------------- | ----------------------------------------- | -------- |
-| `USE_MOCK_SONARQUBE`   | Always effectively `true` today.                   | `true`                                    | No       |
-| `SONARQUBE_URL`        | Reserved for real integration.                     | `https://sonarqube.internal.company`      | No       |
-| `SONARQUBE_TOKEN`      | Reserved for real integration.                     | Token                                     | No       |
-| `USE_MOCK_ARTIFACTORY` | Always effectively `true` today.                   | `true`                                    | No       |
-| `ARTIFACTORY_URL`      | Reserved for real integration.                     | `https://artifactory.internal.company`    | No       |
-| `ARTIFACTORY_API_KEY`  | Reserved for real integration.                     | API key                                   | No       |
+| Name                   | Description                                      | Example                                | Required |
+| ---------------------- | ------------------------------------------------ | -------------------------------------- | -------- |
+| `SONARQUBE_BASE_URL`   | SonarQube base URL used by the connected widget. | `https://sonarqube.internal.company`   | Yes      |
+| `ARTIFACTORY_BASE_URL` | Artifactory base URL used by connected widgets.  | `https://artifactory.internal.company` | Yes      |
 
 ## Self-service / Terraform
 

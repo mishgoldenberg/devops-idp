@@ -17,8 +17,8 @@ Resilience
 * Transport errors never leak upstream — ``_raise_snow_error`` converts
   them into a generic 502 "Service temporarily unavailable".
 
-Mock mode (``USE_MOCK_SERVICENOW=true``, default) returns canned data so
-local dev doesn't need real credentials.
+The integration is configured only through ``SNOW_BASE_URL``,
+``SNOW_API_USERNAME``, and ``SNOW_API_PASSWORD``.
 """
 
 import logging
@@ -56,7 +56,7 @@ def _ensure_user_tickets_table() -> None:
     )
 
 def _use_mock() -> bool:
-    return os.getenv("USE_MOCK_SERVICENOW", "true").lower() in ("true", "1")
+    return False
 
 def _resolve_instance() -> str:
     url = os.getenv("SNOW_BASE_URL", "").strip().rstrip("/")

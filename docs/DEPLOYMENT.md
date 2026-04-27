@@ -532,7 +532,7 @@ kubectl run -it --rm tf-test \
 - [ ] GCP Workload Identity binding configured for `devops-terraform-sa`
 - [ ] `devops-control-center-tfstate` GCS bucket exists and SA has `objectAdmin`
 - [ ] `terraform-job-manager` Role and RoleBinding applied
-- [ ] `AZURE_DEVOPS_PAT` present in `all-secrets` K8s Secret (required by Terraform runner)
+- [ ] `AZURE_DEVOPS_ADMIN_PAT` present in `all-secrets` K8s Secret (required by Terraform runner)
 - [ ] Self-service project creation tested end-to-end (mock mode off)
 
 =======

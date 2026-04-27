@@ -3,8 +3,6 @@ kind: ConfigMap
 metadata:
   name: app-config
 data:
-  # Anything that is commented it's not in use yet
-  
   # ============================================
   # GENERAL APPLICATION SETTINGS
   # ============================================
@@ -16,99 +14,3 @@ data:
   # ============================================
 
   FRONTEND_URL: {{ .Values.config.frontendUrl | quote }}
-
-  # ==========================================
-  # # ============================================
-  # # EXTERNAL SERVICES - AZURE DEVOPS
-  # # ============================================
-  # AZURE_DEVOPS_API_URL: {{ .Values.config.azureDevopsApiUrl | quote }}
-  # AZURE_DEVOPS_SERVICE_HOST: {{ .Values.config.azureDevopsServiceHost | quote }}
-  # AZURE_DEVOPS_SERVICE_PORT: {{ .Values.config.azureDevopsServicePort | quote }}
-  # AZURE_DEVOPS_ORG: {{ .Values.config.azureDevopsOrg | quote }}
-  # AZURE_DEVOPS_QUERY_USER: {{ .Values.config.azureDevopsQueryUser | quote }}
-  # USE_MOCK_AZURE_DEVOPS: {{ .Values.config.useMockAzureDevops | quote }}
-
-  # # ============================================
-  # # EXTERNAL SERVICES - SONARQUBE
-  # # ============================================
-  # SONARQUBE_SERVICE_HOST: {{ .Values.config.sonarQubeServiceHost | quote }}
-  # SONARQUBE_SERVICE_PORT: {{ .Values.config.sonarQubeServicePort | quote }}
-  # SONARQUBE_URL: {{ .Values.config.sonarQubeUrl | quote }}
-  # USE_MOCK_SONARQUBE: {{ .Values.config.useMockSonarQube | quote }}
-
-  # # ============================================
-  # # EXTERNAL SERVICES - ARTIFACTORY
-  # # ============================================
-  # ARTIFACTORY_SERVICE_HOST: {{ .Values.config.artifactoryServiceHost | quote }}
-  # ARTIFACTORY_SERVICE_PORT: {{ .Values.config.artifactoryServicePort | quote }}
-  # ARTIFACTORY_URL: {{ .Values.config.artifactoryUrl | quote }}
-  # ARTIFACTORY_USERNAME: {{ .Values.config.artifactoryUsername | quote }}
-  # ARTIFACTORY_WEB_URL: {{ .Values.config.artifactoryWebUrl | quote }}
-  # USE_MOCK_ARTIFACTORY: {{ .Values.config.useMockArtifactory | quote }}
-
-  # # ============================================
-  # # EXTERNAL SERVICES - SERVICENOW
-  # # ============================================
-  # SERVICENOW_SERVICE_HOST: {{ .Values.config.serviceNowServiceHost | quote }}
-  # SERVICENOW_SERVICE_PORT: {{ .Values.config.serviceNowServicePort | quote }}
-  # SNOW_BASE_URL: {{ .Values.config.snowBaseUrl | quote }}
-  # SNOW_API_USERNAME: {{ .Values.config.snowApiUsername | quote }}
-  # SERVICENOW_TICKET_URL: {{ .Values.config.serviceNowTicketUrl | quote }}
-  # USE_MOCK_SERVICENOW: {{ .Values.config.useMockServiceNow | quote }}
-
-  # # ============================================
-  # # EXTERNAL SERVICES - AI CHATBOT
-  # # ============================================
-  # AI_CHATBOT_SERVICE_HOST: {{ .Values.config.aiChatbotServiceHost | quote }}
-  # AI_CHATBOT_SERVICE_PORT: {{ .Values.config.aiChatbotServicePort | quote }}
-  # AI_CHATBOT_API_URL: {{ .Values.config.aiChatbotApiUrl | quote }}
-  # AI_CHATBOT_UI_URL: {{ .Values.config.aiChatbotUiUrl | quote }}
-  # USE_MOCK_AI_CHATBOT: {{ .Values.config.useMockAiChatbot | quote }}
-
-  # # ============================================
-  # # APPROVAL SERVICE
-  # # ============================================
-  # APPROVAL_SERVICE_HOST: {{ .Values.config.approvalServiceHost | quote }}
-  # APPROVAL_SERVICE_PORT: {{ .Values.config.approvalServicePort | quote }}
-
-  # # ============================================
-  # # FEATURE FLAGS
-  # # ============================================
-  # ENABLE_APPROVALS: {{ .Values.config.enableApprovals | quote }}
-  # ENABLE_OBSERVABILITY: {{ .Values.config.enableObservability | quote }}
-  # ENABLE_USAGE_METRICS: {{ .Values.config.enableUsageMetrics | quote }}
-  # ENABLE_AUDIT_LOGGING: {{ .Values.config.enableAuditLogging | quote }}
-  # ENABLE_METRICS: {{ .Values.config.enableMetrics | quote }}
-
-  # # ============================================
-  # # FRONTEND CONFIGURATION
-  # # ============================================
-  # NEXT_PUBLIC_APP_NAME: {{ .Values.config.nextPublicAppName | quote }}
-  # NEXT_PUBLIC_COMPANY_NAME: {{ .Values.config.nextPublicCompanyName | quote }}
-  # NEXT_PUBLIC_ENABLE_MOCK_AUTH: {{ .Values.config.nextPublicEnableMockAuth | quote }}
-  # NEXT_PUBLIC_API_GATEWAY_URL: {{ .Values.config.nextPublicApiGatewayUrl | quote }}
-
-  # # ============================================
-  # # VAULT SECRETS MANAGEMENT
-  # # ============================================
-  # VAULT_ADDR: {{ .Values.config.vaultAddr | quote }}
-  # VAULT_PATH: {{ .Values.config.vaultPath | quote }}
-  # USE_VAULT: {{ .Values.config.useVault | quote }}
-
-  # # ============================================
-  # # MONITORING & OBSERVABILITY
-  # # ============================================
-  # METRICS_PORT: {{ .Values.config.metricsPort | quote }}
-  # PROMETHEUS_ENDPOINT: {{ .Values.config.prometheusEndpoint | quote }}
-
-  # # ============================================
-  # # RATE LIMITING
-  # # ============================================
-  # RATE_LIMIT_WINDOW_MS: {{ .Values.config.rateLimitWindowMs | quote }}
-  # RATE_LIMIT_MAX_REQUESTS: {{ .Values.config.rateLimitMaxRequests | quote }}
-
-  # # ============================================
-  # # DEVELOPMENT MODE
-  # # ============================================
-  # DEV_MODE_BYPASS_AUTH: {{ .Values.config.devModeBypassAuth | quote }}
-  # DEV_MODE_DEFAULT_USER: {{ .Values.config.devModeDefaultUser | quote }}

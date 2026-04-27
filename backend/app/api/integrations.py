@@ -51,9 +51,9 @@ def _normalize_system(system: str, allowed: set[str]) -> str:
 
 def _base_url(system: str) -> str:
     if system == "sonarqube":
-        url = os.getenv("SONARQUBE_URL", "").strip().rstrip("/")
+        url = os.getenv("SONARQUBE_BASE_URL", "").strip().rstrip("/")
     elif system == "artifactory":
-        url = os.getenv("ARTIFACTORY_URL", "").strip().rstrip("/")
+        url = os.getenv("ARTIFACTORY_BASE_URL", "").strip().rstrip("/")
     else:
         url = ""
     if not url:
