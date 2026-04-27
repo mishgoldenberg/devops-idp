@@ -117,13 +117,9 @@ to Artifactory, mapping responses into the current JSON fields.
 
 ```bash
 USE_MOCK_SERVICENOW=false
-SERVICENOW_INSTANCE=your-instance
-SERVICENOW_URL=https://${SERVICENOW_INSTANCE}.service-now.com
-SERVICENOW_CLIENT_ID=your-client-id
-SERVICENOW_CLIENT_SECRET=your-client-secret
-# OR
-SERVICENOW_USERNAME=your-username
-SERVICENOW_PASSWORD=your-password
+SNOW_BASE_URL=https://your-instance.service-now.com
+SNOW_API_USERNAME=your-username
+SNOW_API_PASSWORD=your-password
 ```
 
 ### Implementation

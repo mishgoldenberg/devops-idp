@@ -37,11 +37,11 @@ on:
         required: false
       AZURE_DEVOPS_ADMIN_PAT:
         required: false
-      SERVICENOW_URL:
+      SNOW_BASE_URL:
         required: false
-      SERVICENOW_USERNAME:
+      SNOW_API_USERNAME:
         required: false
-      SERVICENOW_PASSWORD:
+      SNOW_API_PASSWORD:
         required: false
 
 jobs:
@@ -119,9 +119,9 @@ jobs:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           AZURE_DEVOPS_PAT: ${{ secrets.AZURE_DEVOPS_PAT }}
           AZURE_DEVOPS_ADMIN_PAT: ${{ secrets.AZURE_DEVOPS_ADMIN_PAT }}
-          SERVICENOW_URL: ${{ secrets.SERVICENOW_URL }}
-          SERVICENOW_USERNAME: ${{ secrets.SERVICENOW_USERNAME }}
-          SERVICENOW_PASSWORD: ${{ secrets.SERVICENOW_PASSWORD }}
+          SNOW_BASE_URL: ${{ secrets.SNOW_BASE_URL }}
+          SNOW_API_USERNAME: ${{ secrets.SNOW_API_USERNAME }}
+          SNOW_API_PASSWORD: ${{ secrets.SNOW_API_PASSWORD }}
         run: |
           python3 - <<'EOF'
           import yaml, os
@@ -133,9 +133,9 @@ jobs:
             "jwtSecret":           os.environ.get("JWT_SECRET", ""),
             "azureDevopsPat":      os.environ.get("AZURE_DEVOPS_PAT", ""),
             "azureDevopsAdminPat": os.environ.get("AZURE_DEVOPS_ADMIN_PAT", ""),
-            "servicenowUrl":       os.environ.get("SERVICENOW_URL", ""),
-            "servicenowUsername":  os.environ.get("SERVICENOW_USERNAME", ""),
-            "servicenowPassword":  os.environ.get("SERVICENOW_PASSWORD", ""),
+            "snowBaseUrl":         os.environ.get("SNOW_BASE_URL", ""),
+            "snowApiUsername":     os.environ.get("SNOW_API_USERNAME", ""),
+            "snowApiPassword":     os.environ.get("SNOW_API_PASSWORD", ""),
           }
           # Scope under "backend:" so the umbrella chart passes values to the
           # backend subchart's .Values.secrets context (not the parent chart).

@@ -39,9 +39,9 @@ secrets:
   jwtSecret: ""
   hubAdminUsername: ""
   hubAdminPassword: ""
-  servicenowUrl: ""
-  servicenowUsername: ""
-  servicenowPassword: ""
+  snowBaseUrl: ""
+  snowApiUsername: ""
+  snowApiPassword: ""
 
 ingress:
   enabled: true

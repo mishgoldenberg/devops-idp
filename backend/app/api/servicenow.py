@@ -24,10 +24,10 @@ local dev doesn't need real credentials.
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel
 
 import activity
@@ -37,6 +37,7 @@ from security import AuthUser, get_current_user
 
 router = APIRouter()
 _log = logging.getLogger(__name__)
+_SNOW_SUPPORT_GROUP_SYS_ID: Optional[str] = None
 
 
 def _ensure_user_tickets_table() -> None:
@@ -57,20 +58,12 @@ def _ensure_user_tickets_table() -> None:
 def _use_mock() -> bool:
     return os.getenv("USE_MOCK_SERVICENOW", "true").lower() in ("true", "1")
 
-# Accept either SERVICENOW_URL (full URL already in .env) or construct from SERVICENOW_INSTANCE.
-# Also tolerates URLs stored without the https:// scheme.
 def _resolve_instance() -> str:
-    url = os.getenv("SERVICENOW_URL", "").strip().rstrip("/")
+    url = os.getenv("SNOW_BASE_URL", "").strip().rstrip("/")
     if url:
         if url.startswith("http://") or url.startswith("https://"):
             return url
-        # Stored without scheme (e.g. "mycompany.service-now.com")
         return f"https://{url}"
-    instance = os.getenv("SERVICENOW_INSTANCE", "").strip().rstrip("/")
-    if instance.startswith("http://") or instance.startswith("https://"):
-        return instance
-    if instance:
-        return f"https://{instance}.service-now.com"
     return ""
 
 
@@ -171,8 +164,8 @@ def _now_iso() -> str:
 
 
 def _snow_client() -> httpx.Client:
-    user = os.getenv("SERVICENOW_USERNAME") or os.getenv("SERVICENOW_USER", "")
-    password = os.getenv("SERVICENOW_PASSWORD", "")
+    user = os.getenv("SNOW_API_USERNAME", "")
+    password = os.getenv("SNOW_API_PASSWORD", "")
     return httpx.Client(
         base_url=_resolve_instance(),
         auth=(user, password),
@@ -180,6 +173,150 @@ def _snow_client() -> httpx.Client:
         timeout=15.0,
         follow_redirects=True,
     )
+
+
+def _snow_ticket_flow_client() -> httpx.Client:
+	base_url = (os.getenv("SNOW_BASE_URL") or "").strip().rstrip("/")
+	username = (os.getenv("SNOW_API_USERNAME") or "").strip()
+	password = os.getenv("SNOW_API_PASSWORD") or ""
+	if not base_url or not username or not password:
+		raise HTTPException(
+			status_code=status.HTTP_502_BAD_GATEWAY,
+			detail="ServiceNow ticket creation is not configured. Set SNOW_BASE_URL, SNOW_API_USERNAME, and SNOW_API_PASSWORD.",
+		)
+	if not base_url.startswith(("http://", "https://")):
+		base_url = f"https://{base_url}"
+	return httpx.Client(
+		base_url=base_url,
+		auth=(username, password),
+		headers={"Accept": "application/json"},
+		timeout=30.0,
+		follow_redirects=True,
+	)
+
+
+def _safe_snow_error(exc: Exception, context: str) -> HTTPException:
+	if isinstance(exc, HTTPException):
+		return exc
+	if isinstance(exc, httpx.HTTPStatusError):
+		message = ""
+		try:
+			body = exc.response.json()
+			if isinstance(body, dict):
+				err = body.get("error")
+				if isinstance(err, dict):
+					message = str(err.get("message") or err.get("detail") or "").strip()
+				if not message:
+					message = str(body.get("message") or "").strip()
+		except Exception:
+			message = exc.response.text[:200].strip()
+		_log.warning(
+			"ServiceNow ticket flow failed while %s: status=%s body=%s",
+			context,
+			exc.response.status_code,
+			exc.response.text[:400],
+		)
+		detail = f"ServiceNow returned HTTP {exc.response.status_code} while {context}."
+		if message:
+			detail += f" {message}"
+		return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=detail)
+	_log.warning("ServiceNow ticket flow failed while %s: %s: %s", context, type(exc).__name__, exc)
+	return HTTPException(
+		status_code=status.HTTP_502_BAD_GATEWAY,
+		detail=f"Could not reach ServiceNow while {context}.",
+	)
+
+
+def _required_form_value(name: str, value: Optional[str]) -> str:
+	clean = (value or "").strip()
+	if not clean:
+		raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{name} is required.")
+	return clean
+
+
+def _resolve_snow_user_sys_id(client: httpx.Client, email: str) -> str:
+	# Resolve the SSO user to ServiceNow's sys_id before creating the incident;
+	# ServiceNow reference fields need sys_id values, not portal emails.
+	try:
+		resp = client.get(
+			"/api/now/table/sys_user",
+			params={
+				"sysparm_query": f"email={email}",
+				"sysparm_fields": "sys_id,email",
+				"sysparm_limit": 1,
+			},
+		)
+		resp.raise_for_status()
+	except Exception as exc:
+		raise _safe_snow_error(exc, "resolving user") from exc
+	result = resp.json().get("result") or []
+	if not result or not result[0].get("sys_id"):
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail="Could not find your ServiceNow user by SSO email.",
+		)
+	return str(result[0]["sys_id"])
+
+
+def _resolve_support_group_sys_id(client: httpx.Client) -> str:
+	global _SNOW_SUPPORT_GROUP_SYS_ID
+	if _SNOW_SUPPORT_GROUP_SYS_ID:
+		return _SNOW_SUPPORT_GROUP_SYS_ID
+	# Devops Support rarely changes, so cache the group sys_id after the first
+	# successful lookup and reuse it for later ticket submissions.
+	try:
+		resp = client.get(
+			"/api/now/table/sys_user_group",
+			params={
+				"sysparm_query": "name=Devops Support",
+				"sysparm_fields": "sys_id,name",
+				"sysparm_limit": 1,
+			},
+		)
+		resp.raise_for_status()
+	except Exception as exc:
+		raise _safe_snow_error(exc, "resolving support group") from exc
+	result = resp.json().get("result") or []
+	if not result or not result[0].get("sys_id"):
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail='Could not find the ServiceNow group "Devops Support".',
+		)
+	_SNOW_SUPPORT_GROUP_SYS_ID = str(result[0]["sys_id"])
+	return _SNOW_SUPPORT_GROUP_SYS_ID
+
+
+def _format_ticket_description(fields: Dict[str, str]) -> str:
+	lines = [
+		fields["description"],
+		"",
+		"--- DevOps Hub request details ---",
+	]
+	for key, value in fields.items():
+		if key == "description" or not value:
+			continue
+		lines.append(f"{key.replace('_', ' ').title()}: {value}")
+	return "\n".join(lines).strip()
+
+
+def _upload_snow_attachments(client: httpx.Client, incident_sys_id: str, attachments: Optional[List[UploadFile]]) -> int:
+	count = 0
+	for upload in attachments or []:
+		if not upload or not upload.filename:
+			continue
+		# ServiceNow's attachment API accepts one multipart file per request.
+		try:
+			upload.file.seek(0)
+			resp = client.post(
+				"/api/now/attachment/file",
+				params={"table_name": "incident", "table_sys_id": incident_sys_id},
+				files={"file": (upload.filename, upload.file, upload.content_type or "application/octet-stream")},
+			)
+			resp.raise_for_status()
+			count += 1
+		except Exception as exc:
+			raise _safe_snow_error(exc, f"uploading attachment {upload.filename}") from exc
+	return count
 
 
 _STATE_MAP = {
@@ -240,7 +377,7 @@ def _raise_snow_error(exc: Exception, context: str) -> None:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=(
-                "ServiceNow is not configured: SERVICENOW_URL env var is missing or empty. "
+                "ServiceNow is not configured: SNOW_BASE_URL env var is missing or empty. "
                 "Set it to your instance URL (e.g. https://mycompany.service-now.com)."
             ),
         )
@@ -280,7 +417,7 @@ def _raise_snow_error(exc: Exception, context: str) -> None:
         status_code=status.HTTP_502_BAD_GATEWAY,
         detail=(
             f"Could not reach ServiceNow while {context}. "
-            "Check that SERVICENOW_URL and credentials are configured and the "
+            "Check that SNOW_BASE_URL and credentials are configured and the "
             "instance is reachable from the portal."
         ),
     )
@@ -291,8 +428,8 @@ def _raise_snow_error(exc: Exception, context: str) -> None:
 @router.get("/status")
 def get_status():
     instance = _resolve_instance()
-    user = os.getenv("SERVICENOW_USERNAME") or os.getenv("SERVICENOW_USER", "")
-    password = os.getenv("SERVICENOW_PASSWORD", "")
+    user = os.getenv("SNOW_API_USERNAME", "")
+    password = os.getenv("SNOW_API_PASSWORD", "")
 
     result = {
         "mock_mode": _use_mock(),
@@ -334,7 +471,7 @@ def get_tickets(current_user: AuthUser = Depends(get_current_user)):
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=(
-                "ServiceNow is not configured: SERVICENOW_URL env var is missing or empty. "
+                "ServiceNow is not configured: SNOW_BASE_URL env var is missing or empty. "
                 "Set it to your instance URL (e.g. https://mycompany.service-now.com)."
             ),
         )
@@ -345,7 +482,7 @@ def get_tickets(current_user: AuthUser = Depends(get_current_user)):
 
     # Primary source of truth: ServiceNow itself, scoped to the configured
     # portal account (secret variable) or the active user email fallback.
-    snow_user = (os.getenv("SERVICENOW_USERNAME") or os.getenv("SERVICENOW_USER") or "").strip()
+    snow_user = (os.getenv("SNOW_API_USERNAME") or "").strip()
     if not snow_user:
         snow_user = str(user_email)
 
@@ -636,7 +773,7 @@ def create_ticket(
     }
     impact, urgency = _PRIORITY_TO_IMPACT_URGENCY.get(str(body.priority), ("2", "2"))
 
-    snow_user = os.getenv("SERVICENOW_USERNAME") or os.getenv("SERVICENOW_USER", "")
+    snow_user = os.getenv("SNOW_API_USERNAME", "")
     try:
         with _snow_client() as client:
             resp = client.post(
@@ -724,6 +861,162 @@ def create_ticket(
     )
 
     return {"success": True, "data": ticket, "timestamp": _now_iso()}
+
+
+@router.post("/tickets/create-flow")
+def create_ticket_flow(
+	full_name: str = Form(...),
+	phone_number: str = Form(...),
+	branch: str = Form(...),
+	team: str = Form(...),
+	section: str = Form(...),
+	role: str = Form(...),
+	network: str = Form(...),
+	devops_services: str = Form(...),
+	azure_devops_support_type: Optional[str] = Form(None),
+	azure_devops_collection: Optional[str] = Form(None),
+	azure_devops_project: Optional[str] = Form(None),
+	pipeline_url: Optional[str] = Form(None),
+	reason: str = Form(...),
+	reason_other: Optional[str] = Form(None),
+	title: str = Form(...),
+	urgency: str = Form(...),
+	description: str = Form(...),
+	work_impact: str = Form(...),
+	help_text: str = Form(...),
+	attachments: Optional[List[UploadFile]] = File(None),
+	current_user: AuthUser = Depends(get_current_user),
+):
+	user_email = (current_user.get("email") or current_user.get("username") or "").strip().lower()
+	if not user_email:
+		raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User email missing from auth context.")
+
+	fields = {
+		"full_name": _required_form_value("full_name", full_name),
+		"phone_number": _required_form_value("phone_number", phone_number),
+		"branch": _required_form_value("branch", branch),
+		"team": _required_form_value("team", team),
+		"section": _required_form_value("section", section),
+		"role": _required_form_value("role", role),
+		"network": _required_form_value("network", network),
+		"devops_services": _required_form_value("devops_services", devops_services),
+		"reason": _required_form_value("reason", reason),
+		"reason_other": (reason_other or "").strip(),
+		"title": _required_form_value("title", title),
+		"urgency": _required_form_value("urgency", urgency),
+		"description": _required_form_value("description", description),
+		"work_impact": _required_form_value("work_impact", work_impact),
+		"help_text": _required_form_value("help_text", help_text),
+	}
+	if not fields["phone_number"].isdigit():
+		raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="phone_number must contain numbers only.")
+	if fields["devops_services"] == "azure devops":
+		fields["azure_devops_support_type"] = _required_form_value("azure_devops_support_type", azure_devops_support_type)
+		fields["azure_devops_collection"] = _required_form_value("azure_devops_collection", azure_devops_collection)
+		fields["azure_devops_project"] = _required_form_value("azure_devops_project", azure_devops_project)
+		if fields["azure_devops_support_type"] == "pipelines":
+			fields["pipeline_url"] = _required_form_value("pipeline_url", pipeline_url)
+		else:
+			fields["pipeline_url"] = (pipeline_url or "").strip()
+	else:
+		fields["azure_devops_support_type"] = (azure_devops_support_type or "").strip()
+		fields["azure_devops_collection"] = (azure_devops_collection or "").strip()
+		fields["azure_devops_project"] = (azure_devops_project or "").strip()
+		fields["pipeline_url"] = (pipeline_url or "").strip()
+
+	# The new wizard posts multipart data so incident creation and file upload
+	# can happen as one user action while keeping all ServiceNow credentials
+	# server-side.
+	try:
+		_ensure_user_tickets_table()
+	except Exception:
+		pass
+
+	try:
+		with _snow_ticket_flow_client() as client:
+			user_sys_id = _resolve_snow_user_sys_id(client, user_email)
+			group_sys_id = _resolve_support_group_sys_id(client)
+			payload: Dict[str, Any] = {
+				"short_description": fields["title"],
+				"description": _format_ticket_description(fields),
+				"caller_id": user_sys_id,
+				"opened_by": user_sys_id,
+				"assignment_group": group_sys_id,
+				"urgency": fields["urgency"],
+				"impact": "2",
+				"u_full_name": fields["full_name"],
+				"u_phone_number": fields["phone_number"],
+				"u_branch": fields["branch"],
+				"u_team": fields["team"],
+				"u_section": fields["section"],
+				"u_role": fields["role"],
+				"u_network": fields["network"],
+				"u_devops_services": fields["devops_services"],
+				"u_reason": fields["reason"],
+				"u_work_impact": fields["work_impact"],
+				"u_help_text": fields["help_text"],
+				"u_azure_devops_support_type": fields["azure_devops_support_type"],
+				"u_azure_devops_collection": fields["azure_devops_collection"],
+				"u_azure_devops_project": fields["azure_devops_project"],
+				"u_pipeline_url": fields["pipeline_url"],
+				"u_reason_other": fields["reason_other"],
+			}
+			resp = client.post(
+				"/api/now/table/incident",
+				json=payload,
+				headers={"Content-Type": "application/json"},
+				params={"sysparm_display_value": "true"},
+			)
+			resp.raise_for_status()
+			raw = resp.json().get("result", {})
+			incident_sys_id = str(raw.get("sys_id") or "")
+			ticket_number = str(raw.get("number") or "")
+			if not incident_sys_id:
+				raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="ServiceNow did not return an incident sys_id.")
+			attachment_count = _upload_snow_attachments(client, incident_sys_id, attachments)
+	except HTTPException:
+		raise
+	except Exception as exc:
+		raise _safe_snow_error(exc, "creating ticket") from exc
+
+	try:
+		db.execute(
+			"""
+			INSERT INTO user_tickets (user_email, sys_id, ticket_number)
+			VALUES (%s, %s, %s)
+			ON CONFLICT (user_email, sys_id) DO NOTHING
+			""",
+			[user_email, incident_sys_id, ticket_number],
+		)
+	except Exception:
+		pass
+	cache.invalidate(f"snow:tickets:{user_email}")
+	try:
+		from integrations_cache import invalidate_owner
+		invalidate_owner("snow", user_email)
+	except Exception:
+		pass
+	try:
+		from observability_tracking import priority_to_severity_band, record_servicenow_portal_ticket
+		record_servicenow_portal_ticket(ticket_number or incident_sys_id, user_email, priority_to_severity_band(fields["urgency"]), fields["title"])
+	except Exception:
+		pass
+	activity.log_activity(
+		user_email=user_email,
+		action_type=activity.ACTION_CREATE_TICKET,
+		item_name=fields["title"] or ticket_number or "Ticket",
+		metadata={"sys_id": incident_sys_id, "number": ticket_number, "attachments": attachment_count},
+	)
+	return {
+		"success": True,
+		"data": {
+			"sys_id": incident_sys_id,
+			"number": ticket_number,
+			"short_description": fields["title"],
+			"attachments_uploaded": attachment_count,
+		},
+		"timestamp": _now_iso(),
+	}
 
 
 # ── GET /stats (existing widget endpoint, kept for compatibility) ─────────────

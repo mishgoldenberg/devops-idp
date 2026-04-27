@@ -67,11 +67,9 @@ default behavior and whether they are required.
 | Name                   | Description                                                                          | Example                                 | Required |
 | ---------------------- | ------------------------------------------------------------------------------------ | --------------------------------------- | -------- |
 | `USE_MOCK_SERVICENOW`  | `true` (default) returns canned tickets without calling SNOW.                         | `false`                                 | No       |
-| `SERVICENOW_URL`       | Full instance URL. Preferred.                                                         | `https://mycompany.service-now.com`     | Yes (real) |
-| `SERVICENOW_INSTANCE`  | Instance shortname; used only if `SERVICENOW_URL` is unset.                           | `mycompany`                             | No       |
-| `SERVICENOW_USERNAME`  | Service-account user for the incident API.                                            | `portal_bot`                            | Yes (real) |
-| `SERVICENOW_USER`      | Alias for `SERVICENOW_USERNAME`.                                                      | `portal_bot`                            | No       |
-| `SERVICENOW_PASSWORD`  | Password for the service account.                                                     | `********`                              | Yes (real) |
+| `SNOW_BASE_URL`        | Full instance URL used for all ServiceNow API calls.                                  | `https://mycompany.service-now.com`     | Yes (real) |
+| `SNOW_API_USERNAME`    | Service-account user for incident and attachment APIs.                                | `portal_bot`                            | Yes (real) |
+| `SNOW_API_PASSWORD`    | Password for the service account.                                                     | `********`                              | Yes (real) |
 
 ## SonarQube / Artifactory
 

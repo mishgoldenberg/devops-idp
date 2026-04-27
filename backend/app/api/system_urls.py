@@ -73,7 +73,7 @@ def _resolve_system_urls() -> Dict[str, Optional[str]]:
     if not ado:
         ado = _DEFAULT_URLS.get("azure_devops")
 
-    snow = _first_env("SERVICENOW_URL", "SERVICENOW_INSTANCE_URL")
+    snow = _first_env("SNOW_BASE_URL")
     sonar = _first_env("SONARQUBE_URL")
     artifactory = _first_env("ARTIFACTORY_URL")
     confluence = _first_env("CONFLUENCE_URL")

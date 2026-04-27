@@ -232,6 +232,34 @@ secrets → Helm `--set` → the `all-secrets` K8s Secret → pod env.
 
 ---
 
+## ServiceNow Integration
+
+The Support page creates ServiceNow incidents through a backend-only service
+account. The browser submits the 4-step form to the Hub, and the Hub calls
+ServiceNow using:
+
+- `SNOW_BASE_URL` — full ServiceNow instance URL.
+- `SNOW_API_USERNAME` — service-account username.
+- `SNOW_API_PASSWORD` — service-account password.
+
+Ticket creation flow:
+
+1. User submits the Support form.
+2. Backend resolves the caller with `sys_user?sysparm_query=email=<SSO email>`.
+3. Backend resolves the `Devops Support` group and caches its `sys_id`.
+4. Backend creates an `incident` with the caller, opener, assignment group,
+   urgency, impact, and all extra Hub fields.
+5. Backend uploads each attachment through the attachment API.
+
+Required ServiceNow permissions for the service account:
+
+- `itil` role.
+- Read access to `sys_user`.
+- Create/update access to the `incident` API.
+- Access to upload files through the attachment API.
+
+---
+
 ## SSO Configuration (OIDC)
 
 The Hub uses configurable OIDC only. There is no built-in provider fallback:

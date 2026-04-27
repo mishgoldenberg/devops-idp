@@ -102,9 +102,9 @@ By default `USE_MOCK_AZURE_DEVOPS=true`. To hit a real dev org:
 
   ```env
   USE_MOCK_SERVICENOW=false
-  SERVICENOW_URL=https://devXXXXXX.service-now.com
-  SERVICENOW_USERNAME=admin
-  SERVICENOW_PASSWORD=<your dev instance password>
+  SNOW_BASE_URL=https://devXXXXXX.service-now.com
+  SNOW_API_USERNAME=admin
+  SNOW_API_PASSWORD=<your dev instance password>
   ```
 
 - Open `/ui/support` and create a ticket — it should land in the dev

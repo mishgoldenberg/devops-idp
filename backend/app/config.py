@@ -25,9 +25,9 @@ class Settings:
     jwt_expiry: str
 
     # ServiceNow
-    servicenow_instance: Optional[str]
-    servicenow_user: Optional[str]
-    servicenow_password: Optional[str]
+    snow_base_url: Optional[str]
+    snow_api_username: Optional[str]
+    snow_api_password: Optional[str]
 
     # CORS
     cors_origins: str
@@ -51,9 +51,9 @@ class Settings:
         self.jwt_expiry = os.getenv("JWT_EXPIRY", "8h")
 
         # ServiceNow
-        self.servicenow_instance = os.getenv("SERVICENOW_INSTANCE")
-        self.servicenow_user = os.getenv("SERVICENOW_USER")
-        self.servicenow_password = os.getenv("SERVICENOW_PASSWORD")
+        self.snow_base_url = os.getenv("SNOW_BASE_URL")
+        self.snow_api_username = os.getenv("SNOW_API_USERNAME")
+        self.snow_api_password = os.getenv("SNOW_API_PASSWORD")
 
         # CORS
         # Comma-separated list of origins, e.g. "http://localhost:3000,https://devops.internal.company"

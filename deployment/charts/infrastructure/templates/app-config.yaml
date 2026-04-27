@@ -51,11 +51,8 @@ data:
   # # ============================================
   # SERVICENOW_SERVICE_HOST: {{ .Values.config.serviceNowServiceHost | quote }}
   # SERVICENOW_SERVICE_PORT: {{ .Values.config.serviceNowServicePort | quote }}
-  # SERVICENOW_INSTANCE: {{ .Values.config.serviceNowInstance | quote }}
-  # SERVICENOW_URL: {{ .Values.config.serviceNowUrl | quote }}
-  # SERVICENOW_CLIENT_ID: {{ .Values.config.serviceNowClientId | quote }}
-  # SERVICENOW_CLIENT_SECRET: {{ .Values.config.serviceNowClientSecret | quote }}
-  # SERVICENOW_USERNAME: {{ .Values.config.serviceNowUsername | quote }}
+  # SNOW_BASE_URL: {{ .Values.config.snowBaseUrl | quote }}
+  # SNOW_API_USERNAME: {{ .Values.config.snowApiUsername | quote }}
   # SERVICENOW_TICKET_URL: {{ .Values.config.serviceNowTicketUrl | quote }}
   # USE_MOCK_SERVICENOW: {{ .Values.config.useMockServiceNow | quote }}
 
