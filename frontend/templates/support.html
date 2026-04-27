@@ -13,7 +13,7 @@
 		/>
 	</head>
 	<body class="h-screen bg-base-200 flex flex-col">
-		<div id="banner-component" hx-get="/ui/components/banner" hx-trigger="load" hx-swap="outerHTML"></div>
+		{% include 'partials/components/banner.html' with context %}
 		<div class="flex flex-1 min-h-0 overflow-hidden">
 			{% include "partials/components/sidebar.html" with context %} {% include "partials/components/support-container.html" %}
 		</div>
