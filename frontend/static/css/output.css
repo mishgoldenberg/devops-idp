@@ -3329,9 +3329,6 @@
   .max-w-4xl {
     max-width: var(--container-4xl);
   }
-  .max-w-5xl {
-    max-width: var(--container-5xl);
-  }
   .max-w-7xl {
     max-width: var(--container-7xl);
   }
@@ -3523,9 +3520,6 @@
   }
   .gap-2 {
     gap: calc(var(--spacing) * 2);
-  }
-  .gap-2\.5 {
-    gap: calc(var(--spacing) * 2.5);
   }
   .gap-3 {
     gap: calc(var(--spacing) * 3);
@@ -3799,12 +3793,6 @@
   .border-success {
     border-color: var(--color-success);
   }
-  .border-success\/30 {
-    border-color: var(--color-success);
-    @supports (color: color-mix(in lab, red, red)) {
-      border-color: color-mix(in oklab, var(--color-success) 30%, transparent);
-    }
-  }
   .border-warning\/30 {
     border-color: var(--color-warning);
     @supports (color: color-mix(in lab, red, red)) {
@@ -3909,12 +3897,6 @@
   .bg-green-100 {
     background-color: var(--color-green-100);
   }
-  .bg-info\/5 {
-    background-color: var(--color-info);
-    @supports (color: color-mix(in lab, red, red)) {
-      background-color: color-mix(in oklab, var(--color-info) 5%, transparent);
-    }
-  }
   .bg-info\/10 {
     background-color: var(--color-info);
     @supports (color: color-mix(in lab, red, red)) {
@@ -3959,12 +3941,6 @@
   }
   .bg-success {
     background-color: var(--color-success);
-  }
-  .bg-success\/10 {
-    background-color: var(--color-success);
-    @supports (color: color-mix(in lab, red, red)) {
-      background-color: color-mix(in oklab, var(--color-success) 10%, transparent);
-    }
   }
   .bg-success\/15 {
     background-color: var(--color-success);
@@ -4480,12 +4456,6 @@
   .text-error {
     color: var(--color-error);
   }
-  .text-error\/80 {
-    color: var(--color-error);
-    @supports (color: color-mix(in lab, red, red)) {
-      color: color-mix(in oklab, var(--color-error) 80%, transparent);
-    }
-  }
   .text-gray-300 {
     color: var(--color-gray-300);
   }
@@ -4539,12 +4509,6 @@
   }
   .text-success {
     color: var(--color-success);
-  }
-  .text-success\/80 {
-    color: var(--color-success);
-    @supports (color: color-mix(in lab, red, red)) {
-      color: color-mix(in oklab, var(--color-success) 80%, transparent);
-    }
   }
   .text-warning {
     color: var(--color-warning);
@@ -5423,6 +5387,17 @@
     min-height: calc(var(--spacing) * 0);
     flex: 1;
     overflow-y: auto;
+  }
+  .portal-content-container {
+    margin-inline: auto;
+    display: block;
+    width: 100%;
+    max-width: 60rem;
+    padding-inline: calc(var(--spacing) * 4);
+    padding-block: calc(var(--spacing) * 6);
+    @media (width >= 40rem) {
+      padding-inline: calc(var(--spacing) * 6);
+    }
   }
   .section-card {
     @layer daisyui.l1.l2.l3 {

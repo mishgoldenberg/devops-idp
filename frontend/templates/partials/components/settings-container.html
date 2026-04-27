@@ -5,17 +5,11 @@
 			<p class="page-subtitle">Portal preferences, suggestions, and account session.</p>
 		</div>
 	</header>
-	<!--
-		Layout mirrors the Profile page: a left-aligned stack of
-		`max-w-2xl section-card` blocks with padded `card-body p-5` and
-		the section title inline (no bordered header strip, no
-		divide-y rows). Keeps the shared spacing/typography system
-		while making the two pages feel like siblings.
-	-->
-	<div class="page-content space-y-6">
+	<div class="page-content-flush">
+		<div class="portal-content-container space-y-6">
 
 		<!-- Appearance -->
-		<section class="max-w-2xl section-card">
+		<section class="section-card">
 			<div class="card-body p-5">
 				<h2 class="section-title mb-4">Appearance</h2>
 				<div class="space-y-4">
@@ -68,7 +62,7 @@
 		</section>
 
 		<!-- Suggestions -->
-		<section class="max-w-2xl section-card">
+		<section class="section-card">
 			<div class="card-body p-5">
 				<h2 class="section-title mb-4">Suggestions</h2>
 				<form id="suggestion-form" class="space-y-4">
@@ -128,7 +122,7 @@
 		</section>
 
 		<!-- Session -->
-		<section class="max-w-2xl section-card">
+		<section class="section-card">
 			<div class="card-body p-5">
 				<h2 class="section-title mb-4">Session</h2>
 				<div class="flex items-center justify-between gap-4">
@@ -152,6 +146,7 @@
 			</div>
 		</section>
 
+		</div>
 	</div>
 </div>
 
