@@ -65,12 +65,13 @@ default behavior and whether they are required.
 | `SNOW_API_USERNAME`    | Service-account user for incident and attachment APIs.                                | `portal_bot`                            | Yes (real) |
 | `SNOW_API_PASSWORD`    | Password for the service account.                                                     | `********`                              | Yes (real) |
 
-## SonarQube / Artifactory
+## SonarQube / Artifactory / Confluence
 
-| Name                   | Description                                      | Example                                | Required |
-| ---------------------- | ------------------------------------------------ | -------------------------------------- | -------- |
-| `SONARQUBE_BASE_URL`   | SonarQube base URL used by the connected widget. | `https://sonarqube.internal.company`   | Yes      |
-| `ARTIFACTORY_BASE_URL` | Artifactory base URL used by connected widgets.  | `https://artifactory.internal.company` | Yes      |
+| Name                   | Description                                            | Example                                | Required |
+| ---------------------- | ------------------------------------------------------ | -------------------------------------- | -------- |
+| `SONARQUBE_BASE_URL`   | SonarQube base URL used by the connected widget.       | `https://sonarqube.internal.company`   | Yes      |
+| `ARTIFACTORY_BASE_URL` | Artifactory base URL used by connected widgets.        | `https://artifactory.internal.company` | Yes      |
+| `CONFLUENCE_BASE_URL`  | Confluence base URL used by the Confluence Pages widget. | `https://confluence.internal.company`  | Yes      |
 
 ## Self-service / Terraform
 

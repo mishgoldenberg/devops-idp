@@ -50,12 +50,14 @@ def _resolve_system_urls() -> Dict[str, Optional[str]]:
     snow = _first_env("SNOW_BASE_URL")
     sonar = _first_env("SONARQUBE_BASE_URL")
     artifactory = _first_env("ARTIFACTORY_BASE_URL")
+    confluence = _first_env("CONFLUENCE_BASE_URL")
 
     return {
         "azure_devops": _strip_api_suffix(ado) if ado else None,
         "servicenow": _strip_api_suffix(snow) if snow else None,
         "sonarqube": _strip_api_suffix(sonar) if sonar else None,
         "artifactory": _strip_api_suffix(artifactory) if artifactory else None,
+        "confluence": _strip_api_suffix(confluence) if confluence else None,
     }
 
 

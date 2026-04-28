@@ -79,6 +79,11 @@ spec:
                 secretKeyRef:
                   name: all-secrets
                   key: SONARQUBE_BASE_URL
+            - name: CONFLUENCE_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: all-secrets
+                  key: CONFLUENCE_BASE_URL
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:

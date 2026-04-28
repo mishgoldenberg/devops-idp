@@ -55,6 +55,7 @@ jobs:
           SNOW_API_PASSWORD: ${{ secrets.SNOW_API_PASSWORD }}
           ARTIFACTORY_BASE_URL: ${{ secrets.ARTIFACTORY_BASE_URL }}
           SONARQUBE_BASE_URL: ${{ secrets.SONARQUBE_BASE_URL }}
+          CONFLUENCE_BASE_URL: ${{ secrets.CONFLUENCE_BASE_URL }}
         run: |
           python3 - <<'EOF'
           import yaml, os
@@ -71,6 +72,7 @@ jobs:
             "snowApiPassword":     os.environ.get("SNOW_API_PASSWORD", ""),
             "artifactoryBaseUrl":  os.environ.get("ARTIFACTORY_BASE_URL", ""),
             "sonarqubeBaseUrl":    os.environ.get("SONARQUBE_BASE_URL", ""),
+            "confluenceBaseUrl":   os.environ.get("CONFLUENCE_BASE_URL", ""),
           }
           # Scope under "backend:" so the umbrella chart passes values to the
           # backend subchart's .Values.secrets context (not the parent chart).

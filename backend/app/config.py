@@ -32,6 +32,7 @@ class Settings:
     azure_devops_admin_pat: Optional[str]
     artifactory_base_url: Optional[str]
     sonarqube_base_url: Optional[str]
+    confluence_base_url: Optional[str]
 
     # ServiceNow
     snow_base_url: Optional[str]
@@ -66,6 +67,7 @@ class Settings:
         self.azure_devops_admin_pat = os.getenv("AZURE_DEVOPS_ADMIN_PAT")
         self.artifactory_base_url = os.getenv("ARTIFACTORY_BASE_URL")
         self.sonarqube_base_url = os.getenv("SONARQUBE_BASE_URL")
+        self.confluence_base_url = os.getenv("CONFLUENCE_BASE_URL")
 
         # ServiceNow
         self.snow_base_url = os.getenv("SNOW_BASE_URL")
@@ -82,6 +84,7 @@ class Settings:
             "SNOW_API_PASSWORD": self.snow_api_password,
             "ARTIFACTORY_BASE_URL": self.artifactory_base_url,
             "SONARQUBE_BASE_URL": self.sonarqube_base_url,
+            "CONFLUENCE_BASE_URL": self.confluence_base_url,
         }.items():
             if not value:
                 log.error("Missing critical environment variable: %s", name)

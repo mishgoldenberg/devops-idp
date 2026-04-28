@@ -15,8 +15,8 @@ from sso_config import decrypt_secret, encrypt_secret
 
 router = APIRouter()
 
-SystemName = Literal["azure", "sonarqube", "artifactory"]
-_TOKEN_SYSTEMS = {"azure", "sonarqube", "artifactory"}
+SystemName = Literal["azure", "sonarqube", "artifactory", "confluence"]
+_TOKEN_SYSTEMS = {"azure", "sonarqube", "artifactory", "confluence"}
 _PIN_SYSTEMS = {"sonarqube", "artifactory"}
 
 
@@ -54,6 +54,8 @@ def _base_url(system: str) -> str:
         url = os.getenv("SONARQUBE_BASE_URL", "").strip().rstrip("/")
     elif system == "artifactory":
         url = os.getenv("ARTIFACTORY_BASE_URL", "").strip().rstrip("/")
+    elif system == "confluence":
+        url = os.getenv("CONFLUENCE_BASE_URL", "").strip().rstrip("/")
     else:
         url = ""
     if not url:
@@ -124,7 +126,7 @@ def save_token(
     raw = (body.token or "").strip()
     if len(raw) < 4:
         raise HTTPException(status_code=400, detail="Token is too short")
-    if name in {"sonarqube", "artifactory"}:
+    if name in {"sonarqube", "artifactory", "confluence"}:
         _test_token(name, raw)
     execute(
         """
@@ -311,6 +313,139 @@ def artifactory_storage(current_user: AuthUser = Depends(get_current_user)) -> D
     return {"success": True, "data": data, "timestamp": _now_iso()}
 
 
+@router.get("/confluence/recent")
+def confluence_recent(current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]:
+    """Recently edited Confluence pages across all spaces the user can see.
+
+    Mirrors the existing Sonar/Artifactory token-gated pattern: returns a 428 via
+    ``_require_token`` if the user hasn't set their personal token yet; otherwise
+    proxies a single REST call so we never expose the token to the browser.
+    """
+    token = _require_token(current_user, "confluence")
+    base = _base_url("confluence")
+    response = _confluence_request(
+        f"{base}/rest/api/content",
+        token,
+        params={
+            "type": "page",
+            "orderby": "modified",
+            "limit": 10,
+            "expand": "space,version,history.lastUpdated",
+        },
+    )
+    payload = response.json()
+    return {
+        "success": True,
+        "data": _format_confluence_pages(payload, base),
+        "timestamp": _now_iso(),
+    }
+
+
+@router.get("/confluence/search")
+def confluence_search(
+    q: str,
+    current_user: AuthUser = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Full-text search Confluence pages via CQL, scoped to type=page.
+
+    The widget swaps the recent-pages list with these results inline, so the
+    response shape is identical to ``/confluence/recent``.
+    """
+    token = _require_token(current_user, "confluence")
+    query = (q or "").strip()
+    if not query:
+        return {"success": True, "data": [], "timestamp": _now_iso()}
+    base = _base_url("confluence")
+    # Escape any embedded double-quotes before placing the query inside the CQL
+    # ``text~"..."`` clause so attackers can't break out of the literal.
+    safe = query.replace('"', '\\"')
+    cql = f'type=page AND text~"{safe}"'
+    response = _confluence_request(
+        f"{base}/rest/api/content/search",
+        token,
+        params={
+            "cql": cql,
+            "limit": 10,
+            "expand": "space,version,history.lastUpdated",
+        },
+    )
+    payload = response.json()
+    return {
+        "success": True,
+        "data": _format_confluence_pages(payload, base),
+        "timestamp": _now_iso(),
+    }
+
+
+def _confluence_request(
+    url: str,
+    token: str,
+    *,
+    params: Optional[Dict[str, Any]] = None,
+    timeout: float = 10.0,
+) -> httpx.Response:
+    """Authenticated GET to Confluence; surfaces 401/403 as 401 to the browser."""
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    try:
+        with httpx.Client(timeout=timeout, headers=headers) as client:
+            response = client.get(url, params=params)
+    except Exception:
+        raise HTTPException(status_code=502, detail="Confluence is unreachable")
+    if response.status_code in {401, 403}:
+        raise HTTPException(status_code=401, detail="Invalid token or connection failed")
+    response.raise_for_status()
+    return response
+
+
+def _format_confluence_pages(payload: Dict[str, Any], base: str) -> List[Dict[str, Any]]:
+    """Reshape Confluence page JSON into the small surface the widget consumes."""
+    items = payload.get("results") if isinstance(payload, dict) else None
+    if not isinstance(items, list):
+        return []
+    pages: List[Dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        page_id = str(item.get("id") or "")
+        title = str(item.get("title") or "Untitled")
+        # Space name lives on either ``space.name`` (preferred) or falls back to
+        # the space key when expansion is partial in some Confluence editions.
+        space = item.get("space") or {}
+        space_name = (space.get("name") if isinstance(space, dict) else None) or (
+            space.get("key") if isinstance(space, dict) else None
+        ) or ""
+        # Last-modified can come from history.lastUpdated.when or version.when —
+        # try both so we work with both Cloud and Data Center responses.
+        history = item.get("history") if isinstance(item.get("history"), dict) else {}
+        version = item.get("version") if isinstance(item.get("version"), dict) else {}
+        last_updated = ""
+        if isinstance(history, dict):
+            last = history.get("lastUpdated")
+            if isinstance(last, dict):
+                last_updated = str(last.get("when") or "")
+        if not last_updated and isinstance(version, dict):
+            last_updated = str(version.get("when") or "")
+        # Resolve link: tinyui (cloud) or webui (DC) -> absolute URL.
+        links = item.get("_links") if isinstance(item.get("_links"), dict) else {}
+        webui = str(links.get("tinyui") or links.get("webui") or "").strip()
+        link = ""
+        if webui:
+            if webui.startswith("http://") or webui.startswith("https://"):
+                link = webui
+            else:
+                link = f"{base.rstrip('/')}{webui if webui.startswith('/') else '/' + webui}"
+        pages.append(
+            {
+                "id": page_id,
+                "title": title,
+                "space_name": space_name,
+                "last_updated": last_updated,
+                "url": link or base,
+            }
+        )
+    return pages
+
+
 def _test_token(system: str, token: str) -> None:
     base = _base_url(system)
     try:
@@ -318,6 +453,13 @@ def _test_token(system: str, token: str) -> None:
             headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
             with httpx.Client(timeout=8.0, headers=headers) as client:
                 response = client.get(f"{base}/api/projects/search", params={"ps": 1})
+        elif system == "confluence":
+            # Lightweight reachability + auth check; same Bearer header the
+            # widget endpoints use so a valid result here means the token is
+            # accepted by Confluence's REST API.
+            headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+            with httpx.Client(timeout=8.0, headers=headers) as client:
+                response = client.get(f"{base}/rest/api/space", params={"limit": 1})
         else:
             response = _artifactory_request("GET", f"{base}/api/system/ping", token, timeout=8.0)
         if response.status_code in {401, 403}:

@@ -60,6 +60,7 @@ HOME_WIDGET_KEYS = {
     "sonar_projects": "sonarqube-projects-component",
     "artifactory_repos": "artifactory-repos-component",
     "artifactory_storage": "artifactory-storage-component",
+    "confluence_pages": "confluence-pages-component",
     "recent_activity": "recent-activity-component",
 }
 
@@ -1144,6 +1145,16 @@ def ui_artifactory_repos_component(request: Request):
     templates = _get_templates(request)
     return templates.TemplateResponse(
         "partials/components/artifactory-repos.html",
+        {"request": request},
+    )
+
+
+@ui_router.get("/ui/components/confluence-pages", response_class=HTMLResponse)
+def ui_confluence_pages_component(request: Request):
+    """Render the Confluence Pages dashboard widget; data loads client-side."""
+    templates = _get_templates(request)
+    return templates.TemplateResponse(
+        "partials/components/confluence-pages.html",
         {"request": request},
     )
 

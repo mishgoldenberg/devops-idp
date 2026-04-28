@@ -30,6 +30,7 @@ _ALLOWED_WIDGET_KEYS = {
     "sonar_projects",
     "artifactory_repos",
     "artifactory_storage",
+    "confluence_pages",
     "recent_activity",
 }
 
