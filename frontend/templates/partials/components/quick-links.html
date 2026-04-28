@@ -155,16 +155,27 @@
 
 		function linkItem(link) {
 			const external = link.url && link.url !== "#";
-			return `<li class="shrink-0">
+			// Only admin-managed links carry an `id` (defaults are template-only),
+			// so we use that to gate the per-tile delete affordance.
+			const removable = isAdmin && link && link.id;
+			const deleteBtn = removable
+				? `<button type="button"
+						class="absolute -top-1 -right-1 hidden group-hover:flex items-center justify-center h-5 w-5 rounded-full border border-base-300 bg-base-100 text-error text-xs shadow"
+						title="Remove quick link"
+						data-quick-link-delete="${esc(link.id)}"
+						aria-label="Remove ${esc(link.name)}">×</button>`
+				: "";
+			return `<li class="shrink-0 group relative">
 				<a
 					href="${esc(link.url || "#")}"
 					${external ? 'target="_blank" rel="noopener noreferrer"' : ""}
 					class="flex flex-col items-center gap-4 bg-transparent p-0 hover:bg-transparent focus:bg-transparent"
 				>
-					<div class="avatar">
+					<div class="avatar relative">
 						<div class="flex h-16 w-16 items-center justify-center rounded-full border border-base-content/25 bg-base-200/30 overflow-hidden">
 							${linkIcon(link)}
 						</div>
+						${deleteBtn}
 					</div>
 					<span class="text-sm font-semibold text-base-content/60">${esc(link.name)}</span>
 				</a>
@@ -190,10 +201,53 @@
 			</li>`;
 		}
 
-		function render(links) {
-			const safeLinks = Array.isArray(links) && links.length ? links : fallbackLinks;
-			listEl.innerHTML = safeLinks.map(linkItem).join("") + addButton();
+		function dedupKey(link) {
+			// Prevents the same system being shown twice when an admin links to
+			// a default system (e.g. their own SonarQube URL). Compares case- and
+			// whitespace-insensitively on either name or URL.
+			return [
+				String(link?.name || "").trim().toLowerCase(),
+				String(link?.url || "").trim().toLowerCase(),
+			].join("||");
+		}
+
+		function render(adminLinks) {
+			// Always show the four default system tiles; admin-managed links are
+			// appended after them. Previously this function REPLACED the
+			// fallback list whenever the API returned anything — that's why
+			// adding one admin link nuked Azure DevOps / Artifactory / SonarQube
+			// / ServiceNow from the dashboard.
+			const extras = Array.isArray(adminLinks) ? adminLinks : [];
+			const seen = new Set(fallbackLinks.map(dedupKey));
+			const merged = [...fallbackLinks];
+			for (const link of extras) {
+				const key = dedupKey(link);
+				if (seen.has(key)) continue;
+				seen.add(key);
+				merged.push(link);
+			}
+			listEl.innerHTML = merged.map(linkItem).join("") + addButton();
 			document.getElementById("quick-link-add")?.addEventListener("click", openModal);
+			listEl.querySelectorAll("[data-quick-link-delete]").forEach((btn) => {
+				btn.addEventListener("click", async (event) => {
+					event.preventDefault();
+					event.stopPropagation();
+					const id = btn.getAttribute("data-quick-link-delete");
+					if (!id) return;
+					if (!window.confirm("Remove this quick link?")) return;
+					try {
+						const res = await fetch(`/api/admin/quick-links/${encodeURIComponent(id)}`, {
+							method: "DELETE",
+							credentials: "same-origin",
+						});
+						if (!res.ok) throw new Error("Could not remove");
+						window.portalToast?.({ kind: "success", message: "Quick link removed" });
+						loadLinks();
+					} catch (_) {
+						window.portalToast?.({ kind: "error", message: "Could not remove quick link" });
+					}
+				});
+			});
 		}
 
 		function openModal() {
@@ -230,7 +284,8 @@
 				if (!res.ok) throw new Error("Failed to load quick links");
 				render(Array.isArray(json?.data) ? json.data : []);
 			} catch (_) {
-				render(fallbackLinks);
+				// Network/API failure: fall back to defaults only (no admin extras).
+				render([]);
 			}
 		}
 
@@ -250,7 +305,16 @@
 			setPreview(event.target.value.trim());
 		});
 		document.getElementById("quick-link-cancel")?.addEventListener("click", closeModal);
-		document.getElementById("quick-link-submit")?.addEventListener("click", async () => {
+
+		// Single in-flight lock so a double-click on "Add Link" — or a quick
+		// Enter-then-click — can't post the same link twice. The previous
+		// version disabled nothing during the network call, which is why two
+		// "Claude" rows showed up after a single intent to add one.
+		let submitting = false;
+		const submitBtn = document.getElementById("quick-link-submit");
+
+		async function submitQuickLink() {
+			if (submitting) return;
 			const name = (form?.elements.name?.value || "").trim();
 			const url = (form?.elements.url?.value || "").trim();
 			const iconUrl = (form?.elements.icon_url?.value || "").trim();
@@ -260,6 +324,11 @@
 					errorEl.classList.remove("hidden");
 				}
 				return;
+			}
+			submitting = true;
+			if (submitBtn) {
+				submitBtn.disabled = true;
+				submitBtn.classList.add("btn-disabled");
 			}
 			try {
 				const res = await fetch("/api/admin/quick-links", {
@@ -278,7 +347,20 @@
 					errorEl.textContent = err?.message || "Could not add quick link";
 					errorEl.classList.remove("hidden");
 				}
+			} finally {
+				submitting = false;
+				if (submitBtn) {
+					submitBtn.disabled = false;
+					submitBtn.classList.remove("btn-disabled");
+				}
 			}
+		}
+
+		submitBtn?.addEventListener("click", submitQuickLink);
+		// Pressing Enter inside any field should also submit (and only once).
+		form?.addEventListener("submit", (event) => {
+			event.preventDefault();
+			submitQuickLink();
 		});
 
 		render(fallbackLinks);

@@ -185,8 +185,49 @@ def create_quick_link(
     body: QuickLinkRequest,
     current_user: AuthUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    """Create a globally visible Quick Link. Admin-only on the backend."""
+    """Create a globally visible Quick Link. Admin-only on the backend.
+
+    Idempotent on (name, url): a second submit with the same values — e.g.
+    when the modal is double-clicked before the first POST returns — quietly
+    returns the existing row instead of inserting a duplicate. The frontend
+    also has an in-flight lock; this is the belt-and-suspenders backend half.
+    """
     _require_app_admin(current_user)
+
+    name = body.name.strip()
+    url = body.url.strip()
+    icon = (body.icon_url or "").strip() or None
+
+    # Re-activate any previously soft-deleted row with the same identity, or
+    # return the existing active row, before inserting a new one.
+    existing = query_one(
+        """
+        SELECT id, name, url, icon_url, sort_order, is_active, created_by
+        FROM quick_links
+        WHERE LOWER(name) = LOWER(%s) AND LOWER(url) = LOWER(%s)
+        ORDER BY is_active DESC, id ASC
+        LIMIT 1
+        """,
+        [name, url],
+    )
+    if existing:
+        if not existing.get("is_active") or (icon and existing.get("icon_url") != icon):
+            existing = query_one(
+                """
+                UPDATE quick_links
+                SET is_active = true,
+                    icon_url = COALESCE(%s, icon_url)
+                WHERE id = %s
+                RETURNING id, name, url, icon_url, sort_order, is_active, created_by
+                """,
+                [icon, existing["id"]],
+            )
+        return {
+            "success": True,
+            "data": _quick_link_row(existing),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
     max_order = query_one("SELECT COALESCE(MAX(sort_order), 0) AS n FROM quick_links")
     next_order = int((max_order or {}).get("n") or 0) + 10
     rows = execute_returning(
@@ -196,9 +237,9 @@ def create_quick_link(
         RETURNING id, name, url, icon_url, sort_order, is_active, created_by
         """,
         [
-            body.name,
-            body.url,
-            body.icon_url or None,
+            name,
+            url,
+            icon,
             next_order,
             str(current_user.get("email") or current_user.get("username") or ""),
         ],
