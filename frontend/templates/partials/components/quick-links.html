@@ -123,6 +123,22 @@
 	</symbol>
 </svg>
 
+<style>
+	.quick-link-item .quick-link-delete {
+		opacity: 0;
+		pointer-events: none;
+		transform: scale(0.92);
+		transition: opacity 120ms ease, transform 120ms ease;
+	}
+
+	.quick-link-item:hover .quick-link-delete,
+	.quick-link-delete:focus-visible {
+		opacity: 1;
+		pointer-events: auto;
+		transform: scale(1);
+	}
+</style>
+
 <script>
 	(function () {
 		const isAdmin = {{ is_admin | tojson }};
@@ -160,22 +176,22 @@
 			const removable = isAdmin && link && link.id;
 			const deleteBtn = removable
 				? `<button type="button"
-						class="absolute -top-1 -right-1 hidden group-hover:flex items-center justify-center h-5 w-5 rounded-full border border-base-300 bg-base-100 text-error text-xs shadow"
+						class="quick-link-delete absolute top-0 right-2 z-10 flex h-6 w-6 items-center justify-center rounded-full border border-error/40 bg-base-100 text-error text-sm font-bold leading-none shadow"
 						title="Remove quick link"
 						data-quick-link-delete="${esc(link.id)}"
 						aria-label="Remove ${esc(link.name)}">×</button>`
 				: "";
-			return `<li class="shrink-0 group relative">
+			return `<li class="quick-link-item shrink-0 relative px-1 pt-1">
+				${deleteBtn}
 				<a
 					href="${esc(link.url || "#")}"
 					${external ? 'target="_blank" rel="noopener noreferrer"' : ""}
 					class="flex flex-col items-center gap-4 bg-transparent p-0 hover:bg-transparent focus:bg-transparent"
 				>
-					<div class="avatar relative">
+					<div class="avatar">
 						<div class="flex h-16 w-16 items-center justify-center rounded-full border border-base-content/25 bg-base-200/30 overflow-hidden">
 							${linkIcon(link)}
 						</div>
-						${deleteBtn}
 					</div>
 					<span class="text-sm font-semibold text-base-content/60">${esc(link.name)}</span>
 				</a>
