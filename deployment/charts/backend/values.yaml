@@ -26,6 +26,8 @@ resources:
 
 tier: backend
 
+terraformServiceAccountAnnotations: {}
+
 service:
   type: ClusterIP
   port: 8000

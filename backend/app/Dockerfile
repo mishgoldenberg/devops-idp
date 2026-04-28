@@ -16,7 +16,8 @@
 # - PYTHONUNBUFFERED=1: Output is unbuffered (important for Docker logs)
 # - PYTHONPATH=/app: So app modules can be imported
 
-FROM python:3.11-slim AS base
+ARG PYTHON_BASE_IMAGE=python:3.11-slim
+FROM ${PYTHON_BASE_IMAGE} AS base
 
 # Environment variables for Python runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -24,15 +25,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# System dependencies required by psycopg2 (PostgreSQL Python adapter)
-# These allow the image to compile and run database connections
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libpq-dev \
-  && rm -rf /var/lib/apt/lists/*
+# The app uses psycopg2-binary, so no apt packages are required during the
+# closed-network build. Keeping this image free of apt-get avoids needing a
+# Debian mirror inside the closed network.
 
 # Install Python dependencies
 # requirements.txt includes: fastapi, uvicorn, psycopg2-binary, redis, PyJWT, pydantic, httpx
+ARG PIP_INDEX_URL
+ARG PIP_TRUSTED_HOST
+ENV PIP_INDEX_URL=${PIP_INDEX_URL} \
+    PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST}
 COPY backend/app/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
