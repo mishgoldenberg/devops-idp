@@ -4,42 +4,36 @@ File: `backend/app/api/auth.py` · Prefix: `/api/auth`
 
 ## Purpose
 
-Handles Google OAuth 2.0 / OpenID Connect login, issues the portal's own
-HS256 JWT, and stores it in an HttpOnly `auth_token` cookie that every
-other router reads via `security.get_current_user`.
+Handles admin-configured OpenID Connect login, issues the portal's own HS256
+JWT, and stores it in an HttpOnly `auth_token` cookie that every other router
+reads via `security.get_current_user`.
 
 ## Main endpoints
 
 | Method | Path                    | Description                                                      |
 | ------ | ----------------------- | ---------------------------------------------------------------- |
-| GET    | `/api/auth/login`       | Redirects the user to Google's consent screen                    |
-| GET    | `/api/auth/callback`    | Google redirect target; exchanges code, creates user, sets cookie |
+| GET    | `/api/auth/login`       | Redirects to the configured OIDC provider, if enabled             |
+| GET    | `/api/auth/sso/callback`| OIDC redirect target; validates token, creates user, sets cookie  |
 | POST   | `/api/auth/logout`      | Clears the `auth_token` cookie                                   |
 | GET    | `/api/auth/me`          | Returns the current user (from cookie/Bearer)                    |
 
 ## External APIs used
 
-- Google OAuth token endpoint (`https://oauth2.googleapis.com/token`) —
-  authorization-code exchange.
-- Google JWKS endpoint — ID token signature verification.
-
-Endpoints are configurable via `OAUTH_TOKEN_URL` / `OAUTH_JWKS_URL` so
-an internal OIDC IdP can be swapped in without touching the code.
+- Configured OIDC discovery document (`issuer_uri/.well-known/openid-configuration`).
+- Configured token endpoint and JWKS URI from discovery.
 
 ## Environment variables
 
 See [`docs/env.md`](../env.md) for the full list. The ones that matter
 here:
 
-- `OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET`, `OAUTH_REDIRECT_URI` — **required**.
-- `OAUTH_ISSUER`, `OAUTH_AUTH_URL`, `OAUTH_TOKEN_URL`, `OAUTH_JWKS_URL`,
-  `OAUTH_SCOPES` — optional overrides.
+- `HUB_ADMIN_USERNAME`, `HUB_ADMIN_PASSWORD` — create the first admin when no admin exists.
 - `JWT_SECRET`, `JWT_EXPIRY` — used by `security.create_access_token`.
+- OIDC provider settings are stored in `sso_config` by Platform Admins.
 
 ## Failure handling
 
-- OAuth errors render a neutral 400 with a "Sign-in failed" message —
-  raw Google payloads are never leaked to the browser.
+- OIDC errors render neutral messages; raw token payloads are never leaked to the browser.
 - First-login user creation is idempotent (`INSERT … ON CONFLICT DO
   NOTHING`) so repeated callbacks never dupe rows.
 - The cookie is set `HttpOnly`, `SameSite=Lax`, `Secure` when the
@@ -49,4 +43,3 @@ here:
 
 - `backend/app/security.py` — token creation, decoding, and
   `get_current_user` (cookie or `Authorization: Bearer`).
-- `docs/SSO_GOOGLE_OAUTH.md` — how to set up the GCP OAuth client.

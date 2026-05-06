@@ -47,9 +47,9 @@ data.
 
 ### Login
 
-With Google OAuth configured locally you need real credentials (see
-[`docs/SSO_GOOGLE_OAUTH.md`](./SSO_GOOGLE_OAUTH.md)). For quick local
-testing, set the dev bypass env (`DEV_MODE_BYPASS_AUTH=true`,
+Use `HUB_ADMIN_USERNAME` and `HUB_ADMIN_PASSWORD` to create the first local
+admin, then configure OIDC from Platform Managing. For quick local testing,
+set the dev bypass env (`DEV_MODE_BYPASS_AUTH=true`,
 `DEV_MODE_DEFAULT_USER=admin@internal`) in `.env` and restart — you'll be
 logged in as `admin@internal` with Platform Admin role. **Never** enable
 this flag anywhere except your laptop.
@@ -77,16 +77,15 @@ Spend ~10 min opening each of those files and reading the top of them.
 
 ### Azure DevOps
 
-By default `USE_MOCK_AZURE_DEVOPS=true`. To hit a real dev org:
+To hit a real dev org:
 
 1. Create a PAT in your personal ADO org (scope: `Project & Team
    (Read/Write)`, `Work Items (Read)`, `Code (Read)`, `Build (Read)`).
 2. In your running container's `.env`:
 
    ```env
-   USE_MOCK_AZURE_DEVOPS=false
-   AZURE_DEVOPS_ORGANIZATION=yourorg
-   AZURE_DEVOPS_PAT=<your PAT>
+   AZURE_DEVOPS_BASE_URL=https://dev.azure.com/yourorg
+   AZURE_DEVOPS_ADMIN_PAT=<your PAT>
    ```
 
 3. Restart the backend:
@@ -101,10 +100,9 @@ By default `USE_MOCK_AZURE_DEVOPS=true`. To hit a real dev org:
 - Add to `.env`:
 
   ```env
-  USE_MOCK_SERVICENOW=false
-  SERVICENOW_URL=https://devXXXXXX.service-now.com
-  SERVICENOW_USERNAME=admin
-  SERVICENOW_PASSWORD=<your dev instance password>
+  SNOW_BASE_URL=https://devXXXXXX.service-now.com
+  SNOW_API_USERNAME=admin
+  SNOW_API_PASSWORD=<your dev instance password>
   ```
 
 - Open `/ui/support` and create a ticket — it should land in the dev

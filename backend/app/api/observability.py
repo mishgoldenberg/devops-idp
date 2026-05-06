@@ -84,9 +84,10 @@ _ALLOWED_WIDGET_KEYS = {
     "ado_my_pull_requests",
     "ado_prs_for_review",
     "ado_pipeline_status",
-    "sonar_quality_gate",
+    "sonar_projects",
+    "artifactory_repos",
     "artifactory_storage",
-    "service_health",
+    "recent_activity",
 }
 
 
@@ -278,9 +279,10 @@ def list_suggested_widgets_for_me(
         "ado_my_pull_requests",
         "ado_pipeline_status",
         "quick_links",
-        "sonar_quality_gate",
+        "sonar_projects",
+        "artifactory_repos",
         "artifactory_storage",
-        "service_health",
+        "recent_activity",
         "ado_prs_for_review",
     ]
     for key in _DEFAULT_ORDER:

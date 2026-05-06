@@ -20,6 +20,7 @@ Anything that reads/writes the DB goes through here; don't open raw
 connections from API routers.
 """
 
+import os
 import threading
 from contextlib import contextmanager
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -373,6 +374,94 @@ def ensure_tables() -> None:
     ensure_suggestions_table()
     ensure_favorites_table()
     ensure_activity_log_table()
+    ensure_auth_tables()
+    ensure_sso_config_table()
+    ensure_user_integrations_tables()
+    ensure_quick_links_table()
+
+
+def ensure_quick_links_table() -> None:
+    """Create admin-managed Quick Links shown to every dashboard user."""
+    execute(
+        """
+        CREATE TABLE IF NOT EXISTS quick_links (
+            id          SERIAL PRIMARY KEY,
+            name        VARCHAR(255) NOT NULL,
+            url         TEXT NOT NULL,
+            icon_url    TEXT,
+            sort_order  INTEGER NOT NULL DEFAULT 0,
+            is_active   BOOLEAN NOT NULL DEFAULT true,
+            created_by  VARCHAR(255),
+            created_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    execute(
+        "CREATE INDEX IF NOT EXISTS idx_quick_links_active_order ON quick_links (is_active, sort_order, id)"
+    )
+
+
+def ensure_auth_tables() -> None:
+    """Add local bootstrap-login columns to users without changing SSO users."""
+    for sql in (
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_bootstrap_admin BOOLEAN NOT NULL DEFAULT FALSE",
+    ):
+        try:
+            execute(sql)
+        except Exception:
+            pass
+
+
+def ensure_sso_config_table() -> None:
+    """Single-row OIDC provider configuration, managed by Platform Admins."""
+    execute(
+        """
+        CREATE TABLE IF NOT EXISTS sso_config (
+            id                    INTEGER PRIMARY KEY DEFAULT 1,
+            issuer_uri            TEXT NOT NULL,
+            client_id             TEXT NOT NULL,
+            client_secret_encrypted TEXT NOT NULL,
+            enabled               BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at            TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            updated_at            TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT sso_config_singleton CHECK (id = 1)
+        )
+        """
+    )
+
+
+def ensure_user_integrations_tables() -> None:
+    """Per-user external-system tokens and pinned integration items."""
+    execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_integrations (
+            id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            user_id         TEXT NOT NULL,
+            system          VARCHAR(32) NOT NULL,
+            token_encrypted TEXT NOT NULL,
+            created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            updated_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (user_id, system)
+        )
+        """
+    )
+    execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_pins (
+            id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            user_id     TEXT NOT NULL,
+            system      VARCHAR(32) NOT NULL,
+            item_id     VARCHAR(255) NOT NULL,
+            item_name   VARCHAR(512) NOT NULL,
+            created_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (user_id, system, item_id)
+        )
+        """
+    )
+    execute(
+        "CREATE INDEX IF NOT EXISTS idx_user_pins_user_system ON user_pins (user_id, system, created_at DESC)"
+    )
 
 
 def ensure_user_preference_columns() -> None:
@@ -635,8 +724,8 @@ def ensure_approval_workflow_tables() -> None:
             pass
 
 
-# Primary bootstrap admin (DB role Platform Admin). Single allowed hard-coded identity.
-BOOTSTRAP_ADMIN_EMAIL = "golden.mihel@gmail.com"
+# Env-provided bootstrap admin identity. Empty means "not configured".
+BOOTSTRAP_ADMIN_EMAIL = (os.getenv("HUB_ADMIN_USERNAME") or "").strip().lower()
 
 
 def sync_bootstrap_admin_role_for_email(email: str) -> None:
@@ -669,13 +758,23 @@ def sync_bootstrap_admin_role_for_email(email: str) -> None:
 
 def ensure_bootstrap_platform_admin() -> None:
     """
-    Ensure the bootstrap user exists and has Platform Admin (app role Admin).
-    Safe to run on every startup; no-ops if core tables or role seed are missing.
+    Ensure the env bootstrap Platform Admin is usable.
+
+    Always upsert the HUB_ADMIN_USERNAME row so rotating GitHub Secrets updates
+    the local admin login on the next deploy, even if the database already had
+    a Platform Admin before the bootstrap flag existed.
     """
     import logging
+    from security import hash_password
 
     log = logging.getLogger(__name__)
     try:
+        username = (os.getenv("HUB_ADMIN_USERNAME") or "").strip()
+        password = os.getenv("HUB_ADMIN_PASSWORD") or ""
+        if not username or not password:
+            log.warning("ensure_bootstrap_platform_admin: HUB_ADMIN_USERNAME/HUB_ADMIN_PASSWORD are not fully configured")
+            return
+
         role = query_one(
             "SELECT id FROM roles WHERE LOWER(TRIM(name)) = %s LIMIT 1",
             ["platform admin"],
@@ -684,22 +783,60 @@ def ensure_bootstrap_platform_admin() -> None:
             log.warning("ensure_bootstrap_platform_admin: Platform Admin role not found")
             return
         rid = role["id"]
+        password_hash = hash_password(password)
+
+        bootstrap = query_one(
+            """
+            SELECT id
+            FROM users
+            WHERE is_bootstrap_admin = true
+               OR LOWER(TRIM(username)) = %s
+               OR LOWER(TRIM(email)) = %s
+            LIMIT 1
+            """,
+            [username.lower(), username.lower()],
+        )
+        if bootstrap:
+            execute(
+                """
+                UPDATE users
+                SET username = %s,
+                    email = %s,
+                    full_name = %s,
+                    role_id = %s,
+                    password_hash = %s,
+                    is_bootstrap_admin = true,
+                    is_active = true,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+                """,
+                [username, username.lower(), username, rid, password_hash, bootstrap["id"]],
+            )
+            log.info("Admin bootstrap updated")
+            return
+
         execute(
             """
-            INSERT INTO users (username, email, full_name, role_id)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO users (username, email, full_name, role_id, password_hash, is_bootstrap_admin)
+            VALUES (%s, %s, %s, %s, %s, TRUE)
             ON CONFLICT (email) DO UPDATE SET
+              username = EXCLUDED.username,
+              full_name = EXCLUDED.full_name,
               role_id = EXCLUDED.role_id,
+              password_hash = EXCLUDED.password_hash,
+              is_bootstrap_admin = TRUE,
               is_active = true,
               updated_at = CURRENT_TIMESTAMP
             """,
             [
-                BOOTSTRAP_ADMIN_EMAIL,
-                BOOTSTRAP_ADMIN_EMAIL,
-                "Golden Mihel",
+                username,
+                username.lower(),
+                username,
                 rid,
+                password_hash,
             ],
         )
+        log.info("Admin bootstrap created")
     except Exception as exc:
         log.warning("ensure_bootstrap_platform_admin failed: %s", exc)
 

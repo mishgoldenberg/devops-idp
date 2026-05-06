@@ -3,8 +3,8 @@
 The Support page lets a user:
 
 - See the ServiceNow tickets they've opened through the portal.
-- Open a new incident with a title + description (+ optional priority /
-  category).
+- Open a new incident through a 4-step form with user info, service details,
+  ticket details, attachments, and summary.
 - View the threaded comment history of a ticket and add replies.
 
 All ServiceNow calls happen in the backend — the browser only talks to
@@ -20,20 +20,15 @@ Code:
 
 ## How authentication works today
 
-ServiceNow's Table API is called with **Basic auth** using a
-service-account user. Every ticket the portal creates is filed under
-that service account, and the portal's own `user_tickets` table keeps
-the mapping from portal user → `sys_id` so "My Tickets" still works.
+ServiceNow's Table API is called with **Basic auth** using a service-account
+user. The 4-step creation flow resolves the signed-in user's SSO email to a
+ServiceNow `sys_user.sys_id`, resolves the `Devops Support` group, and uses
+those sys_ids as the caller/opened-by and assignment group.
 
 Env vars used:
 
-- `SERVICENOW_URL` — full instance URL, preferred.
-- `SERVICENOW_INSTANCE` — fallback if URL isn't set.
-- `SERVICENOW_USERNAME` (or `SERVICENOW_USER`) + `SERVICENOW_PASSWORD`.
-- `USE_MOCK_SERVICENOW` — `true` (default) returns canned data.
-
-The future OAuth flow (`SERVICENOW_CLIENT_ID`/`SECRET` in `env.example`)
-is reserved for when SSO-scoped client credentials are available.
+- `SNOW_BASE_URL` — full instance URL.
+- `SNOW_API_USERNAME` + `SNOW_API_PASSWORD` — service-account credentials.
 
 ## Endpoints
 
@@ -44,6 +39,7 @@ All under `/api/support`:
 | GET     | `/tickets`                    | Current user's tickets (cached 60 s per user via `integrations_cache`) |
 | GET     | `/tickets/{sys_id}`           | Full ticket detail incl. status, priority, caller                |
 | POST    | `/tickets`                    | Create a new ticket                                              |
+| POST    | `/tickets/create-flow`        | Create a 4-step form ticket and upload attachments               |
 | GET     | `/tickets/{sys_id}/messages`  | Journal entries (comments + work notes)                          |
 | POST    | `/tickets/{sys_id}/messages`  | Add a new comment to the ticket                                  |
 | PATCH   | `/tickets/{sys_id}`           | Update ticket fields (priority, state, assignment)               |
@@ -52,6 +48,10 @@ All under `/api/support`:
 
 - **`GET /api/now/table/incident`** — list + detail reads.
 - **`POST /api/now/table/incident`** — ticket creation.
+- **`GET /api/now/table/sys_user?sysparm_query=email=...`** — caller sys_id lookup.
+- **`GET /api/now/table/sys_user_group?sysparm_query=name=Devops Support`** —
+  assignment group sys_id lookup.
+- **`POST /api/now/attachment/file`** — one file upload per attachment.
 - **`PATCH /api/now/table/incident/{sys_id}`** — updates.
 - **`GET /api/now/table/sys_journal_field?element_id={sys_id}`** —
   comment history.

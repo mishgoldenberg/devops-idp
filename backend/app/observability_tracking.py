@@ -19,9 +19,10 @@ WIDGET_LABELS: dict[str, str] = {
     "ado_my_pull_requests": "Azure DevOps — My pull requests",
     "ado_prs_for_review": "Azure DevOps — PRs to review",
     "ado_pipeline_status": "Azure DevOps — Pipeline status",
-    "sonar_quality_gate": "SonarQube — Quality gate",
+    "sonar_projects": "SonarQube — Projects",
+    "artifactory_repos": "Artifactory — Repos",
     "artifactory_storage": "Artifactory — Storage",
-    "service_health": "Service health",
+    "recent_activity": "Recent Activity",
 }
 
 

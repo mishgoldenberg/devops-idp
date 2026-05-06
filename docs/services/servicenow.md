@@ -19,22 +19,25 @@ the shared service account.
 | GET    | `/api/support/tickets`                     | Current user's tickets (60 s cache)            |
 | GET    | `/api/support/tickets/{sys_id}`            | Ticket detail (Redis-cached)                   |
 | POST   | `/api/support/tickets`                     | Create a new incident                          |
+| POST   | `/api/support/tickets/create-flow`         | Create incident from 4-step form + attachments |
 | PATCH  | `/api/support/tickets/{sys_id}`            | Update a ticket                                |
 | GET    | `/api/support/tickets/{sys_id}/messages`   | Journal (comment + work-note) history          |
 | POST   | `/api/support/tickets/{sys_id}/messages`   | Append a comment                               |
 
 ## External APIs used
 
-- `GET/POST/PATCH {SERVICENOW_URL}/api/now/table/incident[/{sys_id}]`
-- `GET/POST {SERVICENOW_URL}/api/now/table/sys_journal_field`
+- `GET/POST/PATCH {SNOW_BASE_URL}/api/now/table/incident[/{sys_id}]`
+- `GET {SNOW_BASE_URL}/api/now/table/sys_user`
+- `GET {SNOW_BASE_URL}/api/now/table/sys_user_group`
+- `POST {SNOW_BASE_URL}/api/now/attachment/file`
+- `GET/POST {SNOW_BASE_URL}/api/now/table/sys_journal_field`
 
-Authentication: HTTP Basic (`SERVICENOW_USERNAME` / `SERVICENOW_PASSWORD`).
+Authentication: HTTP Basic (`SNOW_API_USERNAME` / `SNOW_API_PASSWORD`).
 
 ## Environment variables
 
-- `USE_MOCK_SERVICENOW` — default `true`; returns canned data.
-- `SERVICENOW_URL` (or `SERVICENOW_INSTANCE`) — instance URL.
-- `SERVICENOW_USERNAME` (or `SERVICENOW_USER`) + `SERVICENOW_PASSWORD`.
+- `SNOW_BASE_URL` — instance URL.
+- `SNOW_API_USERNAME` + `SNOW_API_PASSWORD`.
 
 ## Data written
 

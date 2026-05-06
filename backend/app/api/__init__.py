@@ -23,7 +23,6 @@ from . import (
     sonarqube,
     artifactory,
     servicenow,
-    ai_chatbot,
     approvals,
     pins,
     notifications,
@@ -34,6 +33,8 @@ from . import (
     system_urls,
     favorites,
     activity,
+    integrations,
+    quick_links,
 )
 
 
@@ -64,7 +65,6 @@ api_router.include_router(azure_devops.router, prefix="/azure-devops", tags=["az
 api_router.include_router(sonarqube.router, prefix="/sonarqube", tags=["sonarqube"])
 api_router.include_router(artifactory.router, prefix="/artifactory", tags=["artifactory"])
 api_router.include_router(servicenow.router, prefix="/support", tags=["support"])
-api_router.include_router(ai_chatbot.router, prefix="/ai-chatbot", tags=["ai-chatbot"])
 
 # Approvals
 api_router.include_router(approvals.router, prefix="/approvals", tags=["approvals"])
@@ -97,5 +97,11 @@ api_router.include_router(favorites.router, prefix="/favorites", tags=["favorite
 # from the client — writes happen server-side at the three tracked call
 # sites (ADO project created, ServiceNow ticket created, self-service).
 api_router.include_router(activity.router, prefix="/activity", tags=["activity"])
+
+# Per-user external integration credentials and real SonarQube/Artifactory reads.
+api_router.include_router(integrations.router, prefix="/integrations", tags=["integrations"])
+
+# Globally visible Quick Links for the dashboard. Admin CRUD lives under /api/admin.
+api_router.include_router(quick_links.router, prefix="/quick-links", tags=["quick-links"])
 
 

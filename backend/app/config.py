@@ -1,6 +1,9 @@
 import os
+import logging
 from functools import lru_cache
 from typing import List, Optional
+
+log = logging.getLogger(__name__)
 
 
 class Settings:
@@ -24,20 +27,17 @@ class Settings:
     jwt_secret: str
     jwt_expiry: str
 
-    # OAuth / OIDC (Google SSO)
-    oauth_client_id: Optional[str]
-    oauth_client_secret: Optional[str]
-    oauth_redirect_uri: Optional[str]
-    oauth_issuer: str
-    oauth_auth_url: str
-    oauth_token_url: str
-    oauth_jwks_url: str
-    oauth_scopes: str
+    # External integrations
+    azure_devops_base_url: Optional[str]
+    azure_devops_admin_pat: Optional[str]
+    artifactory_base_url: Optional[str]
+    sonarqube_base_url: Optional[str]
+    confluence_base_url: Optional[str]
 
     # ServiceNow
-    servicenow_instance: Optional[str]
-    servicenow_user: Optional[str]
-    servicenow_password: Optional[str]
+    snow_base_url: Optional[str]
+    snow_api_username: Optional[str]
+    snow_api_password: Optional[str]
 
     # CORS
     cors_origins: str
@@ -56,24 +56,38 @@ class Settings:
         self.redis_port = int(os.getenv("REDIS_PORT", "6379"))
         self.redis_password = os.getenv("REDIS_PASSWORD")
 
-        self.jwt_secret = os.getenv("JWT_SECRET", "change_this_in_production")
+        self.jwt_secret = os.getenv("JWT_SECRET", "")
+        if not self.jwt_secret:
+            log.error("Missing critical environment variable: JWT_SECRET")
         # Keep same semantics as Node auth-service default
         self.jwt_expiry = os.getenv("JWT_EXPIRY", "8h")
 
-        # OAuth / OIDC (Google accounts)
-        self.oauth_client_id = os.getenv("OAUTH_CLIENT_ID")
-        self.oauth_client_secret = os.getenv("OAUTH_CLIENT_SECRET")
-        self.oauth_redirect_uri = os.getenv("OAUTH_REDIRECT_URI")
-        self.oauth_issuer = os.getenv("OAUTH_ISSUER", "https://accounts.google.com")
-        self.oauth_auth_url = os.getenv("OAUTH_AUTH_URL", "https://accounts.google.com/o/oauth2/v2/auth")
-        self.oauth_token_url = os.getenv("OAUTH_TOKEN_URL", "https://oauth2.googleapis.com/token")
-        self.oauth_jwks_url = os.getenv("OAUTH_JWKS_URL", "https://www.googleapis.com/oauth2/v3/certs")
-        self.oauth_scopes = os.getenv("OAUTH_SCOPES", "openid email profile")
+        # External integrations
+        self.azure_devops_base_url = os.getenv("AZURE_DEVOPS_BASE_URL")
+        self.azure_devops_admin_pat = os.getenv("AZURE_DEVOPS_ADMIN_PAT")
+        self.artifactory_base_url = os.getenv("ARTIFACTORY_BASE_URL")
+        self.sonarqube_base_url = os.getenv("SONARQUBE_BASE_URL")
+        self.confluence_base_url = os.getenv("CONFLUENCE_BASE_URL")
 
         # ServiceNow
-        self.servicenow_instance = os.getenv("SERVICENOW_INSTANCE")
-        self.servicenow_user = os.getenv("SERVICENOW_USER")
-        self.servicenow_password = os.getenv("SERVICENOW_PASSWORD")
+        self.snow_base_url = os.getenv("SNOW_BASE_URL")
+        self.snow_api_username = os.getenv("SNOW_API_USERNAME")
+        self.snow_api_password = os.getenv("SNOW_API_PASSWORD")
+
+        for name, value in {
+            "HUB_ADMIN_USERNAME": os.getenv("HUB_ADMIN_USERNAME"),
+            "HUB_ADMIN_PASSWORD": os.getenv("HUB_ADMIN_PASSWORD"),
+            "AZURE_DEVOPS_BASE_URL": self.azure_devops_base_url,
+            "AZURE_DEVOPS_ADMIN_PAT": self.azure_devops_admin_pat,
+            "SNOW_BASE_URL": self.snow_base_url,
+            "SNOW_API_USERNAME": self.snow_api_username,
+            "SNOW_API_PASSWORD": self.snow_api_password,
+            "ARTIFACTORY_BASE_URL": self.artifactory_base_url,
+            "SONARQUBE_BASE_URL": self.sonarqube_base_url,
+            "CONFLUENCE_BASE_URL": self.confluence_base_url,
+        }.items():
+            if not value:
+                log.error("Missing critical environment variable: %s", name)
 
         # CORS
         # Comma-separated list of origins, e.g. "http://localhost:3000,https://devops.internal.company"

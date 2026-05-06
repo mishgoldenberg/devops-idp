@@ -25,7 +25,6 @@ environment variables it reads, and how it fails.
 | `health`          | `/api/health`       | [health.md](./health.md)               |
 | `metrics`         | `/api/metrics`      | [metrics.md](./metrics.md)             |
 | `pins`            | `/api`              | [pins.md](./pins.md)                   |
-| `ai_chatbot`      | `/api/ai-chatbot`   | [ai_chatbot.md](./ai_chatbot.md)       |
 
 ## Cross-cutting modules
 

@@ -1,0 +1,283 @@
+<div class="section-card h-full flex flex-col" data-confluence-pages-root>
+	<div class="card-body p-5 flex flex-col h-full gap-3">
+		<div class="flex items-center gap-3">
+			<div
+				class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-info/30 bg-info/10"
+			>
+				<svg viewBox="0 0 24 24" class="h-5 w-5 fill-current text-info" aria-hidden="true">
+					<path d="M4 4h11l5 5v11a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm9 1.5V9h3.5L13 5.5zM6 13h12v-2H6v2zm0 4h12v-2H6v2zm0-8h6V7H6v2z" />
+				</svg>
+			</div>
+			<div>
+				<h3 class="text-sm font-bold uppercase tracking-widest text-base-content/70">
+					Confluence Pages
+				</h3>
+				<p class="text-xs text-base-content/50" data-confluence-subtitle>Recently edited across your spaces</p>
+			</div>
+		</div>
+
+		<div class="hidden items-center gap-2" data-confluence-controls>
+			<input
+				type="search"
+				class="input input-bordered input-sm w-full"
+				placeholder="Search pages..."
+				data-confluence-search
+			/>
+			<button
+				type="button"
+				class="btn btn-ghost btn-sm hidden"
+				data-confluence-clear
+				title="Clear search"
+			>Clear</button>
+		</div>
+
+		<div class="flex-1 min-h-0 relative">
+			<div class="h-full flex items-center justify-center text-xs text-base-content/50" data-confluence-status>
+				<span class="loading loading-spinner loading-sm text-base-content/30"></span>
+			</div>
+			<ul
+				class="hidden h-full overflow-y-auto overscroll-contain flex-col gap-2 pr-1"
+				data-confluence-list
+			></ul>
+		</div>
+	</div>
+</div>
+
+<script>
+	(function () {
+		// Mirrors the SonarQube/Artifactory widget pattern: token-gated state +
+		// list, with an inline search that hits a dedicated CQL endpoint and
+		// swaps the recent-pages list with the results until the user clears.
+		const root = document.querySelector("[data-confluence-pages-root]");
+		if (!root) return;
+		const listEl = root.querySelector("[data-confluence-list]");
+		const statusEl = root.querySelector("[data-confluence-status]");
+		const searchEl = root.querySelector("[data-confluence-search]");
+		const clearBtn = root.querySelector("[data-confluence-clear]");
+		const subtitleEl = root.querySelector("[data-confluence-subtitle]");
+		const controlsEl = root.querySelector("[data-confluence-controls]");
+
+		let mode = "recent"; // "recent" | "search"
+		let searchTimer = null;
+
+		function escapeHtml(value) {
+			return String(value == null ? "" : value)
+				.replace(/&/g, "&amp;")
+				.replace(/</g, "&lt;")
+				.replace(/>/g, "&gt;")
+				.replace(/"/g, "&quot;")
+				.replace(/'/g, "&#39;");
+		}
+
+		function timeAgo(iso) {
+			const t = Date.parse(iso || "");
+			if (isNaN(t)) return "";
+			const secs = Math.max(1, Math.floor((Date.now() - t) / 1000));
+			if (secs < 60) return secs + "s ago";
+			if (secs < 3600) return Math.floor(secs / 60) + "m ago";
+			if (secs < 86400) return Math.floor(secs / 3600) + "h ago";
+			return Math.floor(secs / 86400) + "d ago";
+		}
+
+		function showStatus(message) {
+			controlsEl?.classList.add("hidden");
+			controlsEl?.classList.remove("flex");
+			statusEl.classList.remove("hidden");
+			statusEl.classList.remove("block", "text-base-content");
+			statusEl.classList.add("h-full", "items-center", "justify-center", "text-base-content/50");
+			statusEl.classList.add("flex");
+			statusEl.innerHTML = message;
+			listEl.classList.add("hidden");
+		}
+
+		function showSkeleton() {
+			controlsEl?.classList.remove("hidden");
+			controlsEl?.classList.add("flex");
+			statusEl.classList.remove("block", "text-base-content");
+			statusEl.classList.add("h-full", "items-center", "justify-center", "text-base-content/50");
+			statusEl.classList.remove("hidden");
+			statusEl.classList.add("flex");
+			statusEl.innerHTML = `
+				<ul class="w-full flex flex-col gap-2">
+					${[0,1,2,3].map(() => `
+						<li class="rounded-lg border border-base-300 bg-base-200/40 px-3 py-2.5">
+							<div class="sk-line h-4 w-2/3 rounded"></div>
+							<div class="sk-line h-3 w-1/3 rounded mt-2"></div>
+						</li>
+					`).join("")}
+				</ul>
+			`;
+			listEl.classList.add("hidden");
+		}
+
+		function connectPrompt() {
+			controlsEl?.classList.add("hidden");
+			controlsEl?.classList.remove("flex");
+			statusEl.classList.remove("hidden");
+			statusEl.classList.remove("flex", "h-full", "items-center", "justify-center", "text-base-content/50");
+			statusEl.classList.add("block", "text-base-content");
+			statusEl.innerHTML = `
+				<div class="w-full rounded-xl border border-primary/30 bg-primary/5 p-4 text-left opacity-100 scale-100 translate-y-0 transform transition-all duration-150 ease-out">
+					<h4 class="font-semibold text-sm text-base-content">Connect to Confluence</h4>
+					<p class="mt-1 text-xs text-base-content/60">Generate a Personal Access Token in your Confluence profile</p>
+					<input data-confluence-token type="password" class="input input-bordered input-sm mt-3 w-full" placeholder="Paste Confluence Personal Access Token" />
+					<div class="mt-3 flex gap-2">
+						<button type="button" class="btn btn-primary btn-xs" data-confluence-save-token>Save</button>
+						<button type="button" class="btn btn-ghost btn-xs" data-confluence-cancel-token>Cancel</button>
+					</div>
+				</div>
+			`;
+			listEl.classList.add("hidden");
+		}
+
+		function showList() {
+			controlsEl?.classList.remove("hidden");
+			controlsEl?.classList.add("flex");
+			statusEl.classList.remove("block", "text-base-content");
+			statusEl.classList.add("h-full", "items-center", "justify-center", "text-base-content/50");
+			statusEl.classList.add("hidden");
+			listEl.classList.remove("hidden");
+			listEl.classList.add("flex");
+		}
+
+		function showEmpty(message) {
+			controlsEl?.classList.remove("hidden");
+			controlsEl?.classList.add("flex");
+			statusEl.classList.remove("hidden");
+			statusEl.classList.remove("block", "text-base-content");
+			statusEl.classList.add("h-full", "items-center", "justify-center", "text-base-content/50");
+			statusEl.classList.add("flex");
+			statusEl.innerHTML = message;
+			listEl.classList.add("hidden");
+		}
+
+		function render(pages) {
+			if (!pages.length) {
+				const msg = mode === "search"
+					? '<span class="text-base-content/50">No pages match your search</span>'
+					: '<span class="text-base-content/50">No recent pages found</span>';
+				showEmpty(msg);
+				return;
+			}
+			listEl.innerHTML = pages.map((p) => {
+				const title = escapeHtml(p.title || "Untitled");
+				const space = escapeHtml(p.space_name || "");
+				const ago = escapeHtml(timeAgo(p.last_updated));
+				const url = escapeHtml(p.url || "#");
+				return `
+					<li
+						class="rounded-lg border border-base-300 bg-base-200/60 px-3 py-2.5 transition hover:border-info/50 hover:bg-base-200"
+					>
+						<a href="${url}" target="_blank" rel="noopener noreferrer" class="block hover:text-info">
+							<div class="flex items-center justify-between gap-2">
+								<span class="text-sm font-semibold truncate">${title}</span>
+								${space ? `<span class="badge badge-outline badge-xs shrink-0">${space}</span>` : ""}
+							</div>
+							<p class="mt-1 text-xs text-base-content/50">${ago || ""}</p>
+						</a>
+					</li>`;
+			}).join("");
+			showList();
+		}
+
+		function setSubtitle(text) {
+			if (subtitleEl) subtitleEl.textContent = text;
+		}
+
+		function setClearVisible(visible) {
+			if (!clearBtn) return;
+			clearBtn.classList.toggle("hidden", !visible);
+		}
+
+		function loadRecent() {
+			mode = "recent";
+			setSubtitle("Recently edited across your spaces");
+			setClearVisible(false);
+			showSkeleton();
+			fetch("/api/integrations/confluence/recent", { credentials: "same-origin" })
+				.then((res) => {
+					if (res.status === 428) {
+						connectPrompt();
+						return null;
+					}
+					if (!res.ok) throw new Error("http " + res.status);
+					return res.json();
+				})
+				.then((body) => {
+					if (!body) return;
+					const pages = Array.isArray(body && body.data) ? body.data : [];
+					render(pages);
+				})
+				.catch(() => showStatus('<span class="text-error">Invalid token or connection failed</span>'));
+		}
+
+		function runSearch(query) {
+			mode = "search";
+			setSubtitle(`Search results for “${query}”`);
+			setClearVisible(true);
+			showSkeleton();
+			fetch(`/api/integrations/confluence/search?q=${encodeURIComponent(query)}`, { credentials: "same-origin" })
+				.then((res) => {
+					if (res.status === 428) {
+						connectPrompt();
+						return null;
+					}
+					if (!res.ok) throw new Error("http " + res.status);
+					return res.json();
+				})
+				.then((body) => {
+					if (!body) return;
+					const pages = Array.isArray(body && body.data) ? body.data : [];
+					render(pages);
+				})
+				.catch(() => showStatus('<span class="text-error">Search failed. Try again.</span>'));
+		}
+
+		searchEl?.addEventListener("input", () => {
+			clearTimeout(searchTimer);
+			const value = (searchEl.value || "").trim();
+			if (!value) {
+				if (mode === "search") loadRecent();
+				return;
+			}
+			searchTimer = setTimeout(() => runSearch(value), 350);
+		});
+
+		clearBtn?.addEventListener("click", () => {
+			if (searchEl) searchEl.value = "";
+			loadRecent();
+		});
+
+		statusEl.addEventListener("click", async (e) => {
+			const saveBtn = e.target.closest("[data-confluence-save-token]");
+			const cancelBtn = e.target.closest("[data-confluence-cancel-token]");
+			if (cancelBtn) {
+				showStatus('<span class="text-base-content/50">Connection required</span>');
+				return;
+			}
+			if (!saveBtn) return;
+			const input = statusEl.querySelector("[data-confluence-token]");
+			const token = (input?.value || "").trim();
+			if (!token) return;
+			saveBtn.disabled = true;
+			try {
+				const res = await fetch("/api/integrations/confluence/token", {
+					method: "POST",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ token }),
+				});
+				if (!res.ok) throw new Error("Invalid token");
+				if (input) input.value = "";
+				window.portalToast?.({ kind: "success", message: "Confluence connected." });
+				loadRecent();
+			} catch {
+				window.portalToast?.({ kind: "error", message: "Invalid token or connection failed" });
+			} finally {
+				saveBtn.disabled = false;
+			}
+		});
+
+		loadRecent();
+	})();
+</script>

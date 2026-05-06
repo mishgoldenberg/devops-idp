@@ -50,6 +50,7 @@ temp/
 
 # Docker
 .docker/
+offline-deps/
 
 # Database
 *.db

@@ -5,15 +5,16 @@
 			<p class="page-subtitle">Display name and sidebar avatar.</p>
 		</div>
 	</header>
-	<div class="page-content space-y-6">
+	<div class="page-content-flush">
+		<div class="portal-content-container space-y-6">
 		{% if saved %}
-		<div class="max-w-2xl alert alert-success alert-soft text-sm">
+		<div class="alert alert-success alert-soft text-sm">
 			<span>Profile updated.</span>
 		</div>
 		{% endif %}
 
 		<!-- Profile picture -->
-		<section class="max-w-2xl section-card">
+		<section class="section-card">
 			<div class="card-body p-5">
 				<h2 class="section-title mb-4">Profile picture</h2>
 				<div class="flex items-center gap-5">
@@ -73,7 +74,7 @@
 		</section>
 
 		<!-- Display name + email -->
-		<section class="max-w-2xl section-card">
+		<section class="section-card">
 			<div class="card-body p-5">
 				<h2 class="section-title mb-4">Account</h2>
 				<form action="/ui/profile" method="post" class="space-y-4">
@@ -107,6 +108,7 @@
 				</form>
 			</div>
 		</section>
+		</div>
 	</div>
 </div>
 

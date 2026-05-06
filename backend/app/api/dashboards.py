@@ -2,7 +2,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
 from pydantic import BaseModel
 from uuid import uuid4
 
@@ -27,9 +27,11 @@ _ALLOWED_WIDGET_KEYS = {
     "ado_my_pull_requests",
     "ado_prs_for_review",
     "ado_pipeline_status",
-    "sonar_quality_gate",
+    "sonar_projects",
+    "artifactory_repos",
     "artifactory_storage",
-    "service_health",
+    "confluence_pages",
+    "recent_activity",
 }
 
 
@@ -187,6 +189,8 @@ def create_dashboard(
             body.widgets or [],
         ],
     )
+    if not rows:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create dashboard")
     return {
         "success": True,
         "data": rows[0],
@@ -249,6 +253,8 @@ def _create_default_dashboard(user_id: str, role_level: int) -> Dict[str, Any]:
         """,
         [user_id, "My Dashboard", default_layout, default_widgets],
     )
+    if not rows:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create default dashboard")
     return rows[0]
 
 
@@ -256,7 +262,8 @@ def _get_default_widgets_for_role(role_level: int) -> List[Dict[str, Any]]:
     common_widgets = [
         {"id": str(uuid4()), "widget_key": "ado_my_work_items", "config": {}},
         {"id": str(uuid4()), "widget_key": "ado_my_pull_requests", "config": {}},
-        {"id": str(uuid4()), "widget_key": "sonar_quality_gate", "config": {}},
+        {"id": str(uuid4()), "widget_key": "sonar_projects", "config": {}},
+        {"id": str(uuid4()), "widget_key": "artifactory_repos", "config": {}},
         {"id": str(uuid4()), "widget_key": "snow_my_tickets", "config": {}},
     ]
 
@@ -378,7 +385,10 @@ def _apply_user_flags(
 
 
 @router.get("/ado-items")
-def get_ado_items(current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]:
+def get_ado_items(
+    project: Optional[str] = Query(None),
+    current_user: AuthUser = Depends(get_current_user),
+) -> Dict[str, Any]:
     """Latest Azure DevOps work items assigned to the current user, normalized."""
     from api.azure_devops import get_work_items as _ado_work_items
 
@@ -386,7 +396,7 @@ def get_ado_items(current_user: AuthUser = Depends(get_current_user)) -> Dict[st
     error = ""
     items: List[Dict[str, Any]] = []
     try:
-        result = _ado_work_items(project=None, current_user=current_user)
+        result = _ado_work_items(project=project, current_user=current_user)
         rows = result.get("data", []) if isinstance(result, dict) else []
         for wi in rows:
             assigned = wi.get("assigned_to")

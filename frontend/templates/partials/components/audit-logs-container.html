@@ -19,7 +19,8 @@
 		</div>
 	</header>
 
-	<div class="page-content">
+	<div class="page-content-flush">
+		<div class="portal-content-container space-y-6">
 		<section class="section-card">
 			<div class="card-body p-4">
 				<!-- Single horizontal filter row. Wraps cleanly on narrow widths; every
@@ -49,11 +50,11 @@
 						<input id="audit-filter-to" type="date" class="input input-bordered input-sm w-full" />
 					</label>
 					<div class="flex items-center gap-2 ml-auto">
-						<button id="audit-apply" type="button" class="btn btn-sm btn-primary">
-							Apply filters
-						</button>
 						<button id="audit-clear" type="button" class="btn btn-sm btn-ghost">
 							Clear
+						</button>
+						<button id="audit-apply" type="button" class="btn btn-sm btn-primary">
+							Apply filters
 						</button>
 					</div>
 				</div>
@@ -64,7 +65,7 @@
 			</div>
 		</section>
 
-		<section class="section-card mt-6">
+		<section class="section-card">
 			<div class="card-body gap-3">
 				<div id="audit-alert" class="hidden alert text-sm" role="status"></div>
 
@@ -97,6 +98,7 @@
 				</div>
 			</div>
 		</section>
+		</div>
 	</div>
 </div>
 

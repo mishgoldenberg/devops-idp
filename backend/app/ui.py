@@ -18,13 +18,14 @@ instead.
 """
 
 import os
+import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Body, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from api.artifactory import get_storage as _art_get_storage
 from api.azure_devops import ProjectCreationPayload
 from api.azure_devops import create_ado_project as _ado_create_project
 from api.azure_devops import get_project_creation_status as _ado_project_status
@@ -35,12 +36,19 @@ from api.dashboards import DashboardUpdateRequest
 from api.dashboards import get_default_dashboard as _dash_get_default
 from api.dashboards import update_dashboard as _dash_update
 from api.servicenow import get_tickets as _snow_get_tickets
-from api.sonarqube import get_projects as _sonar_get_projects
 from db import query_one
 from secrets_manager import delete_user_azure_devops_pat, get_user_azure_devops_pat, store_user_azure_devops_pat
-from security import AuthUser, decode_access_token, has_effective_admin_access, has_effective_admin_access_live
+from security import (
+    AuthUser,
+    create_access_token,
+    decode_access_token,
+    has_effective_admin_access,
+    has_effective_admin_access_live,
+    verify_password,
+)
 
 ui_router = APIRouter()
+log = logging.getLogger(__name__)
 
 HOME_WIDGET_KEYS = {
     "quick_links": "quick-links-component",
@@ -49,9 +57,10 @@ HOME_WIDGET_KEYS = {
     "ado_my_pull_requests": "pull-requests-component",
     "ado_prs_for_review": "pull-requests-review-component",
     "ado_pipeline_status": "pipelines-component",
-    "sonar_quality_gate": "sonarqube-quality-component",
+    "sonar_projects": "sonarqube-projects-component",
+    "artifactory_repos": "artifactory-repos-component",
     "artifactory_storage": "artifactory-storage-component",
-    "service_health": "service-health-component",
+    "confluence_pages": "confluence-pages-component",
     "recent_activity": "recent-activity-component",
 }
 
@@ -123,6 +132,52 @@ def _current_user_from_token(token: str) -> Optional[AuthUser]:
         return AuthUser(decode_access_token(token))
     except Exception:
         return None
+
+
+def _local_login_payload(username: str, password: str) -> Optional[Dict[str, Any]]:
+    """Authenticate the env bootstrap admin against the local password hash."""
+    log.debug("Login attempt")
+    if not username or not password:
+        log.debug("Password match: false")
+        return None
+    row = query_one(
+        """
+        SELECT u.id, u.username, u.email, u.password_hash,
+               r.name AS role_name, r.hierarchy_level, r.permissions
+        FROM users u
+        JOIN roles r ON u.role_id = r.id
+        WHERE LOWER(u.username) = %s
+          AND u.is_active = true
+          AND u.is_bootstrap_admin = true
+        LIMIT 1
+        """,
+        [username.strip().lower()],
+    )
+    if not row or not row.get("password_hash"):
+        log.debug("Password match: false")
+        return None
+    password_match = verify_password(password, str(row["password_hash"]))
+    log.debug("Password match: %s", str(password_match).lower())
+    if not password_match:
+        return None
+    role_name = str(row.get("role_name") or "")
+    try:
+        hierarchy_level = int(row.get("hierarchy_level") or 99)
+    except (TypeError, ValueError):
+        hierarchy_level = 99
+    role = "Admin" if hierarchy_level == 1 or role_name.strip().lower() == "platform admin" else "User"
+    permissions = row.get("permissions") or []
+    if isinstance(permissions, str):
+        permissions = [permissions]
+    query_one("UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = %s RETURNING id", [row["id"]])
+    return {
+        "id": str(row["id"]),
+        "username": row["username"],
+        "email": row["email"],
+        "role": role,
+        "hierarchy_level": hierarchy_level,
+        "permissions": permissions,
+    }
 
 
 
@@ -766,14 +821,32 @@ def ui_auth_page(request: Request):
 
 
 @ui_router.get("/ui/auth/login")
-def ui_auth_login(
-    username: str = "",
-    password: str = "",
-):
-    """Redirect login requests to the API OAuth login endpoint."""
-    del username
-    del password
+def ui_auth_login():
+    """Redirect SSO button clicks to the API auth entrypoint."""
     return RedirectResponse(url="/api/auth/login", status_code=303)
+
+
+@ui_router.post("/ui/auth/login")
+def ui_auth_local_login(request: Request, username: str = Form(""), password: str = Form("")):
+    """Authenticate the local bootstrap admin, otherwise preserve SSO fallback."""
+    auth_user = _local_login_payload(username, password)
+    if not auth_user:
+        qs = urlencode({"error": "invalid_credentials", "username": (username or "").strip()})
+        return RedirectResponse(
+            url=f"/ui/auth?{qs}",
+            status_code=303,
+        )
+    token = create_access_token(auth_user)
+    response = RedirectResponse(url="/ui/", status_code=303)
+    response.set_cookie(
+        key="auth_token",
+        value=token,
+        httponly=True,
+        samesite="lax",
+        secure=request.url.scheme == "https",
+        path="/",
+    )
+    return response
 
 
 @ui_router.post("/ui/auth/logout")
@@ -807,11 +880,14 @@ def ui_sidebar_component(request: Request):
 @ui_router.get("/ui/components/quick-links", response_class=HTMLResponse)
 def ui_quick_links_component(request: Request):
     """Render the Quick Links dashboard component for HTMX partial loading."""
+    current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
+    is_admin = bool(current_user and has_effective_admin_access_live(current_user))
     templates = _get_templates(request)
     return templates.TemplateResponse(
         "partials/components/quick-links.html",
         {
             "request": request,
+            "is_admin": is_admin,
             "now": datetime.utcnow().isoformat() + "Z",
         },
     )
@@ -827,6 +903,11 @@ def _describe_ado_error(exc: Exception) -> str:
         if isinstance(detail, str) and detail.strip():
             return detail
     return "Unable to load Azure DevOps data right now."
+
+
+def _ado_needs_pat(error: str) -> bool:
+    """Only show the PAT prompt for the actual missing-token error."""
+    return "not connected" in (error or "").lower() or "personal access token" in (error or "").lower()
 
 
 def _get_ado_task_counts(current_user: Optional[AuthUser]) -> Dict[str, Any]:
@@ -873,6 +954,7 @@ def ui_azure_devops_tasks_component(request: Request):
             "request": request,
             "counts": widget_state["counts"],
             "error": widget_state["error"],
+            "needs_pat": _ado_needs_pat(widget_state["error"]),
             "now": datetime.utcnow().isoformat() + "Z",
         },
     )
@@ -969,121 +1051,6 @@ def _get_pipeline_data(current_user: Optional[AuthUser]) -> Dict[str, Any]:
         return {"runs": [], "error": _describe_ado_error(exc)}
 
 
-def _mock_sonar_data() -> list:
-    return [
-        {"name": "my-app", "quality_gate_status": "OK", "bugs": 2, "vulnerabilities": 0, "coverage": 87},
-        {"name": "devops-idp", "quality_gate_status": "OK", "bugs": 5, "vulnerabilities": 1, "coverage": 72},
-        {"name": "pipeline-lib", "quality_gate_status": "ERROR", "bugs": 12, "vulnerabilities": 3, "coverage": 43},
-    ]
-
-
-def _get_sonar_data(current_user: Optional[AuthUser]) -> list:
-    if not current_user:
-        return _mock_sonar_data()
-    try:
-        result = _sonar_get_projects(current_user=current_user)
-        rows = result.get("data", []) if isinstance(result, dict) else []
-        return [
-            {
-                "name": p.get("name"),
-                "quality_gate_status": p.get("quality_gate", {}).get("status", "UNKNOWN"),
-                "bugs": p.get("metrics", {}).get("bugs", 0),
-                "vulnerabilities": p.get("metrics", {}).get("vulnerabilities", 0),
-                "coverage": p.get("metrics", {}).get("coverage", 0),
-            }
-            for p in rows
-        ]
-    except Exception:
-        return _mock_sonar_data()
-
-
-def _fmt_bytes(value: float) -> str:
-    units = ["B", "KB", "MB", "GB", "TB"]
-    v = float(value)
-    for unit in units:
-        if v < 1024:
-            return f"{v:.1f} {unit}"
-        v /= 1024
-    return f"{v:.1f} PB"
-
-
-def _normalize_artifactory_storage(data: Dict[str, Any]) -> Dict[str, Any]:
-    used = data.get("used", 0)
-    total = data.get("total", 0)
-    percentage = data.get("percentage", 0)
-
-    if isinstance(used, (int, float)):
-        used_out = _fmt_bytes(float(used))
-    else:
-        used_out = str(used)
-
-    if isinstance(total, (int, float)):
-        total_out = _fmt_bytes(float(total))
-    else:
-        total_out = str(total)
-
-    repos_out = []
-    for repo in data.get("repositories", []):
-        repo_used = repo.get("used", 0)
-        if isinstance(repo_used, (int, float)):
-            repo_used_out = _fmt_bytes(float(repo_used))
-        else:
-            repo_used_out = str(repo_used)
-        repos_out.append(
-            {
-                "name": repo.get("name", ""),
-                "used": repo_used_out,
-                "percentage": repo.get("percentage", 0),
-            }
-        )
-
-    return {
-        "used": used_out,
-        "total": total_out,
-        "percentage": percentage,
-        "repositories": repos_out,
-    }
-
-
-def _mock_artifactory_data() -> Dict[str, Any]:
-    return {
-        "used": "48.3 GB",
-        "total": "100 GB",
-        "percentage": 48,
-        "repositories": [
-            {"name": "docker-local", "used": "22.1 GB", "percentage": 46},
-            {"name": "npm-local", "used": "14.7 GB", "percentage": 30},
-            {"name": "pypi-local", "used": "8.3 GB", "percentage": 17},
-            {"name": "generic-local", "used": "3.2 GB", "percentage": 7},
-        ],
-    }
-
-
-def _get_artifactory_data(current_user: Optional[AuthUser]) -> Dict[str, Any]:
-    if not current_user:
-        return _mock_artifactory_data()
-    try:
-        result = _art_get_storage(current_user=current_user)
-        data = result.get("data", {}) if isinstance(result, dict) else {}
-        if not data:
-            return _mock_artifactory_data()
-        return _normalize_artifactory_storage(data)
-    except Exception:
-        return _mock_artifactory_data()
-
-
-def _get_service_health_data() -> list:
-    """Return service health status data for the Service Health widget."""
-    return [
-        {"name": "Azure DevOps", "status": "healthy"},
-        {"name": "SonarQube", "status": "healthy"},
-        {"name": "Artifactory", "status": "healthy"},
-        {"name": "ServiceNow", "status": "unhealthy"},
-        {"name": "Database", "status": "healthy"},
-        {"name": "Redis", "status": "healthy"},
-    ]
-
-
 @ui_router.get("/ui/components/pull-requests", response_class=HTMLResponse)
 def ui_pull_requests_component(request: Request):
     """Render the Pull Requests dashboard widget for HTMX partial loading."""
@@ -1092,7 +1059,12 @@ def ui_pull_requests_component(request: Request):
     widget_state = _get_pr_created_data(current_user)
     return templates.TemplateResponse(
         "partials/components/pull-requests.html",
-        {"request": request, "prs": widget_state["prs"], "error": widget_state["error"]},
+        {
+            "request": request,
+            "prs": widget_state["prs"],
+            "error": widget_state["error"],
+            "needs_pat": _ado_needs_pat(widget_state["error"]),
+        },
     )
 
 
@@ -1121,7 +1093,12 @@ def ui_pull_requests_review_component(request: Request):
     widget_state = _get_pr_review_data(current_user)
     return templates.TemplateResponse(
         "partials/components/pull-requests-review.html",
-        {"request": request, "prs": widget_state["prs"], "error": widget_state["error"]},
+        {
+            "request": request,
+            "prs": widget_state["prs"],
+            "error": widget_state["error"],
+            "needs_pat": _ado_needs_pat(widget_state["error"]),
+        },
     )
 
 
@@ -1133,39 +1110,52 @@ def ui_pipelines_component(request: Request):
     widget_state = _get_pipeline_data(current_user)
     return templates.TemplateResponse(
         "partials/components/pipelines.html",
-        {"request": request, "runs": widget_state["runs"], "error": widget_state["error"]},
+        {
+            "request": request,
+            "runs": widget_state["runs"],
+            "error": widget_state["error"],
+            "needs_pat": _ado_needs_pat(widget_state["error"]),
+        },
     )
 
 
-@ui_router.get("/ui/components/sonarqube-quality", response_class=HTMLResponse)
-def ui_sonarqube_quality_component(request: Request):
-    """Render the SonarQube Code Quality dashboard widget for HTMX partial loading."""
-    current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
+@ui_router.get("/ui/components/sonarqube-projects", response_class=HTMLResponse)
+def ui_sonarqube_projects_component(request: Request):
+    """Render mocked SonarQube project list widget; details load client-side."""
     templates = _get_templates(request)
     return templates.TemplateResponse(
-        "partials/components/sonarqube-quality.html",
-        {"request": request, "projects": _get_sonar_data(current_user)},
+        "partials/components/sonarqube-projects.html",
+        {"request": request},
     )
 
 
 @ui_router.get("/ui/components/artifactory-storage", response_class=HTMLResponse)
 def ui_artifactory_storage_component(request: Request):
     """Render the Artifactory Storage dashboard widget for HTMX partial loading."""
-    current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
     templates = _get_templates(request)
     return templates.TemplateResponse(
         "partials/components/artifactory-storage.html",
-        {"request": request, "storage": _get_artifactory_data(current_user)},
+        {"request": request},
     )
 
 
-@ui_router.get("/ui/components/service-health", response_class=HTMLResponse)
-def ui_service_health_component(request: Request):
-    """Render the Service Health dashboard widget for HTMX partial loading."""
+@ui_router.get("/ui/components/artifactory-repos", response_class=HTMLResponse)
+def ui_artifactory_repos_component(request: Request):
+    """Render mocked Artifactory repositories widget; storage widget is untouched."""
     templates = _get_templates(request)
     return templates.TemplateResponse(
-        "partials/components/service-health.html",
-        {"request": request, "services": _get_service_health_data()},
+        "partials/components/artifactory-repos.html",
+        {"request": request},
+    )
+
+
+@ui_router.get("/ui/components/confluence-pages", response_class=HTMLResponse)
+def ui_confluence_pages_component(request: Request):
+    """Render the Confluence Pages dashboard widget; data loads client-side."""
+    templates = _get_templates(request)
+    return templates.TemplateResponse(
+        "partials/components/confluence-pages.html",
+        {"request": request},
     )
 
 

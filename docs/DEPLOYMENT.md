@@ -57,9 +57,11 @@ docker compose logs api-gateway
 docker compose exec postgres psql -U devops_user -d devops_control_center -c "\dt"
 ```
 
-### Authentication (Google SSO)
+### Authentication (OIDC SSO)
 
-# The app uses **Google OAuth (SSO)** for sign-in. There are no seeded usernames/passwords; users sign in with their Google accounts and are created on first login. See [SSO_GOOGLE_OAUTH.md](SSO_GOOGLE_OAUTH.md) for configuration, environment variables, and GCP setup.
+The app uses admin-configured OIDC for sign-in. `HUB_ADMIN_USERNAME` and
+`HUB_ADMIN_PASSWORD` create the first Platform Admin when no admin exists; that
+admin configures RedHat SSO/OIDC from Platform Managing.
 
 Use these seeded accounts:
 
@@ -94,141 +96,139 @@ docker compose down -v
 
 ---
 
-## Kubernetes Deployment
+## OpenShift Deployment
+
+Deployment targets an OpenShift cluster and is driven by `azure-pipelines.yml`. The pipeline runs on the `devops-closed-network` agent pool and uses Artifactory as the container registry — no public internet access is required.
 
 ### Prerequisites
 
-- Kubernetes cluster (1.24+)
-- kubectl configured
-- Internal container registry
-- Ingress controller (nginx recommended)
+- `oc` CLI configured with cluster access (or use the pipeline)
+- `helm` 3.x
+- Access to the Artifactory Docker registry (`$(ARTIFACTORY_DOCKER_REGISTRY)`)
+- Azure DevOps variable group `devops-hub-closed-network` populated (see variable list below)
 
 ### Step 1: Build & Push Container Images
 
+In CI this happens automatically on push to `dev` or `main`. For a manual build:
+
 ```bash
-# Build Python backend (FastAPI + Uvicorn)
+# Backend image — pass closed-network pip overrides as build args
 docker build \
-  -f infrastructure/docker/Dockerfile.python-backend \
-  -t your-registry/devops-control-center/api-gateway:v1.0.0 \
+  --build-arg PYTHON_BASE_IMAGE="<your-internal-python-image>" \
+  --build-arg PIP_INDEX_URL="<your-internal-pypi-url>" \
+  --build-arg PIP_TRUSTED_HOST="<your-internal-pypi-host>" \
+  -f backend/app/Dockerfile \
+  -t "<ARTIFACTORY_DOCKER_REGISTRY>/<ARTIFACTORY_DOCKER_REPOSITORY>/backend:<tag>" \
   .
 
-# Push to your container registry
-docker push your-registry/devops-control-center/api-gateway:v1.0.0
+# Frontend image
+docker build \
+  --build-arg NGINX_BASE_IMAGE="<your-internal-nginx-image>" \
+  -f frontend/Dockerfile \
+  -t "<ARTIFACTORY_DOCKER_REGISTRY>/<ARTIFACTORY_DOCKER_REPOSITORY>/frontend:<tag>" \
+  .
 
-# Update image references in K8s manifests before deployment
+docker push "<ARTIFACTORY_DOCKER_REGISTRY>/<ARTIFACTORY_DOCKER_REPOSITORY>/backend:<tag>"
+docker push "<ARTIFACTORY_DOCKER_REGISTRY>/<ARTIFACTORY_DOCKER_REPOSITORY>/frontend:<tag>"
 ```
 
-### Step 2: Create Secrets
+### Step 2: Secrets
 
-**Option A: Using kubectl**
+All secrets are passed to Helm at deploy time via the pipeline's `devops-hub-closed-network` variable group. The Helm chart renders them into the `all-secrets` Kubernetes Secret in the target namespace. There is no manual secret creation step.
+
+Required variables in the variable group:
+
+| Variable | Purpose |
+|---|---|
+| `POSTGRES_PASSWORD` | PostgreSQL password |
+| `REDIS_PASSWORD` | Redis password |
+| `HUB_ADMIN_USERNAME` / `HUB_ADMIN_PASSWORD` | Bootstrap admin account |
+| `JWT_SECRET` | HS256 signing key |
+| `AZURE_DEVOPS_BASE_URL` / `AZURE_DEVOPS_ADMIN_PAT` | Azure DevOps integration |
+| `SNOW_BASE_URL` / `SNOW_API_USERNAME` / `SNOW_API_PASSWORD` | ServiceNow integration |
+| `ARTIFACTORY_BASE_URL` | Artifactory integration |
+| `SONARQUBE_BASE_URL` | SonarQube integration |
+| `CONFLUENCE_BASE_URL` | Confluence integration |
+| `ARTIFACTORY_DOCKER_REGISTRY` / `ARTIFACTORY_DOCKER_USERNAME` / `ARTIFACTORY_DOCKER_PASSWORD` | Registry auth |
+| `OPENSHIFT_API_URL` / `OPENSHIFT_TOKEN` / `OPENSHIFT_NAMESPACE` | Cluster targeting |
+| `HUB_HOSTNAME` | Ingress hostname |
+| `POSTGRES_IMAGE` / `REDIS_IMAGE` | Internal infra images |
+| `INGRESS_NGINX_IMAGE_REGISTRY` / `INGRESS_NGINX_IMAGE_NAME` / `INGRESS_NGINX_IMAGE_TAG` | Internal nginx image |
+
+### Step 3: Deploy with Helm
+
+The pipeline runs the following. For a manual deploy, replicate it:
 
 ```bash
-# Database secret
-kubectl create secret generic database-secret \
-  --from-literal=connection-string='postgresql://user:password@host:5432/db' \
-  -n devops-control-center
+oc login "$OPENSHIFT_API_URL" --token="$OPENSHIFT_TOKEN"
+oc project "$OPENSHIFT_NAMESPACE" || oc new-project "$OPENSHIFT_NAMESPACE"
 
-# Redis secret
-kubectl create secret generic redis-secret \
-  --from-literal=password='your-redis-password' \
-  -n devops-control-center
+helm dependency build ./deployment
 
-# Auth secrets
-kubectl create secret generic auth-secret \
-  --from-literal=jwt-secret='your-jwt-secret-min-64-chars' \
-  --from-literal=session-secret='your-session-secret-min-32-chars' \
-  -n devops-control-center
-
-# External systems secrets
-kubectl create secret generic external-systems-secret \
-  --from-literal=azure-devops-pat='your-pat' \
-  --from-literal=sonarqube-token='your-token' \
-  --from-literal=artifactory-api-key='your-key' \
-  --from-literal=servicenow-client-id='your-client-id' \
-  --from-literal=servicenow-client-secret='your-client-secret' \
-  --from-literal=ai-chatbot-token='your-token' \
-  -n devops-control-center
+helm upgrade --install devops-hub ./deployment \
+  --namespace "$OPENSHIFT_NAMESPACE" \
+  --create-namespace \
+  --atomic \
+  --timeout 15m \
+  --set-string global.customImage.repository="$IMAGE_REPO" \
+  --set-string backend.image.tag="$IMAGE_TAG" \
+  --set-string frontend.image.tag="$IMAGE_TAG" \
+  --set-string backend.ingress.host="$HUB_HOSTNAME" \
+  --set-string frontend.ingress.host="$HUB_HOSTNAME" \
+  --set-string infrastructure.postgres.image="$POSTGRES_IMAGE" \
+  --set-string infrastructure.redis.image="$REDIS_IMAGE" \
+  --set-string ingress-prod.controller.image.registry="$INGRESS_NGINX_IMAGE_REGISTRY" \
+  --set-string ingress-prod.controller.image.image="$INGRESS_NGINX_IMAGE_NAME" \
+  --set-string ingress-prod.controller.image.tag="$INGRESS_NGINX_IMAGE_TAG" \
+  --set-string ingress-prod.controller.image.digest="" \
+  --set-string ingress-prod.controller.scope.namespace="$OPENSHIFT_NAMESPACE"
 ```
 
-**Option B: Using Vault (Recommended)**
-
-Integrate with HashiCorp Vault or your organization's secret management:
-
-```bash
-# Install Vault CSI driver
-helm repo add hashicorp https://helm.releases.hashicorp.com
-helm install vault hashicorp/vault \
-  --set "injector.enabled=true" \
-  -n vault-system
-
-# Configure Vault integration
-# See: https://www.vaultproject.io/docs/platform/k8s
-```
-
-### Step 3: Deploy with Kustomize
-
-**Development Environment:**
-
-```bash
-kubectl apply -k infrastructure/k8s/overlays/dev
-```
-
-**Production Environment:**
-
-```bash
-# Update image tags in production/kustomization.yaml first
-kubectl apply -k infrastructure/k8s/overlays/production
-```
+All infra dependencies (Postgres, Redis, ingress-nginx) are vendored in the Helm umbrella chart — `helm dependency build` does not reach the internet.
 
 ### Step 4: Verify Deployment
 
 ```bash
 # Check pod status
-kubectl get pods -n devops-control-center
+oc get pods -n <OPENSHIFT_NAMESPACE>
 
 # Check services
-kubectl get svc -n devops-control-center
+oc get svc -n <OPENSHIFT_NAMESPACE>
 
-# Check ingress
-kubectl get ingress -n devops-control-center
+# Check ingress / routes
+oc get ingress -n <OPENSHIFT_NAMESPACE>
 
 # View logs
-kubectl logs -f deployment/api-gateway -n devops-control-center
-kubectl logs -f deployment/api-gateway -n devops-control-center
+oc logs -f deployment/backend -n <OPENSHIFT_NAMESPACE>
 ```
 
 ### Step 5: Verify Health Checks & Database
 
 ```bash
 # Wait for all pods to be Running and Ready
-kubectl get pods -n devops-control-center -w
+oc get pods -n <OPENSHIFT_NAMESPACE> -w
 
-# Once api-gateway is ready, verify health endpoints
-# This confirms the pod is healthy and Kubernetes probes are working
-kubectl exec -it deployment/api-gateway -n devops-control-center -- \
+# Verify health endpoints from inside the pod
+oc exec -it deployment/backend -n <OPENSHIFT_NAMESPACE> -- \
   curl http://localhost:8000/api/health/live
-# Should see: {"status": "alive", "timestamp": "2024-01-XX..."}
+# Should see: {"status": "alive", "timestamp": "..."}
 
-# Check readiness endpoint (used for traffic routing)
-kubectl exec -it deployment/api-gateway -n devops-control-center -- \
+oc exec -it deployment/backend -n <OPENSHIFT_NAMESPACE> -- \
   curl http://localhost:8000/api/health/ready
-# Should see: {"status": "ready", "timestamp": "2024-01-XX..."}
+# Should see: {"status": "ready", "timestamp": "..."}
 
-# Monitor initialization logs (database migrations, data seeds)
-kubectl logs -f deployment/api-gateway -n devops-control-center | grep -E "migrat|seed|health|ready"
-
-# All database operations run automatically inside the api-gateway container
-# No separate migration pods needed
+# Monitor initialization logs (database migrations run automatically on startup)
+oc logs -f deployment/backend -n <OPENSHIFT_NAMESPACE> | grep -E "migrat|seed|health|ready"
 ```
 
 ### Step 6: Access Application
 
 ```bash
-# Get ingress URL
-kubectl get ingress -n devops-control-center
+# Get the configured ingress hostname
+oc get ingress -n <OPENSHIFT_NAMESPACE>
 
-# Access via configured domain
-# Example: https://devops.internal.company
+# Access via the HUB_HOSTNAME configured in the variable group
+# Example: https://devops-hub.internal.company
 ```
 
 ---
@@ -415,104 +415,30 @@ kubectl rollout undo deployment/api-gateway --to-revision=2 -n devops-control-ce
 
 ## Terraform Self-Service Prerequisites
 
-The self-service project creation feature requires several one-time cluster and GCP resources. Apply these **before** deploying the application to a new cluster.
+The self-service project creation feature requires the backend pod to create Kubernetes Jobs in the cluster. The required `terraform-job-manager` Role and RoleBinding are deployed automatically by the Helm chart (`deployment/charts/backend/templates/terraform-rbac.yaml`) — no manual RBAC setup is needed.
 
-### 1. Kubernetes ServiceAccount & Workload Identity
+The Helm chart grants `backend-sa` (the backend pod's service account) permission to:
+- Create, get, list, and watch `batch/jobs`
+- Create, get, and delete `configmaps`
+- Get, list, and watch `pods` and `pods/log`
 
-```bash
-# Create the K8s SA in the correct namespace
-kubectl apply -f - <<'EOF'
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: devops-terraform-sa
-  namespace: devops-control-center
-  annotations:
-    iam.gke.io/gcp-service-account: devops-terraform-sa@devops-idp-489012.iam.gserviceaccount.com
-EOF
+### Verify
 
-# Bind the K8s SA to the GCP SA via Workload Identity
-gcloud iam service-accounts add-iam-policy-binding \
-  devops-terraform-sa@devops-idp-489012.iam.gserviceaccount.com \
-  --role roles/iam.workloadIdentityUser \
-  --member "serviceAccount:devops-idp-489012.svc.id.goog[devops-control-center/devops-terraform-sa]"
-```
-
-### 2. GCS Bucket Access
+After deploying, confirm the RBAC is in place:
 
 ```bash
-# Grant the Terraform SA write access to the tfstate bucket
-gcloud storage buckets add-iam-policy-binding \
-  gs://devops-control-center-tfstate \
-  --member="serviceAccount:devops-terraform-sa@devops-idp-489012.iam.gserviceaccount.com" \
-  --role="roles/storage.objectAdmin"
-```
-
-### 3. Backend Pod RBAC (Job/ConfigMap/Pod management)
-
-The API pod needs permission to create Kubernetes Jobs and ConfigMaps (for the Terraform workspace) and to read pod logs (for status polling and GCS log upload).
-
-```bash
-kubectl apply -f - <<'EOF'
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: terraform-job-manager
-  namespace: devops-control-center
-rules:
-  - apiGroups: ["batch"]
-    resources: ["jobs"]
-    verbs: ["create", "get", "list", "watch"]
-  - apiGroups: [""]
-    resources: ["configmaps"]
-    verbs: ["create", "get", "delete"]
-  - apiGroups: [""]
-    resources: ["pods", "pods/log"]
-    verbs: ["get", "list", "watch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: terraform-job-manager
-  namespace: devops-control-center
-subjects:
-  - kind: ServiceAccount
-    name: api-gateway
-    namespace: devops-control-center
-roleRef:
-  kind: Role
-  apiGroup: rbac.authorization.k8s.io
-  name: terraform-job-manager
-EOF
-```
-
-### 4. Verify
-
-```bash
-# K8s SA exists and has WI annotation
-kubectl get sa devops-terraform-sa -n devops-control-center -o yaml
-
-# Backend RBAC is in place
-kubectl auth can-i create jobs \
-  --as=system:serviceaccount:devops-control-center:api-gateway \
-  -n devops-control-center
+oc auth can-i create jobs \
+  --as=system:serviceaccount:<OPENSHIFT_NAMESPACE>:backend-sa \
+  -n <OPENSHIFT_NAMESPACE>
 # Expected: yes
-
-# GCS bucket accessible via WI (run from a test pod using the devops-terraform-sa SA)
-kubectl run -it --rm tf-test \
-  --image=gcr.io/google.com/cloudsdktool/cloud-sdk:alpine \
-  --serviceaccount=devops-terraform-sa \
-  --restart=Never \
-  -n devops-control-center \
-  -- gsutil ls gs://devops-control-center-tfstate
 ```
 
 ---
 
 ## Production Checklist
 
-- [ ] All secrets created and stored securely
-- [ ] Database migrations completed
+- [ ] All secrets present in the `devops-hub-closed-network` variable group
+- [ ] Database migrations completed (run automatically on pod startup)
 - [ ] Ingress configured with valid TLS certificates
 - [ ] Monitoring and alerting configured
 - [ ] Backup strategy implemented
@@ -526,11 +452,6 @@ kubectl run -it --rm tf-test \
 - [ ] External system integrations tested
 - [ ] Performance testing completed
 - [ ] Security scan passed
-- [ ] `devops-terraform-sa` K8s ServiceAccount created with Workload Identity annotation
-- [ ] GCP Workload Identity binding configured for `devops-terraform-sa`
-- [ ] `devops-control-center-tfstate` GCS bucket exists and SA has `objectAdmin`
-- [ ] `terraform-job-manager` Role and RoleBinding applied
-- [ ] `AZURE_DEVOPS_PAT` present in `all-secrets` K8s Secret (required by Terraform runner)
+- [ ] `terraform-job-manager` Role and RoleBinding deployed by Helm (verify with `oc auth can-i`)
+- [ ] `AZURE_DEVOPS_ADMIN_PAT` present in `all-secrets` K8s Secret (required by Terraform runner)
 - [ ] Self-service project creation tested end-to-end (mock mode off)
-
-=======

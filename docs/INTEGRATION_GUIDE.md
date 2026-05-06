@@ -14,8 +14,7 @@ backend/python_backend/app/
 │   ├── azure_devops.py   # ADO adapter (mocked by default)
 │   ├── sonarqube.py      # SonarQube adapter (mocked by default)
 │   ├── artifactory.py    # Artifactory adapter (mocked by default)
-│   ├── servicenow.py     # ServiceNow adapter (mocked by default)
-│   └── ai_chatbot.py     # AI chatbot adapter (mocked by default)
+│   └── servicenow.py     # ServiceNow adapter (mocked by default)
 └── ...
 ```
 
@@ -35,16 +34,14 @@ To switch from mock to real integration:
 ### Quick-start configuration
 
 ```bash
-USE_MOCK_AZURE_DEVOPS=false
-AZURE_DEVOPS_ORG=YourOrgName          # organisation name only, NOT the full URL
-AZURE_DEVOPS_PAT=your-pat-here        # server-level fallback for the admin account
+AZURE_DEVOPS_BASE_URL=https://dev.azure.com/YourOrgName
+AZURE_DEVOPS_ADMIN_PAT=your-admin-pat
 ```
 
 ### Authentication model
 
 - Each user saves their own PAT via the "Connect via PAT" prompt in the Azure DevOps widgets.
 - PATs are stored server-side in the `system_config` PostgreSQL table (`is_sensitive = true`), never returned to the browser or written to logs.
-- If `AZURE_DEVOPS_PAT` is set in the environment, it acts as a fallback for users who have not yet configured a personal PAT (primarily the admin account).
 - Vault storage is supported — set `USE_VAULT=true` (see full docs for details).
 
 ### What's implemented
@@ -73,9 +70,7 @@ AZURE_DEVOPS_PAT=your-pat-here        # server-level fallback for the admin acco
 ### Configuration
 
 ```bash
-USE_MOCK_SONARQUBE=false
-SONARQUBE_URL=https://sonarqube.internal.company
-SONARQUBE_TOKEN=your-sonarqube-token
+SONARQUBE_BASE_URL=https://sonarqube.internal.company
 ```
 
 ### Implementation
@@ -94,10 +89,7 @@ and keep the response structure aligned with the existing widgets.
 ### Configuration
 
 ```bash
-USE_MOCK_ARTIFACTORY=false
-ARTIFACTORY_URL=https://artifactory.internal.company
-ARTIFACTORY_API_KEY=your-api-key
-ARTIFACTORY_USERNAME=your-username
+ARTIFACTORY_BASE_URL=https://artifactory.internal.company
 ```
 
 ### Implementation
@@ -116,14 +108,9 @@ to Artifactory, mapping responses into the current JSON fields.
 ### Configuration
 
 ```bash
-USE_MOCK_SERVICENOW=false
-SERVICENOW_INSTANCE=your-instance
-SERVICENOW_URL=https://${SERVICENOW_INSTANCE}.service-now.com
-SERVICENOW_CLIENT_ID=your-client-id
-SERVICENOW_CLIENT_SECRET=your-client-secret
-# OR
-SERVICENOW_USERNAME=your-username
-SERVICENOW_PASSWORD=your-password
+SNOW_BASE_URL=https://your-instance.service-now.com
+SNOW_API_USERNAME=your-username
+SNOW_API_PASSWORD=your-password
 ```
 
 ### Implementation
@@ -134,24 +121,6 @@ APIs and return the same ticket JSON currently expected by the frontend.
 ### API Documentation
 
 - [ServiceNow REST API](https://developer.servicenow.com/dev.do#!/reference/api/tokyo/rest)
-
----
-
-## AI Chatbot Integration
-
-### Configuration
-
-```bash
-USE_MOCK_AI_CHATBOT=false
-AI_CHATBOT_API_URL=https://ai.internal.company/api
-AI_CHATBOT_UI_URL=https://ai.internal.company
-AI_CHATBOT_TOKEN=your-ai-token
-```
-
-### Implementation
-
-Extend `backend/python_backend/app/api/ai_chatbot.py` to forward chat messages
-to a real AI backend and return the response in the existing format.
 
 ---
 
@@ -193,8 +162,8 @@ Update service health status from the Python backend by writing to the
 # Test network connectivity
 curl -v https://dev.azure.com
 
-# Test authentication
-curl -u :$AZURE_DEVOPS_PAT https://dev.azure.com/{org}/_apis/projects
+# Test authentication with your personal PAT
+curl -u :<pat> "$AZURE_DEVOPS_BASE_URL/_apis/projects"
 ```
 
 ### Authentication Errors

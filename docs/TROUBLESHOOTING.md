@@ -197,10 +197,7 @@ console.log(localStorage.getItem('auth_token'))
 docker-compose logs -f azure-devops-service
 ```
 
-4. Verify mock data flags:
-```bash
-echo $USE_MOCK_AZURE_DEVOPS
-```
+4. Verify required integration URLs are configured in the running backend environment.
 
 ### Drag-and-Drop Not Working
 

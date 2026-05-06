@@ -28,7 +28,7 @@ router = APIRouter()
 # Keep this explicit so callers can't drop arbitrary strings in and
 # pollute the table. Additions here are cheap but intentional — every new
 # type also needs frontend handling (icon, click target).
-ALLOWED_ITEM_TYPES = {"ado_project", "ticket"}
+ALLOWED_ITEM_TYPES = {"ado_project", "ticket", "repo"}
 
 
 class FavoriteBody(BaseModel):

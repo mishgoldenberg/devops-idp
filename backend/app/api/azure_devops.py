@@ -8,11 +8,8 @@ This module provides FastAPI endpoints for Azure DevOps integration, including:
 - Mock implementations for local development
 
 CONFIGURATION:
-  - USE_MOCK_AZURE_DEVOPS: Set to 'false' to use real Azure DevOps API (default: 'true' for dev)
-  - AZURE_DEVOPS_ORGANIZATION or AZURE_DEVOPS_ORG: Organization name (e.g. MyOrg). Base URL becomes https://dev.azure.com/MyOrg. Required for real API.
-  - AZURE_DEVOPS_API_URL: Optional; if set and no org above, used as-is. Otherwise org is required.
-  - AZURE_DEVOPS_PAT: Personal Access Token (required for real API calls)
-  - AZURE_DEVOPS_QUERY_USER: Optional test user for local development
+  - AZURE_DEVOPS_BASE_URL: Azure DevOps organization URL, e.g. https://dev.azure.com/MyOrg.
+  - AZURE_DEVOPS_ADMIN_PAT: Admin PAT used for self-service write operations.
 
 SELF-SERVICE FEATURE:
   POST /api/azure-devops/projects/create
@@ -30,6 +27,7 @@ ENDPOINTS:
 
 from typing import Any, Dict, List, Optional
 import os
+from urllib.parse import quote, urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
@@ -47,26 +45,15 @@ router = APIRouter()
 
 # Configuration from environment variables (read at import so env is respected in K8s/local)
 def _get_ado_base() -> str:
-    """Build Azure DevOps API base URL. Must include organization: https://dev.azure.com/{org}."""
-    org = (os.getenv("AZURE_DEVOPS_ORGANIZATION") or os.getenv("AZURE_DEVOPS_ORG") or "").strip()
-    if org:
-        return f"https://dev.azure.com/{org}".rstrip("/")
-    base = (os.getenv("AZURE_DEVOPS_API_URL") or "https://dev.azure.com").strip().rstrip("/")
-    # If URL is still just https://dev.azure.com with no org, we cannot call the API
-    if base == "https://dev.azure.com":
-        return base  # Caller will get 404/401 until org is set
-    return base
+    """Return the configured Azure DevOps organization base URL."""
+    return (os.getenv("AZURE_DEVOPS_BASE_URL") or "").strip().rstrip("/")
 
 
-USE_MOCK = os.getenv("USE_MOCK_AZURE_DEVOPS", "true").lower() in ("true", "1")
+USE_MOCK = False
 ADO_BASE = _get_ado_base()
-# Shared server-level PAT (env). Used as fallback only for admin users so they
-# can test immediately without entering a per-user PAT.
-_ENV_PAT = os.getenv("AZURE_DEVOPS_PAT", "")
 # Admin PAT used for write operations (process creation).
 # Requires scope: Process (Read & Manage) — or Full Access.
 _ENV_ADMIN_PAT = os.getenv("AZURE_DEVOPS_ADMIN_PAT", "")
-ADO_QUERY_USER = os.getenv("AZURE_DEVOPS_QUERY_USER", "")
 
 
 def _now_iso() -> str:
@@ -75,14 +62,64 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _is_devops_cloud_root(base: str) -> bool:
+    parsed = urlparse(base)
+    return parsed.netloc.lower() == "dev.azure.com" and not parsed.path.strip("/")
+
+
+def _discover_ado_bases(client: httpx.Client) -> List[str]:
+    """
+    Resolve the Azure DevOps organization/collection URLs available to the PAT.
+
+    `AZURE_DEVOPS_BASE_URL=https://dev.azure.com/` is a service root, not an API
+    scope. In that case we ask Azure DevOps for the accounts the PAT can access
+    and query each one. If a concrete org/collection URL is configured, use it
+    directly.
+    """
+    if not ADO_BASE:
+        raise HTTPException(status_code=500, detail="AZURE_DEVOPS_BASE_URL is not configured")
+
+    if not _is_devops_cloud_root(ADO_BASE):
+        return [ADO_BASE]
+
+    try:
+        profile = client.get("https://app.vssps.visualstudio.com/_apis/profile/profiles/me?api-version=7.1")
+        profile.raise_for_status()
+        member_id = profile.json().get("id")
+        if not member_id:
+            raise ValueError("profile id missing")
+
+        accounts = client.get(
+            f"https://app.vssps.visualstudio.com/_apis/accounts?memberId={member_id}&api-version=7.1"
+        )
+        accounts.raise_for_status()
+        names = [
+            str(account.get("accountName") or "").strip()
+            for account in accounts.json().get("value", [])
+            if account.get("accountName")
+        ]
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=(
+                "Could not discover Azure DevOps organizations for this PAT. "
+                "Check that the PAT has access, or set AZURE_DEVOPS_BASE_URL to a specific organization URL."
+            ),
+        ) from exc
+
+    bases = [f"https://dev.azure.com/{name}" for name in names]
+    if not bases:
+        raise HTTPException(status_code=404, detail="No Azure DevOps organizations are accessible with this PAT")
+    return bases
+
+
 def _get_pat_for_user(current_user: AuthUser) -> str:
     """
     Resolve the Azure DevOps PAT for the requesting user.
 
     Only the per-user PAT stored in Vault / system_config (set via the dashboard
-    UI) is accepted for widget/read endpoints.  The server-level env PATs
-    (_ENV_PAT, _ENV_ADMIN_PAT) are intentionally NOT used here — they are
-    reserved for self-service write operations (project creation).
+    UI) is accepted for widget/read endpoints. The server-level admin PAT is
+    intentionally NOT used here; it is reserved for self-service write operations.
 
     The PAT is never returned to the frontend or written to logs.
     """
@@ -134,7 +171,7 @@ def remove_pat(current_user: AuthUser = Depends(get_current_user)):
     return Response(status_code=204)
 
 
-def _fetch_state_categories(client: httpx.Client, project: str, work_item_type: str) -> dict:
+def _fetch_state_categories(client: httpx.Client, base_url: str, project: str, work_item_type: str) -> dict:
     """
     Returns a mapping of {state_name: state_category} for a given project + work item type.
     State categories are ADO-standard strings: 'Proposed', 'InProgress', 'Resolved',
@@ -142,10 +179,8 @@ def _fetch_state_categories(client: httpx.Client, project: str, work_item_type: 
     Returns an empty dict (not None) on failure so callers can fall back to name heuristics.
     """
     import logging
-    from urllib.parse import quote
-
     url = (
-        f"{ADO_BASE}/{quote(project, safe='')}/_apis/wit/workitemtypes"
+        f"{base_url}/{quote(project, safe='')}/_apis/wit/workitemtypes"
         f"/{quote(work_item_type, safe='')}/"
         f"states?api-version=7.0"
     )
@@ -175,19 +210,26 @@ def get_projects(current_user: AuthUser = Depends(get_current_user)):
             ],
             "timestamp": _now_iso(),
         }
-    if not ADO_BASE or ADO_BASE.rstrip("/") == "https://dev.azure.com":
-        raise HTTPException(status_code=500, detail="AZURE_DEVOPS_ORG is not configured")
+    if not ADO_BASE:
+        raise HTTPException(status_code=500, detail="AZURE_DEVOPS_BASE_URL is not configured")
 
     pat = _get_pat_for_user(current_user)
     auth = httpx.BasicAuth("", pat)
     try:
         with httpx.Client(auth=auth, timeout=20.0) as client:
-            r = client.get(f"{ADO_BASE}/_apis/projects?$top=200&api-version=7.0")
-            r.raise_for_status()
-            projects = [
-                {"id": p.get("id"), "name": p.get("name")}
-                for p in r.json().get("value", [])
-            ]
+            projects = []
+            for base_url in _discover_ado_bases(client):
+                r = client.get(f"{base_url}/_apis/projects?$top=200&api-version=7.0")
+                r.raise_for_status()
+                collection = base_url.rstrip("/").split("/")[-1]
+                projects.extend(
+                    {
+                        "id": p.get("id"),
+                        "name": p.get("name"),
+                        "collection": collection,
+                    }
+                    for p in r.json().get("value", [])
+                )
         return {"success": True, "data": projects, "timestamp": _now_iso()}
     except httpx.HTTPStatusError as exc:
         raise HTTPException(status_code=502, detail=f"Azure DevOps API error: {exc.response.status_code}")
@@ -226,10 +268,10 @@ def get_work_items(
         ]
         return {"success": True, "data": work_items, "timestamp": _now_iso()}
 
-    if not ADO_BASE or ADO_BASE.rstrip("/") == "https://dev.azure.com":
+    if not ADO_BASE:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="AZURE_DEVOPS_ORG is not configured on the server",
+            detail="AZURE_DEVOPS_BASE_URL is not configured on the server",
         )
 
     # ── 60s per-user cache ────────────────────────────────────────────────
@@ -261,6 +303,109 @@ def get_work_items(
         return _fetch_work_items_live(project, current_user)
 
 
+@router.get("/workitem-tasks")
+def get_workitem_tasks(
+    id: int = Query(..., description="Parent Azure DevOps work item id"),
+    current_user: AuthUser = Depends(get_current_user),
+):
+    """Return child tasks for a work item.
+
+    In mock mode this is static. In real mode we first fetch the parent item's
+    hierarchy-forward relations and then batch-load those children. The frontend
+    calls this lazily on hover, so we avoid adding extra weight to the normal
+    dashboard work-items list.
+    """
+    if USE_MOCK:
+        def _mock_task(task_id: int, title: str, state: str) -> dict:
+            return {
+                "id": task_id,
+                "title": title,
+                "state": state,
+                "url": f"https://dev.azure.com/DevCollection-Inheritance/DevOps/_workitems/edit/{task_id}",
+            }
+
+        state_sets = {
+            1001: [
+                _mock_task(5101, "Add API validation", "In Progress"),
+                _mock_task(5102, "Write dashboard tests", "To Do"),
+                _mock_task(5103, "Update deployment docs", "Done"),
+            ],
+        }
+        fallback = [
+            _mock_task(int(id) * 10 + 1, "Review acceptance criteria", "To Do"),
+            _mock_task(int(id) * 10 + 2, "Implement backend changes", "In Progress"),
+            _mock_task(int(id) * 10 + 3, "QA verification", "Done"),
+        ]
+        return {
+            "success": True,
+            "data": state_sets.get(int(id), fallback),
+            "timestamp": _now_iso(),
+        }
+
+    if not ADO_BASE:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="AZURE_DEVOPS_BASE_URL is not configured on the server",
+        )
+
+    try:
+        pat = _get_pat_for_user(current_user)
+        auth = httpx.BasicAuth("", pat)
+        with httpx.Client(auth=auth, timeout=20.0) as client:
+            bases = _discover_ado_bases(client)
+            parent = None
+            parent_base = ""
+            for base_url in bases:
+                res = client.get(
+                    f"{base_url}/_apis/wit/workitems/{id}?$expand=relations&api-version=7.0"
+                )
+                if res.status_code == 200:
+                    parent = res
+                    parent_base = base_url
+                    break
+            if parent is None:
+                raise HTTPException(status_code=404, detail="Azure DevOps work item was not found in accessible organizations")
+            child_ids = []
+            for rel in parent.json().get("relations", []) or []:
+                if rel.get("rel") != "System.LinkTypes.Hierarchy-Forward":
+                    continue
+                url = rel.get("url", "")
+                child_id = url.rstrip("/").split("/")[-1]
+                if child_id.isdigit():
+                    child_ids.append(child_id)
+
+            if not child_ids:
+                return {"success": True, "data": [], "timestamp": _now_iso()}
+
+            tasks = []
+            for i in range(0, len(child_ids), 200):
+                chunk = ",".join(child_ids[i : i + 200])
+                res = client.get(
+                    f"{parent_base}/_apis/wit/workitems?ids={chunk}"
+                    "&fields=System.Id,System.Title,System.State,System.WorkItemType"
+                    "&api-version=7.0"
+                )
+                res.raise_for_status()
+                for item in res.json().get("value", []):
+                    fields = item.get("fields", {})
+                    tasks.append(
+                        {
+                            "id": item.get("id"),
+                            "title": fields.get("System.Title") or f"Task #{item.get('id')}",
+                            "state": fields.get("System.State") or "",
+                            "type": fields.get("System.WorkItemType") or "",
+                            "url": f"{parent_base}/_workitems/edit/{item.get('id')}",
+                        }
+                    )
+        return {"success": True, "data": tasks, "timestamp": _now_iso()}
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=502, detail=f"Azure DevOps API error: {exc.response.status_code}")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Azure DevOps request failed: {exc!s}")
+
+
 def _fetch_work_items_live(
     project: Optional[str],
     current_user: AuthUser,
@@ -286,70 +431,65 @@ def _fetch_work_items_live(
                 "Order By [System.ChangedDate] Desc"
             )
         }
-        # Use test override if configured (helpful when local PAT belongs to a service account)
-        if ADO_QUERY_USER:
-            query["query"] = query["query"].replace(
-                "[System.AssignedTo] = @Me",
-                f"[System.AssignedTo] = '{ADO_QUERY_USER}'",
-            )
-
-        wiql_url = f"{ADO_BASE}/_apis/wit/wiql?api-version=7.0"
         with httpx.Client(auth=auth, timeout=30.0) as client:
-            r = client.post(wiql_url, json=query)
-            r.raise_for_status()
-            ids = [str(item["id"]) for item in r.json().get("workItems", [])]
-            if not ids:
-                return {"success": True, "data": [], "timestamp": _now_iso()}
-
-            # Fetch full details in batches of 200 (API limit)
-            items: list = []
-            for i in range(0, len(ids), 200):
-                chunk = ",".join(ids[i : i + 200])
-                r2 = client.get(
-                    f"{ADO_BASE}/_apis/wit/workitems?ids={chunk}"
-                    "&fields=System.Id,System.Title,System.State,System.WorkItemType,"
-                    "System.TeamProject,System.AssignedTo,System.CreatedDate,System.ChangedDate"
-                    "&api-version=7.0"
-                )
-                r2.raise_for_status()
-                items.extend(r2.json().get("value", []))
-
-            # Build state-category map per (project, type) – one API call each, minimal overhead
-            _cat_cache: dict = {}
-            org = ADO_BASE.split("/")[-1]
-
             work_items = []
-            for it in items:
-                fields = it.get("fields", {})
-                wi_id = it.get("id")
-                wi_state = fields.get("System.State") or ""
-                wi_type = fields.get("System.WorkItemType") or ""
-                wi_project = fields.get("System.TeamProject") or ""
+            for base_url in _discover_ado_bases(client):
+                wiql_url = f"{base_url}/_apis/wit/wiql?api-version=7.0"
+                r = client.post(wiql_url, json=query)
+                if r.status_code in (401, 403, 404):
+                    continue
+                r.raise_for_status()
+                ids = [str(item["id"]) for item in r.json().get("workItems", [])]
+                if not ids:
+                    continue
 
-                cache_key = (wi_project, wi_type)
-                if cache_key not in _cat_cache:
-                    _cat_cache[cache_key] = _fetch_state_categories(client, wi_project, wi_type)
-                state_category = _cat_cache[cache_key].get(wi_state, "")
+                # Fetch full details in batches of 200 (API limit)
+                items: list = []
+                for i in range(0, len(ids), 200):
+                    chunk = ",".join(ids[i : i + 200])
+                    r2 = client.get(
+                        f"{base_url}/_apis/wit/workitems?ids={chunk}"
+                        "&fields=System.Id,System.Title,System.State,System.WorkItemType,"
+                        "System.TeamProject,System.AssignedTo,System.CreatedDate,System.ChangedDate"
+                        "&api-version=7.0"
+                    )
+                    r2.raise_for_status()
+                    items.extend(r2.json().get("value", []))
 
-                portal_url = (
-                    f"https://dev.azure.com/{org}/{wi_project}/_workitems/edit/{wi_id}"
-                    if wi_project
-                    else f"https://dev.azure.com/{org}/_workitems/edit/{wi_id}"
-                )
-                work_items.append(
-                    {
-                        "id": wi_id,
-                        "title": fields.get("System.Title"),
-                        "state": wi_state,
-                        "state_category": state_category,
-                        "type": wi_type,
-                        "project": wi_project,
-                        "assigned_to": fields.get("System.AssignedTo"),
-                        "created_date": fields.get("System.CreatedDate"),
-                        "changed_date": fields.get("System.ChangedDate"),
-                        "url": portal_url,
-                    }
-                )
+                # Build state-category map per (project, type) – one API call each, minimal overhead
+                _cat_cache: dict = {}
+
+                for it in items:
+                    fields = it.get("fields", {})
+                    wi_id = it.get("id")
+                    wi_state = fields.get("System.State") or ""
+                    wi_type = fields.get("System.WorkItemType") or ""
+                    wi_project = fields.get("System.TeamProject") or ""
+
+                    cache_key = (base_url, wi_project, wi_type)
+                    if cache_key not in _cat_cache:
+                        _cat_cache[cache_key] = _fetch_state_categories(client, base_url, wi_project, wi_type)
+                    state_category = _cat_cache[cache_key].get(wi_state, "")
+
+                    portal_url = (
+                        f"{base_url}/{wi_project}/_workitems/edit/{wi_id}"
+                        if wi_project
+                        else f"{base_url}/_workitems/edit/{wi_id}"
+                    )
+                    work_items.append(
+                        {
+                            "id": wi_id,
+                            "title": fields.get("System.Title"),
+                            "state": wi_state,
+                            "state_category": state_category,
+                            "type": wi_type,
+                            "project": wi_project,
+                            "assigned_to": fields.get("System.AssignedTo"),
+                            "created_date": fields.get("System.CreatedDate"),
+                            "changed_date": fields.get("System.ChangedDate"),
+                            "url": portal_url,
+                        }
+                    )
 
         return {"success": True, "data": work_items, "timestamp": _now_iso()}
     except httpx.HTTPStatusError as exc:
@@ -357,7 +497,7 @@ def _fetch_work_items_live(
         logging.warning("Azure DevOps API error: %s %s", exc.response.status_code, exc.response.text[:200])
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Azure DevOps API error: {exc.response.status_code}. Check AZURE_DEVOPS_ORGANIZATION and PAT.",
+            detail=f"Azure DevOps API error: {exc.response.status_code}. Check AZURE_DEVOPS_BASE_URL and PAT.",
         )
     except Exception as exc:
         import logging
@@ -380,10 +520,6 @@ def get_pull_requests(
             detail="Username required",
         )
 
-    # If a test ADO account is provided via env, use that
-    if ADO_QUERY_USER:
-        effective_username = ADO_QUERY_USER
-
     if USE_MOCK:
         # Mock data
         pull_requests = [
@@ -401,10 +537,10 @@ def get_pull_requests(
         ]
         return {"success": True, "data": pull_requests, "timestamp": _now_iso()}
 
-    if not ADO_BASE or ADO_BASE.rstrip("/") == "https://dev.azure.com":
+    if not ADO_BASE:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="AZURE_DEVOPS_ORG is not configured on the server",
+            detail="AZURE_DEVOPS_BASE_URL is not configured on the server",
         )
 
     # 60s per-(user, effective_username) cache. PR listing iterates every repo
@@ -445,15 +581,19 @@ def _fetch_pull_requests_live(effective_username: str, current_user: AuthUser) -
     try:
         pat = _get_pat_for_user(current_user)
         auth = httpx.BasicAuth("", pat)
-        projects_url = f"{ADO_BASE}/_apis/projects?api-version=7.0"
         with httpx.Client(auth=auth, timeout=30.0) as client:
-            r_projects = client.get(projects_url)
-            r_projects.raise_for_status()
-            projects = r_projects.json().get("value", [])
+            projects: List[Dict[str, Any]] = []
+            for base_url in _discover_ado_bases(client):
+                r_projects = client.get(f"{base_url}/_apis/projects?api-version=7.0")
+                if r_projects.status_code in (401, 403, 404):
+                    continue
+                r_projects.raise_for_status()
+                projects.extend({**p, "_ado_base_url": base_url} for p in r_projects.json().get("value", []))
 
             def _repos_for_project(proj: Dict[str, Any]):
+                base_url = proj.get("_ado_base_url") or ADO_BASE
                 project_id = proj.get("id")
-                repos_url = f"{ADO_BASE}/{project_id}/_apis/git/repositories?api-version=7.0"
+                repos_url = f"{base_url}/{project_id}/_apis/git/repositories?api-version=7.0"
                 try:
                     r_repos = client.get(repos_url)
                     if r_repos.status_code != 200:
@@ -463,10 +603,11 @@ def _fetch_pull_requests_live(effective_username: str, current_user: AuthUser) -
                     return proj, []
 
             def _prs_for_repo(proj: Dict[str, Any], repo: Dict[str, Any]):
+                base_url = proj.get("_ado_base_url") or ADO_BASE
                 project_id = proj.get("id")
                 repo_id = repo.get("id")
                 prs_url = (
-                    f"{ADO_BASE}/{project_id}/_apis/git/repositories/{repo_id}"
+                    f"{base_url}/{project_id}/_apis/git/repositories/{repo_id}"
                     "/pullrequests?searchCriteria.status=active&api-version=7.0"
                 )
                 try:
@@ -499,14 +640,11 @@ def _fetch_pull_requests_live(effective_username: str, current_user: AuthUser) -
                         is_reviewer = any(rev.get("uniqueName", "").lower() == query_user_lower for rev in pr.get("reviewers", []))
                         
                         if is_creator or is_reviewer:
-                            # Extract org and project
-                            org = ADO_BASE.split("/")[-1]
+                            base_url = proj.get("_ado_base_url") or ADO_BASE
                             project_name = proj.get("name")
                             repo_name = repo.get("name")
                             pr_id = pr.get("pullRequestId")
-                            
-                            # Construct proper portal URL for PR
-                            portal_url = f"https://dev.azure.com/{org}/{project_name}/_git/{repo_name}/pullrequest/{pr_id}"
+                            portal_url = f"{base_url}/{project_name}/_git/{repo_name}/pullrequest/{pr_id}"
                             
                             pull_requests.append({
                                 "id": pr_id,
@@ -528,7 +666,7 @@ def _fetch_pull_requests_live(effective_username: str, current_user: AuthUser) -
         logging.warning("Azure DevOps API error: %s %s", exc.response.status_code, exc.response.text[:200])
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Azure DevOps API error: {exc.response.status_code}. Check AZURE_DEVOPS_ORGANIZATION and PAT.",
+            detail=f"Azure DevOps API error: {exc.response.status_code}. Check AZURE_DEVOPS_BASE_URL and PAT.",
         )
     except Exception as exc:
         import logging
@@ -559,21 +697,24 @@ def get_pipelines(
         ]
         return {"success": True, "data": pipelines, "timestamp": _now_iso()}
 
-    if not ADO_BASE or ADO_BASE.rstrip("/") == "https://dev.azure.com":
+    if not ADO_BASE:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="AZURE_DEVOPS_ORG is not configured on the server",
+            detail="AZURE_DEVOPS_BASE_URL is not configured on the server",
         )
     try:
         from concurrent.futures import ThreadPoolExecutor
         pat = _get_pat_for_user(current_user)
         auth = httpx.BasicAuth("", pat)
-        # Query all projects in the org and get their recent builds
-        projects_url = f"{ADO_BASE}/_apis/projects?api-version=7.0"
+        # Query all accessible projects and get their recent builds.
         with httpx.Client(auth=auth, timeout=30.0) as client:
-            r_projects = client.get(projects_url)
-            r_projects.raise_for_status()
-            projects = r_projects.json().get("value", [])
+            projects: List[Dict[str, Any]] = []
+            for base_url in _discover_ado_bases(client):
+                r_projects = client.get(f"{base_url}/_apis/projects?api-version=7.0")
+                if r_projects.status_code in (401, 403, 404):
+                    continue
+                r_projects.raise_for_status()
+                projects.extend({**p, "_ado_base_url": base_url} for p in r_projects.json().get("value", []))
 
             target_projects = [
                 p for p in projects
@@ -581,8 +722,9 @@ def get_pipelines(
             ]
 
             def _builds_for(proj):
+                base_url = proj.get("_ado_base_url") or ADO_BASE
                 pid = proj.get("id")
-                url = f"{ADO_BASE}/{pid}/_apis/build/builds?$top=20&api-version=7.0"
+                url = f"{base_url}/{pid}/_apis/build/builds?$top=20&api-version=7.0"
                 try:
                     r = client.get(url)
                     if r.status_code != 200:
@@ -596,7 +738,7 @@ def get_pipelines(
             with ThreadPoolExecutor(max_workers=max_workers) as pool:
                 builds_by_project = list(pool.map(_builds_for, target_projects))
 
-            query_user_lower = (ADO_QUERY_USER or current_user.get("username", "")).lower()
+            query_user_lower = str(current_user.get("username") or "").lower()
             for proj, builds in builds_by_project:
                 project_name = proj.get("name")
                 for build in builds:
@@ -604,12 +746,9 @@ def get_pipelines(
                     requested_for_email = str(requested_for.get("uniqueName", "")).lower()
                     if query_user_lower and requested_for_email != query_user_lower:
                         continue
-                    # Extract org and construct portal URL
-                    org = ADO_BASE.split("/")[-1]
+                    base_url = proj.get("_ado_base_url") or ADO_BASE
                     build_id = build.get("id")
-                    
-                    # Construct proper portal URL for build
-                    portal_url = f"https://dev.azure.com/{org}/{project_name}/_build/results?buildId={build_id}"
+                    portal_url = f"{base_url}/{project_name}/_build/results?buildId={build_id}"
                     
                     pipelines.append({
                         "id": build_id,
@@ -631,7 +770,7 @@ def get_pipelines(
         logging.warning("Azure DevOps API error: %s %s", exc.response.status_code, exc.response.text[:200])
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Azure DevOps API error: {exc.response.status_code}. Check AZURE_DEVOPS_ORGANIZATION and PAT.",
+            detail=f"Azure DevOps API error: {exc.response.status_code}. Check AZURE_DEVOPS_BASE_URL and PAT.",
         )
     except Exception as exc:
         import logging
@@ -712,8 +851,8 @@ def ensure_custom_ado_process(project_name: str, process_type: str) -> str:
     if USE_MOCK:
         return f"{project_name}-{process_type}"
 
-    if not ADO_BASE or ADO_BASE.rstrip("/") == "https://dev.azure.com":
-        raise RuntimeError("AZURE_DEVOPS_ORG is not configured.")
+    if not ADO_BASE:
+        raise RuntimeError("AZURE_DEVOPS_BASE_URL is not configured.")
     if not _ENV_ADMIN_PAT:
         raise RuntimeError(
             "AZURE_DEVOPS_ADMIN_PAT is not configured. Cannot create the "
@@ -744,7 +883,7 @@ def ensure_custom_ado_process(project_name: str, process_type: str) -> str:
             _logging.error("Network error reaching Azure DevOps: %s", exc)
             raise RuntimeError(
                 "Could not connect to Azure DevOps. Check network connectivity "
-                "and AZURE_DEVOPS_ORGANIZATION."
+                "and AZURE_DEVOPS_BASE_URL."
             )
 
         parent_proc = next(
@@ -885,8 +1024,8 @@ def create_ado_project(
         }
 
     # ── Real mode ──────────────────────────────────────────────────────────
-    if not ADO_BASE or ADO_BASE.rstrip("/") == "https://dev.azure.com":
-        raise HTTPException(status_code=500, detail="AZURE_DEVOPS_ORG is not configured.")
+    if not ADO_BASE:
+        raise HTTPException(status_code=500, detail="AZURE_DEVOPS_BASE_URL is not configured.")
 
     pat = _get_pat_for_user(current_user)
     auth = httpx.BasicAuth("", pat)
@@ -912,7 +1051,7 @@ def create_ado_project(
                     status_code=502,
                     detail=(
                         f"Could not reach Azure DevOps (projects API returned {exc.response.status_code}). "
-                        "Verify AZURE_DEVOPS_PAT has 'Project and Team (Read & Write)' scope."
+                        "Verify your Azure DevOps PAT has 'Project and Team (Read & Write)' scope."
                     ),
                 )
 
@@ -1050,7 +1189,7 @@ def create_ado_project(
         _logging.error("Network error reaching Azure DevOps: %s", exc)
         raise HTTPException(
             status_code=502,
-            detail="Could not connect to Azure DevOps. Check network connectivity and AZURE_DEVOPS_ORGANIZATION.",
+            detail="Could not connect to Azure DevOps. Check network connectivity and AZURE_DEVOPS_BASE_URL.",
         )
 
     # 5. Submit Terraform job
@@ -1165,7 +1304,7 @@ def _assign_admin_post_terraform(job_id: str, current_user: AuthUser) -> None:
     if USE_MOCK:
         return
 
-    if not ADO_BASE or ADO_BASE.rstrip("/") == "https://dev.azure.com":
+    if not ADO_BASE:
         return
 
     pat = _get_pat_for_user(current_user)

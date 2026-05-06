@@ -1,8 +1,8 @@
 """
 Authentication, token handling, and RBAC helpers.
 
-The portal issues its own HS256 JWTs after Google OAuth completes (see
-``api/auth.py``) and stores them in an ``auth_token`` HttpOnly cookie.
+The portal issues its own HS256 JWTs after OIDC or bootstrap-admin login and
+stores them in an ``auth_token`` HttpOnly cookie.
 Every protected endpoint depends on :func:`get_current_user`, which
 accepts either the cookie or an ``Authorization: Bearer <token>`` header —
 the Bearer path exists so internal tools and tests don't have to
@@ -17,6 +17,7 @@ call. The slight cost is worth the correctness.
 import datetime as dt
 from typing import Any, Dict, List, Optional
 
+import bcrypt
 import jwt
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -63,6 +64,19 @@ def create_access_token(payload: Dict[str, Any]) -> str:
     to_encode["iat"] = int(now.timestamp())
     to_encode["exp"] = int((now + expire_delta).timestamp())
     return jwt.encode(to_encode, settings.jwt_secret, algorithm="HS256")
+
+
+def hash_password(password: str) -> str:
+    """Hash a local bootstrap-admin password with bcrypt."""
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def verify_password(password: str, stored_hash: str) -> bool:
+    """Verify a bootstrap-admin password with bcrypt.checkpw."""
+    try:
+        return bcrypt.checkpw(password.encode("utf-8"), stored_hash.encode("utf-8"))
+    except Exception:
+        return False
 
 
 def decode_access_token(token: str) -> Dict[str, Any]:

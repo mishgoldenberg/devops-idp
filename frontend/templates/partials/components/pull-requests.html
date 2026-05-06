@@ -26,16 +26,11 @@
 				{{ prs|length }} open
 			</div>
 		</div>
-		{% if error %}
-		<div
-			class="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-base-content/80"
-		>
-			<p class="font-semibold text-warning">Azure DevOps unavailable</p>
-			<p class="mt-1">{{ error }}</p>
-			<div class="mt-3 grid grid-cols-1 gap-2">
-				<input type="password" placeholder="Paste Personal Access Token" class="input input-bordered input-sm w-full ado-pat-input" />
-				<button type="button" class="btn btn-xs btn-primary ado-pat-save-btn">Save PAT</button>
-			</div>
+		{% if error and needs_pat %}
+		{% include "partials/components/azure-pat-prompt.html" %}
+		{% elif error %}
+		<div class="flex flex-1 items-center justify-center rounded-xl border border-error/20 bg-error/5 p-4 text-center text-xs text-error">
+			{{ error }}
 		</div>
 		{% else %}
 		<!-- PR list -->

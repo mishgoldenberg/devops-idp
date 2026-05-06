@@ -55,13 +55,9 @@ Authentication is PAT + HTTP Basic (`httpx.BasicAuth("", pat)`).
 
 ## Environment variables
 
-- `USE_MOCK_AZURE_DEVOPS` — default `true`, returns canned data.
-- `AZURE_DEVOPS_ORGANIZATION` / `AZURE_DEVOPS_ORG` — org name.
-- `AZURE_DEVOPS_API_URL` — base URL override.
-- `AZURE_DEVOPS_PAT` — fallback PAT when a user hasn't configured their own.
-- `AZURE_DEVOPS_ADMIN_PAT` — PAT with `Process (Read & Manage)` used by
-  `ensure_custom_ado_process`.
-- `AZURE_DEVOPS_QUERY_USER` — dev-only override for work item / PR queries.
+- `AZURE_DEVOPS_BASE_URL` — Azure DevOps organization URL.
+- `AZURE_DEVOPS_ADMIN_PAT` — PAT with project/process permissions used by
+  self-service write actions.
 
 ## Failure handling
 

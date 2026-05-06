@@ -47,51 +47,31 @@ default behavior and whether they are required.
 | ---------------------- | --------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- | -------- |
 | `JWT_SECRET`           | HS256 signing secret for the portal's own session JWT.                                              | A 40+ char random string                                                | Yes      |
 | `JWT_EXPIRY`           | JWT TTL. Accepts `8h`, `1d`, etc. Drives the `auth_token` cookie `max_age`.                         | `8h`                                                                    | No       |
-| `OAUTH_CLIENT_ID`      | Google OAuth client ID.                                                                             | `…apps.googleusercontent.com`                                           | Yes      |
-| `OAUTH_CLIENT_SECRET`  | Google OAuth client secret.                                                                         | `GOCSPX-…`                                                              | Yes      |
-| `OAUTH_REDIRECT_URI`   | Where Google redirects after consent. Must exactly match a value registered in GCP.                 | `https://devops.internal.company/api/auth/callback`                     | Yes      |
-| `OAUTH_ISSUER`         | OIDC issuer URL.                                                                                    | `https://accounts.google.com`                                           | No       |
-| `OAUTH_AUTH_URL`       | OIDC authorization endpoint. Derived from issuer when unset.                                        | `https://accounts.google.com/o/oauth2/v2/auth`                          | No       |
-| `OAUTH_TOKEN_URL`      | OIDC token endpoint.                                                                                | `https://oauth2.googleapis.com/token`                                   | No       |
-| `OAUTH_JWKS_URL`       | OIDC JWKS endpoint.                                                                                 | `https://www.googleapis.com/oauth2/v3/certs`                            | No       |
-| `OAUTH_SCOPES`         | Space-separated scope list.                                                                         | `openid email profile`                                                  | No       |
+| `HUB_ADMIN_USERNAME`   | Bootstrap admin username/email used only when no admin exists.                                      | `admin@example.com`                                                     | Yes      |
+| `HUB_ADMIN_PASSWORD`   | Bootstrap admin password, bcrypt-hashed on first startup.                                           | From GitHub Secrets                                                     | Yes      |
 
 ## Azure DevOps integration
 
-| Name                          | Description                                                                                    | Example                       | Required |
-| ----------------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------- | -------- |
-| `USE_MOCK_AZURE_DEVOPS`       | `true` (default) returns canned data without calling ADO. Set to `false` in production.         | `false`                       | No       |
-| `AZURE_DEVOPS_ORGANIZATION`   | ADO organization name. Preferred.                                                              | `myorg`                       | Yes (real) |
-| `AZURE_DEVOPS_ORG`            | Alias for `AZURE_DEVOPS_ORGANIZATION`.                                                         | `myorg`                       | No       |
-| `AZURE_DEVOPS_API_URL`        | Override base URL. Only used if neither of the org vars is set.                                | `https://dev.azure.com`       | No       |
-| `AZURE_DEVOPS_PAT`            | Fallback PAT used only for self-service (project creation) when a user hasn't connected theirs. | PAT                           | Yes (real) |
-| `AZURE_DEVOPS_ADMIN_PAT`      | PAT with `Process (Read & Manage)` scope used for custom process creation.                      | PAT                           | Yes (real) |
-| `AZURE_DEVOPS_QUERY_USER`     | Dev-only: query work items/PRs as this user instead of the caller.                              | `service-account@company.com` | No       |
+| Name                     | Description                                                               | Example                         | Required |
+| ------------------------ | ------------------------------------------------------------------------- | ------------------------------- | -------- |
+| `AZURE_DEVOPS_BASE_URL`  | Azure DevOps organization URL used for API calls and external links.       | `https://dev.azure.com/myorg`   | Yes      |
+| `AZURE_DEVOPS_ADMIN_PAT` | PAT with project/process permissions used for self-service write actions.  | PAT                             | Yes      |
 
 ## ServiceNow integration
 
 | Name                   | Description                                                                          | Example                                 | Required |
 | ---------------------- | ------------------------------------------------------------------------------------ | --------------------------------------- | -------- |
-| `USE_MOCK_SERVICENOW`  | `true` (default) returns canned tickets without calling SNOW.                         | `false`                                 | No       |
-| `SERVICENOW_URL`       | Full instance URL. Preferred.                                                         | `https://mycompany.service-now.com`     | Yes (real) |
-| `SERVICENOW_INSTANCE`  | Instance shortname; used only if `SERVICENOW_URL` is unset.                           | `mycompany`                             | No       |
-| `SERVICENOW_USERNAME`  | Service-account user for the incident API.                                            | `portal_bot`                            | Yes (real) |
-| `SERVICENOW_USER`      | Alias for `SERVICENOW_USERNAME`.                                                      | `portal_bot`                            | No       |
-| `SERVICENOW_PASSWORD`  | Password for the service account.                                                     | `********`                              | Yes (real) |
+| `SNOW_BASE_URL`        | Full instance URL used for all ServiceNow API calls.                                  | `https://mycompany.service-now.com`     | Yes (real) |
+| `SNOW_API_USERNAME`    | Service-account user for incident and attachment APIs.                                | `portal_bot`                            | Yes (real) |
+| `SNOW_API_PASSWORD`    | Password for the service account.                                                     | `********`                              | Yes (real) |
 
-## SonarQube / Artifactory
+## SonarQube / Artifactory / Confluence
 
-Both integrations are currently **mock-only** in code. The env vars below
-exist in `env.example` for future real integrations.
-
-| Name                   | Description                                        | Example                                   | Required |
-| ---------------------- | -------------------------------------------------- | ----------------------------------------- | -------- |
-| `USE_MOCK_SONARQUBE`   | Always effectively `true` today.                   | `true`                                    | No       |
-| `SONARQUBE_URL`        | Reserved for real integration.                     | `https://sonarqube.internal.company`      | No       |
-| `SONARQUBE_TOKEN`      | Reserved for real integration.                     | Token                                     | No       |
-| `USE_MOCK_ARTIFACTORY` | Always effectively `true` today.                   | `true`                                    | No       |
-| `ARTIFACTORY_URL`      | Reserved for real integration.                     | `https://artifactory.internal.company`    | No       |
-| `ARTIFACTORY_API_KEY`  | Reserved for real integration.                     | API key                                   | No       |
+| Name                   | Description                                            | Example                                | Required |
+| ---------------------- | ------------------------------------------------------ | -------------------------------------- | -------- |
+| `SONARQUBE_BASE_URL`   | SonarQube base URL used by the connected widget.       | `https://sonarqube.internal.company`   | Yes      |
+| `ARTIFACTORY_BASE_URL` | Artifactory base URL used by connected widgets.        | `https://artifactory.internal.company` | Yes      |
+| `CONFLUENCE_BASE_URL`  | Confluence base URL used by the Confluence Pages widget. | `https://confluence.internal.company`  | Yes      |
 
 ## Self-service / Terraform
 

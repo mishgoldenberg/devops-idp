@@ -31,6 +31,13 @@
 				Azure DevOps – My Work Items
 			</h3>
 			<div class="ml-auto flex items-center gap-1">
+				<select
+					class="select select-bordered select-xs w-32"
+					data-ado-project-select
+					aria-label="Azure DevOps project"
+				>
+					<option value="">All projects</option>
+				</select>
 				<button
 					type="button"
 					class="btn btn-ghost btn-xs px-2 text-base-content/60 hover:text-base-content"
@@ -56,26 +63,15 @@
 			</div>
 		</div>
 
-		{% if error %}
-		<div
-			class="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-base-content/80"
-		>
-			<p class="font-semibold text-warning">Azure DevOps unavailable</p>
-			<p class="mt-1">{{ error }}</p>
-			<div class="mt-3 grid grid-cols-1 gap-2">
-				<input
-					type="password"
-					placeholder="Paste Personal Access Token"
-					class="input input-bordered input-sm w-full ado-pat-input"
-				/>
-				<button type="button" class="btn btn-xs btn-primary ado-pat-save-btn">
-					Save PAT
-				</button>
-			</div>
+		{% if error and needs_pat %}
+		{% include "partials/components/azure-pat-prompt.html" %}
+		{% elif error %}
+		<div class="flex flex-1 items-center justify-center rounded-xl border border-error/20 bg-error/5 p-4 text-center text-xs text-error">
+			{{ error }}
 		</div>
 		{% else %}
 		<div
-			class="flex-1 min-h-0 flex flex-col"
+			class="flex-1 min-h-0 flex flex-col relative"
 			data-ado-body
 		>
 			<div
@@ -88,6 +84,10 @@
 				class="hidden flex-1 min-h-0 overflow-y-auto overscroll-contain flex flex-col gap-2 pr-1"
 				data-ado-list
 			></ul>
+			<div
+				class="hidden absolute right-6 top-20 z-10 w-80 origin-top-right rounded-xl border border-base-300 bg-base-100 p-4 shadow-xl opacity-0 scale-95 translate-y-1 transform transition-all duration-150 ease-out"
+				data-ado-task-panel
+			></div>
 		</div>
 		{% endif %}
 	</div>
@@ -106,9 +106,15 @@
 		const statusEl = root.querySelector("[data-ado-status]");
 		const filterBtns = root.querySelectorAll("[data-ado-filter]");
 		const refreshBtn = root.querySelector("[data-ado-refresh]");
+		const projectSelect = root.querySelector("[data-ado-project-select]");
+		const taskPanel = root.querySelector("[data-ado-task-panel]");
+		const projectKey = "ado-workitems-project";
+		const taskCache = new Map();
+		let taskPanelTimer = null;
 
 		let items = [];
 		let filter = "all";
+		let selectedProject = localStorage.getItem(projectKey) || "";
 
 		function setStatus(msg) {
 			if (!msg) {
@@ -157,6 +163,37 @@
 			return "text-base-content/60";
 		}
 
+		function taskStateClass(state) {
+			const s = String(state || "").toLowerCase();
+			if (s === "done" || s === "closed" || s === "completed") return "badge-success";
+			if (s === "in progress" || s === "active" || s === "doing") return "badge-info";
+			return "badge-ghost";
+		}
+
+		function scheduleHideTaskPanel() {
+			if (!taskPanel) return;
+			clearTimeout(taskPanelTimer);
+			taskPanelTimer = setTimeout(hideTaskPanel, 180);
+		}
+
+		function showTaskPanel() {
+			if (!taskPanel) return;
+			taskPanel.classList.remove("hidden");
+			requestAnimationFrame(() => {
+				taskPanel.classList.remove("opacity-0", "scale-95", "translate-y-1");
+				taskPanel.classList.add("opacity-100", "scale-100", "translate-y-0");
+			});
+		}
+
+		function hideTaskPanel() {
+			if (!taskPanel) return;
+			taskPanel.classList.remove("opacity-100", "scale-100", "translate-y-0");
+			taskPanel.classList.add("opacity-0", "scale-95", "translate-y-1");
+			setTimeout(() => {
+				if (taskPanel.classList.contains("opacity-0")) taskPanel.classList.add("hidden");
+			}, 160);
+		}
+
 		function renderPinSvg(pinned) {
 			return pinned
 				? '<svg viewBox="0 0 20 20" class="h-4 w-4 fill-current text-warning" aria-hidden="true"><path d="M11.7 1.7a1 1 0 011.4 0l5.2 5.2a1 1 0 010 1.4l-1.4 1.4a1 1 0 01-1 .26l-2.9-.82-3.6 3.6.73 3a1 1 0 01-1.67.94l-2.65-2.65-3.3 3.3a1 1 0 01-1.41-1.41l3.3-3.3L1.78 9.97a1 1 0 01.94-1.67l3 .73 3.6-3.6-.82-2.9a1 1 0 01.26-1L11.7 1.7z"/></svg>'
@@ -190,7 +227,7 @@
 					const pin = renderPinSvg(!!it.pinned);
 					const pinnedCls = it.pinned ? "bg-warning/5 border-warning/30" : "bg-base-200/60 border-base-300";
 					return (
-						'<li class="rounded-lg border ' + pinnedCls + ' px-3 py-2 flex items-center gap-2 transition hover:border-primary/50 hover:bg-base-200" data-id="' + idStr + '">' +
+						'<li class="rounded-lg border ' + pinnedCls + ' px-3 py-2 flex items-center gap-2 transition hover:border-primary/50 hover:bg-base-200" data-id="' + idStr + '" data-ado-hover-id="' + idStr + '">' +
 							'<div class="flex-1 min-w-0">' +
 								'<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer" class="block text-sm font-medium text-base-content hover:text-primary truncate" data-ado-open>' +
 									title +
@@ -214,9 +251,52 @@
 			setStatus(null);
 		}
 
+		function renderTaskPanel(itemId, tasks, anchor) {
+			if (!taskPanel) return;
+			const rowRect = anchor.getBoundingClientRect();
+			const rootRect = root.getBoundingClientRect();
+			taskPanel.style.top = `${Math.max(72, rowRect.top - rootRect.top)}px`;
+			const rows = tasks.map((task) => `
+				<li class="rounded-lg bg-base-200 px-2 py-1.5">
+					<a href="${escapeHtml(task.url || "#")}" target="_blank" rel="noopener noreferrer" class="flex items-center gap-2 hover:text-primary">
+						<span class="truncate text-xs font-medium">${escapeHtml(task.title || "")}</span>
+						<span class="badge badge-xs ${taskStateClass(task.state)} ml-auto">${escapeHtml(task.state || "")}</span>
+					</a>
+				</li>
+			`).join("");
+			taskPanel.innerHTML = `
+				<div class="flex items-center justify-between gap-2">
+					<p class="text-sm font-semibold">Child tasks</p>
+					<span class="text-xs text-base-content/50">#${escapeHtml(itemId)}</span>
+				</div>
+				${tasks.length ? `<ul class="mt-3 flex max-h-48 flex-col gap-2 overflow-y-auto pr-1">${rows}</ul>` : '<p class="mt-3 text-xs text-base-content/50">No child tasks.</p>'}
+			`;
+			showTaskPanel();
+		}
+
+		async function loadTasksFor(itemId, anchor) {
+			if (!taskPanel) return;
+			if (taskCache.has(itemId)) {
+				renderTaskPanel(itemId, taskCache.get(itemId), anchor);
+				return;
+			}
+			taskPanel.innerHTML = '<div class="flex items-center gap-2 text-xs text-base-content/50"><span class="loading loading-spinner loading-xs"></span> Loading child tasks…</div>';
+			showTaskPanel();
+			const res = await fetch(`/api/azure-devops/workitem-tasks?id=${encodeURIComponent(itemId)}`, {
+				credentials: "same-origin",
+				headers: { Accept: "application/json" },
+			});
+			if (!res.ok) throw new Error("http " + res.status);
+			const body = await res.json();
+			const tasks = Array.isArray(body && body.data) ? body.data : [];
+			taskCache.set(itemId, tasks);
+			renderTaskPanel(itemId, tasks, anchor);
+		}
+
 		async function load() {
 			try {
-				const res = await fetch("/api/dashboard/ado-items", {
+				const url = "/api/dashboard/ado-items" + (selectedProject ? `?project=${encodeURIComponent(selectedProject)}` : "");
+				const res = await fetch(url, {
 					credentials: "same-origin",
 					headers: { Accept: "application/json" },
 				});
@@ -242,6 +322,29 @@
 					'<span class="text-base-content/50">Service unavailable</span>';
 				statusEl.classList.remove("hidden");
 				listEl.classList.add("hidden");
+			}
+		}
+
+		async function loadProjects() {
+			if (!projectSelect) return;
+			try {
+				const res = await fetch("/api/azure-devops/projects", {
+					credentials: "same-origin",
+					headers: { Accept: "application/json" },
+				});
+				if (!res.ok) return;
+				const body = await res.json();
+				const projects = Array.isArray(body && body.data) ? body.data : [];
+				projectSelect.innerHTML =
+					'<option value="">All projects</option>' +
+					projects.map((p) => {
+						const name = String(p.name || p.id || "");
+						const selected = name === selectedProject ? " selected" : "";
+						return `<option value="${escapeHtml(name)}"${selected}>${escapeHtml(name)}</option>`;
+					}).join("");
+				projectSelect.value = selectedProject;
+			} catch (_) {
+				/* selector stays on All projects */
 			}
 		}
 
@@ -310,6 +413,24 @@
 			}
 		});
 
+		body.addEventListener("mouseover", (e) => {
+			const row = e.target.closest("[data-ado-hover-id]");
+			if (!row) return;
+			clearTimeout(taskPanelTimer);
+			loadTasksFor(row.dataset.adoHoverId, row).catch(() => {
+				if (!taskPanel) return;
+				taskPanel.innerHTML = '<p class="text-xs text-error">Could not load child tasks.</p>';
+				showTaskPanel();
+			});
+		});
+
+		body.addEventListener("mouseleave", () => {
+			scheduleHideTaskPanel();
+		});
+
+		taskPanel?.addEventListener("mouseenter", () => clearTimeout(taskPanelTimer));
+		taskPanel?.addEventListener("mouseleave", scheduleHideTaskPanel);
+
 		filterBtns.forEach((btn) => {
 			btn.addEventListener("click", () => {
 				filter = btn.dataset.adoFilter;
@@ -324,7 +445,14 @@
 		});
 
 		refreshBtn?.addEventListener("click", load);
+		projectSelect?.addEventListener("change", () => {
+			selectedProject = projectSelect.value || "";
+			try { localStorage.setItem(projectKey, selectedProject); } catch (_) {}
+			taskCache.clear();
+			load();
+		});
 
+		loadProjects();
 		load();
 	})();
 
@@ -332,9 +460,14 @@
 		if (window.__adoPatBinderAttached) return;
 		window.__adoPatBinderAttached = true;
 		document.addEventListener("click", async function (e) {
+			const cancelBtn = e.target.closest(".ado-pat-cancel-btn");
+			if (cancelBtn) {
+				cancelBtn.closest("[data-ado-pat-prompt]")?.classList.add("hidden");
+				return;
+			}
 			const btn = e.target.closest(".ado-pat-save-btn");
 			if (!btn) return;
-			const wrap = btn.closest("div");
+			const wrap = btn.closest("[data-ado-pat-prompt]");
 			const input = wrap?.querySelector(".ado-pat-input");
 			const pat = (input?.value || "").trim();
 			if (!pat) return;
@@ -350,12 +483,14 @@
 					const statusRes = await fetch("/ui/azure-devops/pat", { credentials: "same-origin" });
 					const statusJson = await statusRes.json();
 					if (statusRes.ok && statusJson?.data?.configured) {
+						if (input) input.value = "";
+						window.portalToast?.({ kind: "success", message: "Azure DevOps connected." });
 						document.getElementById("refresh-btn")?.click();
 					} else {
-						alert("PAT did not persist. Please try again.");
+						window.portalToast?.({ kind: "error", message: "PAT did not persist. Please try again." });
 					}
 				} else {
-					alert("Failed to save PAT. Please verify token permissions and try again.");
+					window.portalToast?.({ kind: "error", message: "Invalid token or connection failed" });
 				}
 			} finally {
 				btn.disabled = false;

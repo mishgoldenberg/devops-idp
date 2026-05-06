@@ -1,0 +1,175 @@
+trigger:
+  branches:
+    include:
+      - dev
+      - main
+
+pool:
+  name: devops-closed-network
+
+variables:
+  - group: devops-hub-closed-network
+  - name: imageTag
+    value: $(Build.BuildId)
+  - name: imageRepository
+    value: $(ARTIFACTORY_DOCKER_REGISTRY)/$(ARTIFACTORY_DOCKER_REPOSITORY)
+  - name: backendImage
+    value: $(imageRepository)/backend:$(imageTag)
+  - name: frontendImage
+    value: $(imageRepository)/frontend:$(imageTag)
+  - name: helmReleaseName
+    value: devops-hub
+
+stages:
+  - stage: Build
+    displayName: Build
+    jobs:
+      - job: frontend_build
+        displayName: frontend-build
+        steps:
+          - checkout: self
+          - script: |
+              set -euo pipefail
+              if [ -n "${NPM_REGISTRY_URL:-}" ]; then
+                npm config set registry "$NPM_REGISTRY_URL"
+              fi
+              npm ci
+            displayName: npm ci
+            workingDirectory: frontend
+          - script: npm run build:css
+            displayName: npm run build:css
+            workingDirectory: frontend
+
+      - job: backend_build
+        displayName: backend-build
+        steps:
+          - checkout: self
+          - script: |
+              set -euo pipefail
+              python -m pip install --upgrade pip
+              python -m pip install -r backend/app/requirements.txt
+            displayName: pip install requirements
+
+      - job: docker_build
+        displayName: docker-build
+        dependsOn:
+          - frontend_build
+          - backend_build
+        steps:
+          - checkout: self
+          - script: |
+              set -euo pipefail
+              docker build \
+                --build-arg PYTHON_BASE_IMAGE="$(PYTHON_BASE_IMAGE)" \
+                --build-arg PIP_INDEX_URL="$(PIP_INDEX_URL)" \
+                --build-arg PIP_TRUSTED_HOST="$(PIP_TRUSTED_HOST)" \
+                -f backend/app/Dockerfile \
+                -t "$(backendImage)" \
+                .
+              docker build \
+                --build-arg NGINX_BASE_IMAGE="$(NGINX_BASE_IMAGE)" \
+                -f frontend/Dockerfile \
+                -t "$(frontendImage)" \
+                .
+              docker save "$(backendImage)" -o "$(Pipeline.Workspace)/backend-image.tar"
+              docker save "$(frontendImage)" -o "$(Pipeline.Workspace)/frontend-image.tar"
+            displayName: Build backend and frontend images
+          - publish: $(Pipeline.Workspace)/backend-image.tar
+            artifact: backend-image
+            displayName: Publish backend image artifact
+          - publish: $(Pipeline.Workspace)/frontend-image.tar
+            artifact: frontend-image
+            displayName: Publish frontend image artifact
+
+  - stage: Push
+    displayName: Push
+    dependsOn: Build
+    jobs:
+      - job: push_image
+        displayName: Push image
+        steps:
+          - checkout: self
+          - download: current
+            artifact: backend-image
+          - download: current
+            artifact: frontend-image
+          - script: |
+              set -euo pipefail
+              echo "$(ARTIFACTORY_DOCKER_PASSWORD)" | docker login "$(ARTIFACTORY_DOCKER_REGISTRY)" --username "$(ARTIFACTORY_DOCKER_USERNAME)" --password-stdin
+              docker load -i "$(Pipeline.Workspace)/backend-image/backend-image.tar"
+              docker load -i "$(Pipeline.Workspace)/frontend-image/frontend-image.tar"
+              docker push "$(backendImage)"
+              docker push "$(frontendImage)"
+            displayName: Login, load, and push images
+
+  - stage: Deploy
+    displayName: Deploy
+    dependsOn: Push
+    jobs:
+      - job: deploy
+        displayName: Deploy to OpenShift
+        steps:
+          - checkout: self
+          - script: |
+              set -euo pipefail
+              oc login "$(OPENSHIFT_API_URL)" --token="$(OPENSHIFT_TOKEN)" --insecure-skip-tls-verify="$(OPENSHIFT_INSECURE_SKIP_TLS_VERIFY)"
+              oc project "$(OPENSHIFT_NAMESPACE)" || oc new-project "$(OPENSHIFT_NAMESPACE)"
+
+              python - <<'PY'
+              import json
+              import os
+
+              secrets = {
+                  "postgresPassword": os.environ.get("POSTGRES_PASSWORD", ""),
+                  "redisPassword": os.environ.get("REDIS_PASSWORD", ""),
+                  "hubAdminUsername": os.environ.get("HUB_ADMIN_USERNAME", ""),
+                  "hubAdminPassword": os.environ.get("HUB_ADMIN_PASSWORD", ""),
+                  "jwtSecret": os.environ.get("JWT_SECRET", ""),
+                  "azureDevopsBaseUrl": os.environ.get("AZURE_DEVOPS_BASE_URL", ""),
+                  "azureDevopsAdminPat": os.environ.get("AZURE_DEVOPS_ADMIN_PAT", ""),
+                  "snowBaseUrl": os.environ.get("SNOW_BASE_URL", ""),
+                  "snowApiUsername": os.environ.get("SNOW_API_USERNAME", ""),
+                  "snowApiPassword": os.environ.get("SNOW_API_PASSWORD", ""),
+                  "artifactoryBaseUrl": os.environ.get("ARTIFACTORY_BASE_URL", ""),
+                  "sonarqubeBaseUrl": os.environ.get("SONARQUBE_BASE_URL", ""),
+                  "confluenceBaseUrl": os.environ.get("CONFLUENCE_BASE_URL", ""),
+              }
+              with open(os.environ["PIPELINE_WORKSPACE"] + "/helm-secrets-values.json", "w", encoding="utf-8") as f:
+                  json.dump({"backend": {"secrets": secrets}}, f)
+              PY
+
+              helm dependency build ./deployment
+              helm upgrade --install "$(helmReleaseName)" ./deployment \
+                --namespace "$(OPENSHIFT_NAMESPACE)" \
+                --create-namespace \
+                --atomic \
+                --timeout 15m \
+                -f "$(Pipeline.Workspace)/helm-secrets-values.json" \
+                --set-string global.customImage.repository="$(imageRepository)" \
+                --set-string backend.image.tag="$(imageTag)" \
+                --set-string frontend.image.tag="$(imageTag)" \
+                --set-string backend.ingress.host="$(HUB_HOSTNAME)" \
+                --set-string frontend.ingress.host="$(HUB_HOSTNAME)" \
+                --set-string infrastructure.postgres.image="$(POSTGRES_IMAGE)" \
+                --set-string infrastructure.redis.image="$(REDIS_IMAGE)" \
+                --set-string ingress-prod.controller.image.registry="$(INGRESS_NGINX_IMAGE_REGISTRY)" \
+                --set-string ingress-prod.controller.image.image="$(INGRESS_NGINX_IMAGE_NAME)" \
+                --set-string ingress-prod.controller.image.tag="$(INGRESS_NGINX_IMAGE_TAG)" \
+                --set-string ingress-prod.controller.image.digest="" \
+                --set-string ingress-prod.controller.scope.namespace="$(OPENSHIFT_NAMESPACE)"
+            displayName: Deploy with Helm
+            env:
+              PIPELINE_WORKSPACE: $(Pipeline.Workspace)
+              POSTGRES_PASSWORD: $(POSTGRES_PASSWORD)
+              REDIS_PASSWORD: $(REDIS_PASSWORD)
+              HUB_ADMIN_USERNAME: $(HUB_ADMIN_USERNAME)
+              HUB_ADMIN_PASSWORD: $(HUB_ADMIN_PASSWORD)
+              JWT_SECRET: $(JWT_SECRET)
+              AZURE_DEVOPS_BASE_URL: $(AZURE_DEVOPS_BASE_URL)
+              AZURE_DEVOPS_ADMIN_PAT: $(AZURE_DEVOPS_ADMIN_PAT)
+              SNOW_BASE_URL: $(SNOW_BASE_URL)
+              SNOW_API_USERNAME: $(SNOW_API_USERNAME)
+              SNOW_API_PASSWORD: $(SNOW_API_PASSWORD)
+              ARTIFACTORY_BASE_URL: $(ARTIFACTORY_BASE_URL)
+              SONARQUBE_BASE_URL: $(SONARQUBE_BASE_URL)
+              CONFLUENCE_BASE_URL: $(CONFLUENCE_BASE_URL)

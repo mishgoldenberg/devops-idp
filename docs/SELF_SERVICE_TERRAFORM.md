@@ -195,7 +195,7 @@ A `batch/v1` Job is created with:
 | Command | `terraform init -no-color && terraform apply -auto-approve -no-color` |
 | Service account | `devops-terraform-sa` |
 | GCP Workload Identity | `iam.gke.io/gcp-service-account: devops-terraform-sa@devops-idp-489012.iam.gserviceaccount.com` |
-| `AZDO_PERSONAL_ACCESS_TOKEN` | Injected from `all-secrets` K8s Secret key `AZURE_DEVOPS_PAT` |
+| `AZDO_PERSONAL_ACCESS_TOKEN` | Injected from `all-secrets` K8s Secret key `AZURE_DEVOPS_ADMIN_PAT` |
 | `TF_LOG` | `INFO` |
 | `ttlSecondsAfterFinished` | `86400` (24 h auto-cleanup) |
 | `backoffLimit` | `0` (no retries — ADO project creation is not idempotent) |
@@ -295,7 +295,7 @@ The GCP service account `devops-terraform-sa@devops-idp-489012.iam.gserviceaccou
 ## 6. Security & RBAC
 
 - The self-service endpoint is **accessible to all authenticated users** (no additional RBAC gate).
-- The Azure DevOps PAT (`AZURE_DEVOPS_PAT` / `all-secrets`) must have: **Project and Team (Read & Write)**, **Process (Read & Write)**, **Graph (Read & Write)**.
+- The Azure DevOps PAT (`AZURE_DEVOPS_ADMIN_PAT` / `all-secrets`) must have: **Project and Team (Read & Write)**, **Process (Read & Write)**, **Graph (Read & Write)**.
 - The Terraform container **never receives the GCP SA key file** — authentication is via GKE Workload Identity only.
 - The generated `main.tf` is stored in a Kubernetes ConfigMap (not a Secret); no credentials are written into it.
 - Job TTL is 24 hours; ConfigMaps are removed when the Job is garbage-collected.
@@ -374,24 +374,7 @@ kubectl apply -f infrastructure/k8s/base/rbac/terraform-job-manager.yaml
 
 ---
 
-## 8. Mock Mode (Development)
-
-When `USE_MOCK_AZURE_DEVOPS=true` (the default in local dev):
-
-- All ADO validation calls are skipped.
-- `submit_terraform_job()` creates an entry in `_mock_jobs` (in-memory dict) and returns a `mock-<hex>` job ID immediately.
-- The status endpoint simulates progression:
-  - `0–3 s` → `pending`
-  - `3–12 s` → `running`
-  - `> 12 s` → `succeeded` with a constructed project URL
-- No Kubernetes Job or ConfigMap is created.
-- No GCS writes are attempted.
-
-To trigger the "project already exists" error in mock mode, there is no built-in hook — use a real ADO environment or temporarily set `USE_MOCK_AZURE_DEVOPS=false` with a valid PAT.
-
----
-
-## 9. Error Reference
+## 8. Error Reference
 
 | Scenario | HTTP status | User-facing message |
 |---|---|---|
@@ -421,9 +404,9 @@ Common causes: `devops-terraform-sa` ServiceAccount missing, image pull failure,
 
 ### Terraform fails with authentication error
 
-`Error: The argument "personal_access_token" is required` — the `AZDO_PERSONAL_ACCESS_TOKEN` env var was not injected. Verify the `all-secrets` K8s Secret contains the key `AZURE_DEVOPS_PAT`:
+`Error: The argument "personal_access_token" is required` — the `AZDO_PERSONAL_ACCESS_TOKEN` env var was not injected. Verify the `all-secrets` K8s Secret contains the key `AZURE_DEVOPS_ADMIN_PAT`:
 ```bash
-kubectl get secret all-secrets -n devops-control-center -o jsonpath='{.data.AZURE_DEVOPS_PAT}' | base64 -d | wc -c
+kubectl get secret all-secrets -n devops-control-center -o jsonpath='{.data.AZURE_DEVOPS_ADMIN_PAT}' | base64 -d | wc -c
 # Should be > 0
 ```
 

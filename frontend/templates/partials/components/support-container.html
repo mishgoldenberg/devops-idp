@@ -8,7 +8,7 @@
 			{% with system_key = 'servicenow' %}
 				{% include "partials/components/open-system-button.html" %}
 			{% endwith %}
-			<button id="support-new-ticket-btn" class="btn btn-primary btn-sm">New Ticket</button>
+			<button id="support-new-ticket-btn" class="btn btn-primary btn-sm">Open a Ticket</button>
 		</div>
 	</header>
 
@@ -34,25 +34,214 @@
 </div>
 
 <div id="support-new-ticket-overlay" class="hidden fixed inset-0 z-50 items-center justify-center bg-black/50 p-4">
-	<div class="w-full max-w-lg rounded-xl border border-base-300 bg-base-100 shadow-2xl">
-		<div class="px-5 py-4 border-b border-base-300">
-		<h3 class="font-bold text-lg">Create Ticket</h3>
+	<div class="w-full max-w-4xl max-h-[92vh] rounded-xl border border-base-300 bg-base-100 shadow-2xl flex flex-col">
+		<div class="px-5 py-4 border-b border-base-300 flex items-center justify-between gap-3">
+			<div>
+				<h3 class="font-bold text-lg">Open a Ticket</h3>
+				<p id="support-step-label" class="text-xs opacity-70">Step 1 of 4 — Navy User Info</p>
+			</div>
+			<button id="support-cancel-ticket" class="btn btn-ghost btn-sm">Close</button>
 		</div>
-		<div class="p-5 space-y-3">
-			<input id="support-new-title" class="input input-bordered w-full" placeholder="Title" />
-			<textarea id="support-new-description" class="textarea textarea-bordered w-full" rows="4" placeholder="Description"></textarea>
-			<select id="support-new-priority" class="select select-bordered w-full">
-				<option value="1">1 - Critical</option>
-				<option value="2">2 - High</option>
-				<option value="3" selected>3 - Moderate</option>
-				<option value="4">4 - Low</option>
-				<option value="5">5 - Planning</option>
-			</select>
-			<div id="support-new-ticket-error" class="hidden alert alert-error alert-soft text-xs whitespace-pre-wrap"></div>
+
+		<div class="px-5 pt-4 grid grid-cols-4 gap-2" aria-label="Ticket creation progress">
+			<div class="h-1.5 rounded-full bg-base-300 transition-colors" data-support-step-bar="0"></div>
+			<div class="h-1.5 rounded-full bg-base-300 transition-colors" data-support-step-bar="1"></div>
+			<div class="h-1.5 rounded-full bg-base-300 transition-colors" data-support-step-bar="2"></div>
+			<div class="h-1.5 rounded-full bg-base-300 transition-colors" data-support-step-bar="3"></div>
 		</div>
-		<div class="px-5 pb-5 flex justify-end gap-2">
-			<button id="support-cancel-ticket" class="btn">Cancel</button>
-			<button id="support-create-ticket" class="btn btn-primary">Create</button>
+
+		<div class="p-5 overflow-y-auto">
+			<div id="support-new-ticket-error" class="hidden mb-4 alert alert-error alert-soft text-xs whitespace-pre-wrap"></div>
+			<div id="support-ticket-success" class="hidden text-center py-12 space-y-4">
+				<div class="mx-auto h-14 w-14 rounded-full bg-success/15 text-success flex items-center justify-center">
+					<svg viewBox="0 0 24 24" class="h-8 w-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+						<path d="M20 6 9 17l-5-5"></path>
+					</svg>
+				</div>
+				<div>
+					<h4 class="text-xl font-bold">Ticket created successfully</h4>
+					<p id="support-created-ticket-number" class="mt-1 text-2xl font-semibold text-primary"></p>
+				</div>
+				<a class="btn btn-primary" href="/ui/support">Go to Support</a>
+			</div>
+
+			<form id="support-ticket-flow-form" class="space-y-6">
+				<section data-support-step="0" class="section-card p-5 space-y-5 transition-all duration-200">
+					<div class="section-title">Navy User Info</div>
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+						<label class="form-control w-full">
+							<span class="label-text">Full Name (שם מלא)</span>
+							<input name="full_name" class="input input-bordered w-full" value="{{ user.display_name or user.username or '' }}" required />
+						</label>
+						<label class="form-control w-full">
+							<span class="label-text">Phone Number (טלפון)</span>
+							<input name="phone_number" class="input input-bordered w-full" inputmode="numeric" pattern="[0-9]+" required />
+						</label>
+						<label class="form-control w-full">
+							<span class="label-text">Branch (ענף)</span>
+							<select name="branch" class="select select-bordered w-full" required>
+								<option value="">Select branch</option>
+								<option>משוב</option>
+								<option>פיתוח תוכנה</option>
+								<option>שילובים</option>
+								<option>מערכות מידע</option>
+								<option>דיגיטל</option>
+								<option>סייבר ושתפ</option>
+							</select>
+						</label>
+						<label class="form-control w-full">
+							<span class="label-text">Team (צוות)</span>
+							<input name="team" class="input input-bordered w-full" required />
+						</label>
+						<label class="form-control w-full">
+							<span class="label-text">Section (מדור)</span>
+							<input name="section" class="input input-bordered w-full" required />
+						</label>
+						<label class="form-control w-full">
+							<span class="label-text">Role (תפקיד)</span>
+							<input name="role" class="input input-bordered w-full" required />
+						</label>
+					</div>
+				</section>
+
+				<section data-support-step="1" class="hidden section-card p-5 space-y-5 transition-all duration-200">
+					<div class="section-title">Service Info</div>
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+						<label class="form-control w-full">
+							<span class="label-text">Network (רשת)</span>
+							<select name="network" class="select select-bordered w-full" required>
+								<option value="">Select network</option>
+								<option>סודי ביותר</option>
+								<option>סודי ומדן</option>
+							</select>
+						</label>
+						<label class="form-control w-full">
+							<span class="label-text">DevOps Services (שירותים)</span>
+							<select name="devops_services" class="select select-bordered w-full" required>
+								<option value="">Select service</option>
+								<option>artifactory</option>
+								<option>azure devops</option>
+								<option>devops portal</option>
+								<option>everything</option>
+								<option>service now</option>
+								<option>sonarqube</option>
+								<option>other</option>
+							</select>
+						</label>
+					</div>
+					<div id="support-azure-fields" class="hidden rounded-xl border border-base-300 bg-base-200/50 p-4 space-y-4 transition-all duration-200">
+						<div class="section-title text-sm">Azure DevOps details</div>
+						<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+							<label class="form-control w-full">
+								<span class="label-text">Azure DevOps Support Type (סוג תמיכה Azure DevOps)</span>
+								<select name="azure_devops_support_type" class="select select-bordered w-full">
+									<option value="">Select support type</option>
+									<option>pipelines</option>
+									<option>repository</option>
+									<option>permissions</option>
+									<option>others</option>
+								</select>
+							</label>
+							<label class="form-control w-full">
+								<span class="label-text">Azure DevOps Collection (אוסף Azure DevOps)</span>
+								<select name="azure_devops_collection" class="select select-bordered w-full">
+									<option value="">Select collection</option>
+									<option>devcollection-inheritance</option>
+									<option>devcollection</option>
+									<option>devcollection17</option>
+									<option>tikshuvcollection-inheritance</option>
+									<option>tikshuvcollection</option>
+								</select>
+							</label>
+							<label id="support-azure-project-select-wrap" class="form-control w-full hidden">
+								<span class="label-text">Azure DevOps Project (פרויקט Azure DevOps)</span>
+								<select name="azure_devops_project_select" class="select select-bordered w-full">
+									<option value="">Select project</option>
+								</select>
+							</label>
+							<label id="support-azure-project-input-wrap" class="form-control w-full hidden">
+								<span class="label-text">Azure DevOps Project (פרויקט Azure DevOps)</span>
+								<input name="azure_devops_project_input" class="input input-bordered w-full" placeholder="Enter project name manually" />
+							</label>
+							<label id="support-pipeline-url-wrap" class="form-control w-full hidden md:col-span-2">
+								<span class="label-text">Pipeline URL (קישור Pipeline)</span>
+								<input name="pipeline_url" class="input input-bordered w-full" />
+							</label>
+						</div>
+					</div>
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+						<label class="form-control w-full">
+							<span class="label-text">Reason (סיבת פתיחת הקריאה)</span>
+							<select name="reason" class="select select-bordered w-full" required>
+								<option value="">Select reason</option>
+								<option>customer issue</option>
+								<option>usage/configuration issue</option>
+								<option>data importing</option>
+								<option>performance issue</option>
+								<option>bug</option>
+								<option>feature request</option>
+								<option>question</option>
+								<option>other</option>
+							</select>
+						</label>
+						<label id="support-reason-other-wrap" class="form-control w-full hidden transition-all duration-200">
+							<span class="label-text">Please specify (נא לפרט) <span class="opacity-60">(optional)</span></span>
+							<input name="reason_other" class="input input-bordered w-full" />
+						</label>
+					</div>
+				</section>
+
+				<section data-support-step="2" class="hidden section-card p-5 space-y-5 transition-all duration-200">
+					<div class="section-title">Ticket Info</div>
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+						<label class="form-control w-full">
+							<span class="label-text">Title (כותרת)</span>
+							<input name="title" class="input input-bordered w-full" required />
+						</label>
+						<label class="form-control w-full">
+							<span class="label-text">Urgency (דחיפות)</span>
+							<select name="urgency" class="select select-bordered w-full" required>
+								<option value="">Select urgency</option>
+								<option value="4">low (4)</option>
+								<option value="3">medium (3)</option>
+								<option value="2">high (2)</option>
+								<option value="1">urgent (1)</option>
+							</select>
+						</label>
+						<label class="form-control w-full md:col-span-2">
+							<span class="label-text">Description (תיאור)</span>
+							<textarea name="description" class="textarea textarea-bordered w-full min-h-28" required></textarea>
+						</label>
+						<label class="form-control w-full md:col-span-2">
+							<span class="label-text">Work Impact (השפעה על העבודה)</span>
+							<textarea name="work_impact" class="textarea textarea-bordered w-full min-h-24" required></textarea>
+						</label>
+					</div>
+				</section>
+
+				<section data-support-step="3" class="hidden section-card p-5 space-y-5 transition-all duration-200">
+					<div class="section-title">Attachments + Summary</div>
+					<div id="support-ticket-summary" class="rounded-xl border border-base-300 bg-base-200/50 p-4 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm"></div>
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+						<label class="form-control w-full md:col-span-2">
+							<span class="label-text">Help Text (איך נוכל לעזור?)</span>
+							<textarea name="help_text" class="textarea textarea-bordered w-full min-h-24" required></textarea>
+						</label>
+						<label class="form-control w-full md:col-span-2">
+							<span class="label-text">Attachments (קבצים מצורפים) <span class="opacity-60">(optional)</span></span>
+							<input name="attachments" type="file" class="file-input file-input-bordered w-full" multiple />
+						</label>
+					</div>
+				</section>
+			</form>
+		</div>
+
+		<div id="support-ticket-flow-actions" class="px-5 py-4 border-t border-base-300 flex items-center justify-between gap-2">
+			<button id="support-ticket-back" class="btn">Back</button>
+			<div class="flex items-center gap-2">
+				<button id="support-ticket-next" class="btn btn-primary">Next</button>
+				<button id="support-create-ticket" class="btn btn-primary hidden">Open a Ticket</button>
+			</div>
 		</div>
 	</div>
 </div>
@@ -363,8 +552,31 @@
 
 		// ── new-ticket modal ─────────────────────────────────────────────
 
+		const flowForm = document.getElementById("support-ticket-flow-form");
+		const stepLabel = document.getElementById("support-step-label");
+		const stepBars = Array.from(document.querySelectorAll("[data-support-step-bar]"));
+		const stepEls = Array.from(document.querySelectorAll("[data-support-step]"));
+		const backBtn = document.getElementById("support-ticket-back");
+		const nextBtn = document.getElementById("support-ticket-next");
+		const createBtn = document.getElementById("support-create-ticket");
+		const actionsEl = document.getElementById("support-ticket-flow-actions");
+		const successEl = document.getElementById("support-ticket-success");
+		const successNumberEl = document.getElementById("support-created-ticket-number");
+		const summaryEl = document.getElementById("support-ticket-summary");
+		const draftKey = "support-ticket-flow-draft";
+		const stepTitles = ["Navy User Info", "Service Info", "Ticket Info", "Attachments + Summary"];
+		let currentStep = 0;
+		let azureProjectsLoaded = false;
+		let azureProjectManualFallback = false;
+
 		function openModal() {
 			clearModalError();
+			restoreTicketDraft();
+			updateDynamicFields();
+			showStep(currentStep);
+			successEl?.classList.add("hidden");
+			flowForm?.classList.remove("hidden");
+			actionsEl?.classList.remove("hidden");
 			modal?.classList.remove("hidden");
 			modal?.classList.add("flex");
 		}
@@ -375,8 +587,208 @@
 			clearModalError();
 		}
 
+		// The wizard keeps values in localStorage so users can move between
+		// steps, close the modal, or use Back without losing typed context.
+		function saveTicketDraft() {
+			if (!flowForm) return;
+			const draft = {};
+			Array.from(flowForm.elements).forEach((el) => {
+				if (!el.name || el.type === "file") return;
+				draft[el.name] = el.value || "";
+			});
+			draft.currentStep = currentStep;
+			try { localStorage.setItem(draftKey, JSON.stringify(draft)); } catch (_) { /* ignore */ }
+		}
+
+		function restoreTicketDraft() {
+			if (!flowForm) return;
+			try {
+				const draft = JSON.parse(localStorage.getItem(draftKey) || "{}");
+				Array.from(flowForm.elements).forEach((el) => {
+					if (!el.name || el.type === "file" || draft[el.name] == null) return;
+					el.value = draft[el.name];
+				});
+				currentStep = Math.max(0, Math.min(3, Number(draft.currentStep || 0)));
+			} catch (_) {
+				currentStep = 0;
+			}
+		}
+
+		function setRequired(name, required) {
+			const el = flowForm?.elements[name];
+			if (el) el.required = !!required;
+		}
+
+		function updateDynamicFields() {
+			if (!flowForm) return;
+			const service = flowForm.elements.devops_services?.value || "";
+			const network = flowForm.elements.network?.value || "";
+			const supportType = flowForm.elements.azure_devops_support_type?.value || "";
+			const reason = flowForm.elements.reason?.value || "";
+			const azureVisible = service === "azure devops";
+			if (!azureVisible || network !== "סודי ביותר") {
+				azureProjectManualFallback = false;
+			}
+			document.getElementById("support-azure-fields")?.classList.toggle("hidden", !azureVisible);
+			document.getElementById("support-pipeline-url-wrap")?.classList.toggle("hidden", !(azureVisible && supportType === "pipelines"));
+			document.getElementById("support-reason-other-wrap")?.classList.toggle("hidden", reason !== "other");
+
+			const useProjectSelect = azureVisible && network === "סודי ביותר" && !azureProjectManualFallback;
+			document.getElementById("support-azure-project-select-wrap")?.classList.toggle("hidden", !useProjectSelect);
+			document.getElementById("support-azure-project-input-wrap")?.classList.toggle("hidden", !azureVisible || useProjectSelect);
+
+			setRequired("azure_devops_support_type", azureVisible);
+			setRequired("azure_devops_collection", azureVisible);
+			setRequired("azure_devops_project_select", useProjectSelect);
+			setRequired("azure_devops_project_input", azureVisible && !useProjectSelect);
+			setRequired("pipeline_url", azureVisible && supportType === "pipelines");
+			if (useProjectSelect) loadAzureProjects();
+			renderSummary();
+			updateNavState();
+			saveTicketDraft();
+		}
+
+		async function loadAzureProjects() {
+			if (azureProjectsLoaded || !flowForm) return;
+			const select = flowForm.elements.azure_devops_project_select;
+			if (!select) return;
+			azureProjectsLoaded = true;
+			select.innerHTML = '<option value="">Loading projects…</option>';
+			try {
+				const res = await fetch("/api/azure-devops/projects", { credentials: "same-origin" });
+				const json = await parseJsonSafe(res);
+				if (!res.ok) throw new Error(extractErrorMessage(json, "Failed to load Azure DevOps projects."));
+				const projects = Array.isArray(json?.data) ? json.data : [];
+				if (!projects.length) throw new Error("No Azure DevOps projects were returned.");
+				select.innerHTML = '<option value="">Select project</option>' + projects
+					.map((p) => `<option value="${esc(p.name || p.id || "")}">${esc(p.name || p.id || "")}</option>`)
+					.join("");
+			} catch (err) {
+				// Never block ticket creation on the project-list API: classified
+				// network users get the dropdown when it works, otherwise the same
+				// manual project-name input used by other networks.
+				azureProjectManualFallback = true;
+				select.innerHTML = '<option value="">Could not load projects</option>';
+				document.getElementById("support-azure-project-select-wrap")?.classList.add("hidden");
+				document.getElementById("support-azure-project-input-wrap")?.classList.remove("hidden");
+				setRequired("azure_devops_project_select", false);
+				setRequired("azure_devops_project_input", true);
+				window.portalToast?.({ kind: "error", message: err?.message || "Could not load Azure DevOps projects." });
+			}
+			updateNavState();
+			renderSummary();
+			saveTicketDraft();
+		}
+
+		function visibleStepControls() {
+			const step = stepEls[currentStep];
+			if (!step) return [];
+			return Array.from(step.querySelectorAll("input, select, textarea")).filter((el) => {
+				if (el.type === "file" || el.disabled) return false;
+				return !el.closest(".hidden");
+			});
+		}
+
+		function isCurrentStepValid() {
+			updateHiddenProjectValue();
+			return visibleStepControls().every((el) => {
+				if (el.name === "phone_number" && el.value && !/^[0-9]+$/.test(el.value)) return false;
+				return !el.required || !!String(el.value || "").trim();
+			});
+		}
+
+		function updateHiddenProjectValue() {
+			if (!flowForm) return "";
+			const service = flowForm.elements.devops_services?.value || "";
+			if (service !== "azure devops") return "";
+			const network = flowForm.elements.network?.value || "";
+			return network === "סודי ביותר" && !azureProjectManualFallback
+				? (flowForm.elements.azure_devops_project_select?.value || "")
+				: (flowForm.elements.azure_devops_project_input?.value || "");
+		}
+
+		function updateNavState() {
+			if (!flowForm) return;
+			const stepValid = isCurrentStepValid();
+			backBtn.disabled = currentStep === 0;
+			nextBtn?.classList.toggle("hidden", currentStep === 3);
+			createBtn?.classList.toggle("hidden", currentStep !== 3);
+			if (nextBtn) nextBtn.disabled = !stepValid;
+			if (createBtn) createBtn.disabled = !stepValid;
+			stepBars.forEach((bar, i) => {
+				const complete = i < currentStep || (i === currentStep && stepValid);
+				bar.classList.toggle("bg-success", complete);
+				bar.classList.toggle("bg-base-300", !complete);
+			});
+		}
+
+		function showStep(index) {
+			currentStep = Math.max(0, Math.min(3, index));
+			stepEls.forEach((el, i) => el.classList.toggle("hidden", i !== currentStep));
+			if (stepLabel) stepLabel.textContent = `Step ${currentStep + 1} of 4 — ${stepTitles[currentStep]}`;
+			renderSummary();
+			updateNavState();
+			saveTicketDraft();
+		}
+
+		function renderSummary() {
+			if (!flowForm || !summaryEl) return;
+			const labels = {
+				full_name: "Full name",
+				phone_number: "Phone number",
+				branch: "Branch",
+				team: "Team",
+				section: "Section",
+				role: "Role",
+				network: "Network",
+				devops_services: "DevOps service",
+				azure_devops_support_type: "Azure support type",
+				azure_devops_collection: "Azure collection",
+				azure_devops_project: "Azure project",
+				pipeline_url: "Pipeline URL",
+				reason: "Reason",
+				reason_other: "Other reason",
+				title: "Title",
+				urgency: "Urgency",
+				description: "Description",
+				work_impact: "Work impact",
+				help_text: "Help text",
+				attachments: "Attachments",
+			};
+			const values = {};
+			Array.from(flowForm.elements).forEach((el) => {
+				if (!el.name || el.type === "file" || el.name.endsWith("_select") || el.name.endsWith("_input")) return;
+				values[el.name] = el.value || "";
+			});
+			values.azure_devops_project = updateHiddenProjectValue();
+			const files = flowForm.elements.attachments?.files || [];
+			values.attachments = files.length ? Array.from(files).map((f) => f.name).join(", ") : "";
+			summaryEl.innerHTML = Object.entries(labels)
+				.filter(([key]) => values[key])
+				.map(([key, label]) => `
+					<div class="rounded-lg bg-base-100 border border-base-300 p-3">
+						<div class="text-xs uppercase tracking-wide opacity-60">${esc(label)}</div>
+						<div class="mt-1 whitespace-pre-wrap break-words">${esc(values[key])}</div>
+					</div>
+				`)
+				.join("") || '<div class="text-sm opacity-60">Complete the previous steps to see the summary.</div>';
+		}
+
 		document.getElementById("support-new-ticket-btn")?.addEventListener("click", openModal);
 		document.getElementById("support-cancel-ticket")?.addEventListener("click", closeModal);
+		backBtn?.addEventListener("click", () => showStep(currentStep - 1));
+		nextBtn?.addEventListener("click", () => {
+			if (!isCurrentStepValid()) return;
+			showStep(currentStep + 1);
+		});
+		flowForm?.addEventListener("input", (event) => {
+			if (event.target?.name === "phone_number") {
+				event.target.value = event.target.value.replace(/\D/g, "");
+			}
+			updateDynamicFields();
+		});
+		flowForm?.addEventListener("change", updateDynamicFields);
+		flowForm?.addEventListener("submit", (event) => event.preventDefault());
 
 		// Auto-open from the banner's Quick Actions → "Open support ticket".
 		// Runs independently from the existing `?ticket=<sys_id>` deep-link
@@ -392,40 +804,46 @@
 			}
 		} catch (_) { /* silent */ }
 
-		document.getElementById("support-create-ticket")?.addEventListener("click", async () => {
-			const title = (document.getElementById("support-new-title")?.value || "").trim();
-			const description = (document.getElementById("support-new-description")?.value || "").trim();
-			const priority = document.getElementById("support-new-priority")?.value || "3";
-			if (!title || !description) {
-				showModalError("Title and description are required.");
+		createBtn?.addEventListener("click", async () => {
+			if (!isCurrentStepValid()) {
+				showModalError("Please fill all required fields before creating the ticket.");
 				return;
 			}
 			clearModalError();
-			const createBtn = document.getElementById("support-create-ticket");
 			createBtn.disabled = true;
 			try {
-				const res = await fetch("/api/support/tickets", {
+				const formData = new FormData(flowForm);
+				formData.set("azure_devops_project", updateHiddenProjectValue());
+				const res = await fetch("/api/support/tickets/create-flow", {
 					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ title, description, priority }),
+					body: formData,
 					credentials: "same-origin",
 				});
 				const json = await parseJsonSafe(res);
 				if (!res.ok) {
-					showModalError(extractErrorMessage(json, "Failed to create ticket (HTTP " + res.status + ")."));
+					const message = extractErrorMessage(json, "Failed to create ticket (HTTP " + res.status + ").");
+					window.portalToast?.({ kind: "error", message: "Failed to create ticket" });
+					showModalError(message);
 					return;
 				}
-				closeModal();
-				document.getElementById("support-new-title").value = "";
-				document.getElementById("support-new-description").value = "";
+				localStorage.removeItem(draftKey);
+				flowForm.reset();
+				flowForm.classList.add("hidden");
+				actionsEl?.classList.add("hidden");
+				successNumberEl.textContent = json?.data?.number || json?.data?.sys_id || "";
+				successEl?.classList.remove("hidden");
+				window.portalToast?.({ kind: "success", message: "Ticket created successfully" });
 				await loadTickets();
 				if (json?.data?.sys_id) openTicket(json.data.sys_id);
 			} catch (_) {
+				window.portalToast?.({ kind: "error", message: "Failed to create ticket" });
 				showModalError("Could not reach the portal backend. Try again in a moment.");
 			} finally {
 				createBtn.disabled = false;
 			}
 		});
+
+		updateDynamicFields();
 
 		loadTickets();
 	})();

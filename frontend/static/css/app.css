@@ -43,6 +43,10 @@
 	.page-content-flush {
 		@apply flex-1 min-h-0 overflow-y-auto;
 	}
+	/* Centered column for form/config pages that should not stretch like dashboards. */
+	.portal-content-container {
+		@apply block w-full max-w-[60rem] mx-auto px-4 py-6 sm:px-6;
+	}
 
 	/* Reusable surface card — same border, shadow, background everywhere. */
 	.section-card {

@@ -70,17 +70,14 @@ TF_IMAGE = "hashicorp/terraform:1.6"
 # Create / update it with:
 #   kubectl create secret generic terraform-ado-credentials \
 #     -n devops-control-center \
-#     --from-literal=AZURE_DEVOPS_PAT=<read-only PAT> \
 #     --from-literal=AZURE_DEVOPS_ADMIN_PAT=<admin PAT> \
 #     --dry-run=client -o yaml | kubectl apply -f -
 ADO_SECRET_NAME = "terraform-ado-credentials"
-# Key for the read-only query PAT (fallback).
-ADO_SECRET_KEY = "AZURE_DEVOPS_PAT"
-# Key for the admin PAT (preferred).  Requires at minimum:
+# Key for the admin PAT. Requires at minimum:
 #   Project and Team (Read, Write & Manage)
 ADO_ADMIN_SECRET_KEY = "AZURE_DEVOPS_ADMIN_PAT"
 
-# In-memory mock job store — only used when USE_MOCK_AZURE_DEVOPS=true
+# In-memory mock job store used by callers that explicitly request mock execution.
 _mock_jobs: Dict[str, Dict[str, Any]] = {}
 
 
@@ -304,12 +301,10 @@ def _create_k8s_job(project_name: str, process_name: str, ado_org: str, admin_us
                                 # and the state lock.
                                 "cp /tf-config/main.tf /workspace/main.tf && "
                                 "cd /workspace && "
-                                # Prefer the admin PAT when available; fall back
-                                # to the read-only PAT so existing installs keep
-                                # working.  The admin PAT needs at minimum:
+                                # The admin PAT needs at minimum:
                                 #   Project and Team (Read, Write & Manage)
                                 "export AZDO_PERSONAL_ACCESS_TOKEN="
-                                '"${AZURE_DEVOPS_ADMIN_PAT:-${AZURE_DEVOPS_PAT}}" && '
+                                '"${AZURE_DEVOPS_ADMIN_PAT}" && '
                                 "terraform init -no-color && "
                                 "terraform apply -auto-approve -no-color"
                             ],
@@ -329,25 +324,12 @@ def _create_k8s_job(project_name: str, process_name: str, ado_org: str, admin_us
                                 ),
                             ],
                             env=[
-                                # Base read-only PAT (always injected as fallback).
-                                k8s.V1EnvVar(
-                                    name="AZURE_DEVOPS_PAT",
-                                    value_from=k8s.V1EnvVarSource(
-                                        secret_key_ref=k8s.V1SecretKeySelector(
-                                            name=ADO_SECRET_NAME,
-                                            key=ADO_SECRET_KEY,
-                                        )
-                                    ),
-                                ),
-                                # Admin PAT — optional key.  If present in the
-                                # secret it is preferred over AZURE_DEVOPS_PAT.
                                 k8s.V1EnvVar(
                                     name="AZURE_DEVOPS_ADMIN_PAT",
                                     value_from=k8s.V1EnvVarSource(
                                         secret_key_ref=k8s.V1SecretKeySelector(
                                             name=ADO_SECRET_NAME,
                                             key=ADO_ADMIN_SECRET_KEY,
-                                            optional=True,
                                         )
                                     ),
                                 ),

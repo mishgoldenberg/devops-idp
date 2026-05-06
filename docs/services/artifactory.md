@@ -22,7 +22,6 @@ None today. Real integration will go through
 `resilient_http.resilient_get`. Reads should be cached with
 `integrations_cache.cached_external("artifactory", owner, …, ttl=60)`.
 
-## Environment variables (reserved)
+## Environment variables
 
-- `USE_MOCK_ARTIFACTORY` — logically always `true` today.
-- `ARTIFACTORY_URL`, `ARTIFACTORY_API_KEY` — reserved.
+- `ARTIFACTORY_BASE_URL` — Artifactory base URL used by connected widgets.

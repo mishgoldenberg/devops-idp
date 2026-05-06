@@ -83,14 +83,14 @@ More detail for each is in [`docs/`](./docs).
 
          External systems (called only from backend)
   ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-  │ Azure DevOps │ │  ServiceNow  │ │  SonarQube*  │ │ Artifactory* │
+  │ Azure DevOps │ │  ServiceNow  │ │  SonarQube   │ │ Artifactory  │
   └──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘
              ┌──────────────────────────────────────┐
              │  Kubernetes (Terraform Job runner)   │
              └──────────────────────────────────────┘
 ```
 
-\* SonarQube and Artifactory are currently mock-only in code.
+\* SonarQube and Artifactory use per-user tokens stored by the backend.
 
 See [`docs/architecture.md`](./docs/architecture.md) for the full picture and
 the request lifecycle of a self-service action.
@@ -104,12 +104,12 @@ the request lifecycle of a self-service action.
   [DaisyUI](https://daisyui.com) (no React, no Next.js)
 - **Database:** PostgreSQL 16
 - **Cache:** Redis 7 (with a 60-second layer for external-API reads)
-- **Auth:** Google OAuth 2.0 / OIDC → internal HS256 JWT stored in an
-  `auth_token` cookie
+- **Auth:** Admin-configured OIDC (RedHat SSO compatible) plus an env-seeded
+  bootstrap admin → internal HS256 JWT stored in an `auth_token` cookie
 - **Self-service execution:** Terraform, run as a Kubernetes Job by
   `terraform_runner.py`
 - **Deployment:** Helm umbrella chart under `deployment/`, GitHub Actions in
-  `.github/workflows/`, container images pushed to Google Artifact Registry
+  `.github/workflows/`, container images pushed to the configured container registry
 
 ---
 
@@ -232,6 +232,88 @@ secrets → Helm `--set` → the `all-secrets` K8s Secret → pod env.
 
 ---
 
+## ServiceNow Integration
+
+The Support page creates ServiceNow incidents through a backend-only service
+account. The browser submits the 4-step form to the Hub, and the Hub calls
+ServiceNow using:
+
+- `SNOW_BASE_URL` — full ServiceNow instance URL.
+- `SNOW_API_USERNAME` — service-account username.
+- `SNOW_API_PASSWORD` — service-account password.
+
+Ticket creation flow:
+
+1. User submits the Support form.
+2. Backend resolves the caller with `sys_user?sysparm_query=email=<SSO email>`.
+3. Backend resolves the `Devops Support` group and caches its `sys_id`.
+4. Backend creates an `incident` with the caller, opener, assignment group,
+   urgency, impact, and all extra Hub fields.
+5. Backend uploads each attachment through the attachment API.
+
+Required ServiceNow permissions for the service account:
+
+- `itil` role.
+- Read access to `sys_user`.
+- Create/update access to the `incident` API.
+- Access to upload files through the attachment API.
+
+---
+
+## SSO Configuration (OIDC)
+
+The Hub uses configurable OIDC only. There is no built-in provider fallback:
+Platform Admins configure the provider from **Hub → Platform Managing → SSO
+Configuration** after logging in with the bootstrap admin.
+
+### What You Need
+
+- OIDC provider, for example RedHat SSO or Keycloak.
+- Issuer URI.
+- Client ID.
+- Client Secret.
+
+### Redirect URI
+
+The SSO provider requires a redirect URI before it can safely issue client
+credentials. Configure this exact callback URL in the provider:
+
+```text
+https://<hub-domain>/api/auth/sso/callback
+```
+
+This value must match exactly, including `https`, hostname, path, and trailing
+slashes. If it does not match, login will fail before the Hub receives a token.
+
+### Setup Steps
+
+1. Go to the SSO provider admin panel.
+2. Create a new client.
+3. Set:
+   - Client Protocol: `openid-connect`
+   - Redirect URI: `https://<hub-domain>/api/auth/sso/callback`
+4. Save the client, then copy:
+   - Client ID
+   - Client Secret
+5. In the Hub, go to **Platform Managing → SSO Configuration**.
+6. Enter:
+   - Issuer URI
+   - Client ID
+   - Client Secret
+7. Click **Test Connection**.
+8. Click **Save & Enable**.
+
+The Issuer URI usually looks like:
+
+```text
+https://<sso-domain>/realms/<realm>
+```
+
+If login fails, first check the redirect URI, then the `client_id`, then the
+issuer URI. The redirect URI is the most common mismatch.
+
+---
+
 ## Documentation map
 
 Start here depending on what you need:
@@ -248,7 +330,6 @@ Start here depending on what you need:
 - **Deployment** — [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md)
 - **API reference** — [`docs/API_REFERENCE.md`](./docs/API_REFERENCE.md)
 - **Azure DevOps integration** — [`docs/AZURE_DEVOPS.md`](./docs/AZURE_DEVOPS.md)
-- **Google SSO setup** — [`docs/SSO_GOOGLE_OAUTH.md`](./docs/SSO_GOOGLE_OAUTH.md)
 - **Troubleshooting** — [`docs/TROUBLESHOOTING.md`](./docs/TROUBLESHOOTING.md)
 
 ---

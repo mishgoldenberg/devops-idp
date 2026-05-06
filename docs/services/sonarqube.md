@@ -22,7 +22,6 @@ None today. When this graduates to real, it should use
 `resilient_http.resilient_get` and wrap reads with
 `integrations_cache.cached_external("sonar", owner, …, ttl=60)`.
 
-## Environment variables (reserved)
+## Environment variables
 
-- `USE_MOCK_SONARQUBE` — logically always `true` today.
-- `SONARQUBE_URL`, `SONARQUBE_TOKEN` — reserved.
+- `SONARQUBE_BASE_URL` — SonarQube base URL used by connected widgets.

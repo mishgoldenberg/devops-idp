@@ -7,8 +7,8 @@
 		<link rel="stylesheet" href="/static/css/output.css" />
 		<link
 			rel="shortcut icon"
-			href="/static/images/idp-icon.svg"
-			type="image/x-icon"
+			href="/static/images/devopshub-favicon.png"
+			type="image/png"
 		/>
 	</head>
 	<body
@@ -20,15 +20,11 @@
 			>
 				<div class="card-body p-8 gap-5">
 					<div class="flex flex-col items-center gap-3">
-						<div
-							class="h-12 w-12 rounded-xl bg-primary flex items-center justify-center shadow"
-						>
-							<img
-								src="/static/images/idp-icon.svg"
-								alt="Portal icon"
-								class="h-6 w-6"
-							/>
-						</div>
+						<img
+							src="/static/images/devopshub-logo.png"
+							alt="DevOps Hub logo"
+							class="h-24 w-24 object-contain"
+						/>
 						<h1 class="text-3xl font-bold text-primary">DevOps Hub</h1>
 					</div>
 
@@ -43,13 +39,15 @@
 							>Authentication service is unavailable. Check DB setup and try
 							again.</span
 						>
+						{% elif error == "sso_not_configured" %}
+						<span>SSO is not configured</span>
 						{% else %}
 						<span>Authentication failed. Try again.</span>
 						{% endif %}
 					</div>
 					{% endif %}
 
-					<form action="/ui/auth/login" method="get" class="space-y-4">
+					<form action="/ui/auth/login" method="post" class="space-y-4">
 						<label class="form-control w-full">
 							<div class="label pb-1">
 								<span

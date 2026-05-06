@@ -9,7 +9,6 @@ services:
   sonarqube: http://sonarqube-service:8003
   artifactory: http://artifactory-service:8004
   servicenow: http://servicenow-service:8005
-  aiChatbot: http://ai-chatbot-service:8006
   approval: http://approval-service:8007
 
 # Azure DevOps Config
@@ -26,6 +25,8 @@ resources:
 
 tier: backend
 
+terraformServiceAccountAnnotations: {}
+
 service:
   type: ClusterIP
   port: 8000
@@ -34,14 +35,17 @@ service:
 secrets:
   postgresPassword: ""
   redisPassword: ""
-  azureDevopsPat: ""
   azureDevopsAdminPat: ""
   jwtSecret: ""
-  oauthClientSecret: ""
-  oauthClientId: ""
-  servicenowUrl: ""
-  servicenowUsername: ""
-  servicenowPassword: ""
+  hubAdminUsername: ""
+  hubAdminPassword: ""
+  snowBaseUrl: ""
+  snowApiUsername: ""
+  snowApiPassword: ""
+  azureDevopsBaseUrl: ""
+  artifactoryBaseUrl: ""
+  sonarqubeBaseUrl: ""
+  confluenceBaseUrl: ""
 
 ingress:
   enabled: true

@@ -127,6 +127,8 @@ def create_request(
         """,
         [current_user["id"], body.request_type, body.request_title, body.request_payload],
     )
+    if not rows:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create approval request")
     row = rows[0]
 
     _log_audit(current_user["id"], "CREATE_REQUEST", "approval_request", str(row["id"]))

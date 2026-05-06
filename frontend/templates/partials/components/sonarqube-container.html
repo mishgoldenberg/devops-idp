@@ -16,11 +16,10 @@
 
 	<div class="page-content-flush">
 		<div class="widget-grid">
-			<!-- SonarQube Quality Widget -->
 			<div
-				id="sonarqube-quality-component"
+				id="sonarqube-projects-component"
 				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
-				hx-get="/ui/components/sonarqube-quality"
+				hx-get="/ui/components/sonarqube-projects"
 				hx-trigger="load, every 60s, click from:#refresh-btn"
 				hx-target="find .widget-content"
 				hx-swap="innerHTML"
