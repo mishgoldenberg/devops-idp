@@ -105,7 +105,6 @@ services:
       SNOW_BASE_URL: ${SNOW_BASE_URL:-}
       SNOW_API_USERNAME: ${SNOW_API_USERNAME:-}
       SNOW_API_PASSWORD: ${SNOW_API_PASSWORD:-}
-      USE_MOCK_AI_CHATBOT: ${USE_MOCK_AI_CHATBOT:-true}
     ports:
       - "8000:8000"
     depends_on:

@@ -6,7 +6,9 @@ WHERE widget_key IN (
     'sonar_security_hotspots',
     'artifactory_latest_artifacts',
     'artifactory_storage_usage',
-    'artifactory_download_stats'
+    'artifactory_download_stats',
+    'ai_chatbot',
+    'ai_recent_conversations'
 );
 
 INSERT INTO widget_types (widget_key, name, description, category, min_role_level, icon) VALUES
@@ -27,10 +29,8 @@ INSERT INTO widget_types (widget_key, name, description, category, min_role_leve
 ('snow_my_tickets', 'My Tickets', 'Open incidents and requests', 'servicenow', 7, 'Ticket'),
 ('snow_team_tickets', 'Team Tickets', 'Team workload overview', 'servicenow', 6, 'Users'),
 
--- AI Chatbot widgets
+-- Dashboard widgets
 ('recent_activity', 'Recent Activity', 'Latest user activity in the portal', 'dashboard', 7, 'Clock'),
-('ai_chatbot', 'AI Assistant', 'Embedded conversational interface', 'ai_chatbot', 7, 'MessageSquare'),
-('ai_recent_conversations', 'Recent Conversations', 'Quick access to chat history', 'ai_chatbot', 7, 'Clock'),
 
 -- Executive widgets
 ('executive_branch_dashboard', 'Branch Dashboard', 'Aggregated metrics per branch', 'executive', 3, 'BarChart'),

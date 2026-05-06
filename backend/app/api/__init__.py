@@ -23,7 +23,6 @@ from . import (
     sonarqube,
     artifactory,
     servicenow,
-    ai_chatbot,
     approvals,
     pins,
     notifications,
@@ -66,7 +65,6 @@ api_router.include_router(azure_devops.router, prefix="/azure-devops", tags=["az
 api_router.include_router(sonarqube.router, prefix="/sonarqube", tags=["sonarqube"])
 api_router.include_router(artifactory.router, prefix="/artifactory", tags=["artifactory"])
 api_router.include_router(servicenow.router, prefix="/support", tags=["support"])
-api_router.include_router(ai_chatbot.router, prefix="/ai-chatbot", tags=["ai-chatbot"])
 
 # Approvals
 api_router.include_router(approvals.router, prefix="/approvals", tags=["approvals"])

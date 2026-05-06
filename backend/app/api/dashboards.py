@@ -189,6 +189,8 @@ def create_dashboard(
             body.widgets or [],
         ],
     )
+    if not rows:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create dashboard")
     return {
         "success": True,
         "data": rows[0],
@@ -251,6 +253,8 @@ def _create_default_dashboard(user_id: str, role_level: int) -> Dict[str, Any]:
         """,
         [user_id, "My Dashboard", default_layout, default_widgets],
     )
+    if not rows:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create default dashboard")
     return rows[0]
 
 

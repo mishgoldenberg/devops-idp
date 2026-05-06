@@ -9,7 +9,6 @@ services:
   sonarqube: http://sonarqube-service:8003
   artifactory: http://artifactory-service:8004
   servicenow: http://servicenow-service:8005
-  aiChatbot: http://ai-chatbot-service:8006
   approval: http://approval-service:8007
 
 # Azure DevOps Config

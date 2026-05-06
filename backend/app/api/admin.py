@@ -244,6 +244,8 @@ def create_quick_link(
             str(current_user.get("email") or current_user.get("username") or ""),
         ],
     )
+    if not rows:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create quick link")
     return {
         "success": True,
         "data": _quick_link_row(rows[0]),
@@ -283,6 +285,8 @@ def update_quick_link(
         """,
         [name, url, icon_url or None, quick_link_id],
     )
+    if not rows:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update quick link")
     return {
         "success": True,
         "data": _quick_link_row(rows[0]),

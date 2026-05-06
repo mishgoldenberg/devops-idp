@@ -1,7 +1,7 @@
 # Closed-Network Deployment Runbook
 
 This runbook starts after `offline-deps/README.md` is complete: Python wheels,
-npm packages/cache, and Docker images have been transferred into the closed
+npm package tarballs (`offline-deps/npm/packages`), and Docker images have been transferred into the closed
 network and uploaded to internal Artifactory repositories.
 
 ## 1. Files Used By The Deployment

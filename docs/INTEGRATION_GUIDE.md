@@ -14,8 +14,7 @@ backend/python_backend/app/
 │   ├── azure_devops.py   # ADO adapter (mocked by default)
 │   ├── sonarqube.py      # SonarQube adapter (mocked by default)
 │   ├── artifactory.py    # Artifactory adapter (mocked by default)
-│   ├── servicenow.py     # ServiceNow adapter (mocked by default)
-│   └── ai_chatbot.py     # AI chatbot adapter (mocked by default)
+│   └── servicenow.py     # ServiceNow adapter (mocked by default)
 └── ...
 ```
 
@@ -122,24 +121,6 @@ APIs and return the same ticket JSON currently expected by the frontend.
 ### API Documentation
 
 - [ServiceNow REST API](https://developer.servicenow.com/dev.do#!/reference/api/tokyo/rest)
-
----
-
-## AI Chatbot Integration
-
-### Configuration
-
-```bash
-USE_MOCK_AI_CHATBOT=false
-AI_CHATBOT_API_URL=https://ai.internal.company/api
-AI_CHATBOT_UI_URL=https://ai.internal.company
-AI_CHATBOT_TOKEN=your-ai-token
-```
-
-### Implementation
-
-Extend `backend/python_backend/app/api/ai_chatbot.py` to forward chat messages
-to a real AI backend and return the response in the existing format.
 
 ---
 

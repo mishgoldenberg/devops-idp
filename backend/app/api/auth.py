@@ -7,7 +7,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 
-from db import query_one
+from db import query_one, sync_bootstrap_admin_role_for_email
 from security import create_access_token, decode_access_token
 from sso_config import (
     decrypt_client_secret,
