@@ -46,6 +46,7 @@ secrets:
   artifactoryBaseUrl: ""
   sonarqubeBaseUrl: ""
   confluenceBaseUrl: ""
+  llmApiKey: ""
 
 ingress:
   enabled: true

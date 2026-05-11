@@ -39,6 +39,14 @@ global:
     redisHost: "redis-service"
     redisPort: 6379
 
+  # DevBot chat assistant — OpenAI-compatible /v1/chat/completions backend.
+  # Base URL and model are not secrets, so they live here in plain values.
+  # Only the API key flows through the all-secrets Secret. Override per
+  # environment by passing --set global.llm.baseUrl=...
+  llm:
+    baseUrl: "https://api.openai.com"
+    model: "gpt-4o-mini"
+
 
 ingress-prod:
   controller:

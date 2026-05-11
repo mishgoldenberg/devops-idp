@@ -186,6 +186,11 @@
    context in backend/app/ui.py. #}
 {% include "partials/components/breadcrumbs.html" ignore missing %}
 
+{# DevBot floating chat button + slide-in drawer. Same rationale as the
+   breadcrumbs bar above — including it from the banner means every
+   authenticated page picks it up without per-template plumbing. #}
+{% include "partials/components/chat-drawer.html" ignore missing %}
+
 <script>
 	// ── Notifications bell (banner, top-right) ──────────────────────────────
 	// Polls every 45s for unread count + latest 50 notifications. Clicking a

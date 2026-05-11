@@ -1,0 +1,222 @@
+<main class="flex-1 min-h-0 flex flex-col page-shell" data-chat-base="/api/chat">
+	<header class="page-header">
+		<div>
+			<h1 class="page-title">DevBot Chat</h1>
+			<p class="page-subtitle">
+				Ask about your Azure DevOps projects, work items, pipelines, and pull requests.
+			</p>
+		</div>
+		<div class="flex gap-2 items-center">
+			<span id="chat-page-status" class="text-xs text-base-content/60">Connecting…</span>
+			<button id="chat-page-new" class="btn btn-outline btn-sm">New conversation</button>
+		</div>
+	</header>
+
+	<section class="page-content flex flex-1 min-h-0 flex-col gap-3">
+		<div class="alert bg-base-100 border border-base-300 text-xs py-2" id="chat-page-warning" style="display:none">
+			<span></span>
+		</div>
+
+		<div
+			id="chat-page-messages"
+			class="flex-1 overflow-y-auto bg-base-100 border border-base-300 rounded-box p-4 space-y-3 text-sm"
+		>
+			<div class="text-xs text-base-content/60 text-center py-10">
+				Try asking: <em>"What work items are assigned to me?"</em> or
+				<em>"List my Azure DevOps projects"</em>.
+			</div>
+		</div>
+
+		<form id="chat-page-form" class="flex gap-2">
+			<input
+				id="chat-page-input"
+				type="text"
+				class="input input-bordered flex-1"
+				placeholder="Ask DevBot…"
+				autocomplete="off"
+				required
+				maxlength="4000"
+			/>
+			<button type="submit" class="btn btn-primary" id="chat-page-send">Send</button>
+		</form>
+	</section>
+</main>
+
+<script>
+	(function () {
+		const root = document.querySelector("[data-chat-base]");
+		if (!root) return;
+		const BASE = root.dataset.chatBase || "/api/chat";
+
+		const messages = document.getElementById("chat-page-messages");
+		const form = document.getElementById("chat-page-form");
+		const input = document.getElementById("chat-page-input");
+		const sendBtn = document.getElementById("chat-page-send");
+		const status = document.getElementById("chat-page-status");
+		const newBtn = document.getElementById("chat-page-new");
+		const warn = document.getElementById("chat-page-warning");
+
+		const SESSION_KEY = "devbot.session_id";
+
+		function sessionId() {
+			let sid = sessionStorage.getItem(SESSION_KEY);
+			if (!sid) {
+				sid =
+					(crypto.randomUUID && crypto.randomUUID()) ||
+					String(Date.now()) + "-" + Math.random().toString(16).slice(2);
+				sessionStorage.setItem(SESSION_KEY, sid);
+			}
+			return sid;
+		}
+
+		function escapeHtml(s) {
+			return String(s ?? "").replace(/[&<>"']/g, (c) => ({
+				"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+			}[c]));
+		}
+
+		function renderMarkdown(s) {
+			let html = escapeHtml(s);
+			html = html.replace(/`([^`]+)`/g, '<code class="px-1 rounded bg-base-300/60">$1</code>');
+			html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+			html = html.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+			html = html.replace(
+				/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
+				'<a href="$2" target="_blank" rel="noopener" class="link link-primary">$1</a>',
+			);
+			html = html.replace(/(https?:\/\/[^\s<>"']+)/g, (m) =>
+				`<a href="${m}" target="_blank" rel="noopener" class="link link-primary">${m}</a>`,
+			);
+			html = html.replace(/^[ \t]*[-*]\s+(.+)$/gm, "<li>$1</li>");
+			html = html.replace(/(?:<li>.*<\/li>\n?)+/g, (m) => `<ul class="list-disc ml-5 my-1">${m}</ul>`);
+			html = html.replace(/\n{2,}/g, "<br><br>").replace(/\n/g, "<br>");
+			return html;
+		}
+
+		function appendMessage(role, text, opts) {
+			const isUser = role === "user";
+			const wrap = document.createElement("div");
+			wrap.className = "flex " + (isUser ? "justify-end" : "justify-start");
+			const bubble = document.createElement("div");
+			bubble.className =
+				"max-w-[80%] rounded-lg px-3 py-2 leading-relaxed " +
+				(isUser
+					? "bg-primary text-primary-content"
+					: "bg-base-200 border border-base-300");
+			if (opts && opts.placeholder) {
+				bubble.innerHTML = '<span class="loading loading-dots loading-sm"></span>';
+				bubble.dataset.placeholder = "true";
+			} else {
+				bubble.innerHTML = isUser ? escapeHtml(text) : renderMarkdown(text);
+			}
+			wrap.appendChild(bubble);
+			messages.appendChild(wrap);
+			messages.scrollTop = messages.scrollHeight;
+			return bubble;
+		}
+
+		async function refreshStatus() {
+			try {
+				const res = await fetch(BASE + "/health", { credentials: "same-origin" });
+				if (!res.ok) throw new Error("http " + res.status);
+				const j = await res.json();
+				const d = (j && j.data) || {};
+				const bits = [];
+				bits.push(d.llm_configured ? "AI: ready" : "AI: not configured");
+				bits.push(d.ado_connected ? "ADO: connected" : "ADO: not connected");
+				status.textContent = bits.join(" · ");
+				if (!d.ado_connected) {
+					warn.style.display = "";
+					warn.firstElementChild.textContent =
+						"Azure DevOps is not connected — open the Azure DevOps page and paste your PAT to enable tool calls.";
+				} else if (!d.llm_configured) {
+					warn.style.display = "";
+					warn.firstElementChild.textContent =
+						"The AI backend is not configured for this environment yet (LLM_BASE_URL is unset).";
+				} else {
+					warn.style.display = "none";
+				}
+			} catch (_err) {
+				status.textContent = "Status unavailable";
+			}
+		}
+
+		async function loadHistory() {
+			const sid = sessionStorage.getItem(SESSION_KEY);
+			if (!sid) return;
+			try {
+				const res = await fetch(BASE + "/sessions/" + encodeURIComponent(sid) + "/history", {
+					credentials: "same-origin",
+				});
+				if (!res.ok) return;
+				const j = await res.json();
+				const msgs = (j && j.data && j.data.messages) || [];
+				if (!msgs.length) return;
+				messages.innerHTML = "";
+				for (const m of msgs) {
+					if (m && (m.role === "user" || m.role === "assistant") && m.content) {
+						appendMessage(m.role, String(m.content));
+					}
+				}
+			} catch (_e) { /* silent */ }
+		}
+
+		async function send(text) {
+			appendMessage("user", text);
+			const placeholder = appendMessage("assistant", "", { placeholder: true });
+			sendBtn.disabled = true;
+			input.disabled = true;
+			try {
+				const res = await fetch(BASE + "/message", {
+					method: "POST",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ message: text, session_id: sessionId() }),
+				});
+				const body = await res.json().catch(() => ({}));
+				if (!res.ok) {
+					placeholder.innerHTML = renderMarkdown(
+						"**Error:** " + (body && body.detail ? String(body.detail) : "Request failed."),
+					);
+					return;
+				}
+				const reply = (body && body.data && body.data.reply) || "(no response)";
+				placeholder.removeAttribute("data-placeholder");
+				placeholder.innerHTML = renderMarkdown(reply);
+			} catch (_err) {
+				placeholder.innerHTML = renderMarkdown("**Network error.** Please try again.");
+			} finally {
+				sendBtn.disabled = false;
+				input.disabled = false;
+				input.focus();
+			}
+		}
+
+		form.addEventListener("submit", (e) => {
+			e.preventDefault();
+			const text = input.value.trim();
+			if (!text) return;
+			input.value = "";
+			send(text);
+		});
+
+		newBtn.addEventListener("click", async () => {
+			const sid = sessionStorage.getItem(SESSION_KEY);
+			if (sid) {
+				try {
+					await fetch(BASE + "/sessions/" + encodeURIComponent(sid), {
+						method: "DELETE",
+						credentials: "same-origin",
+					});
+				} catch (_e) { /* ignore */ }
+			}
+			sessionStorage.removeItem(SESSION_KEY);
+			messages.innerHTML =
+				'<div class="text-xs text-base-content/60 text-center py-10">New conversation started.</div>';
+			input.focus();
+		});
+
+		refreshStatus();
+		loadHistory();
+	})();
+</script>

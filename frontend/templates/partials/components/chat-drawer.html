@@ -1,0 +1,267 @@
+{# DevBot floating chat button + slide-in drawer.
+
+   Rendered once via banner.html so every authenticated page gets the
+   widget. The drawer talks to /api/chat/message and persists the session
+   id in sessionStorage so a tab refresh keeps the conversation alive.
+   Plain JS — no new frontend dependencies, matches the rest of the
+   portal.
+#}
+<div
+	id="devbot-root"
+	class="fixed z-[60] right-6 bottom-6"
+	data-chat-base="/api/chat"
+>
+	<button
+		id="devbot-toggle"
+		type="button"
+		class="btn btn-primary btn-circle shadow-lg w-14 h-14"
+		aria-label="Open DevBot chat"
+		title="Ask DevBot"
+	>
+		<svg
+			viewBox="0 0 24 24"
+			class="w-6 h-6"
+			fill="none"
+			stroke="currentColor"
+			stroke-width="2"
+			stroke-linecap="round"
+			stroke-linejoin="round"
+			aria-hidden="true"
+		>
+			<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path>
+		</svg>
+	</button>
+</div>
+
+<div
+	id="devbot-panel"
+	class="hidden fixed z-[60] right-6 bottom-24 w-[26rem] max-w-[calc(100vw-2rem)] h-[34rem] max-h-[calc(100vh-7rem)] card card-compact bg-base-100 text-base-content shadow-2xl border border-base-300 flex flex-col"
+	role="dialog"
+	aria-label="DevBot chat"
+>
+	<header class="flex items-center justify-between px-4 py-3 border-b border-base-300">
+		<div class="flex items-center gap-2 min-w-0">
+			<span class="badge badge-primary badge-sm">DevBot</span>
+			<span class="text-xs text-base-content/60 truncate" id="devbot-status">Connecting…</span>
+		</div>
+		<div class="flex items-center gap-1">
+			<a
+				href="/ui/chat"
+				class="btn btn-ghost btn-xs"
+				title="Open full chat page"
+				aria-label="Open full chat page"
+			>↗</a>
+			<button
+				type="button"
+				class="btn btn-ghost btn-xs"
+				id="devbot-clear"
+				title="Start a new conversation"
+				aria-label="Start a new conversation"
+			>⟲</button>
+			<button
+				type="button"
+				class="btn btn-ghost btn-xs"
+				id="devbot-close"
+				title="Close"
+				aria-label="Close DevBot chat"
+			>✕</button>
+		</div>
+	</header>
+
+	<div
+		id="devbot-messages"
+		class="flex-1 overflow-y-auto p-3 space-y-3 text-sm bg-base-200/30"
+	>
+		<div class="text-xs text-base-content/60 text-center py-6">
+			Ask me about your Azure DevOps work items, projects, pipelines, or pull requests.
+		</div>
+	</div>
+
+	<form id="devbot-form" class="border-t border-base-300 p-3 flex gap-2">
+		<input
+			id="devbot-input"
+			type="text"
+			class="input input-bordered input-sm flex-1"
+			placeholder="Ask DevBot…"
+			autocomplete="off"
+			required
+			maxlength="4000"
+		/>
+		<button type="submit" class="btn btn-primary btn-sm" id="devbot-send">Send</button>
+	</form>
+</div>
+
+<script>
+	// ── DevBot chat widget ─────────────────────────────────────────────────
+	// Tiny, dependency-free chat client. Talks to /api/chat/message and
+	// stores session_id in sessionStorage so a refresh doesn't reset the
+	// conversation. We don't preload history on open — Redis keeps it for
+	// 24h and is fetched lazily on the dedicated /ui/chat page.
+	(function () {
+		if (window.__DEVBOT_BOOTED__) return;
+		window.__DEVBOT_BOOTED__ = true;
+
+		const root = document.getElementById("devbot-root");
+		const panel = document.getElementById("devbot-panel");
+		const toggle = document.getElementById("devbot-toggle");
+		const closeBtn = document.getElementById("devbot-close");
+		const clearBtn = document.getElementById("devbot-clear");
+		const form = document.getElementById("devbot-form");
+		const input = document.getElementById("devbot-input");
+		const sendBtn = document.getElementById("devbot-send");
+		const messages = document.getElementById("devbot-messages");
+		const status = document.getElementById("devbot-status");
+		if (!root || !panel) return;
+
+		const BASE = root.dataset.chatBase || "/api/chat";
+		const SESSION_KEY = "devbot.session_id";
+
+		function sessionId() {
+			let sid = sessionStorage.getItem(SESSION_KEY);
+			if (!sid) {
+				sid =
+					(crypto.randomUUID && crypto.randomUUID()) ||
+					String(Date.now()) + "-" + Math.random().toString(16).slice(2);
+				sessionStorage.setItem(SESSION_KEY, sid);
+			}
+			return sid;
+		}
+
+		function escapeHtml(s) {
+			return String(s ?? "").replace(/[&<>"']/g, (c) => ({
+				"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+			}[c]));
+		}
+
+		function renderMarkdown(s) {
+			// Intentionally narrow: bold, italic, inline code, links, bullet
+			// points, and line breaks. The LLM is instructed to emit
+			// Markdown only (no HTML), and we escape everything first.
+			let html = escapeHtml(s);
+			html = html.replace(/`([^`]+)`/g, '<code class="px-1 rounded bg-base-300/60">$1</code>');
+			html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+			html = html.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+			html = html.replace(
+				/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
+				'<a href="$2" target="_blank" rel="noopener" class="link link-primary">$1</a>',
+			);
+			html = html.replace(/(https?:\/\/[^\s<>"']+)/g, (m) =>
+				`<a href="${m}" target="_blank" rel="noopener" class="link link-primary">${m}</a>`,
+			);
+			html = html.replace(/^[ \t]*[-*]\s+(.+)$/gm, "<li>$1</li>");
+			html = html.replace(/(?:<li>.*<\/li>\n?)+/g, (m) => `<ul class="list-disc ml-5 my-1">${m}</ul>`);
+			html = html.replace(/\n{2,}/g, "<br><br>").replace(/\n/g, "<br>");
+			return html;
+		}
+
+		function appendMessage(role, text, opts) {
+			const isUser = role === "user";
+			const wrap = document.createElement("div");
+			wrap.className = "flex " + (isUser ? "justify-end" : "justify-start");
+			const bubble = document.createElement("div");
+			bubble.className =
+				"max-w-[85%] rounded-lg px-3 py-2 leading-relaxed " +
+				(isUser
+					? "bg-primary text-primary-content"
+					: "bg-base-100 border border-base-300");
+			if (opts && opts.placeholder) {
+				bubble.innerHTML = '<span class="loading loading-dots loading-sm"></span>';
+				bubble.dataset.placeholder = "true";
+			} else {
+				bubble.innerHTML = isUser ? escapeHtml(text) : renderMarkdown(text);
+			}
+			wrap.appendChild(bubble);
+			messages.appendChild(wrap);
+			messages.scrollTop = messages.scrollHeight;
+			return bubble;
+		}
+
+		async function refreshStatus() {
+			try {
+				const res = await fetch(BASE + "/health", { credentials: "same-origin" });
+				if (!res.ok) throw new Error("http " + res.status);
+				const j = await res.json();
+				const d = j && j.data ? j.data : {};
+				const bits = [];
+				bits.push(d.llm_configured ? "AI: ready" : "AI: not configured");
+				bits.push(d.ado_connected ? "ADO: connected" : "ADO: not connected");
+				status.textContent = bits.join(" · ");
+			} catch (_err) {
+				status.textContent = "Status unavailable";
+			}
+		}
+
+		async function send(text) {
+			appendMessage("user", text);
+			const placeholder = appendMessage("assistant", "", { placeholder: true });
+			sendBtn.disabled = true;
+			input.disabled = true;
+			try {
+				const res = await fetch(BASE + "/message", {
+					method: "POST",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ message: text, session_id: sessionId() }),
+				});
+				const body = await res.json().catch(() => ({}));
+				if (!res.ok) {
+					const detail = body && body.detail ? String(body.detail) : "Request failed.";
+					placeholder.innerHTML = renderMarkdown("**Error:** " + detail);
+					return;
+				}
+				const reply = (body && body.data && body.data.reply) || "(no response)";
+				placeholder.removeAttribute("data-placeholder");
+				placeholder.innerHTML = renderMarkdown(reply);
+			} catch (err) {
+				placeholder.innerHTML = renderMarkdown(
+					"**Network error.** Please try again in a moment.",
+				);
+			} finally {
+				sendBtn.disabled = false;
+				input.disabled = false;
+				input.focus();
+			}
+		}
+
+		toggle.addEventListener("click", () => {
+			const visible = !panel.classList.contains("hidden");
+			panel.classList.toggle("hidden", visible);
+			if (!visible) {
+				refreshStatus();
+				setTimeout(() => input.focus(), 50);
+			}
+		});
+
+		closeBtn.addEventListener("click", () => panel.classList.add("hidden"));
+		clearBtn.addEventListener("click", async () => {
+			const sid = sessionStorage.getItem(SESSION_KEY);
+			if (sid) {
+				try {
+					await fetch(BASE + "/sessions/" + encodeURIComponent(sid), {
+						method: "DELETE",
+						credentials: "same-origin",
+					});
+				} catch (_e) { /* ignore */ }
+			}
+			sessionStorage.removeItem(SESSION_KEY);
+			messages.innerHTML =
+				'<div class="text-xs text-base-content/60 text-center py-6">' +
+				"New conversation started." +
+				"</div>";
+		});
+
+		form.addEventListener("submit", (e) => {
+			e.preventDefault();
+			const text = input.value.trim();
+			if (!text) return;
+			input.value = "";
+			send(text);
+		});
+
+		// Hide the floating launcher on the dedicated /ui/chat page so we
+		// don't render two chat surfaces at once.
+		if (window.location.pathname.startsWith("/ui/chat")) {
+			root.classList.add("hidden");
+		}
+	})();
+</script>

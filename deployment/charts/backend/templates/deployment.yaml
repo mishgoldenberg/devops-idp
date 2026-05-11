@@ -84,6 +84,11 @@ spec:
                 secretKeyRef:
                   name: all-secrets
                   key: CONFLUENCE_BASE_URL
+            - name: LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: all-secrets
+                  key: LLM_API_KEY
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:

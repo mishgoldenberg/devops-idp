@@ -10,4 +10,5 @@ data:
   POSTGRES_USER: {{ .Values.global.endpoints.postgresUser | quote }}
   REDIS_HOST: {{ .Values.global.endpoints.redisHost | quote }}
   REDIS_PORT: {{ .Values.global.endpoints.redisPort | quote }}
-  
+  LLM_BASE_URL: {{ .Values.global.llm.baseUrl | default "" | quote }}
+  LLM_MODEL: {{ .Values.global.llm.model | default "gpt-4o-mini" | quote }}

@@ -53,6 +53,8 @@ on:
         required: false
       CONFLUENCE_BASE_URL:
         required: false
+      LLM_API_KEY:
+        required: false
 
 jobs:
   build:
@@ -135,6 +137,7 @@ jobs:
           ARTIFACTORY_BASE_URL: ${{ secrets.ARTIFACTORY_BASE_URL }}
           SONARQUBE_BASE_URL: ${{ secrets.SONARQUBE_BASE_URL }}
           CONFLUENCE_BASE_URL: ${{ secrets.CONFLUENCE_BASE_URL }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
         run: |
           python3 - <<'EOF'
           import yaml, os
@@ -152,6 +155,7 @@ jobs:
             "artifactoryBaseUrl":  os.environ.get("ARTIFACTORY_BASE_URL", ""),
             "sonarqubeBaseUrl":    os.environ.get("SONARQUBE_BASE_URL", ""),
             "confluenceBaseUrl":   os.environ.get("CONFLUENCE_BASE_URL", ""),
+            "llmApiKey":           os.environ.get("LLM_API_KEY", ""),
           }
           # Scope under "backend:" so the umbrella chart passes values to the
           # backend subchart's .Values.secrets context (not the parent chart).

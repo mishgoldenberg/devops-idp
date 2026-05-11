@@ -14,6 +14,7 @@ from fastapi import APIRouter
 
 from . import (
     admin,
+    ai_chatbot,
     auth,
     dashboards,
     health,
@@ -103,5 +104,9 @@ api_router.include_router(integrations.router, prefix="/integrations", tags=["in
 
 # Globally visible Quick Links for the dashboard. Admin CRUD lives under /api/admin.
 api_router.include_router(quick_links.router, prefix="/quick-links", tags=["quick-links"])
+
+# DevBot chat assistant (in-process, Azure DevOps tools only — see
+# docs/chat-bot-requirements.md).
+api_router.include_router(ai_chatbot.router, prefix="/chat", tags=["chat"])
 
 
