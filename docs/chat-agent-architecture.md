@@ -89,22 +89,30 @@ frontend/templates/
 
 ## 4. Credentials and configuration
 
-| Source                    | Used for                                            |
-|---------------------------|-----------------------------------------------------|
-| `AZURE_DEVOPS_BASE_URL` (env) | Base URL passed to every Azure DevOps tool call |
-| Per-user ADO PAT (DB/Vault)   | Authentication header on Azure DevOps API calls |
-| `LLM_BASE_URL` (env)          | OpenAI-compatible chat completions endpoint     |
-| `LLM_MODEL` (env)             | Model name (default `gpt-4o-mini`)              |
-| `LLM_API_KEY` (env, optional) | `Authorization: Bearer …` for the LLM call      |
-| `JWT_SECRET` (env)            | Same JWT auth as the rest of the portal         |
+| Source                    | Cluster origin                                  | Used for                                            |
+|---------------------------|-------------------------------------------------|-----------------------------------------------------|
+| `AZURE_DEVOPS_BASE_URL` (env) | `all-secrets` Secret                        | Base URL passed to every Azure DevOps tool call     |
+| Per-user ADO PAT (DB/Vault)   | `user_integrations` / Vault                 | Authentication header on Azure DevOps API calls     |
+| `LLM_BASE_URL` (env)          | `infra-config` ConfigMap (`global.llm.baseUrl`) | OpenAI-compatible chat completions endpoint     |
+| `LLM_MODEL` (env)             | `infra-config` ConfigMap (`global.llm.model`)   | Model name (default `gpt-4o-mini`)              |
+| `LLM_API_KEY` (env)           | `all-secrets` Secret (GH secret `LLM_API_KEY`)  | `Authorization: Bearer …` for the LLM call      |
+| `JWT_SECRET` (env)            | `all-secrets` Secret                        | Same JWT auth as the rest of the portal             |
 
 The PAT is read via `secrets_manager.get_user_azure_devops_pat(user_id)` —
 the same helper the widget endpoints use. The agent never reads the
 `AZURE_DEVOPS_ADMIN_PAT` (that one is reserved for self-service writes).
 
-If `LLM_BASE_URL` is unset the agent loads cleanly but every reply is the
+The chart ships with sensible OpenAI defaults
+(`baseUrl=https://api.openai.com`, `model=gpt-4o-mini`). The single
+operational input is the `LLM_API_KEY` GitHub Actions secret. To point
+DevBot at a different gateway or pick a different model, edit
+`deployment/values.yaml -> global.llm.*` — see
+[chat-bot-requirements.md §3.3 "Changing the LLM endpoint or model"](chat-bot-requirements.md#changing-the-llm-endpoint-or-model)
+for copy-paste examples (Azure OpenAI, vLLM, LiteLLM/Anthropic shim).
+
+If `LLM_API_KEY` is empty the agent loads cleanly but every reply is the
 "AI backend is not yet configured" stub. This keeps the UI feature shippable
-on environments without an LLM gateway.
+on environments where the key has not yet been provisioned.
 
 ---
 
@@ -285,11 +293,13 @@ to `AZURE_DEVOPS_BASE_URL` (already whitelisted) and `LLM_BASE_URL`
 1. **Tool functions in isolation** — each `tool_*` function can be invoked
    directly with a real PAT to verify the live Azure DevOps response
    shape before the LLM is involved.
-2. **Stub mode** — leave `LLM_BASE_URL` unset and exercise the full UI to
-   confirm health/status, session lifecycle, and the missing-token
-   prompts render correctly.
-3. **End-to-end with a small LLM** — point `LLM_BASE_URL` at any
-   OpenAI-compatible server (vLLM, llama.cpp, Ollama with the OpenAI
-   shim) and run the canonical prompts: "list my projects", "what work
-   items am I working on?", "show recent runs of pipeline X in project
-   Y", "what PRs are open in repo Z of project Y?".
+2. **Stub mode** — deploy with the `LLM_API_KEY` GitHub secret unset (or
+   blank) and exercise the full UI to confirm health/status, session
+   lifecycle, and the missing-token prompts render correctly.
+3. **End-to-end with a small LLM** — set `LLM_API_KEY` in GitHub secrets;
+   if you are not using OpenAI also override
+   `global.llm.baseUrl`/`global.llm.model` in `deployment/values.yaml`
+   (e.g. for vLLM, llama.cpp, Ollama with the OpenAI shim, or LiteLLM).
+   Trigger a deploy and run the canonical prompts: "list my projects",
+   "what work items am I working on?", "show recent runs of pipeline X
+   in project Y", "what PRs are open in repo Z of project Y?".

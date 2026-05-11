@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-Content *)",
+      "PowerShell($env:DATABASE_URL='postgres://x:y@localhost:5432/x'; $env:JWT_SECRET='test'; $env:PYTHONPATH='C:\\\\Users\\\\LeonidK\\\\projects\\\\devops-idp\\\\backend\\\\app'; python -c \"import importlib, sys; sys.path.insert\\(0, 'C:/Users/LeonidK/projects/devops-idp/backend/app'\\); from api import ai_chatbot; print\\('module ok'\\); print\\('router routes:', len\\(ai_chatbot.router.routes\\)\\); from api import api_router; print\\('api_router mounted, total routes:', len\\(api_router.routes\\)\\)\")",
+      "PowerShell(python -c \"import jinja2; env=jinja2.Environment\\(loader=jinja2.FileSystemLoader\\('C:/Users/LeonidK/projects/devops-idp/frontend/templates'\\)\\); env.get_template\\('chat.html'\\); env.get_template\\('partials/components/chat-drawer.html'\\); env.get_template\\('partials/components/chat-container.html'\\); print\\('templates ok'\\)\")",
+      "PowerShell(python -c \"import jinja2; env=jinja2.Environment\\(loader=jinja2.FileSystemLoader\\('C:/Users/LeonidK/projects/devops-idp/frontend/templates'\\)\\); env.get_template\\('chat.html'\\); env.get_template\\('partials/components/chat-drawer.html'\\); env.get_template\\('partials/components/chat-container.html'\\); env.get_template\\('partials/components/banner.html'\\); env.get_template\\('partials/components/sidebar.html'\\); env.get_template\\('index.html'\\); print\\('TEMPLATES OK'\\)\")"
+    ]
+  }
+}

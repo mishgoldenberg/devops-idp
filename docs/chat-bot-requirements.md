@@ -68,8 +68,9 @@ new pod, no new Service, no new Secret beyond the LLM env vars.
 * Missing-PAT short-circuit: if the user has no PAT and the message
   mentions ADO keywords, reply with a deterministic "connect your PAT"
   message without calling the LLM.
-* Stub mode: if `LLM_BASE_URL` is unset the endpoint loads but every
-  reply is the "AI backend not yet configured" message — never 500s.
+* Stub mode: if `LLM_API_KEY` is empty (or the base URL has been
+  blanked out) the endpoint loads but every reply is the "AI backend
+  not yet configured" message — never 500s.
 
 ### 3.2 Frontend
 
@@ -102,6 +103,56 @@ The single thing the operator has to do at install time is set the
 backend `all-secrets` Secret automatically; the base URL and model are
 non-secrets and live in `deployment/values.yaml -> global.llm.*`.
 
+#### Changing the LLM endpoint or model
+
+The base URL and model are plain Helm values, not secrets. To switch
+provider or model, edit `deployment/values.yaml`:
+
+```yaml
+global:
+  llm:
+    baseUrl: "https://api.openai.com"   # OpenAI default
+    model:   "gpt-4o-mini"
+```
+
+Examples for other backends (any OpenAI-compatible server works):
+
+```yaml
+# Azure OpenAI (use the deployment URL, OPENAI key is still the bearer token)
+global:
+  llm:
+    baseUrl: "https://my-resource.openai.azure.com/openai/deployments/my-deployment"
+    model:   "gpt-4o-mini"
+
+# Self-hosted vLLM / Ollama OpenAI shim inside the cluster
+global:
+  llm:
+    baseUrl: "http://vllm.llm.svc.cluster.local:8000"
+    model:   "qwen2.5-coder-32b-instruct"
+
+# Anthropic via an OpenAI-compatible proxy (e.g. LiteLLM)
+global:
+  llm:
+    baseUrl: "http://litellm.llm.svc.cluster.local:4000"
+    model:   "claude-sonnet-4-5"
+```
+
+After committing the change to `main` the `Deploy (Helm only)` workflow
+re-renders the chart and restarts the backend pods, picking up the new
+`LLM_BASE_URL` / `LLM_MODEL` env vars. No code or image rebuild needed.
+
+For a one-off override without touching the file (e.g. testing a model
+in a side environment), pass `--set` flags to the helm upgrade step:
+
+```
+helm upgrade devops-stack ./deployment \
+  --set global.llm.baseUrl=http://vllm.llm.svc.cluster.local:8000 \
+  --set global.llm.model=qwen2.5-coder-32b-instruct
+```
+
+`LLM_API_KEY` stays in GitHub Actions secrets either way — rotating it
+means updating the GH secret and rerunning the deploy workflow.
+
 Re-used (already in the portal):
 
 | Variable                | Used for                                              |
@@ -117,9 +168,11 @@ Re-used (already in the portal):
   rule, image, or Helm release.
 * The portal image already exposes `/api/*` and `/ui/*`; the new routes
   ship inside it.
-* The only operational change is setting `LLM_BASE_URL` (and optional
-  `LLM_MODEL` / `LLM_API_KEY`) in the existing `all-secrets` / values
-  files. Without them the UI is fully functional in stub mode.
+* The only operational change is setting the `LLM_API_KEY` GitHub
+  Actions secret. `LLM_BASE_URL` and `LLM_MODEL` ship with OpenAI
+  defaults in `deployment/values.yaml -> global.llm.*` — override them
+  there to point at a different provider (see §3.3).
+* Without `LLM_API_KEY` the UI is fully functional in stub mode.
 * Closed-network constraint unchanged: outbound calls are limited to
   `AZURE_DEVOPS_BASE_URL` (already allowed) and `LLM_BASE_URL` (must
   point at a cluster-internal or otherwise-allowlisted gateway).
@@ -171,7 +224,9 @@ Re-used (already in the portal):
 
 A reviewer can verify v1 by:
 
-1. **Stub mode** — leave `LLM_BASE_URL` unset, log into the portal:
+1. **Stub mode** — deploy without the `LLM_API_KEY` GitHub secret set
+   (defaults still leave `LLM_BASE_URL`=`https://api.openai.com`,
+   `LLM_MODEL`=`gpt-4o-mini`). Log into the portal:
    1. Floating button appears on every page.
    2. Drawer opens; status reads `AI: not configured · ADO: not connected`.
    3. Sending a message returns the "not yet configured" reply within
@@ -181,8 +236,9 @@ A reviewer can verify v1 by:
 2. **PAT connected, LLM stub** — paste a valid PAT on the Azure DevOps
    page. Status now reads `AI: not configured · ADO: connected`. The
    chat still returns the stub message.
-3. **End-to-end** — set `LLM_BASE_URL` (and `LLM_MODEL`, `LLM_API_KEY`)
-   to any OpenAI-compatible endpoint, restart the backend:
+3. **End-to-end** — set the `LLM_API_KEY` GitHub Actions secret (and
+   override `global.llm.baseUrl` / `global.llm.model` in
+   `deployment/values.yaml` if not using OpenAI), trigger a deploy:
    1. "List my Azure DevOps projects" — assistant calls
       `ado_list_projects` and returns the live list.
    2. "What work items are assigned to me?" — assistant calls
