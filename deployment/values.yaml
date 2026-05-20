@@ -44,7 +44,7 @@ global:
   # Only the API key flows through the all-secrets Secret. Override per
   # environment by passing --set global.llm.baseUrl=...
   llm:
-    baseUrl: "https://api.groq.com/openai/v1"
+    baseUrl: "https://api.groq.com/openai"
     model: "llama-3.3-70b-versatile"
 
 
