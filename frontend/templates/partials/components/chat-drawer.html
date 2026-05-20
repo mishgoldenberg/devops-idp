@@ -159,24 +159,160 @@
 		}
 
 		function renderMarkdown(s) {
-			// Intentionally narrow: bold, italic, inline code, links, bullet
-			// points, and line breaks. The LLM is instructed to emit
-			// Markdown only (no HTML), and we escape everything first.
-			let html = escapeHtml(s);
-			html = html.replace(/`([^`]+)`/g, '<code class="px-1 rounded bg-base-300/60">$1</code>');
-			html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-			html = html.replace(/\*([^*]+)\*/g, "<em>$1</em>");
-			html = html.replace(
-				/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
-				'<a href="$2" target="_blank" rel="noopener" class="link link-primary">$1</a>',
-			);
-			html = html.replace(/(https?:\/\/[^\s<>"']+)/g, (m) =>
-				`<a href="${m}" target="_blank" rel="noopener" class="link link-primary">${m}</a>`,
-			);
-			html = html.replace(/^[ \t]*[-*]\s+(.+)$/gm, "<li>$1</li>");
-			html = html.replace(/(?:<li>.*<\/li>\n?)+/g, (m) => `<ul class="list-disc ml-5 my-1">${m}</ul>`);
-			html = html.replace(/\n{2,}/g, "<br><br>").replace(/\n/g, "<br>");
-			return html;
+			// Line-based Markdown renderer. Everything is HTML-escaped before
+			// any formatting, so model output can never inject markup. Handles
+			// headings, fenced code, tables, ordered/unordered lists,
+			// blockquotes, paragraphs, and inline bold/italic/code/links.
+			const lines = escapeHtml(s).split("\n");
+
+			function inline(text) {
+				let h = text;
+				h = h.replace(/`([^`]+)`/g, '<code class="px-1 rounded bg-base-300/60">$1</code>');
+				h = h.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+				h = h.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+				h = h.replace(
+					/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
+					'<a href="$2" target="_blank" rel="noopener" class="link link-primary">$1</a>',
+				);
+				h = h.replace(
+					/(^|[^"'>])(https?:\/\/[^\s<>"']+)/g,
+					(m, pre, url) =>
+						pre +
+						'<a href="' + url + '" target="_blank" rel="noopener" class="link link-primary">' +
+						url + "</a>",
+				);
+				return h;
+			}
+
+			function isTableStart(idx) {
+				return (
+					/^\s*\|.*\|\s*$/.test(lines[idx]) &&
+					idx + 1 < lines.length &&
+					/^\s*\|?[\s:|-]+\|?\s*$/.test(lines[idx + 1]) &&
+					lines[idx + 1].includes("-")
+				);
+			}
+
+			function isBlockStart(idx) {
+				const ln = lines[idx];
+				return (
+					!ln.trim() ||
+					/^\s*```/.test(ln) ||
+					/^#{1,6}\s+/.test(ln) ||
+					/^\s*\d+\.\s+/.test(ln) ||
+					/^\s*[-*]\s+/.test(ln) ||
+					/^\s*&gt;\s?/.test(ln) ||
+					isTableStart(idx)
+				);
+			}
+
+			function cells(row) {
+				return row
+					.replace(/^\s*\|/, "")
+					.replace(/\|\s*$/, "")
+					.split("|")
+					.map(function (c) { return c.trim(); });
+			}
+
+			const out = [];
+			let i = 0;
+			while (i < lines.length) {
+				const line = lines[i];
+
+				if (!line.trim()) { i++; continue; }
+
+				// Fenced code block — escaped content, no inline parsing.
+				if (/^\s*```/.test(line)) {
+					const code = [];
+					i++;
+					while (i < lines.length && !/^\s*```/.test(lines[i])) {
+						code.push(lines[i]);
+						i++;
+					}
+					i++;
+					out.push(
+						'<pre class="bg-base-300/60 rounded p-2 my-1 overflow-x-auto text-xs">' +
+						"<code>" + code.join("\n") + "</code></pre>",
+					);
+					continue;
+				}
+
+				// Heading.
+				const h = line.match(/^(#{1,6})\s+(.+)$/);
+				if (h) {
+					const weight = h[1].length <= 2 ? "font-bold" : "font-semibold";
+					out.push('<div class="' + weight + ' text-sm mt-2 mb-1">' + inline(h[2]) + "</div>");
+					i++;
+					continue;
+				}
+
+				// Table.
+				if (isTableStart(i)) {
+					const head = cells(line);
+					i += 2;
+					const rows = [];
+					while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) {
+						rows.push(cells(lines[i]));
+						i++;
+					}
+					let t = '<div class="overflow-x-auto my-1"><table class="table table-xs"><thead><tr>';
+					t += head.map(function (c) { return "<th>" + inline(c) + "</th>"; }).join("");
+					t += "</tr></thead><tbody>";
+					t += rows
+						.map(function (r) {
+							return "<tr>" + r.map(function (c) { return "<td>" + inline(c) + "</td>"; }).join("") + "</tr>";
+						})
+						.join("");
+					out.push(t + "</tbody></table></div>");
+					continue;
+				}
+
+				// Ordered list.
+				if (/^\s*\d+\.\s+/.test(line)) {
+					const items = [];
+					while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) {
+						items.push("<li>" + inline(lines[i].replace(/^\s*\d+\.\s+/, "")) + "</li>");
+						i++;
+					}
+					out.push('<ol class="list-decimal ml-5 my-1">' + items.join("") + "</ol>");
+					continue;
+				}
+
+				// Unordered list.
+				if (/^\s*[-*]\s+/.test(line)) {
+					const items = [];
+					while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
+						items.push("<li>" + inline(lines[i].replace(/^\s*[-*]\s+/, "")) + "</li>");
+						i++;
+					}
+					out.push('<ul class="list-disc ml-5 my-1">' + items.join("") + "</ul>");
+					continue;
+				}
+
+				// Blockquote (">" is "&gt;" post-escape).
+				if (/^\s*&gt;\s?/.test(line)) {
+					const quote = [];
+					while (i < lines.length && /^\s*&gt;\s?/.test(lines[i])) {
+						quote.push(inline(lines[i].replace(/^\s*&gt;\s?/, "")));
+						i++;
+					}
+					out.push(
+						'<blockquote class="border-l-2 border-base-300 pl-2 my-1 italic">' +
+						quote.join("<br>") + "</blockquote>",
+					);
+					continue;
+				}
+
+				// Paragraph — consecutive lines until the next block.
+				const para = [];
+				while (i < lines.length && !isBlockStart(i)) {
+					para.push(inline(lines[i]));
+					i++;
+				}
+				if (para.length) out.push('<p class="my-1">' + para.join("<br>") + "</p>");
+			}
+
+			return out.join("");
 		}
 
 		function appendMessage(role, text, opts) {
