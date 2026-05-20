@@ -1,5 +1,5 @@
 """
-AI Chat Bot ("DevBot") — in-portal Azure DevOps assistant.
+AI Chat Bot ("DevBot") — in-portal Azure DevOps + Confluence assistant.
 
 This module is the in-portal implementation of the chat-agent described in
 ``docs/chat-agent-architecture.md``. Unlike the original design, it is **not**
@@ -7,13 +7,14 @@ a separate microservice — it lives inside the existing FastAPI portal and
 shares the same Postgres, Redis, JWT auth, and Azure DevOps credentials as
 the rest of the app.
 
-Scope (intentional):
-    * Tools are implemented for Azure DevOps only. The tool registry is
-      structured so additional systems (SonarQube, Artifactory, Confluence)
-      can be plugged in later without rewriting the orchestrator.
-    * The behaviour and tool schemas mimic the public ``mcp-azure-devops``
-      server (list projects / repos / work items / pipelines / PRs, get
-      work item, etc.) so users get a familiar surface.
+Scope:
+    * Tools are implemented for Azure DevOps (projects, repos, work items,
+      pipelines, pull requests) and Confluence (search, recent pages, read
+      page content). The tool registry is structured so further systems
+      (SonarQube, Artifactory) can be plugged in later without rewriting
+      the orchestrator.
+    * The Azure DevOps tool schemas mimic the public ``mcp-azure-devops``
+      server so users get a familiar surface.
 
 Auth + credentials:
     * Every request requires the standard portal ``auth_token`` JWT cookie /
@@ -45,9 +46,11 @@ Sessions:
 
 from __future__ import annotations
 
+import html
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -58,9 +61,11 @@ from fastapi import APIRouter, Body, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from db import query_one
 from redis_client import get_redis
 from secrets_manager import get_user_azure_devops_pat
 from security import AuthUser, get_current_user
+from sso_config import decrypt_secret
 
 
 router = APIRouter()
@@ -628,8 +633,252 @@ _AZURE_DEVOPS_TOOLS: List[Tuple[str, Dict[str, Any], ToolFn]] = [
 ]
 
 
-def _tool_registry() -> Dict[str, Tuple[Dict[str, Any], ToolFn]]:
-    return {name: (schema, fn) for name, schema, fn in _AZURE_DEVOPS_TOOLS}
+# ─── Confluence helpers + tools ───────────────────────────────────────────────
+# Confluence pages are searched and read with the per-user Confluence token
+# stored in the ``user_integrations`` table (the same place the Confluence
+# widget reads it from). The base URL comes from ``CONFLUENCE_BASE_URL``.
+
+
+def _confluence_base() -> str:
+    return (os.getenv("CONFLUENCE_BASE_URL") or "").strip().rstrip("/")
+
+
+def _confluence_token(user_id: str) -> str:
+    """Per-user Confluence token from the user_integrations table ('' if none)."""
+    try:
+        row = query_one(
+            "SELECT token_encrypted FROM user_integrations WHERE user_id = %s AND system = %s",
+            [user_id, "confluence"],
+        )
+    except Exception:
+        return ""
+    if not row:
+        return ""
+    try:
+        return decrypt_secret(str(row["token_encrypted"])) or ""
+    except Exception:
+        return ""
+
+
+def _confluence_get(path: str, token: str, params: Optional[Dict[str, Any]] = None) -> Any:
+    """Authenticated GET against the Confluence REST API; raises on failure."""
+    base = _confluence_base()
+    if not base:
+        raise RuntimeError("CONFLUENCE_BASE_URL is not configured.")
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    with httpx.Client(timeout=20.0, headers=headers) as client:
+        response = client.get(f"{base}{path}", params=params)
+        response.raise_for_status()
+        return response.json()
+
+
+def _strip_html(raw: str) -> str:
+    """Reduce Confluence's rendered-HTML page body to plain text for the LLM."""
+    if not raw:
+        return ""
+    no_blocks = re.sub(r"(?is)<(script|style)\b.*?</\1>", " ", raw)
+    text = re.sub(r"(?s)<[^>]+>", " ", no_blocks)
+    return re.sub(r"\s+", " ", html.unescape(text)).strip()
+
+
+def _confluence_pages(payload: Any) -> List[Dict[str, Any]]:
+    """Reshape a Confluence content/search response into a compact page list."""
+    base = _confluence_base()
+    results = payload.get("results") if isinstance(payload, dict) else None
+    pages: List[Dict[str, Any]] = []
+    for item in results or []:
+        if not isinstance(item, dict):
+            continue
+        page_id = str(item.get("id") or "")
+        space = item.get("space") if isinstance(item.get("space"), dict) else {}
+        space_name = str(space.get("name") or space.get("key") or "")
+        links = item.get("_links") if isinstance(item.get("_links"), dict) else {}
+        webui = str(links.get("webui") or "")
+        url = (
+            f"{base}{webui}"
+            if webui
+            else (f"{base}/pages/viewpage.action?pageId={page_id}" if page_id else "")
+        )
+        pages.append({
+            "id": page_id,
+            "title": str(item.get("title") or "Untitled"),
+            "space": space_name,
+            "url": url,
+        })
+    return pages
+
+
+def _confluence_limit(args: Dict[str, Any]) -> int:
+    try:
+        return min(max(int(args.get("limit") or 10), 1), 25)
+    except (TypeError, ValueError):
+        return 10
+
+
+_CONFLUENCE_NOT_CONNECTED = (
+    "Confluence is not connected. Open the Confluence page in the portal "
+    "and add your personal token."
+)
+
+
+def tool_confluence_search(args: Dict[str, Any], token: str) -> Dict[str, Any]:
+    if not token:
+        return _tool_error(_CONFLUENCE_NOT_CONNECTED)
+    query = str(args.get("query") or "").strip()
+    if not query:
+        return _tool_error("A 'query' is required to search Confluence.")
+    # Escape embedded quotes so the text cannot break out of the CQL literal.
+    safe = query.replace('"', '\\"')
+    try:
+        payload = _confluence_get(
+            "/rest/api/content/search",
+            token,
+            {
+                "cql": f'type=page AND text~"{safe}"',
+                "limit": _confluence_limit(args),
+                "expand": "space,version,history.lastUpdated",
+            },
+        )
+    except httpx.HTTPStatusError as exc:
+        return _tool_error(f"Confluence search failed (HTTP {exc.response.status_code}).")
+    except Exception as exc:
+        return _tool_error(f"Confluence search failed: {exc}")
+    return {"pages": _confluence_pages(payload)}
+
+
+def tool_confluence_recent(args: Dict[str, Any], token: str) -> Dict[str, Any]:
+    if not token:
+        return _tool_error(_CONFLUENCE_NOT_CONNECTED)
+    try:
+        payload = _confluence_get(
+            "/rest/api/content",
+            token,
+            {
+                "type": "page",
+                "orderby": "modified",
+                "limit": _confluence_limit(args),
+                "expand": "space,version,history.lastUpdated",
+            },
+        )
+    except httpx.HTTPStatusError as exc:
+        return _tool_error(f"Confluence request failed (HTTP {exc.response.status_code}).")
+    except Exception as exc:
+        return _tool_error(f"Confluence request failed: {exc}")
+    return {"pages": _confluence_pages(payload)}
+
+
+def tool_confluence_get_page(args: Dict[str, Any], token: str) -> Dict[str, Any]:
+    if not token:
+        return _tool_error(_CONFLUENCE_NOT_CONNECTED)
+    page_id = str(args.get("page_id") or "").strip()
+    if not page_id:
+        return _tool_error("A 'page_id' is required (get it from confluence_search).")
+    try:
+        payload = _confluence_get(
+            f"/rest/api/content/{quote(page_id)}",
+            token,
+            {"expand": "body.view,space,version"},
+        )
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            return _tool_error(f"Confluence page '{page_id}' was not found.")
+        return _tool_error(f"Confluence page fetch failed (HTTP {exc.response.status_code}).")
+    except Exception as exc:
+        return _tool_error(f"Confluence page fetch failed: {exc}")
+    if not isinstance(payload, dict):
+        return _tool_error("Unexpected Confluence response.")
+    space = payload.get("space") if isinstance(payload.get("space"), dict) else {}
+    text = _strip_html(str(_safe_get(payload, "body.view.value", "") or ""))
+    return {
+        "id": str(payload.get("id") or page_id),
+        "title": str(payload.get("title") or "Untitled"),
+        "space": str(space.get("name") or space.get("key") or ""),
+        "content": text[:6000],
+        "truncated": len(text) > 6000,
+    }
+
+
+_CONFLUENCE_TOOLS: List[Tuple[str, Dict[str, Any], ToolFn]] = [
+    (
+        "confluence_search",
+        {
+            "type": "function",
+            "function": {
+                "name": "confluence_search",
+                "description": (
+                    "Full-text search Confluence pages. Returns matching page "
+                    "titles, spaces, ids, and URLs. Use an id with "
+                    "confluence_get_page to read that page's content."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Search text."},
+                        "limit": {"type": "integer", "description": "Max results (default 10, capped at 25)."},
+                    },
+                    "required": ["query"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        tool_confluence_search,
+    ),
+    (
+        "confluence_recent",
+        {
+            "type": "function",
+            "function": {
+                "name": "confluence_recent",
+                "description": "List recently updated Confluence pages the user can see.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "description": "Max results (default 10, capped at 25)."},
+                    },
+                    "additionalProperties": False,
+                },
+            },
+        },
+        tool_confluence_recent,
+    ),
+    (
+        "confluence_get_page",
+        {
+            "type": "function",
+            "function": {
+                "name": "confluence_get_page",
+                "description": (
+                    "Fetch the full text content of a single Confluence page by id. "
+                    "Get the id from confluence_search or confluence_recent."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "page_id": {"type": "string", "description": "Confluence page id."},
+                    },
+                    "required": ["page_id"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        tool_confluence_get_page,
+    ),
+]
+
+
+# ─── Tool registry ────────────────────────────────────────────────────────────
+# Each entry is tagged with the system whose credential it needs, so the
+# orchestrator hands the right token (ADO PAT vs Confluence token) to each
+# tool when it runs.
+
+_ALL_TOOLS: List[Tuple[str, Dict[str, Any], ToolFn, str]] = [
+    *[(name, schema, fn, "ado") for name, schema, fn in _AZURE_DEVOPS_TOOLS],
+    *[(name, schema, fn, "confluence") for name, schema, fn in _CONFLUENCE_TOOLS],
+]
+
+
+def _tool_registry() -> Dict[str, Tuple[Dict[str, Any], ToolFn, str]]:
+    return {name: (schema, fn, system) for name, schema, fn, system in _ALL_TOOLS}
 
 
 # ─── Session store (Redis) ────────────────────────────────────────────────────
@@ -691,19 +940,23 @@ def _mentions_ado(message: str) -> bool:
 
 _SYSTEM_PROMPT_TEMPLATE = """You are DevBot, an AI assistant built into DevOps Hub.
 You help users investigate their Azure DevOps projects, work items, pipelines,
-and pull requests by calling the provided tools.
+and pull requests, and search and read their Confluence documentation — by
+calling the provided tools.
 
 Rules:
 - Always call tools to fetch live data — never guess project names, work item
-  ids, or pipeline results.
+  ids, pipeline results, or the contents of Confluence pages.
+- To answer a documentation question, search Confluence first, then call
+  confluence_get_page on the most relevant result to read its actual content.
 - Be concise. Use bullet points and short tables where they aid readability.
 - Use Markdown for formatting; do not output HTML.
 - Surface direct links (web_url, url) when the user might want to click through.
 - If a tool returns an 'error' field, summarise the error to the user instead
-  of retrying blindly.
-- This deployment only supports Azure DevOps tools today. If the user asks
-  about Artifactory, SonarQube, Confluence, or any other system, explain that
-  these are coming soon and that you can only help with Azure DevOps for now.
+  of retrying blindly. If the error says a system is not connected, tell the
+  user to open that system's page in the portal and add their token.
+- Azure DevOps and Confluence are supported today. For any other system
+  (Artifactory, SonarQube, ServiceNow, …) explain that it is not available
+  through the assistant yet.
 
 User: {display_name}
 """
@@ -743,11 +996,15 @@ def _run_orchestrator(
     user_message: str,
     history: List[Dict[str, Any]],
     current_user: AuthUser,
-    pat: str,
+    creds: Dict[str, str],
 ) -> Tuple[str, List[Dict[str, Any]]]:
-    """Run the tool-calling loop and return (final_text, updated_history)."""
+    """Run the tool-calling loop and return (final_text, updated_history).
+
+    ``creds`` maps a system tag ('ado', 'confluence') to the credential that
+    system's tools need; each tool is dispatched with its own system's token.
+    """
     registry = _tool_registry()
-    tools_schema = [schema for _, schema, _ in _AZURE_DEVOPS_TOOLS]
+    tools_schema = [schema for _, schema, _, _ in _ALL_TOOLS]
 
     messages: List[Dict[str, Any]] = [{"role": "system", "content": _build_system_prompt(current_user)}]
     messages.extend(history)
@@ -796,10 +1053,10 @@ def _run_orchestrator(
             if not entry:
                 tool_result: Dict[str, Any] = {"error": f"Unknown tool '{name}'."}
             else:
-                _, fn = entry
+                _, fn, system = entry
                 started = time.time()
                 try:
-                    tool_result = fn(args, pat)
+                    tool_result = fn(args, creds.get(system, ""))
                 except Exception as exc:
                     log.exception("Tool %s crashed: %s", name, exc)
                     tool_result = {"error": f"Tool '{name}' failed: {exc}"}
@@ -853,16 +1110,16 @@ def chat_health(current_user: AuthUser = Depends(get_current_user)) -> Dict[str,
 @router.get("/connected-systems")
 def chat_connected_systems(current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]:
     """Which integrations the user can use through the chat agent."""
+    user_id = str(current_user.get("id"))
     return {
         "success": True,
         "data": {
-            "azure_devops": _ado_is_connected(str(current_user.get("id"))),
-            # The portal currently only ships ADO chat tools. Leaving the
-            # other flags in the response so the frontend status dots can be
-            # rendered uniformly and lit up later without a contract change.
+            "azure_devops": _ado_is_connected(user_id),
+            "confluence": bool(_confluence_token(user_id)),
+            # SonarQube and Artifactory have no chat tools yet — flags kept so
+            # the frontend status dots stay uniform without a contract change.
             "artifactory": False,
             "sonarqube": False,
-            "confluence": False,
         },
     }
 
@@ -930,16 +1187,17 @@ def chat_message(
         pat = get_user_azure_devops_pat(user_id) or ""
     except Exception:
         pat = ""
+    creds = {"ado": pat, "confluence": _confluence_token(user_id)}
 
     history = _load_history(user_id, session_id)
-    reply, new_history = _run_orchestrator(user_message, history, current_user, pat)
+    reply, new_history = _run_orchestrator(user_message, history, current_user, creds)
     _save_history(user_id, session_id, new_history)
     return JSONResponse({
         "success": True,
         "data": {
             "session_id": session_id,
             "reply": reply,
-            "tools_available": bool(pat),
+            "tools_available": any(creds.values()),
         },
     })
 

@@ -18,9 +18,10 @@ interact with it via:
   page (rendered through `banner.html`).
 * A dedicated `/ui/chat` page reached from the sidebar.
 
-It currently calls Azure DevOps tools only, using the existing per-user
-PAT and the global `AZURE_DEVOPS_BASE_URL`. The behaviour and tool
-surface intentionally mirror the public
+It calls Azure DevOps tools (using the existing per-user PAT and the global
+`AZURE_DEVOPS_BASE_URL`) and Confluence tools (using the per-user Confluence
+token and `CONFLUENCE_BASE_URL`). The Azure DevOps tool surface intentionally
+mirrors the public
 [`mcp-azure-devops`](https://github.com/microsoft/azure-devops-mcp) server
 so users get a familiar set of operations.
 
@@ -116,12 +117,17 @@ on environments where the key has not yet been provisioned.
 
 ---
 
-## 5. Tool registry (Azure DevOps)
+## 5. Tool registry
 
 Each tool is a plain Python function with signature
-`tool_*(args: dict, pat: str) -> dict`. The `_AZURE_DEVOPS_TOOLS` list pairs
-each function with its OpenAI tool schema. Adding a tool means appending a
-tuple — the orchestrator picks it up automatically.
+`tool_*(args: dict, credential: str) -> dict`. `_AZURE_DEVOPS_TOOLS` and
+`_CONFLUENCE_TOOLS` pair each function with its OpenAI tool schema;
+`_ALL_TOOLS` merges them and tags every entry with the system whose
+credential it needs (`ado` or `confluence`). The orchestrator passes each
+tool its own system's token (ADO PAT vs Confluence token), so adding a tool
+— or a whole new system — means appending tuples, not rewriting dispatch.
+
+**Azure DevOps** (per-user PAT):
 
 | Tool name              | Description                                                       |
 |------------------------|-------------------------------------------------------------------|
@@ -133,12 +139,19 @@ tuple — the orchestrator picks it up automatically.
 | `ado_get_pipeline_runs`| Recent runs of a specific pipeline                                |
 | `ado_list_pull_requests`| PRs in a repo, filtered by status (default `active`)             |
 
+**Confluence** (per-user token from the `user_integrations` table):
+
+| Tool name             | Description                                                        |
+|-----------------------|--------------------------------------------------------------------|
+| `confluence_search`   | Full-text CQL search over pages; returns titles, spaces, ids, URLs |
+| `confluence_recent`   | Recently updated pages the user can see                            |
+| `confluence_get_page` | Full plain-text content of one page by id                         |
+
 All tools return JSON-serialisable dicts. Failures are surfaced as
 `{"error": "..."}` rather than raised so the LLM can summarise the error
 to the user instead of the request crashing.
 
-The shipped tools are **read-only** by design — see
-[chat-bot-requirements.md §4](chat-bot-requirements.md#4-out-of-scope-for-v1).
+The shipped tools are **read-only** by design.
 
 ---
 
@@ -202,19 +215,23 @@ call.
 ```
 You are DevBot, an AI assistant built into DevOps Hub.
 You help users investigate their Azure DevOps projects, work items, pipelines,
-and pull requests by calling the provided tools.
+and pull requests, and search and read their Confluence documentation — by
+calling the provided tools.
 
 Rules:
 - Always call tools to fetch live data — never guess project names, work item
-  ids, or pipeline results.
+  ids, pipeline results, or the contents of Confluence pages.
+- To answer a documentation question, search Confluence first, then call
+  confluence_get_page on the most relevant result to read its actual content.
 - Be concise. Use bullet points and short tables where they aid readability.
 - Use Markdown for formatting; do not output HTML.
 - Surface direct links (web_url, url) when the user might want to click through.
 - If a tool returns an 'error' field, summarise the error to the user instead
-  of retrying blindly.
-- This deployment only supports Azure DevOps tools today. If the user asks
-  about Artifactory, SonarQube, Confluence, or any other system, explain that
-  these are coming soon and that you can only help with Azure DevOps for now.
+  of retrying blindly. If the error says a system is not connected, tell the
+  user to open that system's page in the portal and add their token.
+- Azure DevOps and Confluence are supported today. For any other system
+  (Artifactory, SonarQube, ServiceNow, …) explain that it is not available
+  through the assistant yet.
 
 User: {display_name}
 ```
