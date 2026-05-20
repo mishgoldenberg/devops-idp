@@ -98,11 +98,21 @@
 	// conversation. We don't preload history on open — Redis keeps it for
 	// 24h and is fetched lazily on the dedicated /ui/chat page.
 	(function () {
+		const root = document.getElementById("devbot-root");
+		const panel = document.getElementById("devbot-panel");
+		if (!root || !panel) return;
+
+		// Move both elements to direct <body> children so position:fixed is
+		// always relative to the viewport. Without this, ancestor transforms
+		// (e.g. the portal-fade-in animation on .dropdown-content in banner.html)
+		// can make fixed positioning resolve relative to the banner instead of
+		// the viewport, placing the button at the top of the page.
+		document.body.appendChild(root);
+		document.body.appendChild(panel);
+
 		if (window.__DEVBOT_BOOTED__) return;
 		window.__DEVBOT_BOOTED__ = true;
 
-		const root = document.getElementById("devbot-root");
-		const panel = document.getElementById("devbot-panel");
 		const toggle = document.getElementById("devbot-toggle");
 		const closeBtn = document.getElementById("devbot-close");
 		const clearBtn = document.getElementById("devbot-clear");
@@ -111,7 +121,6 @@
 		const sendBtn = document.getElementById("devbot-send");
 		const messages = document.getElementById("devbot-messages");
 		const status = document.getElementById("devbot-status");
-		if (!root || !panel) return;
 
 		const BASE = root.dataset.chatBase || "/api/chat";
 		const SESSION_KEY = "devbot.session_id";

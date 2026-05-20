@@ -12,6 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Code rules
 - Always guard `execute_returning(...)` results with an emptiness check before indexing; raise HTTP 500 if empty.
 - When a function is called in a module, verify it is present in that module's imports before writing or leaving the call.
+- Any floating/fixed-position widget included from `banner.html` must be moved to a direct `<body>` child via `document.body.appendChild()` in its init script; ancestor transforms in the banner (e.g. `portal-fade-in`) will otherwise make `position:fixed` resolve relative to the banner instead of the viewport. Alternative: move the `{% include %}` out of `banner.html` and into each page template just before `</body>` — cleaner semantically but requires editing every page shell.
 
 ## What This Project Is
 
