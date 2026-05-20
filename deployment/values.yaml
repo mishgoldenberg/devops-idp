@@ -44,8 +44,8 @@ global:
   # Only the API key flows through the all-secrets Secret. Override per
   # environment by passing --set global.llm.baseUrl=...
   llm:
-    baseUrl: "https://api.openai.com"
-    model: "gpt-4o-mini"
+    baseUrl: "https://api.groq.com/openai/v1"
+    model: "llama-3.3-70b-versatile"
 
 
 ingress-prod:
