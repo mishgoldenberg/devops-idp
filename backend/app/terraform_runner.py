@@ -5,18 +5,18 @@ Manages Terraform execution inside Kubernetes Jobs for Azure DevOps project
 provisioning. Each job:
   - Runs the official hashicorp/terraform:1.6 image
   - Uses a K8s ConfigMap to mount generated .tf files
-  - Authenticates to GCS via GKE Workload Identity
-    (GCP SA: devops-terraform-sa@devops-idp-489012.iam.gserviceaccount.com)
-  - Stores tfstate in:  gs://devops-control-center-tfstate/terraform/state/<project>
-  - Stores logs in:     gs://devops-control-center-tfstate/terraform/logs/<project>-YYYYMMDD-HHMM.log
+  - Authenticates to GCS via GKE Workload Identity (TF_GCP_SERVICE_ACCOUNT)
+  - Stores tfstate in:  gs://<TF_GCS_BUCKET>/terraform/state/<project>
+  - Stores logs in:     gs://<TF_GCS_BUCKET>/terraform/logs/<project>-YYYYMMDD-HHMM.log
   - Reads AZDO_PERSONAL_ACCESS_TOKEN from the 'all-secrets' K8s Secret
 
 Prerequisites (must be provisioned in the cluster before use):
-  - K8s ServiceAccount 'devops-terraform-sa' in namespace 'devops-control-center'
-    annotated with iam.gke.io/gcp-service-account = devops-terraform-sa@...
+  - K8s ServiceAccount 'devops-terraform-sa' in namespace TF_K8S_NAMESPACE
+    annotated with iam.gke.io/gcp-service-account = <TF_GCP_SERVICE_ACCOUNT>
   - Backend ClusterRole allowing Jobs/ConfigMaps/Pods read+write for the
     backend service account
-  - GCP SA granted roles/storage.objectAdmin on devops-control-center-tfstate
+  - GCP SA granted roles/storage.objectAdmin on the GCS bucket
+  - Set TF_GCS_BUCKET and TF_GCP_SERVICE_ACCOUNT environment variables
 """
 
 import logging
@@ -31,9 +31,9 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-GCS_BUCKET = "devops-control-center-tfstate"
-TF_GCP_SA = "devops-terraform-sa@devops-idp-489012.iam.gserviceaccount.com"
-TF_K8S_SA = "devops-terraform-sa"
+GCS_BUCKET = os.getenv("TF_GCS_BUCKET", "devops-hub-tfstate")
+TF_GCP_SA = os.getenv("TF_GCP_SERVICE_ACCOUNT", "terraform-sa@your-project.iam.gserviceaccount.com")
+TF_K8S_SA = os.getenv("TF_K8S_SERVICE_ACCOUNT", "devops-terraform-sa")
 
 
 def _detect_k8s_namespace() -> str:

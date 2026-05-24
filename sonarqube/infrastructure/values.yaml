@@ -42,8 +42,8 @@ config:
   logLevel: "info"
   apiGatewayHost: "api-gateway-service"
   apiGatewayPort: "8080"
-  frontendUrl: "https://devops.internal.company"
+  frontendUrl: "https://devops-hub.your-domain.example.com"
   sessionExpiryHours: 24
-  corsOrigins: "https://devops.internal.company"
+  corsOrigins: "https://devops-hub.your-domain.example.com"
 
   

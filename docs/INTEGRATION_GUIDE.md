@@ -70,7 +70,7 @@ AZURE_DEVOPS_ADMIN_PAT=your-admin-pat
 ### Configuration
 
 ```bash
-SONARQUBE_BASE_URL=https://sonarqube.internal.company
+SONARQUBE_BASE_URL=https://your-sonarqube.example.com
 ```
 
 ### Implementation
@@ -89,7 +89,7 @@ and keep the response structure aligned with the existing widgets.
 ### Configuration
 
 ```bash
-ARTIFACTORY_BASE_URL=https://artifactory.internal.company
+ARTIFACTORY_BASE_URL=https://your-artifactory.example.com
 ```
 
 ### Implementation

@@ -1,352 +1,228 @@
-# DevOps Control Center
+<div align="center">
 
-Internal developer portal that gives engineers a single place to see their
-Azure DevOps work, ServiceNow tickets, SonarQube quality, and Artifactory
-status, and to kick off self-service platform actions (e.g. "create me an
-Azure DevOps project") through an approval workflow.
+# 🛠️ DevOps Hub
 
-The portal is a single FastAPI app that:
+**Self-hosted developer portal that unifies Azure DevOps, SonarQube, Artifactory, ServiceNow, and Confluence behind a single role-aware dashboard — with approval workflows and Kubernetes-powered self-service.**
 
-- Serves the UI (HTMX + Jinja templates + Tailwind/DaisyUI) under `/ui/…`
-- Exposes a JSON API under `/api/…`
-- Calls external systems (Azure DevOps, ServiceNow) from the backend only —
-  the browser never talks to them directly
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![Redis](https://img.shields.io/badge/Redis-7-DC382D?style=for-the-badge&logo=redis&logoColor=white)](https://redis.io/)
+[![Helm](https://img.shields.io/badge/Helm-Kubernetes-0F1689?style=for-the-badge&logo=helm&logoColor=white)](https://helm.sh/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
 
----
-
-## What this project is for
-
-Before this portal, a typical engineer had to:
-
-- Log into Azure DevOps for work items and pull requests
-- Log into ServiceNow for tickets
-- Log into SonarQube for code quality
-- Open a ticket and wait a few days to get an ADO project provisioned
-- Ask admins to toggle platform features
-
-DevOps Control Center solves that by:
-
-- **Aggregating** all those views into one personalizable dashboard
-- **Automating** common platform requests through a self-service + approval
-  workflow that ultimately runs Terraform
-- **Tracking** how the platform is used (widget views, self-service usage,
-  ticket volume, ADO project count) on an Observability page
-- **Keeping an audit trail** of every approval/execution and making it
-  searchable from the Admin section
+</div>
 
 ---
 
-## Key features
+## What is this?
 
-| Area             | What it does                                                                     |
-| ---------------- | -------------------------------------------------------------------------------- |
-| Dashboard        | Customizable widget grid (work items, PRs, tickets, pipelines, sonar, storage…) |
-| Self-Service     | Request templates that run Terraform after approval (ADO project create, etc.) |
-| Approvals        | Admin review queue + "My Requests" page; triggers execution on approve         |
-| Support          | ServiceNow ticket list, creation, and threaded reply view                      |
-| Observability    | Most-used widgets, self-service usage, ticket counts, ADO projects created     |
-| Audit Logs       | Admin-only searchable log of portal events                                     |
-| Notifications    | In-app bell with click-to-navigate + basic grouping                            |
-| Safe Mode        | Admin toggle that simulates self-service execution without real side effects    |
+Engineering teams that rely on Azure DevOps, SonarQube, Artifactory, ServiceNow, and Confluence spend their day switching between five separate UIs with no central way to request access, track approvals, or monitor the health of all their tools. DevOps Hub is a self-hosted web portal that surfaces all of those systems in one place: a role-aware, widget-based dashboard each user configures for themselves.
 
-More detail for each is in [`docs/`](./docs).
+When a developer needs a new Azure DevOps project, Confluence space, or SonarQube licence, they submit a self-service request through the portal; it flows through a configurable approval chain and is provisioned automatically by a Terraform Kubernetes Job on approval. All browser traffic goes exclusively through the FastAPI backend — no credentials are ever sent to the browser or stored in logs. Every action is written to an append-only audit log.
 
 ---
 
-## Architecture at a glance
+## ✨ Features
+
+| | |
+|---|---|
+| 📊 **Role-aware dashboard** | Widget layout adapts to the user's role — 7-level RBAC hierarchy from Platform Admin to Regular User |
+| 🔗 **Five integrations** | Azure DevOps, SonarQube, Artifactory, ServiceNow, and Confluence — all responses cached in Redis |
+| ✅ **Approval workflows** | Self-service requests route through a configurable approver chain; executed automatically on approval |
+| 🤖 **Terraform self-service** | ADO project creation runs as a Kubernetes Job — async, idempotent, GCS-backed state |
+| 🔐 **OIDC authentication** | RedHat SSO / any OIDC provider; sessions held in HttpOnly JWT cookies; credentials stored server-side only |
+| 📋 **Audit log** | Append-only `audit_events` table records every user action with IP, user agent, and timestamp |
+| 🚢 **Helm deployment** | Umbrella Helm chart deploys backend, Nginx proxy, PostgreSQL, Redis, and ingress to Kubernetes |
+
+---
+
+## 🏗️ How it works
 
 ```
-          ┌────────────────────────────────────────────────────┐
-          │                    Browser (HTMX)                  │
-          │    Jinja templates + Tailwind/DaisyUI + HTMX       │
-          └───────────────────────┬────────────────────────────┘
-                                  │  /ui/… (HTML)   /api/… (JSON)
-                                  ▼
-┌───────────────────────────────────────────────────────────────────┐
-│                    FastAPI app (backend/app)                      │
-│  Routers: auth / dashboards / approvals / azure_devops /          │
-│           servicenow / sonarqube / artifactory / observability /  │
-│           notifications / audit_logs / safe_mode / admin / health │
-│  Cross-cutting: security.py (JWT)   db.py (psycopg2 pool)         │
-│                 cache.py (Redis)    terraform_runner.py (K8s Job) │
-│                 resilient_http.py   integrations_cache.py         │
-└───────┬──────────────────────────────┬────────────────────────────┘
-        │                              │
-        ▼                              ▼
- ┌───────────────┐              ┌───────────────┐
- │  PostgreSQL   │              │     Redis     │
- │  users,       │              │  cache,       │
- │  approvals,   │              │  ext. API     │
- │  widget usage │              │  cache (60s)  │
- │  audit, …     │              └───────────────┘
- └───────────────┘
-
-         External systems (called only from backend)
-  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-  │ Azure DevOps │ │  ServiceNow  │ │  SonarQube   │ │ Artifactory  │
-  └──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘
-             ┌──────────────────────────────────────┐
-             │  Kubernetes (Terraform Job runner)   │
-             └──────────────────────────────────────┘
-```
-
-\* SonarQube and Artifactory use per-user tokens stored by the backend.
-
-See [`docs/architecture.md`](./docs/architecture.md) for the full picture and
-the request lifecycle of a self-service action.
-
----
-
-## Tech stack
-
-- **Backend:** Python 3.11, FastAPI, Uvicorn, `psycopg2`, `httpx`, `redis-py`
-- **Frontend:** Jinja2 templates, [HTMX](https://htmx.org), Tailwind CSS v4,
-  [DaisyUI](https://daisyui.com) (no React, no Next.js)
-- **Database:** PostgreSQL 16
-- **Cache:** Redis 7 (with a 60-second layer for external-API reads)
-- **Auth:** Admin-configured OIDC (RedHat SSO compatible) plus an env-seeded
-  bootstrap admin → internal HS256 JWT stored in an `auth_token` cookie
-- **Self-service execution:** Terraform, run as a Kubernetes Job by
-  `terraform_runner.py`
-- **Deployment:** Helm umbrella chart under `deployment/`, GitHub Actions in
-  `.github/workflows/`, container images pushed to the configured container registry
-
----
-
-## Repository layout
-
-```
-devops-portal/
-├── backend/
-│   └── app/                       # FastAPI application
-│       ├── main.py                # create_app(), routers, startup hooks
-│       ├── config.py              # Settings (env → typed config)
-│       ├── db.py                  # psycopg2 pool + ensure_*() DDL helpers
-│       ├── cache.py               # Redis get_cached/invalidate
-│       ├── integrations_cache.py  # 60s cache wrapper for ADO/SNOW reads
-│       ├── resilient_http.py      # Timeouts + retries + safe_integration
-│       ├── security.py            # JWT create/decode + get_current_user
-│       ├── safe_mode.py           # Safe-Mode toggle (env + DB flag)
-│       ├── audit.py               # Audit events (new audit_events table)
-│       ├── notifications.py       # (helpers) — API in api/notifications.py
-│       ├── terraform_runner.py    # Submits Terraform K8s Jobs
-│       ├── ui.py                  # /ui/… HTML routes (Jinja)
-│       └── api/                   # FastAPI routers (see docs/services/)
-├── frontend/
-│   ├── templates/                 # Jinja pages + partials/components
-│   └── static/                    # Tailwind output, images, icons
-├── deployment/                    # Helm umbrella chart
-│   └── charts/
-│       ├── backend/               # Backend Deployment / Service / Ingress
-│       ├── frontend/              # (legacy frontend chart; UI is served by backend)
-│       ├── infrastructure/        # Postgres, Redis, migration Job, SQL
-│       └── ingress-nginx/         # Vendored ingress-nginx chart
-├── docs/                          # This documentation set
-├── scripts/                       # Node-based DB bootstrap helpers
-├── .github/workflows/             # CI: build/push images + Helm deploy
-├── docker-compose.yml             # Local dev stack (optional)
-└── env.example                    # Template for .env
+Browser (HTMX partial renders at /ui/*)
+       │
+       ▼
+FastAPI Backend (:8000)
+       │
+       ├── /auth/*     ──► OIDC provider ──► JWT cookie set
+       │
+       ├── RBAC check (7-level hierarchy) ──► allow / 403
+       │
+       ├── Business logic (approvals, dashboards, audit)
+       │          │                    │
+       │          ▼                    ▼
+       │      PostgreSQL            Redis (60s TTL)
+       │   (users, approvals,    (all external API
+       │    audit, widgets)       responses cached)
+       │
+       └── External adapters (never called directly by browser)
+                  │
+                  ├──► Azure DevOps REST  (work items, repos, pipelines)
+                  ├──► SonarQube API      (quality gates, coverage, debt)
+                  ├──► Artifactory        (storage stats, artifact info)
+                  ├──► ServiceNow OAuth2  (incidents, support tickets)
+                  └──► Confluence REST    (pages, spaces)
 ```
 
 ---
 
-## Local development
+## 🚀 Quick Start
 
-### Prerequisites
-
-- Docker Desktop (Compose v2)
-- `git`
-- Optional for direct backend run: Python 3.11 + `pip`
-- Optional for CSS changes: Node 18+ + `npm`
-
-### Option A — Docker Compose (recommended for first run)
+### 1. Clone and install
 
 ```bash
-cp env.example .env       # Linux/macOS
-# or:  Copy-Item env.example .env     (PowerShell)
-
-docker compose up -d
-# ⇒ Postgres, Redis, and the FastAPI backend/UI come up together
-```
-
-Open:
-
-- UI: <http://localhost:8000/ui/>
-- API health: <http://localhost:8000/api/health>
-
-### Option B — Run the backend directly
-
-```bash
-cd backend/app
-pip install -r requirements.txt
-
-# Export the minimum env (Postgres + Redis must be reachable):
-export DATABASE_URL=postgresql://devops:devops@localhost:5432/devops_control_center
-export REDIS_HOST=localhost
-export REDIS_PORT=6379
-export JWT_SECRET=change-me
-
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
-```
-
-### Option C — Rebuild CSS
-
-If you change anything in `frontend/static/css/app.css` or the Jinja
-templates and want the Tailwind output to be regenerated:
-
-```bash
-cd frontend
+git clone https://github.com/mishgoldenberg/devops-idp.git
+cd devops-idp
 npm install
-npm run build:css
 ```
 
-Full environment variable reference: [`docs/env.md`](./docs/env.md).
+### 2. Configure
 
----
-
-## Deployment overview
-
-Production / staging runs on GKE. The `deployment/` directory is a single
-umbrella Helm chart that installs:
-
-- `infrastructure` (PostgreSQL, Redis, migration Job, DB grants)
-- `backend` (the FastAPI + UI pod)
-- `frontend` (legacy — can be disabled when UI is served by backend)
-- `ingress-nginx` (vendored)
-
-Deployments are driven by `.github/workflows/deploy-workflow.yml` which
-calls `template-workflow.yml`. The workflow:
-
-1. Builds and pushes backend + frontend images to Artifact Registry.
-2. Runs `helm upgrade --install devops-stack ./deployment` with secrets
-   injected via `--set secrets.*="${{ secrets.* }}"`.
-3. The Helm templates pull those into an `all-secrets` Kubernetes `Secret`,
-   and the backend `Deployment` uses a `checksum/secrets` annotation so
-   pods roll when any secret changes.
-
-Full deployment guide: [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md).
-
-Secrets handling in one sentence: **nothing secret lives in the repo** —
-`env.example` documents shape only, real values come from GitHub Actions
-secrets → Helm `--set` → the `all-secrets` K8s Secret → pod env.
-
----
-
-## ServiceNow Integration
-
-The Support page creates ServiceNow incidents through a backend-only service
-account. The browser submits the 4-step form to the Hub, and the Hub calls
-ServiceNow using:
-
-- `SNOW_BASE_URL` — full ServiceNow instance URL.
-- `SNOW_API_USERNAME` — service-account username.
-- `SNOW_API_PASSWORD` — service-account password.
-
-Ticket creation flow:
-
-1. User submits the Support form.
-2. Backend resolves the caller with `sys_user?sysparm_query=email=<SSO email>`.
-3. Backend resolves the `Devops Support` group and caches its `sys_id`.
-4. Backend creates an `incident` with the caller, opener, assignment group,
-   urgency, impact, and all extra Hub fields.
-5. Backend uploads each attachment through the attachment API.
-
-Required ServiceNow permissions for the service account:
-
-- `itil` role.
-- Read access to `sys_user`.
-- Create/update access to the `incident` API.
-- Access to upload files through the attachment API.
-
----
-
-## SSO Configuration (OIDC)
-
-The Hub uses configurable OIDC only. There is no built-in provider fallback:
-Platform Admins configure the provider from **Hub → Platform Managing → SSO
-Configuration** after logging in with the bootstrap admin.
-
-### What You Need
-
-- OIDC provider, for example RedHat SSO or Keycloak.
-- Issuer URI.
-- Client ID.
-- Client Secret.
-
-### Redirect URI
-
-The SSO provider requires a redirect URI before it can safely issue client
-credentials. Configure this exact callback URL in the provider:
-
-```text
-https://<hub-domain>/api/auth/sso/callback
+```bash
+cp .env.example .env
 ```
 
-This value must match exactly, including `https`, hostname, path, and trailing
-slashes. If it does not match, login will fail before the Hub receives a token.
+Edit `.env` with your values:
 
-### Setup Steps
+| Variable | Required | Description |
+|---|:---:|---|
+| `POSTGRES_PASSWORD` | ✅ | Password for the local PostgreSQL container |
+| `REDIS_PASSWORD` | ✅ | Password for the local Redis container |
+| `JWT_SECRET` | ✅ | Random 32+ character string used to sign session tokens |
+| `HUB_ADMIN_USERNAME` | ✅ | Email address granted Platform Admin on first startup |
+| `HUB_ADMIN_PASSWORD` | ✅ | Password for the bootstrap admin account |
+| `AZURE_DEVOPS_BASE_URL` | ✅ | Full Azure DevOps org URL: `https://dev.azure.com/your-org` |
+| `AZURE_DEVOPS_ADMIN_PAT` | ✅ | PAT with Project/Process/Build read+write scopes |
+| `SNOW_BASE_URL` | ✅ | ServiceNow instance URL |
+| `SNOW_API_USERNAME` | ✅ | ServiceNow service account username |
+| `SNOW_API_PASSWORD` | ✅ | ServiceNow service account password |
+| `SONARQUBE_BASE_URL` | ✅ | SonarQube instance URL |
+| `ARTIFACTORY_BASE_URL` | ✅ | Artifactory instance URL |
+| `CONFLUENCE_BASE_URL` | ✅ | Confluence instance URL |
 
-1. Go to the SSO provider admin panel.
-2. Create a new client.
-3. Set:
-   - Client Protocol: `openid-connect`
-   - Redirect URI: `https://<hub-domain>/api/auth/sso/callback`
-4. Save the client, then copy:
-   - Client ID
-   - Client Secret
-5. In the Hub, go to **Platform Managing → SSO Configuration**.
-6. Enter:
-   - Issuer URI
-   - Client ID
-   - Client Secret
-7. Click **Test Connection**.
-8. Click **Save & Enable**.
+> Generate a strong JWT secret with: `openssl rand -hex 32`
 
-The Issuer URI usually looks like:
+### 3. Start the stack
 
-```text
-https://<sso-domain>/realms/<realm>
+```bash
+docker compose up -d
 ```
 
-If login fails, first check the redirect URI, then the `client_id`, then the
-issuer URI. The redirect URI is the most common mismatch.
+PostgreSQL, Redis, and the FastAPI backend start with health checks — the backend waits until both databases are ready.
+
+### 4. Initialize the database
+
+```bash
+npm run migrate   # Creates schema: tables, enums, indexes
+npm run seed      # Inserts roles, widget types, and seed data
+```
+
+### 5. Open the portal
+
+Navigate to [http://localhost:8000/ui/](http://localhost:8000/ui/) and sign in with the `HUB_ADMIN_USERNAME` credentials.
 
 ---
 
-## Documentation map
+## 🔑 OIDC / SSO Setup
 
-Start here depending on what you need:
+DevOps Hub uses OIDC for authentication. The SSO provider and client credentials are configured at runtime through the admin UI — no environment variables needed for OIDC itself.
 
-- **New to the project?** — [`docs/onboarding.md`](./docs/onboarding.md)
-- **How does it hang together?** — [`docs/architecture.md`](./docs/architecture.md)
-- **What does each backend module do?** — [`docs/services/`](./docs/services/)
-- **Database tables** — [`docs/database.md`](./docs/database.md)
-- **Env vars** — [`docs/env.md`](./docs/env.md)
-- **Self-service lifecycle** — [`docs/self-service-flow.md`](./docs/self-service-flow.md)
-- **Observability metrics** — [`docs/observability.md`](./docs/observability.md)
-- **ServiceNow integration** — [`docs/support.md`](./docs/support.md)
-- **Frontend structure** — [`docs/frontend.md`](./docs/frontend.md)
-- **Deployment** — [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md)
-- **API reference** — [`docs/API_REFERENCE.md`](./docs/API_REFERENCE.md)
-- **Azure DevOps integration** — [`docs/AZURE_DEVOPS.md`](./docs/AZURE_DEVOPS.md)
-- **Troubleshooting** — [`docs/TROUBLESHOOTING.md`](./docs/TROUBLESHOOTING.md)
+**Step 1 — Log in as the bootstrap admin**
+
+On first startup, the account at `HUB_ADMIN_USERNAME` is created with the Platform Admin role. Log in with this account using the local login form at `/ui/login`.
+
+**Step 2 — Configure your OIDC provider**
+
+Navigate to **Admin → SSO Configuration** and enter your provider's discovery URL, client ID, and client secret. The portal fetches the OpenID configuration automatically and stores the client secret encrypted in the database.
+
+**Step 3 — Test SSO login**
+
+Click **Test SSO** in the admin UI before enabling it. Once verified, enable SSO — all subsequent logins will redirect to your provider.
 
 ---
 
-## Contributing
+## 🗂️ Project Structure
 
-1. Branch off `dev` (not `main`).
-2. Keep business logic unchanged unless the task explicitly calls for it.
-3. Don't introduce mock data unless `SAFE_MODE=true`.
-4. External calls must go through the backend — the browser must not hit
-   Azure DevOps, ServiceNow, etc. directly.
-5. Before opening a PR: run `npm run build:css` if you changed
-   Tailwind/templates, and check `ReadLints` / `python -m py_compile` on
-   Python changes.
+```
+devops-hub/
+├── backend/
+│   └── app/                   # FastAPI application root
+│       ├── main.py            # Entry point, startup hooks, ensure_tables()
+│       ├── config.py          # All settings loaded from environment
+│       ├── security.py        # JWT auth (auth_token cookie, HS256)
+│       ├── db.py              # PostgreSQL connection pool + DDL helpers
+│       ├── cache.py           # Redis client (60s TTL cache)
+│       ├── ui.py              # All HTMX/Jinja2 HTML routes
+│       ├── sso_config.py      # OIDC discovery and client secret encryption
+│       ├── terraform_runner.py# Kubernetes Job submission for ADO provisioning
+│       ├── Dockerfile
+│       ├── requirements.txt
+│       └── api/               # One router per integration or domain
+│           ├── auth.py        # OIDC callback, JWT issuance
+│           ├── azure_devops.py# Work items, repos, pipelines, project creation
+│           ├── sonarqube.py   # Quality gates, coverage, technical debt
+│           ├── artifactory.py # Artifact storage and download stats
+│           ├── servicenow.py  # Incidents and support tickets
+│           ├── approvals.py   # Request submission and approval chain
+│           ├── dashboards.py  # Per-user widget layout persistence
+│           └── health.py      # /api/health/live and /api/health/ready
+├── frontend/
+│   ├── nginx.conf             # Nginx reverse proxy (production)
+│   ├── static/                # Compiled Tailwind CSS and SVG icons
+│   └── templates/             # Jinja2 page and partial templates
+├── deployment/                # Helm umbrella chart
+│   ├── Chart.yaml
+│   ├── values.yaml            # Global values (registry URL, service endpoints)
+│   └── charts/                # Sub-charts: backend, frontend, infrastructure, ingress-nginx
+├── scripts/
+│   └── db.js                  # Migration and seed runner (Node.js)
+├── docs/                      # Architecture, API reference, integration guides
+├── docker-compose.yml         # Local development orchestration
+├── .env.example               # Environment variable template
+└── package.json               # npm scripts: migrate, seed, db:reset
+```
 
 ---
 
-## License
+## ⚙️ Customisation
 
-Internal — not licensed for external distribution.
+- **Add a new integration** — create a new router in `backend/app/api/` that calls the external API through `cache.py` for Redis caching, register it in `backend/app/main.py`, and add the corresponding Jinja2 partial in `frontend/templates/partials/`.
+
+- **Change the RBAC hierarchy** — the 7-level role structure lives in the `roles` table, seeded by `scripts/db.js`. Edit the seed data and run `npm run db:reset` to rebuild.
+
+- **Add or remove dashboard widgets** — widget types are registered in the `widget_types` table (part of `npm run seed`). Add a new type there, then create the matching HTMX partial in `frontend/templates/partials/components/`.
+
+- **Enable HashiCorp Vault for secret storage** — set `USE_VAULT=true`, `VAULT_ADDR`, `VAULT_TOKEN`, and `VAULT_PATH` in `.env`. The backend switches secret backends automatically.
+
+- **Tune Terraform job limits** — set `TF_GCS_BUCKET`, `TF_GCP_SERVICE_ACCOUNT`, `TF_K8S_NAMESPACE`, and `TERRAFORM_JOB_TIMEOUT_SECONDS` in `.env`. See [docs/SELF_SERVICE_TERRAFORM.md](docs/SELF_SERVICE_TERRAFORM.md) for infrastructure prerequisites.
+
+---
+
+## 🚢 Deployment
+
+Build your container image and push it to your registry, then update `global.customImage.repository` in [deployment/values.yaml](deployment/values.yaml). Deploy with Helm:
+
+```bash
+helm dependency build ./deployment
+
+helm upgrade --install devops-hub ./deployment \
+  --namespace devops-hub-prod \
+  --create-namespace \
+  --atomic \
+  --timeout 15m \
+  --set-string global.customImage.repository="your-registry/devops-hub" \
+  --set-string backend.ingress.host="devops.your-domain.example.com" \
+  --set secrets.postgresPassword="<strong-password>" \
+  --set secrets.jwtSecret="<random-32-char-string>" \
+  --set secrets.hubAdminUsername="admin@your-domain.example.com" \
+  --set secrets.hubAdminPassword="<strong-password>"
+```
+
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full variable list and a step-by-step guide.
+
+---
+
+## 📄 License
+
+[MIT](LICENSE) © 2026 Michael Goldenberg

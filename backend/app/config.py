@@ -90,7 +90,7 @@ class Settings:
                 log.error("Missing critical environment variable: %s", name)
 
         # CORS
-        # Comma-separated list of origins, e.g. "http://localhost:3000,https://devops.internal.company"
+        # Comma-separated list of origins, e.g. "http://localhost:3000,https://devops-hub.your-domain.example.com"
         self.cors_origins = os.getenv("CORS_ORIGINS", "*")
 
     @property

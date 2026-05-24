@@ -228,7 +228,7 @@ oc logs -f deployment/backend -n <OPENSHIFT_NAMESPACE> | grep -E "migrat|seed|he
 oc get ingress -n <OPENSHIFT_NAMESPACE>
 
 # Access via the HUB_HOSTNAME configured in the variable group
-# Example: https://devops-hub.internal.company
+# Example: https://devops-hub.your-domain.example.com
 ```
 
 ---

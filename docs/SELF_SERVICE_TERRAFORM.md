@@ -194,7 +194,7 @@ A `batch/v1` Job is created with:
 | Working directory | `/workspace` (ConfigMap mounted here) |
 | Command | `terraform init -no-color && terraform apply -auto-approve -no-color` |
 | Service account | `devops-terraform-sa` |
-| GCP Workload Identity | `iam.gke.io/gcp-service-account: devops-terraform-sa@devops-idp-489012.iam.gserviceaccount.com` |
+| GCP Workload Identity | `iam.gke.io/gcp-service-account: terraform-sa@your-project.iam.gserviceaccount.com` |
 | `AZDO_PERSONAL_ACCESS_TOKEN` | Injected from `all-secrets` K8s Secret key `AZURE_DEVOPS_ADMIN_PAT` |
 | `TF_LOG` | `INFO` |
 | `ttlSecondsAfterFinished` | `86400` (24 h auto-cleanup) |
@@ -228,7 +228,7 @@ The backend reads the K8s Job `.status` fields:
 
 1. `project_url` is extracted by parsing the pod logs for a line containing `project_url =`.
 2. `_assign_admin_post_terraform()` is called — looks up the user descriptor and group descriptor via ADO Graph API and creates the group membership.
-3. `save_logs_to_gcs()` is called — reads all pod logs via the K8s API and uploads them to `gs://devops-control-center-tfstate/terraform/logs/<project>-YYYYMMDD-HHMM.log`.
+3. `save_logs_to_gcs()` is called — reads all pod logs via the K8s API and uploads them to `gs://<TF_GCS_BUCKET>/terraform/logs/<project>-YYYYMMDD-HHMM.log`.
 
 **On the first `failed` poll**: logs are saved to GCS; the error message is extracted from pod logs (see §9).
 
@@ -276,10 +276,10 @@ idle  ──(onSuccess)──▶  provisioning  ──(succeeded)──▶  succ
 
 ## 5. GCP Storage Layout
 
-All Terraform artefacts are stored in `gs://devops-control-center-tfstate`:
+All Terraform artefacts are stored in `gs://<TF_GCS_BUCKET>`:
 
 ```
-devops-control-center-tfstate/
+<TF_GCS_BUCKET>/
 ├── terraform/
 │   ├── state/
 │   │   └── <sanitised-project-name>/     ← tfstate managed by GCS backend
@@ -288,7 +288,7 @@ devops-control-center-tfstate/
 │       └── <sanitised-project-name>-YYYYMMDD-HHMM.log  ← pod logs
 ```
 
-The GCP service account `devops-terraform-sa@devops-idp-489012.iam.gserviceaccount.com` needs `roles/storage.objectAdmin` on this bucket.
+The GCP service account `terraform-sa@your-project.iam.gserviceaccount.com` needs `roles/storage.objectAdmin` on this bucket.
 
 ---
 
@@ -315,24 +315,24 @@ metadata:
   name: devops-terraform-sa
   namespace: devops-control-center
   annotations:
-    iam.gke.io/gcp-service-account: devops-terraform-sa@devops-idp-489012.iam.gserviceaccount.com
+    iam.gke.io/gcp-service-account: terraform-sa@your-project.iam.gserviceaccount.com
 ```
 
 ### 7.2 GCP Workload Identity binding
 
 ```bash
 gcloud iam service-accounts add-iam-policy-binding \
-  devops-terraform-sa@devops-idp-489012.iam.gserviceaccount.com \
+  terraform-sa@your-project.iam.gserviceaccount.com \
   --role roles/iam.workloadIdentityUser \
-  --member "serviceAccount:devops-idp-489012.svc.id.goog[devops-control-center/devops-terraform-sa]"
+  --member "serviceAccount:your-project.svc.id.goog[devops-control-center/devops-terraform-sa]"
 ```
 
 ### 7.3 GCS bucket permissions
 
 ```bash
 gcloud storage buckets add-iam-policy-binding \
-  gs://devops-control-center-tfstate \
-  --member="serviceAccount:devops-terraform-sa@devops-idp-489012.iam.gserviceaccount.com" \
+  gs://<TF_GCS_BUCKET> \
+  --member="serviceAccount:terraform-sa@your-project.iam.gserviceaccount.com" \
   --role="roles/storage.objectAdmin"
 ```
 
@@ -414,7 +414,7 @@ kubectl get secret all-secrets -n devops-control-center -o jsonpath='{.data.AZUR
 
 `Error: Failed to get existing workspaces: storage: bucket doesn't exist` — the bucket name is wrong or the SA lacks permissions. Check:
 ```bash
-gcloud storage ls gs://devops-control-center-tfstate --impersonate-service-account=devops-terraform-sa@devops-idp-489012.iam.gserviceaccount.com
+gcloud storage ls gs://<TF_GCS_BUCKET> --impersonate-service-account=terraform-sa@your-project.iam.gserviceaccount.com
 ```
 
 ### Workload Identity not working
@@ -424,7 +424,7 @@ gcloud storage ls gs://devops-control-center-tfstate --impersonate-service-accou
 kubectl get sa devops-terraform-sa -n devops-control-center -o yaml | grep gcp-service-account
 
 # Verify the IAM binding
-gcloud iam service-accounts get-iam-policy devops-terraform-sa@devops-idp-489012.iam.gserviceaccount.com
+gcloud iam service-accounts get-iam-policy terraform-sa@your-project.iam.gserviceaccount.com
 ```
 
 ### View Terraform logs after a run
@@ -434,7 +434,7 @@ gcloud iam service-accounts get-iam-policy devops-terraform-sa@devops-idp-489012
 kubectl logs -l job-name=<job-id> -n devops-control-center
 
 # From GCS (persisted after job deletion)
-gcloud storage cat gs://devops-control-center-tfstate/terraform/logs/<project>-YYYYMMDD-HHMM.log
+gcloud storage cat gs://<TF_GCS_BUCKET>/terraform/logs/<project>-YYYYMMDD-HHMM.log
 ```
 
 ### Backend cannot create Jobs (403 Forbidden from K8s API)

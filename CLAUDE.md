@@ -117,7 +117,7 @@ deployment/
   values.yaml             Global overrides (image repo, endpoints, replicas)
 ```
 
-CI/CD (GitHub Actions) builds images, pushes to `europe-west1-docker.pkg.dev/devops-idp-489012/devops-idp`, then runs `helm upgrade`. Secrets are injected as the `all-secrets` Kubernetes Secret via `--set` flags.
+CI/CD builds images, pushes to the configured registry (`global.customImage.repository` in `deployment/values.yaml`), then runs `helm upgrade`. Secrets are injected as the `all-secrets` Kubernetes Secret via `--set` flags.
 
 ## Environment variables
 

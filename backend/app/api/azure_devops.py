@@ -321,7 +321,7 @@ def get_workitem_tasks(
                 "id": task_id,
                 "title": title,
                 "state": state,
-                "url": f"https://dev.azure.com/DevCollection-Inheritance/DevOps/_workitems/edit/{task_id}",
+                "url": f"{os.getenv('AZURE_DEVOPS_BASE_URL', 'https://dev.azure.com/your-org')}/DevOps/_workitems/edit/{task_id}",
             }
 
         state_sets = {

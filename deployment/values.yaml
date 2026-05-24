@@ -25,7 +25,7 @@ redis:
 global:
   # This makes your image repo available to everyone
   customImage:
-    repository: "europe-west1-docker.pkg.dev/devops-idp-489012/devops-idp"
+    repository: "your-registry.example.com/your-org/devops-hub"
     pullPolicy: "Always"
   replicaCount: 1
   

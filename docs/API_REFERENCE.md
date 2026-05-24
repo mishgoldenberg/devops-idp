@@ -193,7 +193,7 @@ Poll the status of a Terraform provisioning job. Call every 3 seconds until `sta
   "success": true,
   "data": {
     "status": "succeeded",
-    "project_url": "https://dev.azure.com/DevCollection-Inheritance/my-platform"
+    "project_url": "https://dev.azure.com/YourOrgName/my-platform"
   },
   "timestamp": "2024-12-10T14:31:45Z"
 }

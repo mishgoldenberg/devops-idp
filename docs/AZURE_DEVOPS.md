@@ -74,7 +74,7 @@ Users see **"Connect via PAT"** in each Azure DevOps widget until they save thei
 
 | Variable | Example | Description |
 |---|---|---|
-| `AZURE_DEVOPS_BASE_URL` | `https://dev.azure.com/DevCollection-Inheritance` | Azure DevOps organization URL |
+| `AZURE_DEVOPS_BASE_URL` | `https://dev.azure.com/YourOrgName` | Azure DevOps organization URL |
 | `AZURE_DEVOPS_ADMIN_PAT` | `5P6m3Ay…` | Admin PAT used for self-service write actions |
 
 ### Optional
@@ -82,7 +82,7 @@ Users see **"Connect via PAT"** in each Azure DevOps widget until they save thei
 | Variable | Example | Description |
 |---|---|---|
 | `USE_VAULT` | `false` | Store PATs in HashiCorp Vault instead of PostgreSQL |
-| `VAULT_ADDR` | `https://vault.internal.company` | Vault server URL (only when `USE_VAULT=true`) |
+| `VAULT_ADDR` | `https://your-vault.example.com` | Vault server URL (only when `USE_VAULT=true`) |
 | `VAULT_TOKEN` | `s.xxx` | Vault token (only when `USE_VAULT=true`) |
 | `VAULT_PATH` | `secret/devops-control-center` | Vault KV base path |
 
@@ -299,7 +299,7 @@ On every push to `frontend/**` or `backend/app/**`:
 1. **Build** — Docker image built with two tags:
    - `:latest` — for human convenience
    - `:sha-<7-char-commit>` — immutable tag used by the deployment
-2. **Push** — both tags pushed to Google Artifact Registry (`europe-west1-docker.pkg.dev/devops-idp-489012/devops-idp/`)
+2. **Push** — both tags pushed to Google Artifact Registry (`your-registry.example.com/your-org/devops-hub/`)
 3. **Deploy** — `google-github-actions/get-gke-credentials@v2` authenticates to `devops-idp-cluster` in `europe-west1`, then:
    ```bash
    kubectl set image deployment/<service> <service>=<registry>/<service>:sha-<sha> -n devops-control-center-dev

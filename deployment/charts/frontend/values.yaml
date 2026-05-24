@@ -22,7 +22,7 @@ secretName: all-secrets
 ingress:
   enabled: true
   className: nginx
-  host: devops.internal.company
+  host: devops-hub.your-domain.example.com
   path: /
   annotations:
     nginx.ingress.kubernetes.io/ssl-redirect: "false"

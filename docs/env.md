@@ -20,7 +20,7 @@ default behavior and whether they are required.
 | `NODE_ENV`     | Environment label (`development` / `production`). Used by logging & cookie `secure`. | `development`                     | No       |
 | `ENVIRONMENT`  | Alias used by some modules; same meaning as `NODE_ENV`.                      | `production`                              | No       |
 | `LOG_LEVEL`    | Passed to Python logging config.                                             | `debug`                                   | No       |
-| `CORS_ORIGINS` | Comma-separated list of allowed origins. `*` to allow all.                   | `https://devops.internal.company`         | No       |
+| `CORS_ORIGINS` | Comma-separated list of allowed origins. `*` to allow all.                   | `https://your-devops-hub.example.com`         | No       |
 
 ## Database (PostgreSQL)
 
@@ -69,9 +69,9 @@ default behavior and whether they are required.
 
 | Name                   | Description                                            | Example                                | Required |
 | ---------------------- | ------------------------------------------------------ | -------------------------------------- | -------- |
-| `SONARQUBE_BASE_URL`   | SonarQube base URL used by the connected widget.       | `https://sonarqube.internal.company`   | Yes      |
-| `ARTIFACTORY_BASE_URL` | Artifactory base URL used by connected widgets.        | `https://artifactory.internal.company` | Yes      |
-| `CONFLUENCE_BASE_URL`  | Confluence base URL used by the Confluence Pages widget. | `https://confluence.internal.company`  | Yes      |
+| `SONARQUBE_BASE_URL`   | SonarQube base URL used by the connected widget.       | `https://your-sonarqube.example.com`   | Yes      |
+| `ARTIFACTORY_BASE_URL` | Artifactory base URL used by connected widgets.        | `https://your-artifactory.example.com` | Yes      |
+| `CONFLUENCE_BASE_URL`  | Confluence base URL used by the Confluence Pages widget. | `https://your-confluence.example.com`  | Yes      |
 
 ## Self-service / Terraform
 
@@ -91,7 +91,7 @@ default behavior and whether they are required.
 | Name          | Description                                                       | Example                             | Required |
 | ------------- | ----------------------------------------------------------------- | ----------------------------------- | -------- |
 | `USE_VAULT`   | If `true`, look up integration secrets in Vault instead of env.   | `true`                              | No       |
-| `VAULT_ADDR`  | Vault address.                                                    | `https://vault.internal.company`    | No       |
+| `VAULT_ADDR`  | Vault address.                                                    | `https://your-vault.example.com`    | No       |
 | `VAULT_TOKEN` | Token with read access to `VAULT_PATH`.                           | `s.xxxxx`                           | No       |
 | `VAULT_PATH`  | KV path that stores the per-user secrets.                         | `secret/devops-control-center`      | No       |
 
