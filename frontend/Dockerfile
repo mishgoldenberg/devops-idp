@@ -4,6 +4,7 @@
 ARG NGINX_BASE_IMAGE=nginx:1.29-alpine
 FROM ${NGINX_BASE_IMAGE}
 
+COPY frontend/nginx-main.conf /etc/nginx/nginx.conf
 COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 3000

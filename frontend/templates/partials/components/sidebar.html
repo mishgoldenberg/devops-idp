@@ -506,7 +506,7 @@
 		paintIcon();
 
 		toggleBtn.addEventListener("click", async () => {
-			const next = root.getAttribute("data-theme") === "light" ? "night" : "light";
+			const next = root.getAttribute("data-theme") === "night" ? "nord" : "night";
 			root.setAttribute("data-theme", next);
 			try { localStorage.setItem(themeKey, next); } catch (_) {}
 			paintIcon();

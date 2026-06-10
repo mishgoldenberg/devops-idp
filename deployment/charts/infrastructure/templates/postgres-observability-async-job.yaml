@@ -16,9 +16,6 @@ spec:
         app.kubernetes.io/component: observability-migrate-async
     spec:
       restartPolicy: Never
-      securityContext:
-        seccompProfile:
-          type: RuntimeDefault
       containers:
         - name: apply-observability-sql
           image: {{ .Values.postgres.image | quote }}

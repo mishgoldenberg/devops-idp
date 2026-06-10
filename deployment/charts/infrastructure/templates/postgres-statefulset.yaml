@@ -22,26 +22,21 @@ spec:
             requests:
               memory: {{ .Values.postgres.memoryLimit }}
               cpu: {{ .Values.postgres.cpuLimit }}
+            limits:
+              memory: {{ .Values.postgres.memoryLimit }}
+              cpu: {{ .Values.postgres.cpuLimit }}
           env:
-            - name: POSTGRES_USER
+            - name: POSTGRESQL_USERNAME
               value: {{ .Values.postgres.postgresUser }}
-            - name: POSTGRES_PASSWORD
+            - name: POSTGRESQL_PASSWORD
               valueFrom: { secretKeyRef: { name: {{ .Values.postgres.secretName }}, key: POSTGRES_PASSWORD } }
-            - name: POSTGRES_DB
+            - name: POSTGRESQL_DATABASE
               value: {{ .Values.postgres.postgresDB }}
-            - name: POSTGRES_PORT
+            - name: POSTGRESQL_PORT_NUMBER
               value: {{ .Values.postgres.port | quote }}
-            - name: POSTGRES_HOST
-              value: {{ .Values.postgres.serviceName }}
-            - name: PGDATA
-              value: {{ .Values.postgres.pgData }}
-            # String interpolation for DATABASE_URL
-            - name: DATABASE_URL
-              value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)"
           volumeMounts:
             - name: postgres-storage
-              mountPath: /var/lib/postgresql/data
-              subPath: pgdata
+              mountPath: /bitnami/postgresql
             - name: postgres-init-scripts
               mountPath: /docker-entrypoint-initdb.d
       volumes:

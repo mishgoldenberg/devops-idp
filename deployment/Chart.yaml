@@ -21,7 +21,3 @@ dependencies:
     version: "0.1.0"
     repository: "file://./charts/backend"
 
-  - name: ingress-nginx
-    version: "4.x.x"
-    repository: "file://./charts/ingress-nginx"
-    alias: ingress-prod # You can alias it for the specific environment

@@ -8,7 +8,6 @@ postgres:
   secretName: "all-secrets"
   serviceName: "postgres-service"
   port: 5432
-  pgData: "/var/lib/postgresql/data"
   # Helm hook Job (post-upgrade): applies 06_observability.sql. Default off (blocks upgrade if Job fails).
   observabilityMigrateHook: false
   # Fire-and-forget Job each upgrade — Helm does not wait; applies 06_observability.sql in cluster.

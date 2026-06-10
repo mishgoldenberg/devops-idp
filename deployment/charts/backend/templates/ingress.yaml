@@ -6,7 +6,7 @@ metadata:
   annotations:
     {{- toYaml .Values.ingress.annotations | nindent 4 }}
 spec:
-  ingressClassName: {{ .Values.ingress.className | default "nginx" }}
+  ingressClassName: {{ .Values.ingress.className | default "openshift-default" }}
   rules:
     - host: {{ .Values.ingress.host }}
       http:

@@ -21,8 +21,10 @@ secretName: all-secrets
 
 ingress:
   enabled: true
-  className: nginx
+  className: openshift-default
   host: devops-hub.your-domain.example.com
   path: /
+  tls: true
   annotations:
-    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    route.openshift.io/termination: "edge"
+    route.openshift.io/insecure-edge-termination-policy: "Allow"

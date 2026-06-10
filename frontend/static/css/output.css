@@ -1,4 +1,4 @@
-/*! tailwindcss v4.2.2 | MIT License | https://tailwindcss.com */
+/*! tailwindcss v4.3.0 | MIT License | https://tailwindcss.com */
 @layer properties;
 @layer theme, base, components, utilities;
 @layer theme {
@@ -59,7 +59,6 @@
     --container-lg: 32rem;
     --container-2xl: 42rem;
     --container-4xl: 56rem;
-    --container-5xl: 64rem;
     --container-7xl: 80rem;
     --text-xs: 0.75rem;
     --text-xs--line-height: calc(1 / 0.75);
@@ -418,6 +417,10 @@
         @supports (color: color-mix(in lab, red, red)) {
           scrollbar-color: color-mix(in oklch, currentColor 35%, #0000) oklch(0 0 0 / calc(var(--page-has-backdrop, 0) * 0.4));
         }
+        > :not(.drawer-overlay) {
+          transform: none;
+          will-change: auto;
+        }
       }
       :where(:root:has(&:checked)) {
         --page-has-backdrop: 1;
@@ -734,7 +737,7 @@
         z-index: 999;
         @media (prefers-reduced-motion: no-preference) {
           animation: dropdown 0.2s;
-          transition-property: opacity, scale, display;
+          transition-property: opacity, scale, display, overlay;
           transition-behavior: allow-discrete;
           transition-duration: 0.2s;
           transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
@@ -2072,9 +2075,6 @@
   .inset-y-0 {
     inset-block: calc(var(--spacing) * 0);
   }
-  .start {
-    inset-inline-start: var(--spacing);
-  }
   .dropdown-end {
     @layer daisyui.l1.l2 {
       --anchor-h: span-left;
@@ -2102,9 +2102,6 @@
         }
       }
     }
-  }
-  .end {
-    inset-inline-end: var(--spacing);
   }
   .top-0 {
     top: calc(var(--spacing) * 0);
@@ -3751,6 +3748,18 @@
   .border-error {
     border-color: var(--color-error);
   }
+  .border-error\/20 {
+    border-color: var(--color-error);
+    @supports (color: color-mix(in lab, red, red)) {
+      border-color: color-mix(in oklab, var(--color-error) 20%, transparent);
+    }
+  }
+  .border-error\/40 {
+    border-color: var(--color-error);
+    @supports (color: color-mix(in lab, red, red)) {
+      border-color: color-mix(in oklab, var(--color-error) 40%, transparent);
+    }
+  }
   .border-gray-100 {
     border-color: var(--color-gray-100);
   }
@@ -3852,6 +3861,12 @@
       background-color: color-mix(in oklab, var(--color-base-200) 30%, transparent);
     }
   }
+  .bg-base-200\/40 {
+    background-color: var(--color-base-200);
+    @supports (color: color-mix(in lab, red, red)) {
+      background-color: color-mix(in oklab, var(--color-base-200) 40%, transparent);
+    }
+  }
   .bg-base-200\/50 {
     background-color: var(--color-base-200);
     @supports (color: color-mix(in lab, red, red)) {
@@ -3884,6 +3899,12 @@
   }
   .bg-error {
     background-color: var(--color-error);
+  }
+  .bg-error\/5 {
+    background-color: var(--color-error);
+    @supports (color: color-mix(in lab, red, red)) {
+      background-color: color-mix(in oklab, var(--color-error) 5%, transparent);
+    }
   }
   .bg-gray-50 {
     background-color: var(--color-gray-50);
@@ -4547,6 +4568,10 @@
   }
   .opacity-100 {
     opacity: 100%;
+  }
+  .shadow {
+    --tw-shadow: 0 1px 3px 0 var(--tw-shadow-color, rgb(0 0 0 / 0.1)), 0 1px 2px -1px var(--tw-shadow-color, rgb(0 0 0 / 0.1));
+    box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
   }
   .shadow-2xl {
     --tw-shadow: 0 25px 50px -12px var(--tw-shadow-color, rgb(0 0 0 / 0.25));
@@ -5905,26 +5930,6 @@ dialog.modal[open] > .modal-box {
   }
 }
 @layer base {
-  :root {
-    --fx-noise: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'%3E%3Cfilter id='a'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.34' numOctaves='4' stitchTiles='stitch'%3E%3C/feTurbulence%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23a)' opacity='0.2'%3E%3C/rect%3E%3C/svg%3E");
-  }
-}
-@layer base {
-  :root {
-    scrollbar-color: currentColor #0000;
-    @supports (color: color-mix(in lab, red, red)) {
-      scrollbar-color: color-mix(in oklch, currentColor 35%, #0000) #0000;
-    }
-  }
-}
-@layer base {
-  @property --radialprogress {
-    syntax: "<percentage>";
-    inherits: true;
-    initial-value: 0%;
-  }
-}
-@layer base {
   :root:not(span) {
     overflow: var(--page-overflow);
   }
@@ -5950,6 +5955,11 @@ dialog.modal[open] > .modal-box {
   }
 }
 @layer base {
+  :root {
+    --fx-noise: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'%3E%3Cfilter id='a'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.34' numOctaves='4' stitchTiles='stitch'%3E%3C/feTurbulence%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23a)' opacity='0.2'%3E%3C/rect%3E%3C/svg%3E");
+  }
+}
+@layer base {
   :root, [data-theme] {
     background: var(--page-scroll-bg, var(--root-bg));
     color: var(--color-base-content);
@@ -5958,33 +5968,30 @@ dialog.modal[open] > .modal-box {
     --root-bg: var(--color-base-100);
   }
 }
+@layer base {
+  :root {
+    scrollbar-color: currentColor #0000;
+    @supports (color: color-mix(in lab, red, red)) {
+      scrollbar-color: color-mix(in oklch, currentColor 35%, #0000) #0000;
+    }
+  }
+}
+@layer base {
+  @property --radialprogress {
+    syntax: "<percentage>";
+    inherits: true;
+    initial-value: 0%;
+  }
+}
 @keyframes rating {
   0%, 40% {
     scale: 1.1;
     filter: brightness(1.05) contrast(1.05);
   }
 }
-@keyframes dropdown {
+@keyframes menu {
   0% {
     opacity: 0;
-  }
-}
-@keyframes radio {
-  0% {
-    padding: 5px;
-  }
-  50% {
-    padding: 3px;
-  }
-}
-@keyframes toast {
-  0% {
-    scale: 0.9;
-    opacity: 0;
-  }
-  100% {
-    scale: 1;
-    opacity: 1;
   }
 }
 @keyframes rotator {
@@ -5998,22 +6005,40 @@ dialog.modal[open] > .modal-box {
     translate: 0 -100%;
   }
 }
+@keyframes progress {
+  50% {
+    background-position-x: -115%;
+  }
+}
+@keyframes radio {
+  0% {
+    padding: 5px;
+  }
+  50% {
+    padding: 3px;
+  }
+}
+@keyframes dropdown {
+  0% {
+    opacity: 0;
+  }
+}
+@keyframes toast {
+  0% {
+    scale: 0.9;
+    opacity: 0;
+  }
+  100% {
+    scale: 1;
+    opacity: 1;
+  }
+}
 @keyframes skeleton {
   0% {
     background-position: 150%;
   }
   100% {
     background-position: -50%;
-  }
-}
-@keyframes menu {
-  0% {
-    opacity: 0;
-  }
-}
-@keyframes progress {
-  50% {
-    background-position-x: -115%;
   }
 }
 @property --tw-translate-x {
