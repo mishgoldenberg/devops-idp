@@ -7356,6 +7356,38 @@ html[data-density="compact"] .section-card ul[class~="flex"][class~="flex-col"][
    open instead of flash-appearing. DaisyUI toggles `.dropdown-content` via
    :focus-within, so we piggy-back on that for a single animation trigger. */
 
+/*
+ * DaisyUI 5 → 3 compatibility shims. The markup was written against
+ * DaisyUI 5 but we compile with DaisyUI 3 for legacy-browser support,
+ * so the few v5-only behaviors templates rely on are recreated here.
+ */
+
+/* DaisyUI 3 uppercases .btn text; the design expects normal case (v4+ default). */
+
+.btn {
+  text-transform: none;
+}
+
+/* v5 `alert-soft` modifier: tinted background instead of solid fill. */
+
+.alert-error.alert-soft {
+  background-color: hsl(var(--er) / 0.12);
+  border-color: hsl(var(--er) / 0.25);
+  color: hsl(var(--er));
+}
+
+.alert-success.alert-soft {
+  background-color: hsl(var(--su) / 0.12);
+  border-color: hsl(var(--su) / 0.25);
+  color: hsl(var(--su));
+}
+
+.alert-warning.alert-soft {
+  background-color: hsl(var(--wa) / 0.12);
+  border-color: hsl(var(--wa) / 0.25);
+  color: hsl(var(--wa));
+}
+
 /* Shimmer sweep for the local skeleton primitive (mirrors DaisyUI 4's). */
 
 @keyframes portal-skeleton {
