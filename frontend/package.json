@@ -7,15 +7,14 @@
   "type": "commonjs",
   "main": "index.js",
   "scripts": {
-    "build:css": "npx @tailwindcss/cli -i ./static/css/app.css -o ./static/css/output.css",
-    "build:css:watch": "npx @tailwindcss/cli -i ./static/css/app.css -o ./static/css/output.css --watch"
+    "build:css": "npx tailwindcss -i ./static/css/app.css -o ./static/css/output.css",
+    "build:css:watch": "npx tailwindcss -i ./static/css/app.css -o ./static/css/output.css --watch"
   },
   "dependencies": {
-    "@tailwindcss/cli": "^4.2.1",
-    "tailwindcss": "^4.2.1"
+    "tailwindcss": "^3.4.17"
   },
   "devDependencies": {
-    "daisyui": "^5.5.19",
+    "daisyui": "^3.9.4",
     "prettier": "^3.8.1",
     "prettier-plugin-tailwindcss": "^0.7.2"
   }
