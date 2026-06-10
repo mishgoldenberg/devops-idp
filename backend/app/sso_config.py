@@ -13,6 +13,8 @@ import hashlib
 from typing import Any, Dict, Optional
 
 import httpx
+
+from resilient_http import tls_verify
 from cryptography.fernet import Fernet, InvalidToken
 
 from config import get_settings
@@ -59,7 +61,7 @@ def fetch_openid_configuration(issuer_uri: str, timeout: float = 10.0) -> Dict[s
     if not issuer:
         raise ValueError("Issuer URI is required")
     url = f"{issuer}/.well-known/openid-configuration"
-    with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+    with httpx.Client(verify=tls_verify(), timeout=timeout, follow_redirects=True) as client:
         response = client.get(url, headers={"Accept": "application/json"})
         response.raise_for_status()
         data = response.json()

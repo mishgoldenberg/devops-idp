@@ -40,6 +40,20 @@ def default_timeout() -> httpx.Timeout:
     return httpx.Timeout(DEFAULT_READ_TIMEOUT_S, connect=DEFAULT_CONNECT_TIMEOUT_S)
 
 
+def tls_verify() -> bool:
+    """Whether outbound integration calls should verify TLS certificates.
+
+    Controlled by INTEGRATION_TLS_VERIFY (default true). Closed networks with
+    internal CAs / self-signed certs set it to "false".
+    """
+    try:
+        from config import get_settings
+
+        return get_settings().integration_tls_verify
+    except Exception:
+        return True
+
+
 def resilient_request(
     method: str,
     url: str,
@@ -59,7 +73,9 @@ def resilient_request(
     """
     attempt = 0
     last_exc: Optional[BaseException] = None
-    _client = client or httpx.Client(timeout=default_timeout(), follow_redirects=True)
+    _client = client or httpx.Client(
+        timeout=default_timeout(), follow_redirects=True, verify=tls_verify()
+    )
     _owns_client = client is None
     try:
         while attempt <= retries:

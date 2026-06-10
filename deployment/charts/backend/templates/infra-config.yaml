@@ -10,4 +10,5 @@ data:
   POSTGRES_USER: {{ .Values.global.endpoints.postgresUser | quote }}
   REDIS_HOST: {{ .Values.global.endpoints.redisHost | quote }}
   REDIS_PORT: {{ .Values.global.endpoints.redisPort | quote }}
+  INTEGRATION_TLS_VERIFY: {{ .Values.global.integrationTlsVerify | default "true" | quote }}
   

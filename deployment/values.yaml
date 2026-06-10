@@ -28,7 +28,11 @@ global:
     repository: "your-registry.example.com/your-org/devops-hub"
     pullPolicy: "Always"
   replicaCount: 1
-  
+
+  # Set to "false" in closed networks where integrations (Azure DevOps,
+  # Artifactory, SonarQube, ServiceNow, SSO) use internal/self-signed certs.
+  integrationTlsVerify: "true"
+
   # This makes DB connection details available to backend/frontend
   endpoints:
     postgresHost: "postgres-service"

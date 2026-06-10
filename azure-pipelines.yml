@@ -12,7 +12,7 @@ variables:
   - name: imageTag
     value: $(Build.BuildId)
   - name: imageRepository
-    value: $(ARTIFACTORY_DOCKER_REGISTRY)/$(ARTIFACTORY_DOCKER_REPOSITORY)
+    value: $(ARTIFACTORY_DOCKER_REGISTRY)
   - name: backendImage
     value: $(imageRepository)/backend:$(imageTag)
   - name: frontendImage
@@ -24,22 +24,6 @@ stages:
   - stage: Build
     displayName: Build
     jobs:
-      - job: frontend_build
-        displayName: frontend-build
-        steps:
-          - checkout: self
-          - script: |
-              set -euo pipefail
-              if [ -n "${NPM_REGISTRY_URL:-}" ]; then
-                npm config set registry "$NPM_REGISTRY_URL"
-              fi
-              npm ci
-            displayName: npm ci
-            workingDirectory: frontend
-          - script: npm run build:css
-            displayName: npm run build:css
-            workingDirectory: frontend
-
       - job: backend_build
         displayName: backend-build
         steps:
@@ -50,15 +34,15 @@ stages:
               python -m pip install -r backend/app/requirements.txt
             displayName: pip install requirements
 
-      - job: docker_build
-        displayName: docker-build
+      - job: docker_build_and_push
+        displayName: docker-build-and-push
         dependsOn:
-          - frontend_build
           - backend_build
         steps:
           - checkout: self
           - script: |
               set -euo pipefail
+              echo "$(ARTIFACTORY_DOCKER_PASSWORD)" | docker login "$(ARTIFACTORY_DOCKER_REGISTRY)" --username "$(ARTIFACTORY_DOCKER_USERNAME)" --password-stdin
               docker build \
                 --build-arg PYTHON_BASE_IMAGE="$(PYTHON_BASE_IMAGE)" \
                 --build-arg PIP_INDEX_URL="$(PIP_INDEX_URL)" \
@@ -71,40 +55,17 @@ stages:
                 -f frontend/Dockerfile \
                 -t "$(frontendImage)" \
                 .
-              docker save "$(backendImage)" -o "$(Pipeline.Workspace)/backend-image.tar"
-              docker save "$(frontendImage)" -o "$(Pipeline.Workspace)/frontend-image.tar"
-            displayName: Build backend and frontend images
-          - publish: $(Pipeline.Workspace)/backend-image.tar
-            artifact: backend-image
-            displayName: Publish backend image artifact
-          - publish: $(Pipeline.Workspace)/frontend-image.tar
-            artifact: frontend-image
-            displayName: Publish frontend image artifact
-
-  - stage: Push
-    displayName: Push
-    dependsOn: Build
-    jobs:
-      - job: push_image
-        displayName: Push image
-        steps:
-          - checkout: self
-          - download: current
-            artifact: backend-image
-          - download: current
-            artifact: frontend-image
-          - script: |
-              set -euo pipefail
-              echo "$(ARTIFACTORY_DOCKER_PASSWORD)" | docker login "$(ARTIFACTORY_DOCKER_REGISTRY)" --username "$(ARTIFACTORY_DOCKER_USERNAME)" --password-stdin
-              docker load -i "$(Pipeline.Workspace)/backend-image/backend-image.tar"
-              docker load -i "$(Pipeline.Workspace)/frontend-image/frontend-image.tar"
               docker push "$(backendImage)"
+              docker tag "$(backendImage)" "$(imageRepository)/backend:latest"
+              docker push "$(imageRepository)/backend:latest"
               docker push "$(frontendImage)"
-            displayName: Login, load, and push images
+              docker tag "$(frontendImage)" "$(imageRepository)/frontend:latest"
+              docker push "$(imageRepository)/frontend:latest"
+            displayName: Build and push backend and frontend images
 
   - stage: Deploy
     displayName: Deploy
-    dependsOn: Push
+    dependsOn: Build
     jobs:
       - job: deploy
         displayName: Deploy to OpenShift
@@ -112,9 +73,8 @@ stages:
           - checkout: self
           - script: |
               set -euo pipefail
+              cd "$(Build.SourcesDirectory)"
               oc login "$(OPENSHIFT_API_URL)" --token="$(OPENSHIFT_TOKEN)" --insecure-skip-tls-verify="$(OPENSHIFT_INSECURE_SKIP_TLS_VERIFY)"
-              oc project "$(OPENSHIFT_NAMESPACE)" || oc new-project "$(OPENSHIFT_NAMESPACE)"
-
               python - <<'PY'
               import json
               import os
@@ -138,12 +98,20 @@ stages:
                   json.dump({"backend": {"secrets": secrets}}, f)
               PY
 
-              helm dependency build ./deployment
-              helm upgrade --install "$(helmReleaseName)" ./deployment \
+              oc create secret docker-registry artifactory-pull-secret \
+                --docker-server="$(ARTIFACTORY_DOCKER_REGISTRY)" \
+                --docker-username="$(ARTIFACTORY_DOCKER_USERNAME)" \
+                --docker-password="$(ARTIFACTORY_DOCKER_PASSWORD)" \
+                -n "$(OPENSHIFT_NAMESPACE)" \
+                --dry-run=client -o yaml | oc apply -f -
+              oc secrets link default artifactory-pull-secret --for=pull \
+                -n "$(OPENSHIFT_NAMESPACE)" 2>/dev/null || true
+
+              oc delete jobs -l app.kubernetes.io/component=observability-migrate-async \
+                -n "$(OPENSHIFT_NAMESPACE)" 2>/dev/null || true
+
+              helm template "$(helmReleaseName)" ./deployment \
                 --namespace "$(OPENSHIFT_NAMESPACE)" \
-                --create-namespace \
-                --atomic \
-                --timeout 15m \
                 -f "$(Pipeline.Workspace)/helm-secrets-values.json" \
                 --set-string global.customImage.repository="$(imageRepository)" \
                 --set-string backend.image.tag="$(imageTag)" \
@@ -152,11 +120,10 @@ stages:
                 --set-string frontend.ingress.host="$(HUB_HOSTNAME)" \
                 --set-string infrastructure.postgres.image="$(POSTGRES_IMAGE)" \
                 --set-string infrastructure.redis.image="$(REDIS_IMAGE)" \
-                --set-string ingress-prod.controller.image.registry="$(INGRESS_NGINX_IMAGE_REGISTRY)" \
-                --set-string ingress-prod.controller.image.image="$(INGRESS_NGINX_IMAGE_NAME)" \
-                --set-string ingress-prod.controller.image.tag="$(INGRESS_NGINX_IMAGE_TAG)" \
-                --set-string ingress-prod.controller.image.digest="" \
-                --set-string ingress-prod.controller.scope.namespace="$(OPENSHIFT_NAMESPACE)"
+                --set-string backend.ingress.className="$(INGRESS_CLASS_NAME)" \
+                --set-string frontend.ingress.className="$(INGRESS_CLASS_NAME)" \
+                --set-string global.integrationTlsVerify="false" \
+                | oc apply -n "$(OPENSHIFT_NAMESPACE)" -f -
             displayName: Deploy with Helm
             env:
               PIPELINE_WORKSPACE: $(Pipeline.Workspace)

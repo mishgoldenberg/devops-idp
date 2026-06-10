@@ -62,6 +62,12 @@ class Settings:
         # Keep same semantics as Node auth-service default
         self.jwt_expiry = os.getenv("JWT_EXPIRY", "8h")
 
+        # TLS verification for outbound integration calls. Closed networks
+        # often run internal CAs / self-signed certs; set to "false" there.
+        self.integration_tls_verify = os.getenv(
+            "INTEGRATION_TLS_VERIFY", "true"
+        ).strip().lower() not in ("0", "false", "no")
+
         # External integrations
         self.azure_devops_base_url = os.getenv("AZURE_DEVOPS_BASE_URL")
         self.azure_devops_admin_pat = os.getenv("AZURE_DEVOPS_ADMIN_PAT")

@@ -27,6 +27,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
+
+from resilient_http import tls_verify
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel
 
@@ -166,7 +168,7 @@ def _now_iso() -> str:
 def _snow_client() -> httpx.Client:
     user = os.getenv("SNOW_API_USERNAME", "")
     password = os.getenv("SNOW_API_PASSWORD", "")
-    return httpx.Client(
+    return httpx.Client(verify=tls_verify(), 
         base_url=_resolve_instance(),
         auth=(user, password),
         headers={"Accept": "application/json", "Content-Type": "application/json"},
@@ -186,7 +188,7 @@ def _snow_ticket_flow_client() -> httpx.Client:
 		)
 	if not base_url.startswith(("http://", "https://")):
 		base_url = f"https://{base_url}"
-	return httpx.Client(
+	return httpx.Client(verify=tls_verify(), 
 		base_url=base_url,
 		auth=(username, password),
 		headers={"Accept": "application/json"},
@@ -441,7 +443,7 @@ def get_status():
 
     if not _use_mock() and instance and user:
         try:
-            with httpx.Client(
+            with httpx.Client(verify=tls_verify(), 
                 base_url=instance,
                 auth=(user, password),
                 headers={"Accept": "application/json"},
