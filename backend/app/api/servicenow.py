@@ -170,7 +170,7 @@ def _snow_client() -> httpx.Client:
         base_url=_resolve_instance(),
         auth=(user, password),
         headers={"Accept": "application/json", "Content-Type": "application/json"},
-        timeout=15.0,
+        timeout=httpx.Timeout(15.0, connect=5.0),
         follow_redirects=True,
     )
 
@@ -190,7 +190,7 @@ def _snow_ticket_flow_client() -> httpx.Client:
 		base_url=base_url,
 		auth=(username, password),
 		headers={"Accept": "application/json"},
-		timeout=30.0,
+		timeout=httpx.Timeout(30.0, connect=5.0),
 		follow_redirects=True,
 	)
 
@@ -445,7 +445,7 @@ def get_status():
                 base_url=instance,
                 auth=(user, password),
                 headers={"Accept": "application/json"},
-                timeout=10.0,
+                timeout=httpx.Timeout(10.0, connect=5.0),
                 follow_redirects=True,
             ) as client:
                 resp = client.get("/api/now/table/incident", params={"sysparm_limit": "1"})

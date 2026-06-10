@@ -194,7 +194,7 @@ def sonarqube_projects(current_user: AuthUser = Depends(get_current_user)) -> Di
     token = _require_token(current_user, "sonarqube")
     base = _base_url("sonarqube")
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-    with httpx.Client(timeout=10.0, headers=headers) as client:
+    with httpx.Client(timeout=httpx.Timeout(10.0, connect=5.0), headers=headers) as client:
         response = client.get(f"{base}/api/projects/search")
         if response.status_code in {401, 403}:
             raise HTTPException(status_code=401, detail="Invalid token or connection failed")
@@ -221,7 +221,7 @@ def sonarqube_project_details(project_key: str, current_user: AuthUser = Depends
     base = _base_url("sonarqube")
     metrics = "bugs,vulnerabilities,coverage,duplicated_lines_density,ncloc,code_smells"
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-    with httpx.Client(timeout=10.0, headers=headers) as client:
+    with httpx.Client(timeout=httpx.Timeout(10.0, connect=5.0), headers=headers) as client:
         response = client.get(
             f"{base}/api/measures/component",
             params={"component": project_key, "metricKeys": metrics},
@@ -387,7 +387,7 @@ def _confluence_request(
     """Authenticated GET to Confluence; surfaces 401/403 as 401 to the browser."""
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
     try:
-        with httpx.Client(timeout=timeout, headers=headers) as client:
+        with httpx.Client(timeout=httpx.Timeout(timeout, connect=5.0), headers=headers) as client:
             response = client.get(url, params=params)
     except Exception:
         raise HTTPException(status_code=502, detail="Confluence is unreachable")
@@ -451,14 +451,14 @@ def _test_token(system: str, token: str) -> None:
     try:
         if system == "sonarqube":
             headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-            with httpx.Client(timeout=8.0, headers=headers) as client:
+            with httpx.Client(timeout=httpx.Timeout(8.0, connect=5.0), headers=headers) as client:
                 response = client.get(f"{base}/api/projects/search", params={"ps": 1})
         elif system == "confluence":
             # Lightweight reachability + auth check; same Bearer header the
             # widget endpoints use so a valid result here means the token is
             # accepted by Confluence's REST API.
             headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-            with httpx.Client(timeout=8.0, headers=headers) as client:
+            with httpx.Client(timeout=httpx.Timeout(8.0, connect=5.0), headers=headers) as client:
                 response = client.get(f"{base}/rest/api/space", params={"limit": 1})
         else:
             response = _artifactory_request("GET", f"{base}/api/system/ping", token, timeout=8.0)
@@ -524,7 +524,7 @@ def _artifactory_request(
     extra_headers = dict(kwargs.pop("headers", {}) or {})
     for headers in _artifactory_header_sets(token):
         merged_headers = {**headers, **extra_headers}
-        with httpx.Client(timeout=timeout, headers=merged_headers) as client:
+        with httpx.Client(timeout=httpx.Timeout(timeout, connect=5.0), headers=merged_headers) as client:
             response = client.request(method, url, **kwargs)
         if response.status_code not in {401, 403}:
             response.raise_for_status()

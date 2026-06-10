@@ -18,6 +18,10 @@ def get_redis() -> redis.Redis:
             port=settings.redis_port,
             password=settings.redis_password or None,
             decode_responses=True,
+            # Cache must fail fast: an unreachable Redis otherwise blocks
+            # request threads forever (no default socket timeout in redis-py).
+            socket_connect_timeout=2.0,
+            socket_timeout=2.0,
         )
     return _client
 

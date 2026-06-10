@@ -216,7 +216,7 @@ def get_projects(current_user: AuthUser = Depends(get_current_user)):
     pat = _get_pat_for_user(current_user)
     auth = httpx.BasicAuth("", pat)
     try:
-        with httpx.Client(auth=auth, timeout=20.0) as client:
+        with httpx.Client(auth=auth, timeout=httpx.Timeout(20.0, connect=5.0)) as client:
             projects = []
             for base_url in _discover_ado_bases(client):
                 r = client.get(f"{base_url}/_apis/projects?$top=200&api-version=7.0")
@@ -351,7 +351,7 @@ def get_workitem_tasks(
     try:
         pat = _get_pat_for_user(current_user)
         auth = httpx.BasicAuth("", pat)
-        with httpx.Client(auth=auth, timeout=20.0) as client:
+        with httpx.Client(auth=auth, timeout=httpx.Timeout(20.0, connect=5.0)) as client:
             bases = _discover_ado_bases(client)
             parent = None
             parent_base = ""
@@ -431,7 +431,7 @@ def _fetch_work_items_live(
                 "Order By [System.ChangedDate] Desc"
             )
         }
-        with httpx.Client(auth=auth, timeout=30.0) as client:
+        with httpx.Client(auth=auth, timeout=httpx.Timeout(30.0, connect=5.0)) as client:
             work_items = []
             for base_url in _discover_ado_bases(client):
                 wiql_url = f"{base_url}/_apis/wit/wiql?api-version=7.0"
@@ -581,7 +581,7 @@ def _fetch_pull_requests_live(effective_username: str, current_user: AuthUser) -
     try:
         pat = _get_pat_for_user(current_user)
         auth = httpx.BasicAuth("", pat)
-        with httpx.Client(auth=auth, timeout=30.0) as client:
+        with httpx.Client(auth=auth, timeout=httpx.Timeout(30.0, connect=5.0)) as client:
             projects: List[Dict[str, Any]] = []
             for base_url in _discover_ado_bases(client):
                 r_projects = client.get(f"{base_url}/_apis/projects?api-version=7.0")
@@ -707,7 +707,7 @@ def get_pipelines(
         pat = _get_pat_for_user(current_user)
         auth = httpx.BasicAuth("", pat)
         # Query all accessible projects and get their recent builds.
-        with httpx.Client(auth=auth, timeout=30.0) as client:
+        with httpx.Client(auth=auth, timeout=httpx.Timeout(30.0, connect=5.0)) as client:
             projects: List[Dict[str, Any]] = []
             for base_url in _discover_ado_bases(client):
                 r_projects = client.get(f"{base_url}/_apis/projects?api-version=7.0")
@@ -862,7 +862,7 @@ def ensure_custom_ado_process(project_name: str, process_type: str) -> str:
     proc_auth = httpx.BasicAuth("", _ENV_ADMIN_PAT)
     custom_process_name = f"{project_name}-{process_type}"
 
-    with httpx.Client(auth=proc_auth, timeout=30.0) as client:
+    with httpx.Client(auth=proc_auth, timeout=httpx.Timeout(30.0, connect=5.0)) as client:
         try:
             r_procs = client.get(
                 f"{ADO_BASE}/_apis/work/processes?api-version=7.1-preview.2"
@@ -1031,7 +1031,7 @@ def create_ado_project(
     auth = httpx.BasicAuth("", pat)
 
     try:
-        with httpx.Client(auth=auth, timeout=30.0) as client:
+        with httpx.Client(auth=auth, timeout=httpx.Timeout(30.0, connect=5.0)) as client:
 
             # 1. Uniqueness check — requires Project (Read) PAT scope
             try:
@@ -1333,7 +1333,7 @@ def _assign_admin_post_terraform(job_id: str, current_user: AuthUser) -> None:
     if not project_name:
         return
 
-    with httpx.Client(auth=auth, timeout=20.0) as client:
+    with httpx.Client(auth=auth, timeout=httpx.Timeout(20.0, connect=5.0)) as client:
         # Resolve user descriptor
         ru = client.get(
             f"{ADO_BASE}/_apis/graph/users?api-version=7.0"
