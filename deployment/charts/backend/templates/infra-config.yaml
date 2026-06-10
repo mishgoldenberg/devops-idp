@@ -11,4 +11,7 @@ data:
   REDIS_HOST: {{ .Values.global.endpoints.redisHost | quote }}
   REDIS_PORT: {{ .Values.global.endpoints.redisPort | quote }}
   INTEGRATION_TLS_VERIFY: {{ .Values.global.integrationTlsVerify | default "true" | quote }}
+  # Trust the OpenShift router's X-Forwarded-Proto so request.url.scheme is
+  # https — required for the SSO redirect_uri to match the registered value.
+  FORWARDED_ALLOW_IPS: "*"
   
