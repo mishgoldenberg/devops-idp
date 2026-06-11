@@ -195,13 +195,11 @@ def remove_pin(system: str, body: PinBody, current_user: AuthUser = Depends(get_
 def sonarqube_projects(current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]:
     token = _require_token(current_user, "sonarqube")
     base = _base_url("sonarqube")
-    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-    with httpx.Client(verify=tls_verify(), timeout=httpx.Timeout(10.0, connect=5.0), headers=headers) as client:
-        response = client.get(f"{base}/api/projects/search")
-        if response.status_code in {401, 403}:
-            raise HTTPException(status_code=401, detail="Invalid token or connection failed")
-        response.raise_for_status()
-        payload = response.json()
+    response = _sonar_request(f"{base}/api/projects/search", token)
+    if response.status_code in {401, 403}:
+        raise HTTPException(status_code=401, detail="Invalid token or connection failed")
+    response.raise_for_status()
+    payload = response.json()
     projects = [
         {
             "project_key": item.get("key") or "",
@@ -222,16 +220,15 @@ def sonarqube_project_details(project_key: str, current_user: AuthUser = Depends
     token = _require_token(current_user, "sonarqube")
     base = _base_url("sonarqube")
     metrics = "bugs,vulnerabilities,coverage,duplicated_lines_density,ncloc,code_smells"
-    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-    with httpx.Client(verify=tls_verify(), timeout=httpx.Timeout(10.0, connect=5.0), headers=headers) as client:
-        response = client.get(
-            f"{base}/api/measures/component",
-            params={"component": project_key, "metricKeys": metrics},
-        )
-        if response.status_code in {401, 403}:
-            raise HTTPException(status_code=401, detail="Invalid token or connection failed")
-        response.raise_for_status()
-        payload = response.json()
+    response = _sonar_request(
+        f"{base}/api/measures/component",
+        token,
+        params={"component": project_key, "metricKeys": metrics},
+    )
+    if response.status_code in {401, 403}:
+        raise HTTPException(status_code=401, detail="Invalid token or connection failed")
+    response.raise_for_status()
+    payload = response.json()
     component = payload.get("component") or {}
     measures = {m.get("metric"): m.get("value") for m in component.get("measures", [])}
     data = {
@@ -452,9 +449,7 @@ def _test_token(system: str, token: str) -> None:
     base = _base_url(system)
     try:
         if system == "sonarqube":
-            headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-            with httpx.Client(verify=tls_verify(), timeout=httpx.Timeout(8.0, connect=5.0), headers=headers) as client:
-                response = client.get(f"{base}/api/projects/search", params={"ps": 1})
+            response = _sonar_request(f"{base}/api/projects/search", token, params={"ps": 1}, timeout=8.0)
         elif system == "confluence":
             # Lightweight reachability + auth check; same Bearer header the
             # widget endpoints use so a valid result here means the token is
@@ -465,12 +460,23 @@ def _test_token(system: str, token: str) -> None:
         else:
             response = _artifactory_request("GET", f"{base}/api/system/ping", token, timeout=8.0)
         if response.status_code in {401, 403}:
-            raise HTTPException(status_code=401, detail="Invalid token")
+            raise HTTPException(
+                status_code=401,
+                detail=f"{system.title()} rejected the token (HTTP {response.status_code}).",
+            )
         response.raise_for_status()
     except HTTPException:
         raise
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid token or connection failed")
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{system.title()} returned HTTP {exc.response.status_code} during token validation.",
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{system.title()} unreachable during token validation: {type(exc).__name__}.",
+        )
 
 
 def _storage_percentage(binaries: Dict[str, Any]) -> float:
@@ -532,6 +538,34 @@ def _artifactory_request(
             response.raise_for_status()
             return response
     raise HTTPException(status_code=401, detail="Invalid token or connection failed")
+
+
+def _sonar_request(
+    url: str,
+    token: str,
+    *,
+    params: Optional[Dict[str, Any]] = None,
+    timeout: float = 10.0,
+) -> httpx.Response:
+    """GET against SonarQube, tolerant of token-auth differences between versions.
+
+    SonarQube >= 10.0 accepts ``Authorization: Bearer <token>``; older versions
+    only accept the token as the HTTP Basic *username* (empty password). Try
+    Bearer first, then fall back to Basic so both server generations work.
+    """
+    attempts = (
+        {"headers": {"Authorization": f"Bearer {token}", "Accept": "application/json"}},
+        {"auth": (token, ""), "headers": {"Accept": "application/json"}},
+    )
+    response: Optional[httpx.Response] = None
+    for kwargs in attempts:
+        with httpx.Client(verify=tls_verify(), timeout=httpx.Timeout(timeout, connect=5.0)) as client:
+            response = client.get(url, params=params, **kwargs)
+        if response.status_code not in {401, 403}:
+            return response
+    # Both schemes rejected — hand back the last response so the caller decides.
+    assert response is not None
+    return response
 
 
 def _latest_artifacts(base: str, token: str, repo: str) -> List[Dict[str, Any]]:

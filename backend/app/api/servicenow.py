@@ -482,15 +482,20 @@ def get_tickets(current_user: AuthUser = Depends(get_current_user)):
         tickets = [t for t in _MOCK_TICKETS if t["assigned_to"] == user_email]
         return {"success": True, "data": tickets, "timestamp": _now_iso()}
 
-    # Primary source of truth: ServiceNow itself, scoped to the configured
-    # portal account (secret variable) or the active user email fallback.
-    snow_user = (os.getenv("SNOW_API_USERNAME") or "").strip()
-    if not snow_user:
-        snow_user = str(user_email)
+    # Auth uses the service account (admin token via _snow_client), but the
+    # ticket scope is the logged-in hub user: their hub email matches their
+    # ServiceNow user (same SSO identity), so we filter on that email and show
+    # every incident that user ever opened in ServiceNow.
+    snow_email = str(user_email).strip()
+    if not snow_email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No email on the current session to scope ServiceNow tickets.",
+        )
 
     query = (
-        f"opened_by={snow_user}"
-        f"^ORcaller_id.user_name={snow_user}"
+        f"opened_by.email={snow_email}"
+        f"^ORcaller_id.email={snow_email}"
         "^ORDERBYDESCsys_created_on"
     )
 
@@ -519,7 +524,7 @@ def get_tickets(current_user: AuthUser = Depends(get_current_user)):
         records = cached_external(
             "snow",
             (user_email or "anon").lower(),
-            f"tickets:{snow_user}",
+            f"tickets:{snow_email}",
             _fetch_live,
             ttl=60,
         )
