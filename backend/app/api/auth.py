@@ -1,6 +1,7 @@
 from typing import Any, Dict, Optional
 
 import secrets
+import ssl
 from urllib.parse import urlencode
 
 import httpx
@@ -8,12 +9,25 @@ from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 
 from db import query_one, sync_bootstrap_admin_role_for_email
+from resilient_http import tls_verify
 from security import create_access_token, decode_access_token
 from sso_config import (
     decrypt_client_secret,
     fetch_openid_configuration,
     get_enabled_sso_config,
 )
+
+
+def _jwks_ssl_context() -> Optional[ssl.SSLContext]:
+    """Unverified TLS context for the JWKS fetch when INTEGRATION_TLS_VERIFY is
+    off (closed network / self-signed IdP). PyJWKClient verifies certs by
+    default, so without this the JWKS fetch fails on internal CAs."""
+    if tls_verify():
+        return None
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return ctx
 
 
 router = APIRouter()
@@ -237,7 +251,7 @@ async def sso_callback(request: Request, code: Optional[str] = None, state: Opti
     except ValueError:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="SSO secret is unavailable")
 
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=10, verify=tls_verify()) as client:
         token_resp = await client.post(
             discovery["token_endpoint"],
             data={
@@ -261,7 +275,9 @@ async def sso_callback(request: Request, code: Optional[str] = None, state: Opti
     try:
         import jwt as pyjwt
 
-        signing_key = pyjwt.PyJWKClient(discovery["jwks_uri"]).get_signing_key_from_jwt(id_token)
+        signing_key = pyjwt.PyJWKClient(
+            discovery["jwks_uri"], ssl_context=_jwks_ssl_context()
+        ).get_signing_key_from_jwt(id_token)
         payload = pyjwt.decode(
             id_token,
             signing_key.key,
