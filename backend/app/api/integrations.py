@@ -65,6 +65,10 @@ def _base_url(system: str) -> str:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"{system.title()} URL is not configured",
         )
+    # Tolerate base URLs configured without a scheme (closed-network secrets
+    # are often set as "host/path"); httpx raises UnsupportedProtocol otherwise.
+    if not url.startswith(("http://", "https://")):
+        url = f"https://{url}"
     return url
 
 

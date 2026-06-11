@@ -467,7 +467,7 @@ def get_status():
 
 @router.get("/tickets")
 def get_tickets(current_user: AuthUser = Depends(get_current_user)):
-    user_email = current_user.get("username", "")
+    user_email = (current_user.get("email") or current_user.get("username") or "").strip()
 
     if not _use_mock() and not _resolve_instance():
         raise HTTPException(
@@ -636,7 +636,7 @@ def create_ticket(
     body: CreateTicketRequest,
     current_user: AuthUser = Depends(get_current_user),
 ):
-    user_email = current_user.get("username", "")
+    user_email = (current_user.get("email") or current_user.get("username") or "").strip()
 
     # Hardening: reject empty title/description so we never post meaningless
     # tickets to ServiceNow. Mirrors the frontend guard for defense-in-depth.
