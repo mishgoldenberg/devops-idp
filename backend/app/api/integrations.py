@@ -519,9 +519,12 @@ def _artifactory_headers(token: str) -> Dict[str, str]:
 
 
 def _artifactory_header_sets(token: str) -> List[Dict[str, str]]:
+    # Accept */* not application/json: /api/system/ping returns text/plain, and
+    # demanding JSON makes Artifactory answer 406 Not Acceptable. JSON endpoints
+    # (repositories, storageinfo, AQL) still return JSON under */*.
     return [
-        {"Authorization": f"Bearer {token}", "Accept": "application/json"},
-        {"X-JFrog-Art-Api": token, "Accept": "application/json"},
+        {"Authorization": f"Bearer {token}", "Accept": "*/*"},
+        {"X-JFrog-Art-Api": token, "Accept": "*/*"},
     ]
 
 

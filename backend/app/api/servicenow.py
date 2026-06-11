@@ -493,11 +493,16 @@ def get_tickets(current_user: AuthUser = Depends(get_current_user)):
             detail="No email on the current session to scope ServiceNow tickets.",
         )
 
+    # Match the user on either the email or the user_name of opened_by/caller_id,
+    # since instances differ in which attribute carries the SSO identity.
     query = (
         f"opened_by.email={snow_email}"
         f"^ORcaller_id.email={snow_email}"
+        f"^ORopened_by.user_name={snow_email}"
+        f"^ORcaller_id.user_name={snow_email}"
         "^ORDERBYDESCsys_created_on"
     )
+    _log.info("ServiceNow my-tickets: scoping to email=%r", snow_email)
 
     def _fetch_live():
         try:
@@ -533,6 +538,7 @@ def get_tickets(current_user: AuthUser = Depends(get_current_user)):
     except Exception:
         records = _fetch_live()
 
+    _log.info("ServiceNow my-tickets: email=%r returned %d ticket(s)", snow_email, len(records or []))
     return {"success": True, "data": records, "timestamp": _now_iso()}
 
 
