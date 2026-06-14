@@ -876,6 +876,63 @@ def create_ticket(
     return {"success": True, "data": ticket, "timestamp": _now_iso()}
 
 
+def _producer_sys_id() -> str:
+    """sys_id of the 'Open A Ticket' Record Producer (overridable via env)."""
+    return (os.getenv("SNOW_PRODUCER_SYS_ID") or "9451f30fc1fe6610b2a83094d023d641").strip()
+
+
+# Wizard form key -> Record Producer variable name (identity unless listed).
+_PRODUCER_VAR_ALIASES = {
+    "reason": "what_is_the_reason_for_opening_this_ticket",
+    "work_impact": "how_does_this_affect_your_work",
+    "help_text": "how_can_we_help",
+}
+
+
+def _producer_choice_maps(client: httpx.Client) -> Dict[str, Dict[str, str]]:
+    """Fetch the producer's variables; return {var_name: {label_or_value_lower: value}}
+    so dropdown labels convert to their stored choice values. Best-effort."""
+    try:
+        resp = client.get(f"/api/sn_sc/servicecatalog/items/{_producer_sys_id()}")
+        resp.raise_for_status()
+        data = resp.json().get("result", {}) or {}
+    except Exception:
+        return {}
+    out: Dict[str, Dict[str, str]] = {}
+    for var in data.get("variables") or []:
+        name = var.get("name")
+        if not name:
+            continue
+        cmap: Dict[str, str] = {}
+        for ch in var.get("choices") or []:
+            val = ch.get("value")
+            if val is None:
+                continue
+            cmap[str(val).strip().lower()] = str(val)
+            lab = ch.get("label")
+            if lab:
+                cmap[str(lab).strip().lower()] = str(val)
+        if cmap:
+            out[name] = cmap
+    return out
+
+
+def _build_producer_variables(client: httpx.Client, fields: Dict[str, str]) -> Dict[str, str]:
+    """Map wizard fields to producer variables, converting dropdown labels to values."""
+    choice_maps = _producer_choice_maps(client)
+    variables: Dict[str, str] = {}
+    for key, value in fields.items():
+        value = (value or "").strip()
+        if not value:
+            continue
+        name = _PRODUCER_VAR_ALIASES.get(key, key)
+        cmap = choice_maps.get(name)
+        if cmap:
+            value = cmap.get(value.lower(), value)
+        variables[name] = value
+    return variables
+
+
 @router.post("/tickets/create-flow")
 def create_ticket_flow(
 	full_name: str = Form(...),
@@ -947,45 +1004,36 @@ def create_ticket_flow(
 
 	try:
 		with _snow_ticket_flow_client() as client:
-			user_sys_id = _resolve_snow_user_sys_id(client, user_email)
-			group_sys_id = _resolve_support_group_sys_id(client)
-			payload: Dict[str, Any] = {
-				"short_description": fields["title"],
-				"description": _format_ticket_description(fields),
-				"caller_id": user_sys_id,
-				"opened_by": user_sys_id,
-				"assignment_group": group_sys_id,
-				"urgency": fields["urgency"],
-				"impact": "2",
-				"u_full_name": fields["full_name"],
-				"u_phone_number": fields["phone_number"],
-				"u_branch": fields["branch"],
-				"u_team": fields["team"],
-				"u_section": fields["section"],
-				"u_role": fields["role"],
-				"u_network": fields["network"],
-				"u_devops_services": fields["devops_services"],
-				"u_reason": fields["reason"],
-				"u_work_impact": fields["work_impact"],
-				"u_help_text": fields["help_text"],
-				"u_azure_devops_support_type": fields["azure_devops_support_type"],
-				"u_azure_devops_collection": fields["azure_devops_collection"],
-				"u_azure_devops_project": fields["azure_devops_project"],
-				"u_pipeline_url": fields["pipeline_url"],
-				"u_reason_other": fields["reason_other"],
-			}
+			variables = _build_producer_variables(client, fields)
 			resp = client.post(
-				"/api/now/table/incident",
-				json=payload,
+				f"/api/sn_sc/servicecatalog/items/{_producer_sys_id()}/submit_producer",
+				json={"sysparm_quantity": "1", "variables": variables},
 				headers={"Content-Type": "application/json"},
-				params={"sysparm_display_value": "true"},
 			)
-			resp.raise_for_status()
-			raw = resp.json().get("result", {})
-			incident_sys_id = str(raw.get("sys_id") or "")
-			ticket_number = str(raw.get("number") or "")
+			if resp.status_code >= 400:
+				raise HTTPException(
+					status_code=status.HTTP_502_BAD_GATEWAY,
+					detail=f"ServiceNow producer rejected the ticket (HTTP {resp.status_code}): {resp.text[:300]}",
+				)
+			result = resp.json().get("result", {}) or {}
+			incident_sys_id = str(result.get("sys_id") or "")
+			table = str(result.get("table") or "incident")
 			if not incident_sys_id:
-				raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="ServiceNow did not return an incident sys_id.")
+				raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="ServiceNow producer did not return a record sys_id.")
+			# Set caller to the portal user so 'My Tickets' (email filter) finds it.
+			try:
+				user_sys_id = _resolve_snow_user_sys_id(client, user_email)
+				if user_sys_id:
+					client.patch(f"/api/now/table/{table}/{incident_sys_id}", json={"caller_id": user_sys_id})
+			except Exception:
+				pass
+			ticket_number = ""
+			try:
+				rec = client.get(f"/api/now/table/{table}/{incident_sys_id}", params={"sysparm_fields": "number", "sysparm_display_value": "true"})
+				if rec.status_code == 200:
+					ticket_number = str((rec.json().get("result") or {}).get("number") or "")
+			except Exception:
+				pass
 			attachment_count = _upload_snow_attachments(client, incident_sys_id, attachments)
 	except HTTPException:
 		raise
