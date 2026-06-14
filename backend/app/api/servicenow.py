@@ -1005,13 +1005,13 @@ def create_ticket_flow(
 	try:
 		with _snow_ticket_flow_client() as client:
 			variables = _build_producer_variables(client, fields)
-			_log.info("SNow producer submit: item=%s vars=%s", _producer_sys_id(), sorted(variables.keys()))
+			_log.warning("SNow producer submit: item=%s vars=%s", _producer_sys_id(), sorted(variables.keys()))
 			resp = client.post(
 				f"/api/sn_sc/servicecatalog/items/{_producer_sys_id()}/submit_producer",
 				json={"sysparm_quantity": "1", "variables": variables},
 				headers={"Content-Type": "application/json"},
 			)
-			_log.info("SNow producer response: status=%s body=%s", resp.status_code, resp.text[:600])
+			_log.warning("SNow producer response: status=%s body=%s", resp.status_code, resp.text[:600])
 			if resp.status_code >= 400:
 				raise HTTPException(
 					status_code=status.HTTP_502_BAD_GATEWAY,
