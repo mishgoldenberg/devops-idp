@@ -289,7 +289,18 @@ def artifactory_repo_details(name: str, current_user: AuthUser = Depends(get_cur
 def artifactory_storage(current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]:
     token = _require_token(current_user, "artifactory")
     base = _base_url("artifactory")
-    response = _artifactory_request("GET", f"{base}/api/storageinfo", token)
+    try:
+        response = _artifactory_request("GET", f"{base}/api/storageinfo", token)
+    except HTTPException as exc:
+        # /api/storageinfo is admin-only in Artifactory; a valid non-admin token
+        # gets 401/403 here even though /api/repositories works for it. Surface a
+        # clear reason instead of the generic "invalid token".
+        if exc.status_code in {401, 403}:
+            raise HTTPException(
+                status_code=403,
+                detail="Artifactory storage stats require an admin-scoped token.",
+            )
+        raise
     payload = response.json()
     binaries = payload.get("binariesSummary") or {}
     repos_raw = payload.get("repositoriesSummaryList") or []
