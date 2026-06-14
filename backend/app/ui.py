@@ -64,6 +64,15 @@ HOME_WIDGET_KEYS = {
     "recent_activity": "recent-activity-component",
 }
 
+# Widgets only usable by Platform Admins. Artifactory's /api/storageinfo is
+# admin-only, so a normal user token can never populate the storage widget.
+ADMIN_ONLY_WIDGETS = {"artifactory_storage"}
+
+
+def _is_portal_admin(request: Request) -> bool:
+    """Admin flag resolved by the portal_admin_nav_context middleware."""
+    return bool(getattr(request.state, "portal_is_admin", False))
+
 
 def _get_templates(request: Request):
     """Retrieve the Jinja2Templates instance stored on the app state."""
@@ -216,6 +225,9 @@ def ui_index(request: Request):
     # by real widget_view events posted from the browser, not by preferences.
     saved = _get_home_widget_prefs_from_cookie(request)
     enabled_widgets: list = saved if saved else list(HOME_WIDGET_KEYS.keys())
+    # Admin-only widgets never appear for non-admins, even if an old cookie has them.
+    if not _is_portal_admin(request):
+        enabled_widgets = [w for w in enabled_widgets if w not in ADMIN_ONLY_WIDGETS]
 
     templates = _get_templates(request)
     return templates.TemplateResponse(
@@ -1131,7 +1143,13 @@ def ui_sonarqube_projects_component(request: Request):
 
 @ui_router.get("/ui/components/artifactory-storage", response_class=HTMLResponse)
 def ui_artifactory_storage_component(request: Request):
-    """Render the Artifactory Storage dashboard widget for HTMX partial loading."""
+    """Render the Artifactory Storage dashboard widget for HTMX partial loading.
+
+    Admin-only: /api/storageinfo requires an admin-scoped token, so the widget
+    is hidden from non-admins and the endpoint refuses them directly too.
+    """
+    if not _is_portal_admin(request):
+        return HTMLResponse("", status_code=403)
     templates = _get_templates(request)
     return templates.TemplateResponse(
         "partials/components/artifactory-storage.html",

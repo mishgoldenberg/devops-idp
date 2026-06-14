@@ -191,7 +191,8 @@
 				</div>
 			</div>
 
-			<!-- Artifactory Storage -->
+			<!-- Artifactory Storage (admin-only: /api/storageinfo needs an admin token) -->
+			{% if request.state.portal_is_admin %}
 			<div
 				id="artifactory-storage-component"
 				data-widget-key="artifactory_storage"
@@ -209,6 +210,7 @@
 					{% include "partials/components/widget-skeleton.html" %}
 				</div>
 			</div>
+			{% endif %}
 
 			<!-- Confluence Pages -->
 			<div
@@ -324,10 +326,12 @@
 						<input type="checkbox" checked class="checkbox checkbox-primary dashboard-widget-toggle" data-widget-key="artifactory_repos" />
 						<span class="font-medium text-base-content">Artifactory Repos</span>
 					</label>
+					{% if request.state.portal_is_admin %}
 					<label class="label cursor-pointer justify-start gap-3 py-2">
 						<input type="checkbox" checked class="checkbox checkbox-primary dashboard-widget-toggle" data-widget-key="artifactory_storage" />
 						<span class="font-medium text-base-content">Artifactory Storage</span>
 					</label>
+					{% endif %}
 					<label class="label cursor-pointer justify-start gap-3 py-2">
 						<input type="checkbox" checked class="checkbox checkbox-primary dashboard-widget-toggle" data-widget-key="confluence_pages" />
 						<span class="font-medium text-base-content">Confluence Pages</span>
