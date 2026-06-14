@@ -111,6 +111,18 @@
 					connectPrompt();
 					return;
 				}
+				if (res.status === 403) {
+					// Storage stats are admin-only in Artifactory; the saved token works
+					// for repos but lacks admin rights. Retry won't help — offer a reconnect.
+					showConnectStatus(`
+						<div class="w-full rounded-xl border border-warning/30 bg-warning/5 p-4 text-left">
+							<h4 class="font-semibold text-sm text-base-content">Admin token required</h4>
+							<p class="mt-1 text-xs text-base-content/60">Artifactory storage stats need a token with <b>admin</b> rights. Your current token works for repositories but isn't admin-scoped.</p>
+							<button type="button" class="btn btn-warning btn-xs mt-3" data-arti-storage-reconnect>Use a different token</button>
+						</div>
+					`);
+					return;
+				}
 				if (!res.ok) throw new Error("Invalid token or connection failed");
 				const json = await res.json();
 				render(json.data || {});
@@ -122,6 +134,10 @@
 		bodyEl.addEventListener("click", async (e) => {
 			if (e.target.closest("[data-arti-storage-retry]")) {
 				loadStorage();
+				return;
+			}
+			if (e.target.closest("[data-arti-storage-reconnect]")) {
+				connectPrompt();
 				return;
 			}
 			if (e.target.closest("[data-arti-storage-cancel-token]")) {
