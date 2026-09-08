@@ -3,9 +3,11 @@ Postgres access layer.
 
 Responsibilities
 ----------------
-* Own the application's single ``psycopg2.pool.SimpleConnectionPool``.
-  The pool is created lazily so importing this module never fails when the
-  DB is temporarily unreachable (matters during pod startup / CrashLoopBackOff).
+* Own the application's single ``psycopg2.pool.ThreadedConnectionPool``.
+  Threaded, not Simple: nearly every route here is a synchronous ``def``, and
+  those run in worker threads, so the pool is shared across threads by design.
+  It is created lazily so importing this module never fails when the DB is
+  temporarily unreachable (matters during pod startup / CrashLoopBackOff).
 * Provide small, explicit helpers (``query_all``, ``query_one``,
   ``execute``, ``execute_returning``) instead of pulling in a full ORM — the
   schema and query surface are small enough to keep direct SQL honest.
@@ -22,6 +24,7 @@ connections from API routers.
 
 import os
 import threading
+import time
 from contextlib import contextmanager
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -31,6 +34,11 @@ from psycopg2.extensions import register_adapter
 from psycopg2.extras import Json, RealDictCursor
 from config import get_settings
 
+# Imported at module scope on purpose. security.py touches db only from inside
+# function bodies, so there is no cycle — and a lazy import here would turn a
+# packaging mistake into a silently skipped migration instead of a startup error.
+from security import PLATFORM_ADMIN_LEVEL, REGULAR_USER_LEVEL
+
 # Globally teach psycopg2 how to serialize Python dicts into Postgres JSON /
 # JSONB columns. Without this, any `execute(sql, [some_dict])` raises
 # `ProgrammingError: can't adapt type 'dict'`, which bites endpoints that
@@ -39,16 +47,115 @@ from config import get_settings
 # adapter is still correct for any Postgres text/uuid array columns.
 register_adapter(dict, Json)
 
-# Lazily initialised so that the module can be imported without a live DB
-# (avoids CrashLoopBackOff when the pool creation fails at import time).
-_db_pool: "psycopg2.pool.SimpleConnectionPool | None" = None
+# THREADED, not Simple. psycopg2's own words for SimpleConnectionPool are "a
+# connection pool that can't be shared across different threads" — it has no lock,
+# and its free-connection list is mutated by every getconn/putconn.
+#
+# This application is served by that exact forbidden arrangement. Practically every
+# route here is a plain `def` (over three hundred of them, against one `async def`),
+# and Starlette runs every plain `def` endpoint in a worker thread. So concurrent
+# requests call getconn/putconn on an unsynchronised pool, and two of them can be
+# handed the SAME connection — which then interleaves two transactions on one
+# session. That does not fail cleanly; it produces wrong data and "connection
+# already closed" at random under load.
+#
+# It survives today because concurrency is low. It is precisely the bug that appears
+# when the portal is put in front of hundreds of people, and it would look like
+# random unexplainable errors rather than like a pool problem, so it is fixed here
+# rather than diagnosed later.
+#
+# ThreadedConnectionPool is the same pool with a lock around it.
+_db_pool: "psycopg2.pool.ThreadedConnectionPool | None" = None
+
+# One pod's ceiling on Postgres connections. Sized against the server's
+# max_connections, NOT against expected traffic: every replica keeps its own pool,
+# so the real total is POOL_MAX x replicas, and exceeding max_connections takes the
+# database down for everything rather than slowing one pod down.
+_POOL_MIN = int(os.getenv("DB_POOL_MIN", "2"))
+_POOL_MAX = int(os.getenv("DB_POOL_MAX", "20"))
+
+# Guard against a lazily-initialised global being created twice when two threads
+# arrive at once — otherwise the loser's pool is silently orphaned along with its
+# open connections, which leaks a handful of connections on every cold start.
+_pool_lock = threading.Lock()
 
 
-def _get_pool() -> "psycopg2.pool.SimpleConnectionPool":
-    global _db_pool
-    if _db_pool is None:
-        settings = get_settings()
-        _db_pool = psycopg2.pool.SimpleConnectionPool(1, 20, settings.database_url)
+# How long a single connection attempt may take. Without this, libpq waits for the
+# OS TCP timeout — minutes — whenever the DB host silently drops packets, which is
+# the normal behaviour of a firewall in this network rather than an exotic failure.
+#
+# That wait is what turns "Postgres is unreachable" into CrashLoopBackOff: the
+# startup DDL blocks on connect, uvicorn never starts answering, the liveness probe
+# gets connection-refused and the kubelet kills a container that was only waiting.
+# Five seconds turns the same outage into a logged error and a NotReady pod.
+_CONNECT_TIMEOUT = int(os.getenv("DB_CONNECT_TIMEOUT", "5"))
+
+
+def _dsn_with_timeouts(dsn: str) -> str:
+    """
+    Add connect_timeout and TCP keepalives to the DSN unless they are already set.
+
+    Keepalives matter for the same reason: a connection idling in the pool across a
+    firewall/NAT rebalance is dead but looks open, and the first query on it hangs
+    for the OS timeout instead of failing.
+    """
+    if not dsn:
+        return dsn
+    params = {
+        "connect_timeout": str(_CONNECT_TIMEOUT),
+        "keepalives": "1",
+        "keepalives_idle": "30",
+        "keepalives_interval": "10",
+        "keepalives_count": "3",
+    }
+    # Works for both URL DSNs (postgresql://…) and keyword DSNs (host=… dbname=…).
+    is_url = "://" in dsn
+    missing = [(k, v) for k, v in params.items() if k not in dsn]
+    if not missing:
+        return dsn
+    if is_url:
+        sep = "&" if "?" in dsn else "?"
+        return dsn + sep + "&".join(f"{k}={v}" for k, v in missing)
+    return dsn + " " + " ".join(f"{k}={v}" for k, v in missing)
+
+
+# When pool construction fails, every caller must NOT immediately try again.
+# Building the pool opens DB_POOL_MIN connections, so one failed attempt costs
+# min x connect_timeout seconds — and while it runs it holds _pool_lock, so a
+# hundred queued requests each wait for all the attempts ahead of them. That is
+# how "Postgres is down" turns into "the whole pod is wedged". One thread retries
+# per cooldown window; everyone else fails fast and the UI shows a real error.
+_pool_failed_at = 0.0
+_POOL_RETRY_COOLDOWN = float(os.getenv("DB_POOL_RETRY_COOLDOWN", "5"))
+
+
+class DatabaseUnavailable(psycopg2.OperationalError):
+    """Raised instead of queueing behind a connection attempt that is failing."""
+
+
+def _get_pool() -> "psycopg2.pool.ThreadedConnectionPool":
+    global _db_pool, _pool_failed_at
+    if _db_pool is not None:
+        return _db_pool
+    if time.monotonic() - _pool_failed_at < _POOL_RETRY_COOLDOWN:
+        raise DatabaseUnavailable(
+            "database is unreachable (a connection attempt failed moments ago)"
+        )
+    if not _pool_lock.acquire(timeout=1):
+        raise DatabaseUnavailable("a database connection attempt is already in progress")
+    try:
+        if _db_pool is None:
+            settings = get_settings()
+            try:
+                _db_pool = psycopg2.pool.ThreadedConnectionPool(
+                    _POOL_MIN, _POOL_MAX, _dsn_with_timeouts(settings.database_url)
+                )
+                _pool_failed_at = 0.0
+            except Exception:
+                _pool_failed_at = time.monotonic()
+                raise
+    finally:
+        _pool_lock.release()
     return _db_pool
 
 @contextmanager
@@ -103,13 +210,42 @@ def execute_returning(
     return [dict(row) for row in rows]
 
 
+_health_lock = threading.Lock()
+_health_cache: Tuple[float, bool] = (0.0, False)
+_HEALTH_TTL = 2.0
+
+
 def health_check() -> bool:
-    """Simple database health check."""
+    """
+    Database health, answered fast enough to be a probe.
+
+    Called by the readiness probe every few seconds. The naive version — run
+    `SELECT 1`, let it block — is what makes a database outage escalate: each
+    probe takes as long as a connection attempt, probes overlap, every one of
+    them occupies a Starlette worker thread, and once the pool is exhausted the
+    *liveness* endpoint stops answering too. The pod is then restarted for a
+    fault that a restart cannot fix.
+
+    So: cache the answer briefly, and if a check is already in flight report the
+    last known result instead of starting a second one.
+    """
+    global _health_cache
+    ts, last = _health_cache
+    now = time.monotonic()
+    if now - ts < _HEALTH_TTL:
+        return last
+    if not _health_lock.acquire(blocking=False):
+        return last
     try:
-        query_one("SELECT 1")
-        return True
-    except Exception:
-        return False
+        try:
+            query_one("SELECT 1")
+            ok = True
+        except Exception:
+            ok = False
+        _health_cache = (time.monotonic(), ok)
+        return ok
+    finally:
+        _health_lock.release()
 
 
 def _pg_exception_chain(exc: BaseException):
@@ -185,12 +321,8 @@ def ensure_observability_tables() -> None:
 
     log = logging.getLogger(__name__)
     stmts = [
-        # Legacy tables from earlier iterations — dropped so the new
-        # event-based widget_usage schema can take over cleanly.
-        (
-            "drop_legacy_widget_usage",
-            "DROP TABLE IF EXISTS widget_usage",
-        ),
+        # Genuinely dead schema from earlier iterations. These two are safe to drop
+        # repeatedly because nothing has written to them for a long time.
         (
             "drop_legacy_widget_user_views",
             "DROP TABLE IF EXISTS widget_user_views",
@@ -199,6 +331,18 @@ def ensure_observability_tables() -> None:
             "drop_legacy_home_widget_prefs",
             "DROP TABLE IF EXISTS home_widget_prefs",
         ),
+        # widget_usage is NOT dropped. It used to be, immediately above the
+        # CREATE TABLE IF NOT EXISTS below — which made that guard meaningless and
+        # emptied the table every time this function ran.
+        #
+        # This function runs at BACKEND STARTUP, so it fired on every pod start. With
+        # two replicas and autoscaling that is several times a day, and every one of
+        # them silently reset "Suggested for you", "Recently used" and every count on
+        # the Observability page for all users. The same statement existed in the
+        # deploy-time SQL job and has been removed there too.
+        #
+        # It is the current schema, not legacy. Replacing it one day is a migration
+        # written for that change, not a drop that runs forever.
         # Event-based widget usage: one row per widget view.
         (
             "widget_usage",
@@ -370,14 +514,256 @@ def ensure_tables() -> None:
     ensure_item_tables()
     ensure_observability_tables()
     ensure_approval_workflow_tables()
+    ensure_approval_request_types()
     ensure_user_preference_columns()
     ensure_suggestions_table()
     ensure_favorites_table()
+    ensure_inbox_dismissals_table()
+    ensure_announcements_tables()
     ensure_activity_log_table()
     ensure_auth_tables()
     ensure_sso_config_table()
     ensure_user_integrations_tables()
     ensure_quick_links_table()
+    ensure_user_quick_links_table()
+    ensure_catalog_submissions_table()
+    ensure_artifactory_cleaners_table()
+    # Imported here, not at module scope: release_notes reads through this module, so
+    # importing it back at the top is a cycle. The table's DDL lives with the code
+    # that owns it rather than being a second copy here.
+    from release_notes import ensure_release_notes_table
+
+    ensure_release_notes_table()
+
+
+def ensure_approval_request_types() -> None:
+    """Teach the approval_request_type ENUM every request type the app can produce.
+
+    request_type is a Postgres ENUM, not text. A type the application considers
+    supported but the enum has never heard of is accepted by every layer above the
+    database and then rejected at the INSERT -- which surfaces as a 500 with
+    "invalid input value for enum approval_request_type" and nothing pointing at the
+    schema.
+
+    The values come from request_types.py, the same module api/approvals.py gates on,
+    so the two cannot drift.
+
+    Read back afterwards. ALTER TYPE is wrapped in its own try because a minimal dev
+    database may have the column as text (nothing to do) -- and an ALTER that quietly
+    did nothing is exactly the failure this function exists to prevent, so what is
+    still missing is logged rather than assumed absent.
+    """
+    import logging
+
+    from request_types import ALL_REQUEST_TYPES
+
+    log = logging.getLogger(__name__)
+    enum_name = None
+    try:
+        row = query_one(
+            """
+            SELECT t.typname AS enum_name
+              FROM pg_attribute a
+              JOIN pg_class c ON c.oid = a.attrelid
+              JOIN pg_type t ON t.oid = a.atttypid
+             WHERE c.relname = 'approval_requests'
+               AND a.attname = 'request_type'
+               AND t.typtype = 'e'
+            """
+        )
+        enum_name = (row or {}).get("enum_name")
+    except Exception as exc:
+        log.warning("approval request-type enum lookup failed: %s", exc)
+        return
+
+    if not enum_name:
+        # The column is not an enum on this database; nothing to extend.
+        return
+
+    for value in sorted(ALL_REQUEST_TYPES):
+        try:
+            # The value is from a module-level frozenset, never from a request.
+            execute(f"ALTER TYPE {enum_name} ADD VALUE IF NOT EXISTS '{value}'")
+        except Exception as exc:
+            log.warning("could not add '%s' to %s: %s", value, enum_name, exc)
+
+    try:
+        present = {
+            r["enumlabel"]
+            for r in (query_all(
+                "SELECT e.enumlabel FROM pg_enum e "
+                "JOIN pg_type t ON t.oid = e.enumtypid WHERE t.typname = %s",
+                [enum_name],
+            ) or [])
+        }
+        missing = sorted(ALL_REQUEST_TYPES - present)
+        if missing:
+            log.error(
+                "%s is still missing %s -- requests of those types will fail at INSERT",
+                enum_name, ", ".join(missing),
+            )
+        else:
+            # WARNING, not INFO: the root logger runs at WARNING, so an INFO line
+            # here is written nowhere and an operator asked to confirm the sync ran
+            # finds an empty log and cannot tell that from a silent failure.
+            log.warning("%s holds every request type the portal can produce", enum_name)
+    except Exception as exc:
+        log.warning("could not verify %s: %s", enum_name, exc)
+
+
+def ensure_catalog_submissions_table() -> None:
+    """
+    Catalog submissions - the structured requests the portal collects on its own.
+
+    Pipeline Characterization is the first: a questionnaire whose answers are the
+    deliverable, not a side effect. It goes to ServiceNow as a requested item so the
+    team works it beside everything else, and it is ALSO kept here, because a RITM
+    stores the answers as a wall of variables on a ticket and cannot answer "show me
+    every CI pipeline we were asked for this quarter".
+
+    The answers live in one JSONB column on purpose. A form whose fields change every
+    time somebody adds a question is not a schema, and a column per question turns
+    each new question into a migration.
+
+    snow_number is nullable and stays that way when ServiceNow is unreachable: the
+    submission is still recorded, still visible to the requester, and still shows that
+    it never reached the queue - which is the one thing a silent failure hides.
+    """
+    execute(
+        """
+        CREATE TABLE IF NOT EXISTS catalog_submissions (
+            id            SERIAL PRIMARY KEY,
+            kind          VARCHAR(64)  NOT NULL,
+            requester_id  VARCHAR(64)  NOT NULL,
+            requester_email VARCHAR(255),
+            title         VARCHAR(255) NOT NULL,
+            answers       JSONB        NOT NULL DEFAULT '{}'::jsonb,
+            snow_number   VARCHAR(32),
+            snow_sys_id   VARCHAR(64),
+            snow_error    TEXT,
+            created_at    TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    execute(
+        "CREATE INDEX IF NOT EXISTS idx_catalog_submissions_requester "
+        "ON catalog_submissions (requester_id, created_at DESC)"
+    )
+    execute(
+        "CREATE INDEX IF NOT EXISTS idx_catalog_submissions_kind "
+        "ON catalog_submissions (kind, created_at DESC)"
+    )
+
+
+def ensure_artifactory_cleaners_table() -> None:
+    """
+    Artifactory cleaners the portal has created.
+
+    The record is what makes a cleaner editable. Changing one means re-rendering the
+    same three files with new rules, and re-rendering needs the rules -- which
+    otherwise exist only inside a merged pull request and inside the ConfigMap the
+    job mounts. Reading them back out of YAML in a repository to change them would be
+    a parser nobody wants to own.
+
+    It is also the only place a requester can see what they asked for: the pull
+    request is in Azure DevOps, the CronJob is in OpenShift, and neither is somewhere
+    they can look.
+
+    rules is JSONB for the same reason the submissions table uses it: the set of ways
+    to select an artifact grows, and a column per rule turns each new one into a
+    migration.
+    """
+    execute(
+        """
+        CREATE TABLE IF NOT EXISTS artifactory_cleaners (
+            id            SERIAL PRIMARY KEY,
+            slug          VARCHAR(64)  NOT NULL UNIQUE,
+            cleaner_name  VARCHAR(255) NOT NULL,
+            repository    VARCHAR(128) NOT NULL,
+            rules         JSONB        NOT NULL DEFAULT '{}'::jsonb,
+            summary       TEXT,
+            owner_id      VARCHAR(64)  NOT NULL,
+            owner_email   VARCHAR(255),
+            request_id    VARCHAR(64),
+            pull_request_url TEXT,
+            snow_number   VARCHAR(32),
+            status        VARCHAR(32)  NOT NULL DEFAULT 'PR_OPEN',
+            created_at    TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            updated_at    TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    # The pull request's own lifecycle, added after the table shipped.
+    #
+    # A cleaner does nothing until somebody merges its pull request, and it does
+    # nothing ever if they abandon it -- which is exactly what happened the first time
+    # one was reviewed. Without these columns the portal said "completed" for both
+    # outcomes, because opening the pull request was all it had ever recorded.
+    #
+    # pull_request_id is what Azure DevOps is asked about; status is the portal's own
+    # word for it (PR_OPEN / RUNNING / ABANDONED / FAILED); pr_checked_at is when that
+    # word was last confirmed, so a stale answer can say it is stale rather than
+    # passing itself off as current.
+    for ddl in (
+        "ALTER TABLE artifactory_cleaners ADD COLUMN IF NOT EXISTS pull_request_id INTEGER",
+        "ALTER TABLE artifactory_cleaners ADD COLUMN IF NOT EXISTS pr_state VARCHAR(32)",
+        "ALTER TABLE artifactory_cleaners ADD COLUMN IF NOT EXISTS pr_closed_at TIMESTAMP WITH TIME ZONE",
+        "ALTER TABLE artifactory_cleaners ADD COLUMN IF NOT EXISTS pr_checked_at TIMESTAMP WITH TIME ZONE",
+        "ALTER TABLE artifactory_cleaners ADD COLUMN IF NOT EXISTS last_error TEXT",
+        # A removal is a pull request like any other change, so the record has to
+        # survive until it is reviewed -- and the outcome is the opposite of every
+        # other merge: merging THIS one means the cleaner is gone.
+        "ALTER TABLE artifactory_cleaners ADD COLUMN IF NOT EXISTS pending_delete BOOLEAN NOT NULL DEFAULT FALSE",
+        # The Azure DevOps pipeline created when the pull request is merged. Merging
+        # puts pipeline.yaml in the repository; a YAML file with no build definition
+        # pointing at it never runs, so the cleaner was only ever half-created until
+        # an admin made one by hand.
+        #
+        # pipeline_error is stored alongside on purpose. This step happens after a
+        # merge that cannot be undone and is not allowed to fail it, so its failure is
+        # invisible -- the files are on main and everything looks finished. The column
+        # is what "Merged, not scheduled" is read from, and it carries the name and the
+        # path an admin needs to create the pipeline by hand.
+        "ALTER TABLE artifactory_cleaners ADD COLUMN IF NOT EXISTS pipeline_id INTEGER",
+        "ALTER TABLE artifactory_cleaners ADD COLUMN IF NOT EXISTS pipeline_name VARCHAR(255)",
+        "ALTER TABLE artifactory_cleaners ADD COLUMN IF NOT EXISTS pipeline_url TEXT",
+        "ALTER TABLE artifactory_cleaners ADD COLUMN IF NOT EXISTS pipeline_error TEXT",
+        # The cluster side of a removal, which this portal cannot perform: the CronJob
+        # and the ConfigMap live on a different cluster, behind a firewall, and merging
+        # the removal deletes only the files that describe them. '' means the objects
+        # are meant to be there, PENDING means a removal was approved and they are
+        # still running, CLEARED means somebody confirmed they are gone. Without this
+        # the portal would report a cleaner as removed while it still deletes
+        # artifacts every night.
+        # The first build of a merged cleaner's pipeline. Creating the definition
+        # applies nothing: pipeline.yaml is a set of instructions, and until a build
+        # executes it the CronJob and ConfigMap do not exist at all. So the merge
+        # queues one, and this is what became of it.
+        "ALTER TABLE artifactory_cleaners ADD COLUMN IF NOT EXISTS first_run_id INTEGER",
+        "ALTER TABLE artifactory_cleaners ADD COLUMN IF NOT EXISTS first_run_url TEXT",
+        "ALTER TABLE artifactory_cleaners ADD COLUMN IF NOT EXISTS first_run_state VARCHAR(16) NOT NULL DEFAULT ''",
+        # Whether anything of this cleaner is on the cluster. DEFAULT TRUE, and the
+        # direction is the whole point: every cleaner that existed before this column
+        # did was applied by a build somebody ran by hand, so assuming FALSE would
+        # have the portal declare "nothing left on the cluster" over a live CronJob
+        # still deleting artifacts every night. New rows are written FALSE explicitly
+        # by cleaner_store.record and become TRUE when a build succeeds.
+        "ALTER TABLE artifactory_cleaners ADD COLUMN IF NOT EXISTS cluster_applied BOOLEAN NOT NULL DEFAULT TRUE",
+        "ALTER TABLE artifactory_cleaners ADD COLUMN IF NOT EXISTS cluster_state VARCHAR(16) NOT NULL DEFAULT ''",
+        "ALTER TABLE artifactory_cleaners ADD COLUMN IF NOT EXISTS cluster_cleared_by VARCHAR(255)",
+        "ALTER TABLE artifactory_cleaners ADD COLUMN IF NOT EXISTS cluster_cleared_at TIMESTAMP WITH TIME ZONE",
+    ):
+        execute(ddl)
+    execute(
+        "CREATE INDEX IF NOT EXISTS idx_artifactory_cleaners_owner "
+        "ON artifactory_cleaners (owner_id, created_at DESC)"
+    )
+    # The my-requests and approvals pages look a cleaner up by the request that
+    # created it, which is a different question from "whose is it".
+    execute(
+        "CREATE INDEX IF NOT EXISTS idx_artifactory_cleaners_request "
+        "ON artifactory_cleaners (request_id)"
+    )
 
 
 def ensure_quick_links_table() -> None:
@@ -399,6 +785,65 @@ def ensure_quick_links_table() -> None:
     execute(
         "CREATE INDEX IF NOT EXISTS idx_quick_links_active_order ON quick_links (is_active, sort_order, id)"
     )
+    # Multi-links: one circle that opens a small panel of named links instead of
+    # navigating somewhere itself. Added as nullable columns on the existing table
+    # rather than a child table — the children are a short ordered list edited as a
+    # single unit, so JSONB keeps it to one row, one write, and no join.
+    # `kind` is 'single' (a plain link, `url` used) or 'multi' (`children` used).
+    #
+    # `admin_only` restricts a link to admins. It defaults to FALSE, which is what
+    # every existing row means: they were created when the only possible answer was
+    # "everyone", so that is the answer they keep. A visibility column must never
+    # default to the restrictive value — that would silently hide links people are
+    # already using, on the deploy that adds the feature.
+    for sql in (
+        "ALTER TABLE quick_links ADD COLUMN IF NOT EXISTS kind VARCHAR(16) NOT NULL DEFAULT 'single'",
+        "ALTER TABLE quick_links ADD COLUMN IF NOT EXISTS children JSONB",
+        "ALTER TABLE quick_links ADD COLUMN IF NOT EXISTS admin_only BOOLEAN NOT NULL DEFAULT false",
+        "ALTER TABLE quick_links ALTER COLUMN url DROP NOT NULL",
+    ):
+        try:
+            execute(sql)
+        except Exception:
+            pass
+
+
+def ensure_user_quick_links_table() -> None:
+    """
+    Per-user Quick Links — the ones somebody adds for themselves.
+
+    Deliberately a separate table from ``quick_links`` rather than a nullable
+    ``owner_id`` on it. The two are different things with different rules: the
+    admin list is platform configuration, managed in Platform Managing, audited,
+    and visible to everyone (or to admins). This one is a personal bookmark list
+    nobody else can see or manage, and it must be impossible for a bug in one to
+    expose or destroy the other. One column separating them would be one WHERE
+    clause away from doing exactly that.
+
+    Rows are soft-deleted so the toast's Undo is a flag flip rather than a
+    re-insert that would lose the tile's place in the order.
+    """
+    execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_quick_links (
+            id          SERIAL PRIMARY KEY,
+            user_id     VARCHAR(255) NOT NULL,
+            name        VARCHAR(255) NOT NULL,
+            url         TEXT,
+            icon_url    TEXT,
+            kind        VARCHAR(16)  NOT NULL DEFAULT 'single',
+            children    JSONB,
+            sort_order  INTEGER NOT NULL DEFAULT 0,
+            is_active   BOOLEAN NOT NULL DEFAULT true,
+            created_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            updated_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    execute(
+        "CREATE INDEX IF NOT EXISTS idx_user_quick_links_owner "
+        "ON user_quick_links (user_id, is_active, sort_order, id)"
+    )
 
 
 def ensure_auth_tables() -> None:
@@ -406,6 +851,10 @@ def ensure_auth_tables() -> None:
     for sql in (
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_bootstrap_admin BOOLEAN NOT NULL DEFAULT FALSE",
+        # The second local account: same mechanism, no admin rights. It exists so an
+        # admin can see the portal exactly as an ordinary user does without signing out
+        # of their own session on another machine or borrowing someone's SSO login.
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_bootstrap_user BOOLEAN NOT NULL DEFAULT FALSE",
     ):
         try:
             execute(sql)
@@ -489,8 +938,26 @@ def ensure_user_preference_columns() -> None:
 
 def ensure_suggestions_table() -> None:
     """
-    Table for in-app user suggestions submitted from the Settings page.
-    Kept intentionally flat — admins can triage later via a dedicated UI.
+    Suggestions — the feedback board.
+
+    This started as a fire-and-forget box on the Settings page: you typed an idea, it
+    vanished into a table, and nothing ever came back. Nobody could see anybody else's
+    idea, nobody could say "yes, this, I need it too", and nobody ever heard whether it
+    was going to happen. That is not a feedback feature, it is a suggestions BIN.
+
+    It is a board now (the fider model):
+
+      * VOTES tell you which ideas people actually want, instead of leaving an admin to
+        guess from a list sorted by date. That is the whole point — a suggestion with
+        thirty votes and one with none are not the same suggestion.
+      * A STATUS is a promise or a refusal, publicly. 'planned', 'in_progress',
+        'completed', 'declined'.
+      * An ADMIN RESPONSE says WHY. A declined idea with a reason is a conversation; a
+        declined idea in silence is why people stop suggesting things.
+
+    The columns arrive as ALTERs so an existing table upgrades in place — every row
+    already there keeps its title, its author and its date, and simply starts with no
+    votes and no response.
     """
     execute(
         """
@@ -504,9 +971,137 @@ def ensure_suggestions_table() -> None:
         )
         """
     )
+    for ddl in (
+        "ALTER TABLE suggestions ADD COLUMN IF NOT EXISTS admin_response TEXT",
+        "ALTER TABLE suggestions ADD COLUMN IF NOT EXISTS responded_by VARCHAR(255)",
+        "ALTER TABLE suggestions ADD COLUMN IF NOT EXISTS responded_at TIMESTAMP WITH TIME ZONE",
+    ):
+        execute(ddl)
+
     execute(
         "CREATE INDEX IF NOT EXISTS idx_suggestions_created "
         "ON suggestions (created_at DESC)"
+    )
+
+    # One vote per person per suggestion — enforced by the primary key rather than by
+    # the application remembering to check, because the application will eventually
+    # forget and a feedback board whose votes can be stuffed is worth nothing.
+    execute(
+        """
+        CREATE TABLE IF NOT EXISTS suggestion_votes (
+            suggestion_id UUID NOT NULL REFERENCES suggestions(id) ON DELETE CASCADE,
+            user_email    VARCHAR(255) NOT NULL,
+            created_at    TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (suggestion_id, user_email)
+        )
+        """
+    )
+    execute(
+        "CREATE INDEX IF NOT EXISTS idx_suggestion_votes_suggestion "
+        "ON suggestion_votes (suggestion_id)"
+    )
+
+    # Comments turn a suggestion from a poll into a conversation. is_admin is stamped at
+    # write time so a reply from the platform team reads as official in the thread no
+    # matter what role the author has later. Comments cascade with the suggestion.
+    execute(
+        """
+        CREATE TABLE IF NOT EXISTS suggestion_comments (
+            id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            suggestion_id UUID NOT NULL REFERENCES suggestions(id) ON DELETE CASCADE,
+            user_email    VARCHAR(255) NOT NULL,
+            is_admin      BOOLEAN NOT NULL DEFAULT FALSE,
+            body          TEXT NOT NULL,
+            created_at    TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    execute(
+        "CREATE INDEX IF NOT EXISTS idx_suggestion_comments_suggestion "
+        "ON suggestion_comments (suggestion_id, created_at)"
+    )
+
+
+def ensure_inbox_dismissals_table() -> None:
+    """
+    "I have dealt with this" — per user, per item, for the Needs You strip.
+
+    The strip surfaces things waiting on you from five systems, and some of them are
+    not yours to close: a work item can sit in Pending Review for four months for a
+    reason the portal cannot see. Without a way to say so, the oldest and least
+    actionable rows permanently occupy the list that exists to show what to do next.
+
+    ``item_stamp`` is what makes this a dismissal rather than a mute. It records how
+    fresh the item was when it was waved off — its changed-date. The item reappears if
+    it is touched again afterwards, because that is new information; it stays gone if
+    nothing has happened. So "done" does not silence an item forever, and nobody has to
+    remember to un-dismiss anything.
+    """
+    execute(
+        """
+        CREATE TABLE IF NOT EXISTS inbox_dismissals (
+            user_id      VARCHAR(255) NOT NULL,
+            item_key     VARCHAR(512) NOT NULL,
+            item_stamp   VARCHAR(64)  NOT NULL DEFAULT '',
+            reason       VARCHAR(32)  NOT NULL DEFAULT 'done',
+            dismissed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, item_key)
+        )
+        """
+    )
+    execute(
+        "CREATE INDEX IF NOT EXISTS idx_inbox_dismissals_user "
+        "ON inbox_dismissals (user_id, dismissed_at DESC)"
+    )
+
+
+def ensure_announcements_tables() -> None:
+    """
+    Admin announcements, and who has read them.
+
+    ``updated_at`` is the load-bearing column, not ``created_at``: a dismissal
+    records the announcement's updated_at at the moment it was waved away, so an
+    admin who EDITS a live announcement (a corrected date, a new link) has it
+    reappear for everyone who had already dismissed the earlier wording. Without
+    that stamp the second version is invisible to exactly the people who read the
+    first one — the same mute-forever failure the inbox dismissals avoid.
+
+    Windows are optional and open-ended on both sides: ``starts_at`` NULL means
+    "now", ``ends_at`` NULL means "until an admin retires it". They are stored as
+    timestamptz so a window means the same thing in every browser.
+    """
+    execute(
+        """
+        CREATE TABLE IF NOT EXISTS announcements (
+            id          SERIAL PRIMARY KEY,
+            title       VARCHAR(200) NOT NULL,
+            body        TEXT NOT NULL DEFAULT '',
+            kind        VARCHAR(16)  NOT NULL DEFAULT 'info',
+            link_url    TEXT,
+            link_label  VARCHAR(80),
+            starts_at   TIMESTAMP WITH TIME ZONE,
+            ends_at     TIMESTAMP WITH TIME ZONE,
+            is_active   BOOLEAN NOT NULL DEFAULT true,
+            created_by  VARCHAR(255),
+            created_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            updated_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    execute(
+        "CREATE INDEX IF NOT EXISTS idx_announcements_live "
+        "ON announcements (is_active, starts_at, ends_at)"
+    )
+    execute(
+        """
+        CREATE TABLE IF NOT EXISTS announcement_dismissals (
+            user_id         VARCHAR(255) NOT NULL,
+            announcement_id INTEGER NOT NULL,
+            seen_stamp      VARCHAR(64) NOT NULL DEFAULT '',
+            dismissed_at    TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, announcement_id)
+        )
+        """
     )
 
 
@@ -567,6 +1162,66 @@ def ensure_activity_log_table() -> None:
         "CREATE INDEX IF NOT EXISTS idx_activity_log_user_created "
         "ON activity_log (user_email, created_at DESC)"
     )
+
+
+def ensure_backup_runs_table() -> None:
+    """
+    One row per database backup or restore-verification attempt.
+
+    Written by the two CronJobs in the infrastructure chart (``psql`` straight
+    into this table), read by ``/api/backups`` and the Platform Managing page.
+    The backend never writes here — it is a status log the cluster reports INTO,
+    which is the only reason an operator can tell a working backup from one that
+    has been 401ing against Artifactory every night since the token expired.
+
+    The row is inserted as ``running`` BEFORE pg_dump starts and updated on the
+    way out, so a job that is OOM-killed or evicted leaves a ``running`` row that
+    simply ages — "started and never finished" and "never started" are different
+    failures and must not look identical.
+
+    ``jwt_fingerprint`` is a salted hash of ``JWT_SECRET``, never the secret. It
+    exists so a restore can PROVE the dump matches the secret it is about to be
+    restored beside (RUNBOOK §4: a dump restored next to a different
+    environment's secret is a table of unreadable strings, and nothing reports
+    it until a user opens the Connections page).
+    """
+    execute(
+        """
+        CREATE TABLE IF NOT EXISTS backup_runs (
+            id              BIGSERIAL PRIMARY KEY,
+            kind            VARCHAR(16)  NOT NULL,
+            environment     VARCHAR(64)  NOT NULL DEFAULT 'prod',
+            status          VARCHAR(16)  NOT NULL,
+            started_at      TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            finished_at     TIMESTAMP WITH TIME ZONE,
+            artifact        TEXT,
+            size_bytes      BIGINT,
+            sha256          VARCHAR(64),
+            jwt_fingerprint VARCHAR(64),
+            message         TEXT
+        )
+        """
+    )
+    execute(
+        "CREATE INDEX IF NOT EXISTS idx_backup_runs_kind_started "
+        "ON backup_runs (kind, started_at DESC)"
+    )
+
+
+def backup_runs_schema_unavailable() -> bool:
+    """True when ``backup_runs`` does not exist yet.
+
+    Distinguishes "the table was never created" from "the table is empty", which
+    the API has to tell apart: the first is a deploy that has not finished, the
+    second is a backup that has never run — and only the second is an alarm.
+    """
+    try:
+        query_one("SELECT 1 FROM backup_runs LIMIT 1")
+        return False
+    except Exception as exc:
+        if _is_undefined_table(exc):
+            return True
+        raise
 
 
 def cleanup_old_audit_logs(retention_days: int = 7) -> int:
@@ -756,6 +1411,48 @@ def sync_bootstrap_admin_role_for_email(email: str) -> None:
         pass
 
 
+# Local service-account credentials are long-lived, live in a pipeline variable group,
+# and are the only password the portal itself accepts — so a weak one is not a small
+# problem. This does not silently "fix" anything (that would lock the operator out of
+# their own portal); it refuses to be quiet about it.
+#
+# The floor is deliberately about LENGTH and REUSE, not character classes: a 20-character
+# passphrase beats "P@ssw0rd!" and forcing symbols mostly produces the latter.
+_MIN_LOCAL_PASSWORD_LEN = 14
+_OBVIOUS_PASSWORDS = {
+    "password", "changeme", "admin", "admin123", "devops", "devopshub",
+    "letmein", "welcome", "secret", "p@ssw0rd", "passw0rd", "123456", "test",
+}
+
+
+def audit_local_password(label: str, username: str, password: str) -> list:
+    """Return a list of human-readable weaknesses in a local account password.
+
+    Logged at ERROR by the caller. The password itself is never logged — only what is
+    wrong with it — because the whole point of the check is that this value is secret.
+    """
+    problems = []
+    if len(password) < _MIN_LOCAL_PASSWORD_LEN:
+        problems.append(
+            f"shorter than {_MIN_LOCAL_PASSWORD_LEN} characters (it is {len(password)})"
+        )
+    if password.strip().lower() in _OBVIOUS_PASSWORDS:
+        problems.append("is a well-known default password")
+    if username and password.strip().lower() == username.strip().lower():
+        problems.append("is the same as the username")
+    if password != password.strip():
+        problems.append("has leading or trailing whitespace (usually a copy-paste slip)")
+    if problems:
+        import logging as _lg
+
+        _lg.getLogger(__name__).error(
+            "%s: the configured password is weak — %s. Rotate it in the pipeline "
+            "variable group; this credential is accepted by the portal's own sign-in form.",
+            label, "; ".join(problems),
+        )
+    return problems
+
+
 def ensure_bootstrap_platform_admin() -> None:
     """
     Ensure the env bootstrap Platform Admin is usable.
@@ -774,6 +1471,7 @@ def ensure_bootstrap_platform_admin() -> None:
         if not username or not password:
             log.warning("ensure_bootstrap_platform_admin: HUB_ADMIN_USERNAME/HUB_ADMIN_PASSWORD are not fully configured")
             return
+        audit_local_password("HUB_ADMIN_PASSWORD", username, password)
 
         role = query_one(
             "SELECT id FROM roles WHERE LOWER(TRIM(name)) = %s LIMIT 1",
@@ -841,3 +1539,173 @@ def ensure_bootstrap_platform_admin() -> None:
         log.warning("ensure_bootstrap_platform_admin failed: %s", exc)
 
 
+def ensure_bootstrap_service_user() -> None:
+    """Ensure the env bootstrap REGULAR user is usable.
+
+    The mirror of ensure_bootstrap_platform_admin, with one difference that is the whole
+    reason it exists: it is given the LOWEST role, and never Platform Admin. An admin
+    checking "what does this actually look like to a normal person?" otherwise has to
+    borrow a colleague's SSO account, which is a bad habit to build into a portal.
+
+    Entirely optional — with HUB_USER_USERNAME / HUB_USER_PASSWORD unset, nothing is
+    created and no second credential exists to attack.
+    """
+    import logging
+    from security import hash_password
+
+    log = logging.getLogger(__name__)
+    try:
+        username = (os.getenv("HUB_USER_USERNAME") or "").strip()
+        password = os.getenv("HUB_USER_PASSWORD") or ""
+        # An Azure Pipelines macro for a variable that was never defined arrives as the
+        # literal "$(HUB_USER_USERNAME)". Creating an account under that name — with a
+        # password of "$(HUB_USER_PASSWORD)" — is exactly the sort of default credential
+        # this feature must not introduce. Treat unexpanded macros as "not configured".
+        if "$(" in username or "$(" in password:
+            log.warning(
+                "ensure_bootstrap_service_user: HUB_USER_* looks like an unexpanded "
+                "pipeline macro — the account was NOT created. Define the variables "
+                "(empty is fine) in the variable group."
+            )
+            return
+        if not username or not password:
+            log.info("ensure_bootstrap_service_user: not configured, skipping")
+            return
+
+        admin_username = (os.getenv("HUB_ADMIN_USERNAME") or "").strip().lower()
+        if admin_username and username.lower() == admin_username:
+            # Same name would mean one row wearing both flags, and whichever bootstrap
+            # ran last would decide whether it is an admin. Refuse rather than gamble.
+            log.error(
+                "ensure_bootstrap_service_user: HUB_USER_USERNAME must differ from "
+                "HUB_ADMIN_USERNAME — the demo account was NOT created."
+            )
+            return
+
+        audit_local_password("HUB_USER_PASSWORD", username, password)
+        if password == (os.getenv("HUB_ADMIN_PASSWORD") or "__unset__"):
+            log.error(
+                "ensure_bootstrap_service_user: HUB_USER_PASSWORD is identical to "
+                "HUB_ADMIN_PASSWORD — one leak now compromises both accounts."
+            )
+
+        # Lowest privilege available. hierarchy_level 7 is the seed's regular user;
+        # falling back to the highest number keeps this correct if the seed differs.
+        role = query_one(
+            "SELECT id FROM roles WHERE hierarchy_level = 7 LIMIT 1"
+        ) or query_one(
+            "SELECT id FROM roles ORDER BY hierarchy_level DESC LIMIT 1"
+        )
+        if not role:
+            log.warning("ensure_bootstrap_service_user: no role found, skipping")
+            return
+
+        password_hash = hash_password(password)
+        existing = query_one(
+            """
+            SELECT id
+            FROM users
+            WHERE is_bootstrap_user = true
+               OR LOWER(TRIM(username)) = %s
+               OR LOWER(TRIM(email)) = %s
+            LIMIT 1
+            """,
+            [username.lower(), username.lower()],
+        )
+        if existing:
+            execute(
+                """
+                UPDATE users
+                SET username = %s,
+                    email = %s,
+                    full_name = %s,
+                    role_id = %s,
+                    password_hash = %s,
+                    is_bootstrap_user = true,
+                    is_bootstrap_admin = false,
+                    is_active = true,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+                """,
+                [username, username.lower(), username, role["id"], password_hash, existing["id"]],
+            )
+            log.info("Service user bootstrap updated")
+            return
+
+        execute(
+            """
+            INSERT INTO users (username, email, full_name, role_id, password_hash,
+                               is_bootstrap_user, is_bootstrap_admin)
+            VALUES (%s, %s, %s, %s, %s, TRUE, FALSE)
+            ON CONFLICT (email) DO UPDATE SET
+              username = EXCLUDED.username,
+              full_name = EXCLUDED.full_name,
+              role_id = EXCLUDED.role_id,
+              password_hash = EXCLUDED.password_hash,
+              is_bootstrap_user = TRUE,
+              is_bootstrap_admin = FALSE,
+              is_active = true,
+              updated_at = CURRENT_TIMESTAMP
+            """,
+            [username, username.lower(), username, role["id"], password_hash],
+        )
+        log.info("Service user bootstrap created")
+    except Exception as exc:
+        log.warning("ensure_bootstrap_service_user failed: %s", exc)
+
+
+
+
+def collapse_non_admin_roles() -> None:
+    """Move every account that is not a Platform Admin onto the lowest role.
+
+    The roles table shipped seven levels, but only level 1 was ever a real
+    privilege boundary: the intermediate roles differed from one another solely
+    in a ``permissions`` array that no authorization decision read. Approval was
+    the single exception — it tested ``hierarchy_level <= 5`` — and that is now
+    Platform-Admin-only too, which leaves levels 2 to 6 granting exactly nothing.
+
+    Leaving accounts sitting on them would keep the misleading label without the
+    access, so this puts the data where the model already is. Idempotent: it
+    reports how many rows it touched and does nothing at all on the next start.
+
+    Deliberately NOT a DROP or a DELETE. The intermediate role rows stay in the
+    table, because deleting rows that ``users.role_id`` may still reference is
+    the kind of startup-path destruction this codebase has been bitten by before.
+    """
+    try:
+        target = query_one(
+            "SELECT id, hierarchy_level FROM roles WHERE hierarchy_level = %s LIMIT 1",
+            [REGULAR_USER_LEVEL],
+        ) or query_one(
+            "SELECT id, hierarchy_level FROM roles ORDER BY hierarchy_level DESC LIMIT 1"
+        )
+        if not target:
+            log.warning("collapse_non_admin_roles: no role to demote to, skipping")
+            return
+
+        moved = execute_returning(
+            """
+            UPDATE users u
+               SET role_id = %s, updated_at = CURRENT_TIMESTAMP
+              FROM roles r
+             WHERE u.role_id = r.id
+               AND r.hierarchy_level <> %s
+               AND u.role_id <> %s
+            RETURNING u.email, r.name AS previous_role
+            """,
+            [target["id"], PLATFORM_ADMIN_LEVEL, target["id"]],
+        )
+        if moved:
+            # WARNING, not INFO: the root logger sits at WARNING, and a silent
+            # privilege change is exactly the event an operator must be able to
+            # find afterwards on the Logs page.
+            log.warning(
+                "collapse_non_admin_roles: moved %d account(s) to the lowest role: %s",
+                len(moved),
+                ", ".join(
+                    f"{r.get('email')} (was {r.get('previous_role')})" for r in moved[:20]
+                ),
+            )
+    except Exception as exc:
+        log.warning("collapse_non_admin_roles failed: %s", exc)

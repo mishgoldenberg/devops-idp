@@ -98,21 +98,21 @@ docker compose down -v
 
 ## OpenShift Deployment
 
-Deployment targets an OpenShift cluster and is driven by `azure-pipelines.yml`. The pipeline runs on the `devops-closed-network` agent pool and uses Artifactory as the container registry — no public internet access is required.
+Deployment targets an OpenShift cluster and is driven by `azure-pipelines.yml`. The pipeline runs on the `devops-build` agent pool and uses Artifactory as the container registry — no public internet access is required.
 
 ### Prerequisites
 
 - `oc` CLI configured with cluster access (or use the pipeline)
 - `helm` 3.x
 - Access to the Artifactory Docker registry (`$(ARTIFACTORY_DOCKER_REGISTRY)`)
-- Azure DevOps variable group `devops-hub-closed-network` populated (see variable list below)
+- Azure DevOps variable group `devops-hub-deploy` populated (see variable list below)
 
 ### Step 1: Build & Push Container Images
 
 In CI this happens automatically on push to `dev` or `main`. For a manual build:
 
 ```bash
-# Backend image — pass closed-network pip overrides as build args
+# Backend image — pass offline pip overrides as build args
 docker build \
   --build-arg PYTHON_BASE_IMAGE="<your-internal-python-image>" \
   --build-arg PIP_INDEX_URL="<your-internal-pypi-url>" \
@@ -134,7 +134,7 @@ docker push "<ARTIFACTORY_DOCKER_REGISTRY>/<ARTIFACTORY_DOCKER_REPOSITORY>/front
 
 ### Step 2: Secrets
 
-All secrets are passed to Helm at deploy time via the pipeline's `devops-hub-closed-network` variable group. The Helm chart renders them into the `all-secrets` Kubernetes Secret in the target namespace. There is no manual secret creation step.
+All secrets are passed to Helm at deploy time via the pipeline's `devops-hub-deploy` variable group. The Helm chart renders them into the `all-secrets` Kubernetes Secret in the target namespace. There is no manual secret creation step.
 
 Required variables in the variable group:
 
@@ -413,31 +413,32 @@ kubectl rollout undo deployment/api-gateway --to-revision=2 -n devops-control-ce
 
 ---
 
-## Terraform Self-Service Prerequisites
+## Self-Service Prerequisites
 
-The self-service project creation feature requires the backend pod to create Kubernetes Jobs in the cluster. The required `terraform-job-manager` Role and RoleBinding are deployed automatically by the Helm chart (`deployment/charts/backend/templates/terraform-rbac.yaml`) — no manual RBAC setup is needed.
+Project creation is REST-only. The backend calls the Azure DevOps REST API directly with
+the admin PAT — it does **not** create Kubernetes Jobs, and it needs no cluster RBAC of
+its own to provision anything.
 
-The Helm chart grants `backend-sa` (the backend pod's service account) permission to:
-- Create, get, list, and watch `batch/jobs`
-- Create, get, and delete `configmaps`
-- Get, list, and watch `pods` and `pods/log`
+What it does need:
 
-### Verify
+- `AZURE_DEVOPS_ADMIN_PAT` in the `all-secrets` Secret. This is the credential that
+  creates projects and grants permissions; it is used for nothing else, and never for
+  reads on a user's behalf.
+- `AZURE_DEVOPS_BASE_URL` pointing at **one collection**
+  (`https://<server>/tfs/DevCollection-Inheritance`). The portal discovers the server's
+  other collections from there.
+- `ADO_PROVISION_COLLECTIONS` — the collections a request is allowed to target, and the
+  first one is the default. A request names exactly one; nothing fans out.
 
-After deploying, confirm the RBAC is in place:
-
-```bash
-oc auth can-i create jobs \
-  --as=system:serviceaccount:<OPENSHIFT_NAMESPACE>:backend-sa \
-  -n <OPENSHIFT_NAMESPACE>
-# Expected: yes
-```
+`deployment/charts/backend/templates/terraform-rbac.yaml` still ships the
+`terraform-job-manager` Role for the legacy runner. Nothing in the live path uses it, and
+it can be removed once you are sure you will not want the Job approach back.
 
 ---
 
 ## Production Checklist
 
-- [ ] All secrets present in the `devops-hub-closed-network` variable group
+- [ ] All secrets present in the `devops-hub-deploy` variable group
 - [ ] Database migrations completed (run automatically on pod startup)
 - [ ] Ingress configured with valid TLS certificates
 - [ ] Monitoring and alerting configured
@@ -452,6 +453,10 @@ oc auth can-i create jobs \
 - [ ] External system integrations tested
 - [ ] Performance testing completed
 - [ ] Security scan passed
-- [ ] `terraform-job-manager` Role and RoleBinding deployed by Helm (verify with `oc auth can-i`)
-- [ ] `AZURE_DEVOPS_ADMIN_PAT` present in `all-secrets` K8s Secret (required by Terraform runner)
-- [ ] Self-service project creation tested end-to-end (mock mode off)
+- [ ] `AZURE_DEVOPS_ADMIN_PAT` present in `all-secrets` K8s Secret (provisioning writes)
+- [ ] `ADO_PROVISION_COLLECTIONS` lists the collections requests may target
+- [ ] Self-service project creation tested end-to-end (Safe Mode off)
+- [ ] `JWT_SECRET` backed up **with** the database dump — see [RUNBOOK.md](RUNBOOK.md);
+      a restore without it leaves every stored PAT unreadable
+- [ ] Readiness reports `"credentials": "ok"` after the first deploy
+      (`curl -s .../api/health/ready`)

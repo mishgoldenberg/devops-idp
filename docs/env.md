@@ -107,3 +107,80 @@ default behavior and whether they are required.
 4. The backend `Deployment` references it with `envFrom: secretRef:
    name: all-secrets`, plus a `checksum/secrets` annotation so pods roll
    whenever the secret changes.
+
+<!-- GENERATED:ENV — do not edit by hand; run scripts/gen_docs.py -->
+
+68 variables the backend actually reads, found by parsing every `os.getenv` in `backend/app/`. A variable that is not here is not read by anything, whatever the deployment sets.
+
+| Variable | Default | Read by |
+| --- | --- | --- |
+| `ADO_CLEANER_ARTIFACTORY_URL` | _(none)_ | `artifactory_cleaner.py` |
+| `ADO_CLEANER_BASE_BRANCH` | _(none)_ | `ado_repo.py`, `artifactory_cleaner.py` |
+| `ADO_CLEANER_COLLECTION` | _(none)_ | `ado_repo.py` |
+| `ADO_CLEANER_IMAGE` | _(none)_ | `artifactory_cleaner.py` |
+| `ADO_CLEANER_NAMESPACE` | _(none)_ | `artifactory_cleaner.py` |
+| `ADO_CLEANER_POOL` | _(none)_ | `artifactory_cleaner.py` |
+| `ADO_CLEANER_PROJECT` | _(none)_ | `ado_repo.py` |
+| `ADO_CLEANER_REPO` | _(none)_ | `ado_repo.py` |
+| `ADO_CLEANER_VARIABLE_GROUP` | _(none)_ | `artifactory_cleaner.py` |
+| `ADO_DEFAULT_COLLECTION` | _(none)_ | `ado_repo.py`, `azure_devops.py` |
+| `ADO_NETBIOS_DOMAIN` | _(none)_ | `azure_devops.py` |
+| `ADO_PROVISION_COLLECTIONS` | `DevCollection-Inheritance,TikshuvCollection-Inheritance` | `azure_devops.py` |
+| `ADO_REVIEWER_FIELD` | _(none)_ | `azure_devops.py` |
+| `ADO_REVIEW_STATES` | `Pending Review,Needs Review,Ready for Review,In Review,Code Review,Review,Awaiting Review,Pending Approval,Ready for Test` | `azure_devops.py` |
+| `APP_BUILD` | `unknown` | `health.py` |
+| `ARTIFACTORY_ADMIN_PASSWORD` | _(secret — must be set)_ | `artifactory_admin.py` |
+| `ARTIFACTORY_ADMIN_TOKEN` | _(secret — must be set)_ | `artifactory_admin.py` |
+| `ARTIFACTORY_ADMIN_USERNAME` | _(none)_ | `artifactory_admin.py` |
+| `ARTIFACTORY_BACKUP_TOKEN` | _(secret — must be set)_ | `artifactory_admin.py` |
+| `ARTIFACTORY_BACKUP_USERNAME` | _(none)_ | `artifactory_admin.py` |
+| `ARTIFACTORY_BASE_URL` | _(none)_ | `integrations.py`, `artifactory_admin.py`, `artifactory_cleaner.py` |
+| `ARTIFACTORY_DISK_TOTAL` | _(none)_ | `integrations.py`, `artifactory_admin.py` |
+| `ARTIFACTORY_UNLIMITED_PROJECTS` | `DevOps` | `artifactory_admin.py` |
+| `AUTH_ACTIVE_CHECK_TTL` | `30` | `security.py` |
+| `AZURE_DEVOPS_ADMIN_PAT` | _(secret — must be set)_ | `ado_repo.py`, `azure_devops.py`, `config.py` |
+| `AZURE_DEVOPS_BASE_URL` | _(none)_ | `azure_devops.py`, `config.py` |
+| `BACKUP_BACKEND_DEPLOYMENT` | _(none)_ | `backups.py` |
+| `BACKUP_BACKEND_REPLICAS` | _(none)_ | `backups.py` |
+| `BACKUP_KEEP_LAST` | `3` | `backups.py` |
+| `BACKUP_PG_STATEFULSET` | _(none)_ | `backups.py` |
+| `CONFLUENCE_BASE_URL` | _(none)_ | `integrations.py`, `config.py` |
+| `CORS_ORIGINS` | `*` | `config.py` |
+| `DATABASE_URL` | _(none)_ | `backups.py`, `config.py` |
+| `DB_CONNECT_TIMEOUT` | `5` | `db.py` |
+| `DB_POOL_MAX` | `20` | `db.py` |
+| `DB_POOL_MIN` | `2` | `db.py` |
+| `DB_POOL_RETRY_COOLDOWN` | `5` | `db.py` |
+| `DB_SIZE_WARN_MB` | `600` | `audit.py` |
+| `DB_VOLUME_MB` | `1024` | `audit.py` |
+| `ENVIRONMENT` | `development` | `config.py` |
+| `HOST` | `0.0.0.0` | `config.py` |
+| `HUB_ADMIN_PASSWORD` | _(secret — must be set)_ | `config.py`, `db.py` |
+| `HUB_ADMIN_USERNAME` | _(none)_ | `config.py`, `db.py` |
+| `HUB_NAMESPACE` | _(none)_ | `backups.py` |
+| `HUB_USER_PASSWORD` | _(secret — must be set)_ | `db.py` |
+| `HUB_USER_USERNAME` | _(none)_ | `db.py` |
+| `INTEGRATION_TLS_VERIFY` | `true` | `config.py` |
+| `JWT_EXPIRY` | `8h` | `config.py` |
+| `JWT_SECRET` | _(secret — must be set)_ | `config.py` |
+| `NODE_ENV` | _(none)_ | `config.py` |
+| `PORT` | `8000` | `config.py` |
+| `REDIS_HOST` | `redis` | `config.py` |
+| `REDIS_PASSWORD` | _(secret — must be set)_ | `config.py` |
+| `REDIS_PORT` | `6379` | `config.py` |
+| `SAFE_MODE` | _(none)_ | `safe_mode.py` |
+| `SNOW_API_PASSWORD` | _(secret — must be set)_ | `servicenow.py`, `config.py`, `snow_catalog.py` |
+| `SNOW_API_USERNAME` | _(none)_ | `servicenow.py`, `config.py`, `snow_catalog.py` |
+| `SNOW_BASE_URL` | _(none)_ | `servicenow.py`, `config.py`, `snow_catalog.py` |
+| `SNOW_DEFAULT_SUPPORT_GROUP` | `Devops Support` | `servicenow.py` |
+| `SNOW_JOURNAL_ELEMENTS` | `comments` | `servicenow.py` |
+| `SNOW_PRODUCER_SYS_ID` | _(none)_ | `servicenow.py` |
+| `SNOW_SERVICE_ACCOUNT_DISPLAY` | _(none)_ | `servicenow.py` |
+| `SNOW_SUPPORT_GROUP_VAR` | `choose_a_support_group` | `servicenow.py` |
+| `SONARQUBE_BASE_URL` | _(none)_ | `integrations.py`, `config.py` |
+| `USE_VAULT` | `false` | `secrets_manager.py` |
+| `VAULT_ADDR` | _(none)_ | `secrets_manager.py` |
+| `VAULT_PATH` | `secret/devops-control-center` | `secrets_manager.py` |
+| `VAULT_TOKEN` | _(secret — must be set)_ | `secrets_manager.py` |
+
+<!-- /GENERATED:ENV -->

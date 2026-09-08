@@ -1,155 +1,242 @@
 {#
-	Quick Links are intentionally data-driven so a non-specialist can add a new
-	circle without copying HTML. Add one object below with:
-	- name: label shown under the circle
-	- url: target URL
-	- icon: one of the symbol IDs defined at the bottom of this file
-	- color: Tailwind fill class for the icon
-	- viewBox: SVG viewBox for that icon
-#}
-{% set system_urls = request.state.portal_system_urls if request is defined and request.state.portal_system_urls is defined else {} %}
-{% set quick_links = [
-	{
-		"name": "Azure DevOps",
-		"url": system_urls.get("azure_devops") or "#",
-		"icon": "quicklink-azure-devops",
-		"color": "fill-blue-600",
-		"viewBox": "0 0 16 16",
-	},
-	{
-		"name": "Artifactory",
-		"url": system_urls.get("artifactory") or "#",
-		"icon": "quicklink-artifactory",
-		"color": "fill-green-500",
-		"viewBox": "0 0 48 48",
-	},
-	{
-		"name": "SonarQube",
-		"url": system_urls.get("sonarqube") or "#",
-		"icon": "quicklink-sonarqube",
-		"color": "fill-slate-600",
-		"viewBox": "0 0 24 24",
-	},
-	{
-		"name": "ServiceNow",
-		"url": system_urls.get("servicenow") or "#",
-		"icon": "quicklink-servicenow",
-		"color": "fill-emerald-500",
-		"viewBox": "0 0 71.1 63.6",
-	},
-] %}
+	Quick Links — display only, and draggable.
 
-<div class="section-card w-full max-w-full">
-	<div class="card-body gap-6 p-6">
-		<h3
-			class="card-title text-lg font-semibold uppercase tracking-[0.14em] text-base-content/70"
-		>
-			Quick Links
-		</h3>
+	NO DEFAULTS. The four system tiles (Azure DevOps, Artifactory, SonarQube, ServiceNow)
+	used to be hard-coded here and rendered before anything an admin had added, so the
+	admin's own links were always shoved to the back of a list they did not choose. The
+	list is now exactly what an admin put in it, in Platform Managing → Quick Links, and
+	nothing else. An empty portal shows an empty widget, which is honest.
+
+	IT WRAPS, IT DOES NOT SCROLL SIDEWAYS. This used to be one non-wrapping row in an
+	`overflow-x-auto` strip. Two things were wrong with that: a vertical mouse wheel does
+	not scroll a horizontal container (only Shift+wheel does), so the list read as frozen;
+	and everything past the eighth link was simply off-screen. Now the tiles wrap onto as
+	many rows as they need, clamped to two rows with a "Show all" toggle so a long list
+	cannot push the whole dashboard down.
+
+	TILES ARE A FIXED WIDTH. The gaps used to be set by the longest name in the row, so
+	the spacing visibly changed from row to row. Every tile is now the same width and the
+	label wraps inside it, which makes the grid regular no matter what anything is called.
+
+	ORDER IS THE USER'S. Drag any circle to move it. The order is saved per-browser, so
+	rearranging your own dashboard cannot disturb anybody else's — the links themselves
+	are one shared list an admin controls, but where they sit is nobody's business but
+	yours. A link an admin adds later appears at the end for everyone; a link removed
+	simply drops out of your order.
+
+	TWO LISTS, ONE STRIP. The SHARED links are an admin's, managed in Platform Managing;
+	this widget only displays them. Your OWN links are added, edited and removed right
+	here from the "+" tile at the end, because the moment you want a tile is the moment
+	you are looking at the place it is missing from. Only you ever see yours — they are
+	a separate table, not a flag on the shared one, so no query can confuse the two.
+#}
+<div class="section-card w-full max-w-full" data-quick-links-root>
+	<div class="card-body gap-4 p-6">
+		<div class="flex items-center gap-3">
+			<h3
+				class="card-title text-lg font-semibold uppercase tracking-[0.14em] text-base-content/70"
+			>
+				Quick Links
+			</h3>
+			<button
+				type="button"
+				class="hidden ml-auto shrink-0 text-xs font-semibold text-base-content/50 hover:text-primary"
+				data-ql-toggle
+			></button>
+		</div>
 		<ul
 			id="quick-links-list"
-			class="menu menu-horizontal w-full max-w-full flex-nowrap items-start justify-start gap-8 overflow-x-auto overflow-y-hidden p-0 pb-2"
+			class="w-full max-w-full p-0"
+			style="display: flex; flex-wrap: wrap; gap: 1rem 0.75rem; overflow: hidden"
 		>
-			<li class="shrink-0 text-sm opacity-60">Loading quick links…</li>
+			<li class="text-sm opacity-60">Loading quick links…</li>
 		</ul>
 	</div>
 </div>
 
-{% if is_admin %}
-<div id="quick-link-modal" class="hidden fixed inset-0 z-50 items-center justify-center bg-black/50 p-4">
-	<div class="w-full max-w-lg rounded-xl border border-base-300 bg-base-100 shadow-2xl">
-		<div class="px-5 py-4 border-b border-base-300">
-			<h3 class="font-bold text-lg">Add Quick Link</h3>
-			<p class="text-sm opacity-70">This link will be visible to all users.</p>
-		</div>
-		<form id="quick-link-form" class="p-5 space-y-4">
+{% include "partials/components/quick-link-children.html" %}
+
+{#
+	Your own quick links.
+
+	The same form an admin gets in Platform Managing, minus "Admins only" — a link
+	nobody else can see has nobody else to hide it from. It lives here rather than on
+	a settings page because the tile you want to add is the one you are looking at
+	the absence of.
+#}
+<dialog id="uql-modal" class="modal">
+	<div class="modal-box">
+		<h3 id="uql-title" class="font-bold text-lg">Add your own link</h3>
+		<p class="text-sm text-base-content/60 mt-1">
+			Only you will see this. It sits on your dashboard beside the shared ones.
+		</p>
+
+		<form id="uql-form" class="grid grid-cols-1 gap-3 mt-4" novalidate>
 			<label class="form-control w-full">
-				<span class="label-text">System Name</span>
+				<span class="label-text mb-1">Name</span>
 				<input name="name" class="input input-bordered w-full" required />
 			</label>
-			<label class="form-control w-full">
-				<span class="label-text">URL</span>
-				<input name="url" class="input input-bordered w-full" placeholder="https://example.internal" required />
+
+			<label class="flex items-start gap-3 rounded-xl border border-base-300 bg-base-200/50 p-3 cursor-pointer">
+				<input id="uql-multi" type="checkbox" class="checkbox checkbox-sm mt-0.5" />
+				<span>
+					<span class="label-text font-semibold">A group of links</span>
+					<span class="block text-xs opacity-60">
+						One circle that opens a list instead of opening a site.
+					</span>
+				</span>
 			</label>
+
+			<label id="uql-url-wrap" class="form-control w-full">
+				<span class="label-text mb-1">URL</span>
+				<input name="url" class="input input-bordered w-full" placeholder="https://example.internal" />
+			</label>
+
+			<div id="uql-children-wrap" class="hidden form-control w-full">
+				<span class="label-text mb-1">Links in this group</span>
+				<div class="overflow-x-auto rounded-xl border border-base-300">
+					<table class="table table-sm w-full">
+						<thead>
+							<tr>
+								<th class="w-56">Name</th>
+								<th>Link</th>
+								<th class="w-12"></th>
+							</tr>
+						</thead>
+						<tbody id="uql-kids" data-kid-body></tbody>
+					</table>
+				</div>
+				<!-- align-self inline: self-start is not compiled into output.css. -->
+				<button type="button" id="uql-kid-add" class="btn btn-ghost btn-xs mt-2" style="align-self: flex-start">
+					+ Add link
+				</button>
+			</div>
+
 			<label class="form-control w-full">
-				<span class="label-text">Icon URL</span>
+				<span class="label-text mb-1">Icon URL <span class="opacity-60">(optional)</span></span>
 				<input name="icon_url" class="input input-bordered w-full" placeholder="https://example.internal/icon.png" />
 			</label>
 			<label class="form-control w-full">
-				<span class="label-text">Icon image upload <span class="opacity-60">(optional preview)</span></span>
-				<input id="quick-link-icon-file" type="file" accept="image/*" class="file-input file-input-bordered w-full" />
+				<span class="label-text mb-1">…or upload an image</span>
+				<input id="uql-file" type="file" accept="image/*" class="file-input file-input-bordered w-full" />
 			</label>
+
 			<div class="flex items-center gap-3 rounded-xl border border-base-300 bg-base-200/50 p-3">
 				<div class="flex h-16 w-16 items-center justify-center rounded-full border border-base-content/25 bg-base-200/30 overflow-hidden">
-					<img id="quick-link-preview" class="hidden h-10 w-10 object-contain" alt="Icon preview" />
-					<span id="quick-link-preview-fallback" class="text-2xl font-bold text-primary">+</span>
+					<img id="uql-preview" class="hidden h-10 w-10 object-contain" alt="Icon preview" />
+					<span id="uql-preview-fallback" class="text-2xl font-bold text-primary" style="line-height:1">+</span>
 				</div>
 				<div>
 					<div class="text-sm font-semibold">Preview</div>
-					<div class="text-xs opacity-60">The icon appears inside the same circle style.</div>
+					<div class="text-xs opacity-60">The icon appears inside the circle on your dashboard.</div>
 				</div>
 			</div>
-			<div id="quick-link-error" class="hidden alert alert-error alert-soft text-xs"></div>
-		</form>
-		<div class="px-5 pb-5 flex justify-end gap-2">
-			<button id="quick-link-cancel" type="button" class="btn">Cancel</button>
-			<button id="quick-link-submit" type="button" class="btn btn-primary">Add Link</button>
-		</div>
-	</div>
-</div>
-{% endif %}
 
-<svg class="hidden" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
-	<symbol id="quicklink-azure-devops" viewBox="0 0 16 16">
-		<path
-			d="M15 3.622v8.512L11.5 15l-5.425-1.975v1.958L3.004 10.97l8.951.7V4.005L15 3.622zm-2.984.428L6.994 1v2.001L2.382 4.356 1 6.13v4.029l1.978.873V5.869l9.038-1.818z"
-		/>
-	</symbol>
-	<symbol id="quicklink-artifactory" viewBox="0 0 48 48">
-		<rect x="5" y="42.4" width="38" height="2.92" />
-		<path
-			d="M23.93,34.48A16.24,16.24,0,1,1,40.17,18.24,16.25,16.25,0,0,1,23.93,34.48Zm0-29.38A13.14,13.14,0,1,0,37.07,18.24,13.16,13.16,0,0,0,23.93,5.1Z"
-		/>
-	</symbol>
-	<symbol id="quicklink-sonarqube" viewBox="0 0 24 24">
-		<path
-			d="M15.685.386l-.465.766c3.477 2.112 6.305 5.27 7.966 8.89L24 9.67C22.266 5.887 19.313 2.59 15.685.386zM8.462.91l-.305 1.075c6.89 1.976 12.384 7.64 13.997 14.421l1.085-.258C21.535 8.977 15.735 2.997 8.462.909zM0 2.667v1.342c10.963 0 19.883 8.795 19.883 19.605h1.342c0-11.55-9.522-20.947-21.225-20.947z"
-		/>
-	</symbol>
-	<symbol id="quicklink-servicenow" viewBox="0 0 71.1 63.6">
-		<path
-			d="M35.8,0C16.1,0,0,15.9,0,35.6c0,9.8,4,19.3,11.2,26c2.5,2.4,6.4,2.6,9.2,0.5c9-6.7,21.4-6.7,30.4,0c2.8,2.1,6.7,1.9,9.2-0.5C74.3,48,74.9,25.4,61.3,11.1C54.7,4.1,45.4,0.1,35.8,0 M35.6,53.5C26,53.8,18,46.2,17.8,36.7c0-0.3,0-0.6,0-0.9c0-9.8,8-17.8,17.8-17.8s17.8,8,17.8,17.8c0.3,9.6-7.3,17.5-16.8,17.8C36.2,53.5,35.9,53.5,35.6,53.5"
-		/>
-	</symbol>
-</svg>
+			<div id="uql-error" class="hidden alert alert-error alert-soft text-xs"></div>
+
+			<div class="modal-action">
+				{# Remove sits on the LEFT, away from Save, and only when editing. #}
+				<button type="button" id="uql-remove" class="btn btn-ghost btn-sm text-error hidden" style="margin-right:auto">
+					Remove
+				</button>
+				<button type="button" id="uql-cancel" class="btn">Cancel</button>
+				<button type="submit" id="uql-submit" class="btn btn-primary">Add link</button>
+			</div>
+		</form>
+	</div>
+	<form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
 
 <style>
-	.quick-link-item .quick-link-delete {
-		opacity: 0;
-		pointer-events: none;
-		transform: scale(0.92);
-		transition: opacity 120ms ease, transform 120ms ease;
+	/* Drag affordance. `grab` on the tile is the only hint people need; the tilt and
+	   the dimming during a drag are what make it obvious the thing is actually moving
+	   rather than that you have broken something. */
+	.quick-link-item {
+		cursor: grab;
 	}
 
-	.quick-link-item:hover .quick-link-delete,
-	.quick-link-delete:focus-visible {
+	/* The edit pencil on your own tiles. Pinned to the tile's top-right corner rather
+	   than placed in the flow, so it cannot shift the circle or the label by a pixel,
+	   and hidden until the tile is hovered or something inside it has keyboard focus —
+	   a permanent pencil on every tile is a dashboard covered in controls.
+
+	   `opacity` rather than `display`, so it is still in the accessibility tree and a
+	   tab-stop; a control that only exists on hover is a control a keyboard cannot
+	   reach. */
+	.ql-edit {
+		position: absolute;
+		top: -0.25rem;
+		right: 0.25rem;
+		min-height: 1.25rem;
+		height: 1.25rem;
+		width: 1.25rem;
+		opacity: 0;
+		transition: opacity 120ms ease;
+		background-color: hsl(var(--b1));
+		border: 1px solid hsl(var(--b3));
+	}
+
+	.quick-link-item:hover .ql-edit,
+	.quick-link-item:focus-within .ql-edit {
 		opacity: 1;
-		pointer-events: auto;
-		transform: scale(1);
+	}
+
+	/* Touch has no hover, so the pencil would be unreachable on a tablet. */
+	@media (hover: none) {
+		.ql-edit {
+			opacity: 1;
+		}
+	}
+
+	.quick-link-item:active {
+		cursor: grabbing;
+	}
+
+	.quick-link-item[data-dragging] {
+		opacity: 0.4;
+	}
+
+	/* The gap the tile will land in. */
+	.quick-link-item[data-drop-target] {
+		transform: scale(1.06);
+		transition: transform 90ms ease;
+	}
+
+	/* Two lines of label, then ellipsis. Without the clamp a long name makes its tile
+	   taller than its neighbours and the row heights stop matching. */
+	.quick-link-label {
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
+		overflow-wrap: anywhere;
+		line-height: 1.2;
+	}
+
+	/* The multi-link panel is appended to <body>, not to the tile: a panel rendered
+	   inside the list would be clipped by the list's own `overflow: hidden`. Fixed
+	   positioning also means it cannot be cut off by the card. */
+	.ql-panel {
+		position: fixed;
+		z-index: 60;
+		min-width: 13rem;
+		max-width: 20rem;
+		max-height: 60vh;
+		overflow-y: auto;
 	}
 </style>
 
 <script>
 	(function () {
-		const isAdmin = {{ is_admin | tojson }};
-		const fallbackLinks = {{ quick_links | tojson }};
+		const root = document.querySelector("[data-quick-links-root]");
 		const listEl = document.getElementById("quick-links-list");
-		const modal = document.getElementById("quick-link-modal");
-		const form = document.getElementById("quick-link-form");
-		const errorEl = document.getElementById("quick-link-error");
-		const preview = document.getElementById("quick-link-preview");
-		const previewFallback = document.getElementById("quick-link-preview-fallback");
-		const iconFile = document.getElementById("quick-link-icon-file");
+		if (!root || !listEl) return;
+		const toggleEl = root.querySelector("[data-ql-toggle]");
+
+		const ORDER_KEY = "portal-quick-link-order";
+		const ROWS_COLLAPSED = 2;
+		let links = [];
+		let expanded = false;
 
 		function esc(value) {
 			return String(value ?? "")
@@ -160,226 +247,512 @@
 				.replace(/'/g, "&#39;");
 		}
 
+		function readOrder() {
+			try {
+				const raw = JSON.parse(localStorage.getItem(ORDER_KEY) || "[]");
+				return Array.isArray(raw) ? raw.map(String) : [];
+			} catch (_) {
+				return [];
+			}
+		}
+
+		function writeOrder(ids) {
+			try {
+				localStorage.setItem(ORDER_KEY, JSON.stringify(ids.map(String)));
+			} catch (_) {
+				/* private mode — the arrangement just won't survive a reload */
+			}
+		}
+
+		// Apply the saved order, then append anything the user has never seen (a link an
+		// admin added since they last arranged theirs). Sorting purely by the saved list
+		// would silently DROP new links, which is a far worse bug than them arriving last.
+		function applyOrder(items) {
+			const saved = readOrder();
+			const byId = new Map(items.map((l) => [String(l.id), l]));
+			const ordered = [];
+			for (const id of saved) {
+				const link = byId.get(id);
+				if (link) {
+					ordered.push(link);
+					byId.delete(id);
+				}
+			}
+			return ordered.concat([...byId.values()]);
+		}
+
+		// DaisyUI's own rules (`.menu :where(li > *) {display:grid}`) out-specify Tailwind's
+		// flex utilities, which is why the icons kept landing in the corner of their circle
+		// instead of the middle. The layout is pinned with inline styles — those beat any
+		// stylesheet rule regardless of specificity.
+		const TILE_W = 88;
+		const CIRCLE_STYLE =
+			"display:flex;align-items:center;justify-content:center;position:relative;";
+		const TILE_STYLE =
+			"display:flex;flex-direction:column;align-items:center;gap:.5rem;width:100%;";
+
 		function linkIcon(link) {
 			if (link.icon_url) {
-				return `<img src="${esc(link.icon_url)}" alt="" class="h-10 w-10 object-contain" />`;
+				return `<img src="${esc(link.icon_url)}" alt="" class="h-8 w-8 object-contain" style="display:block;" draggable="false" />`;
 			}
-			return `<svg viewBox="${esc(link.viewBox || "0 0 24 24")}" class="h-8 w-8" aria-hidden="true">
-				<use href="#${esc(link.icon || "quicklink-azure-devops")}" class="${esc(link.color || "fill-primary")}" />
-			</svg>`;
+			// No icon configured: the initial, which at least distinguishes one circle
+			// from the next at a glance.
+			const initial = String(link.name || "?").trim().charAt(0).toUpperCase();
+			return `<span class="text-xl font-bold text-primary">${esc(initial)}</span>`;
+		}
+
+		// A group has to look different from a plain link before it is clicked, or the
+		// panel opening instead of a new tab reads as a bug. Small count badge on the circle.
+		function groupBadge(link) {
+			if (link.kind !== "multi") return "";
+			const n = (link.children || []).length;
+			// The foreground colour is inline: `text-primary-content` is not compiled
+			// into output.css, so as a class it would silently do nothing and leave the
+			// number unreadable on the primary fill.
+			return `<span class="text-[10px] font-bold bg-primary"
+				style="position:absolute;bottom:-2px;right:-2px;min-width:16px;height:16px;border-radius:9999px;display:flex;align-items:center;justify-content:center;padding:0 4px;color:hsl(var(--pc));"
+			>${n}</span>`;
 		}
 
 		function linkItem(link) {
-			const external = link.url && link.url !== "#";
-			// Only admin-managed links carry an `id` (defaults are template-only),
-			// so we use that to gate the per-tile delete affordance.
-			const removable = isAdmin && link && link.id;
-			const deleteBtn = removable
-				? `<button type="button"
-						class="quick-link-delete absolute top-0 right-2 z-10 flex h-6 w-6 items-center justify-center rounded-full border border-error/40 bg-base-100 text-error text-sm font-bold leading-none shadow"
-						title="Remove quick link"
-						data-quick-link-delete="${esc(link.id)}"
-						aria-label="Remove ${esc(link.name)}">×</button>`
-				: "";
-			return `<li class="quick-link-item shrink-0 relative px-1 pt-1">
-				${deleteBtn}
-				<a
-					href="${esc(link.url || "#")}"
-					${external ? 'target="_blank" rel="noopener noreferrer"' : ""}
-					class="flex flex-col items-center gap-4 bg-transparent p-0 hover:bg-transparent focus:bg-transparent"
+			const isMulti = link.kind === "multi";
+			const external = !isMulti && link.url && link.url !== "#";
+			const inner = `
+				<div
+					class="h-14 w-14 shrink-0 rounded-full border border-base-content/25 bg-base-200/30"
+					style="${CIRCLE_STYLE}"
 				>
-					<div class="avatar">
-						<div class="flex h-16 w-16 items-center justify-center rounded-full border border-base-content/25 bg-base-200/30 overflow-hidden">
-							${linkIcon(link)}
-						</div>
-					</div>
-					<span class="text-sm font-semibold text-base-content/60">${esc(link.name)}</span>
-				</a>
-			</li>`;
+					${linkIcon(link)}${groupBadge(link)}
+				</div>
+				<span class="quick-link-label text-xs font-semibold text-base-content/60 text-center">${esc(link.name)}</span>`;
+
+			// A group is a button, not a link: it does not navigate, and making it an
+			// anchor would offer a middle-click "open in new tab" that goes nowhere.
+			const body = isMulti
+				? `<button type="button" class="bg-transparent p-0 hover:bg-transparent focus:bg-transparent"
+						style="${TILE_STYLE}" data-ql-group aria-haspopup="true" aria-expanded="false">${inner}</button>`
+				: `<a href="${esc(link.url || "#")}"
+						${external ? 'target="_blank" rel="noopener noreferrer"' : ""}
+						class="bg-transparent p-0 hover:bg-transparent focus:bg-transparent"
+						style="${TILE_STYLE}" draggable="false">${inner}</a>`;
+
+			// Only your OWN tiles get an edit control. A shared link is an admin's to
+			// change, and offering a pencil that 403s is worse than not offering one.
+			const edit =
+				link.scope === "personal"
+					? `<button type="button" class="ql-edit btn btn-ghost btn-xs btn-circle"
+							data-ql-edit="${esc(link.id)}" title="Edit this link" aria-label="Edit ${esc(link.name)}">
+							<svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+								<path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+							</svg>
+						</button>`
+					: "";
+
+			return `<li
+				class="quick-link-item shrink-0 relative"
+				style="width:${TILE_W}px;display:flex;"
+				draggable="true"
+				data-ql-id="${esc(link.id)}"
+			>${body}${edit}</li>`;
 		}
 
-		function addButton() {
-			if (!isAdmin) return "";
-			return `<li class="shrink-0">
-				<button
-					type="button"
-					id="quick-link-add"
-					class="flex flex-col items-center gap-4 bg-transparent p-0 hover:bg-transparent focus:bg-transparent"
-					aria-label="Add quick link"
-				>
-					<div class="avatar">
-						<div class="flex h-16 w-16 items-center justify-center rounded-full border border-dashed border-primary/60 bg-primary/10 text-primary text-3xl font-semibold">
-							<span class="-mt-1 leading-none">+</span>
-						</div>
-					</div>
-					<span class="text-sm font-semibold text-base-content/60">Add</span>
+		// The "+" tile. Last, always, and deliberately NOT a .quick-link-item: it has no
+		// id, takes no part in the drag order, and must never be saved into it.
+		function addTile() {
+			return `<li class="quick-link-add shrink-0 relative" style="width:${TILE_W}px;display:flex;">
+				<button type="button" class="bg-transparent p-0 hover:bg-transparent focus:bg-transparent"
+					style="${TILE_STYLE}" data-ql-add title="Add a link only you can see">
+					<span class="h-14 w-14 shrink-0 rounded-full border border-dashed border-base-content/30 text-base-content/40"
+						style="${CIRCLE_STYLE}background-color:hsl(var(--b2)/.35);">
+						<!--
+							An SVG cross, not a "+" character. Flex centres a text node by its LINE
+							BOX, and a line box carries the font's ascender and descender - so the
+							glyph inside it sits visibly low, which is exactly what this looked
+							like. Two strokes centred in a square viewBox have no such padding and
+							land on the middle of the circle.
+						-->
+						<svg viewBox="0 0 24 24" class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+							<path d="M12 5v14M5 12h14" />
+						</svg>
+					</span>
+					<span class="quick-link-label text-xs font-semibold text-base-content/50 text-center">Add link</span>
 				</button>
 			</li>`;
 		}
 
-		function dedupKey(link) {
-			// Prevents the same system being shown twice when an admin links to
-			// a default system (e.g. their own SonarQube URL). Compares case- and
-			// whitespace-insensitively on either name or URL.
-			return [
-				String(link?.name || "").trim().toLowerCase(),
-				String(link?.url || "").trim().toLowerCase(),
-			].join("||");
+		/* ── Multi-link panel ────────────────────────────────────────────────
+		   One panel element, reused, parented to <body>. Kept out of the list so
+		   the list's `overflow:hidden` (which is what clamps it to two rows) cannot
+		   clip it, and positioned on open rather than tracked, since any scroll or
+		   resize closes it anyway. */
+		let panel = null;
+		let panelOwner = null;
+
+		function closePanel() {
+			if (panel) panel.remove();
+			panel = null;
+			if (panelOwner) panelOwner.setAttribute("aria-expanded", "false");
+			panelOwner = null;
 		}
 
-		function render(adminLinks) {
-			// Always show the four default system tiles; admin-managed links are
-			// appended after them. Previously this function REPLACED the
-			// fallback list whenever the API returned anything — that's why
-			// adding one admin link nuked Azure DevOps / Artifactory / SonarQube
-			// / ServiceNow from the dashboard.
-			const extras = Array.isArray(adminLinks) ? adminLinks : [];
-			const seen = new Set(fallbackLinks.map(dedupKey));
-			const merged = [...fallbackLinks];
-			for (const link of extras) {
-				const key = dedupKey(link);
-				if (seen.has(key)) continue;
-				seen.add(key);
-				merged.push(link);
+		function openPanel(link, tileEl, btnEl) {
+			closePanel();
+			panel = document.createElement("div");
+			panel.className =
+				"ql-panel rounded-xl border border-base-300 bg-base-100 shadow-lg p-2";
+			panel.innerHTML =
+				`<div class="px-2 py-1 text-[11px] uppercase tracking-wide text-base-content/40">${esc(link.name)}</div>` +
+				(link.children || [])
+					.map(
+						(c) =>
+							`<a href="${esc(c.url)}" target="_blank" rel="noopener noreferrer"
+								class="block rounded-lg px-2 py-1.5 text-sm text-base-content hover:bg-base-200 hover:text-primary truncate"
+							>${esc(c.name)}</a>`
+					)
+					.join("");
+			document.body.appendChild(panel);
+
+			// Position under the tile, then pull back inside the viewport if the tile is
+			// near the right edge or the panel would fall off the bottom.
+			const r = tileEl.getBoundingClientRect();
+			const pr = panel.getBoundingClientRect();
+			let left = r.left;
+			let top = r.bottom + 6;
+			if (left + pr.width > window.innerWidth - 8) left = window.innerWidth - pr.width - 8;
+			if (left < 8) left = 8;
+			if (top + pr.height > window.innerHeight - 8) top = Math.max(8, r.top - pr.height - 6);
+			panel.style.left = left + "px";
+			panel.style.top = top + "px";
+
+			panelOwner = btnEl || null;
+			if (panelOwner) panelOwner.setAttribute("aria-expanded", "true");
+		}
+
+		document.addEventListener("click", (event) => {
+			if (panel && !panel.contains(event.target) && !event.target.closest("[data-ql-group]")) {
+				closePanel();
 			}
-			listEl.innerHTML = merged.map(linkItem).join("") + addButton();
-			document.getElementById("quick-link-add")?.addEventListener("click", openModal);
-			listEl.querySelectorAll("[data-quick-link-delete]").forEach((btn) => {
-				btn.addEventListener("click", async (event) => {
-					event.preventDefault();
-					event.stopPropagation();
-					const id = btn.getAttribute("data-quick-link-delete");
-					if (!id) return;
-					if (!window.confirm("Remove this quick link?")) return;
-					try {
-						const res = await fetch(`/api/admin/quick-links/${encodeURIComponent(id)}`, {
-							method: "DELETE",
-							credentials: "same-origin",
-						});
-						if (!res.ok) throw new Error("Could not remove");
-						window.portalToast?.({ kind: "success", message: "Quick link removed" });
-						loadLinks();
-					} catch (_) {
-						window.portalToast?.({ kind: "error", message: "Could not remove quick link" });
-					}
-				});
-			});
-		}
+		});
+		document.addEventListener("keydown", (event) => {
+			if (event.key === "Escape") closePanel();
+		});
+		window.addEventListener("resize", closePanel);
+		window.addEventListener("scroll", closePanel, true);
 
-		function openModal() {
-			errorEl?.classList.add("hidden");
-			form?.reset();
-			setPreview("");
-			modal?.classList.remove("hidden");
-			modal?.classList.add("flex");
-		}
+		listEl.addEventListener("click", (event) => {
+			const btn = event.target.closest("[data-ql-group]");
+			if (!btn) return;
+			event.preventDefault();
+			const item = btn.closest(".quick-link-item");
+			const link = links.find((l) => String(l.id) === String(item?.dataset.qlId));
+			if (!link) return;
+			// Second click on the same group closes it.
+			if (panelOwner === btn) {
+				closePanel();
+				return;
+			}
+			openPanel(link, item, btn);
+		});
 
-		function closeModal() {
-			modal?.classList.add("hidden");
-			modal?.classList.remove("flex");
-			errorEl?.classList.add("hidden");
-		}
+		/* ── Two-row clamp ───────────────────────────────────────────────────
+		   Height is measured, not assumed: the tile height depends on whether any
+		   label wrapped to a second line, and a hard-coded pixel value would clip
+		   the second row on some lists and leave a gap on others. */
+		function applyClamp() {
+			if (!links.length) {
+				listEl.style.maxHeight = "";
+				toggleEl?.classList.add("hidden");
+				return;
+			}
+			const first = listEl.querySelector(".quick-link-item");
+			if (!first) return;
+			const rowH = first.offsetHeight;
+			const gap = 16; // matches the 1rem row gap set inline on the <ul>
+			const clamp = rowH * ROWS_COLLAPSED + gap * (ROWS_COLLAPSED - 1);
 
-		function setPreview(src) {
-			if (!preview || !previewFallback) return;
-			if (src) {
-				preview.src = src;
-				preview.classList.remove("hidden");
-				previewFallback.classList.add("hidden");
-			} else {
-				preview.removeAttribute("src");
-				preview.classList.add("hidden");
-				previewFallback.classList.remove("hidden");
+			listEl.style.maxHeight = expanded ? "" : clamp + "px";
+			// scrollHeight is the full wrapped height regardless of the clamp.
+			const overflows = listEl.scrollHeight > clamp + 2;
+			if (!overflows && !expanded) {
+				toggleEl?.classList.add("hidden");
+				listEl.style.maxHeight = "";
+				return;
+			}
+			if (toggleEl) {
+				toggleEl.classList.remove("hidden");
+				toggleEl.textContent = expanded ? "Show less" : `Show all (${links.length})`;
 			}
 		}
+
+		toggleEl?.addEventListener("click", () => {
+			expanded = !expanded;
+			closePanel();
+			applyClamp();
+		});
+
+		function render() {
+			// The empty state is a full-width line ABOVE the "+" tile, not instead of it:
+			// the answer to an empty widget is the thing that fills it.
+			const empty = links.length
+				? ""
+				: `<li class="text-sm text-base-content/50 italic" style="width:100%">
+						Nothing here yet — add a link of your own, or ask an admin to add one for everyone.
+					</li>`;
+			listEl.innerHTML = empty + links.map(linkItem).join("") + addTile();
+			applyClamp();
+		}
+
+		/* ── Drag to reorder ────────────────────────────────────────────────
+		   HTML5 drag-and-drop rather than pointer maths: it is what the browser
+		   already knows how to do, it gives us the drag image for free, and it
+		   does not fight the horizontal scroll this list can have.
+
+		   The tricky part is that each tile contains an <a>, and a link is
+		   draggable by default — the browser would try to drag the URL instead
+		   of the tile. `draggable="false"` on the anchor hands the gesture back
+		   to the <li>. A plain click still follows the link. */
+		let draggedId = null;
+
+		listEl.addEventListener("dragstart", (event) => {
+			const item = event.target.closest(".quick-link-item");
+			if (!item) return;
+			closePanel();
+			draggedId = item.dataset.qlId;
+			item.setAttribute("data-dragging", "");
+			event.dataTransfer.effectAllowed = "move";
+			// Firefox will not start a drag at all unless some data is set.
+			try { event.dataTransfer.setData("text/plain", draggedId); } catch (_) {}
+		});
+
+		listEl.addEventListener("dragend", () => {
+			draggedId = null;
+			listEl.querySelectorAll("[data-dragging]").forEach((el) => el.removeAttribute("data-dragging"));
+			listEl.querySelectorAll("[data-drop-target]").forEach((el) => el.removeAttribute("data-drop-target"));
+		});
+
+		listEl.addEventListener("dragover", (event) => {
+			if (!draggedId) return;
+			event.preventDefault();          // without this, "drop" never fires
+			event.dataTransfer.dropEffect = "move";
+			const over = event.target.closest(".quick-link-item");
+			listEl.querySelectorAll("[data-drop-target]").forEach((el) => el.removeAttribute("data-drop-target"));
+			if (over && over.dataset.qlId !== draggedId) over.setAttribute("data-drop-target", "");
+		});
+
+		listEl.addEventListener("drop", (event) => {
+			if (!draggedId) return;
+			event.preventDefault();
+			const over = event.target.closest(".quick-link-item");
+			if (!over || over.dataset.qlId === draggedId) return;
+
+			const from = links.findIndex((l) => String(l.id) === String(draggedId));
+			const to = links.findIndex((l) => String(l.id) === String(over.dataset.qlId));
+			if (from < 0 || to < 0) return;
+
+			const [moved] = links.splice(from, 1);
+			links.splice(to, 0, moved);
+			writeOrder(links.map((l) => l.id));
+			render();
+		});
 
 		async function loadLinks() {
 			try {
 				const res = await fetch("/api/quick-links", { credentials: "same-origin" });
 				const json = await res.json();
 				if (!res.ok) throw new Error("Failed to load quick links");
-				render(Array.isArray(json?.data) ? json.data : []);
+				links = applyOrder(Array.isArray(json?.data) ? json.data : []);
 			} catch (_) {
-				// Network/API failure: fall back to defaults only (no admin extras).
-				render([]);
+				links = [];
+			}
+			render();
+		}
+
+		// The clamp is a measured height, so it has to be recomputed when the row count
+		// changes — which it does whenever the card gets wider or narrower.
+		window.addEventListener("resize", () => { if (links.length) applyClamp(); });
+
+		/* ── Your own links: add, edit, remove ───────────────────────────────
+		   Personal links are namespaced "u<id>" by the API precisely so they cannot be
+		   confused with a shared link that happens to share a SERIAL. Strip the prefix
+		   for the URL; refuse to act on anything without it, so a bug here can never
+		   send a shared link's id to the personal endpoints. */
+		const modal    = document.getElementById("uql-modal");
+		const form     = document.getElementById("uql-form");
+		const multiTgl = document.getElementById("uql-multi");
+		const urlWrap  = document.getElementById("uql-url-wrap");
+		const kidsWrap = document.getElementById("uql-children-wrap");
+		const kidsBody = document.getElementById("uql-kids");
+		const kidAdd   = document.getElementById("uql-kid-add");
+		const fileEl   = document.getElementById("uql-file");
+		const previewEl = document.getElementById("uql-preview");
+		const previewFb = document.getElementById("uql-preview-fallback");
+		const errorEl  = document.getElementById("uql-error");
+		const titleEl  = document.getElementById("uql-title");
+		const submitEl = document.getElementById("uql-submit");
+		const removeEl = document.getElementById("uql-remove");
+		const kids     = window.portalQuickLinkChildren;
+
+		let editingId = null;   // the raw numeric id, or null when adding
+		let saving = false;
+
+		function rawId(id) {
+			const s = String(id || "");
+			return s.charAt(0) === "u" ? s.slice(1) : null;
+		}
+
+		function setPreview(src) {
+			if (src) {
+				previewEl.src = src;
+				previewEl.classList.remove("hidden");
+				previewFb.classList.add("hidden");
+			} else {
+				previewEl.removeAttribute("src");
+				previewEl.classList.add("hidden");
+				previewFb.classList.remove("hidden");
 			}
 		}
 
-		iconFile?.addEventListener("change", () => {
-			const file = iconFile.files && iconFile.files[0];
+		function applyKind(isMulti) {
+			urlWrap?.classList.toggle("hidden", isMulti);
+			kidsWrap?.classList.toggle("hidden", !isMulti);
+			if (isMulti && !kidsBody.children.length) kids.set(kidsBody, []);
+		}
+
+		function openModal(link) {
+			editingId = link ? rawId(link.id) : null;
+			form.reset();
+			errorEl.classList.add("hidden");
+			titleEl.textContent = link ? "Edit your link" : "Add your own link";
+			submitEl.textContent = link ? "Save changes" : "Add link";
+			removeEl.classList.toggle("hidden", !link);
+			const isMulti = link?.kind === "multi";
+			if (link) {
+				form.elements.name.value = link.name || "";
+				form.elements.url.value = link.url || "";
+				form.elements.icon_url.value = link.icon_url || "";
+			}
+			// form.reset() cannot clear rows it did not create, so they are set every time.
+			multiTgl.checked = !!isMulti;
+			kids.set(kidsBody, isMulti ? link.children || [] : []);
+			applyKind(!!isMulti);
+			setPreview(link?.icon_url || "");
+			modal.showModal();
+			form.elements.name.focus();
+		}
+
+		function fail(message) {
+			errorEl.textContent = message;
+			errorEl.classList.remove("hidden");
+		}
+
+		multiTgl?.addEventListener("change", () => applyKind(multiTgl.checked));
+		kidAdd?.addEventListener("click", () => kids.addRow(kidsBody));
+		document.getElementById("uql-cancel")?.addEventListener("click", () => modal.close());
+		form.elements.icon_url?.addEventListener("input", (e) => setPreview(e.target.value.trim()));
+		fileEl?.addEventListener("change", () => {
+			const file = fileEl.files && fileEl.files[0];
 			if (!file) return;
 			const reader = new FileReader();
 			reader.onload = () => {
 				const dataUrl = String(reader.result || "");
-				const iconInput = form?.elements.icon_url;
-				if (iconInput) iconInput.value = dataUrl;
+				form.elements.icon_url.value = dataUrl;
 				setPreview(dataUrl);
 			};
 			reader.readAsDataURL(file);
 		});
-		form?.elements.icon_url?.addEventListener("input", (event) => {
-			setPreview(event.target.value.trim());
-		});
-		document.getElementById("quick-link-cancel")?.addEventListener("click", closeModal);
 
-		// Single in-flight lock so a double-click on "Add Link" — or a quick
-		// Enter-then-click — can't post the same link twice. The previous
-		// version disabled nothing during the network call, which is why two
-		// "Claude" rows showed up after a single intent to add one.
-		let submitting = false;
-		const submitBtn = document.getElementById("quick-link-submit");
-
-		async function submitQuickLink() {
-			if (submitting) return;
-			const name = (form?.elements.name?.value || "").trim();
-			const url = (form?.elements.url?.value || "").trim();
-			const iconUrl = (form?.elements.icon_url?.value || "").trim();
-			if (!name || !url) {
-				if (errorEl) {
-					errorEl.textContent = "System Name and URL are required.";
-					errorEl.classList.remove("hidden");
-				}
+		listEl.addEventListener("click", (event) => {
+			if (event.target.closest("[data-ql-add]")) {
+				event.preventDefault();
+				openModal(null);
 				return;
 			}
-			submitting = true;
-			if (submitBtn) {
-				submitBtn.disabled = true;
-				submitBtn.classList.add("btn-disabled");
-			}
-			try {
-				const res = await fetch("/api/admin/quick-links", {
-					method: "POST",
-					credentials: "same-origin",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ name, url, icon_url: iconUrl }),
-				});
-				const json = await res.json().catch(() => ({}));
-				if (!res.ok) throw new Error(json?.detail || "Could not add quick link");
-				closeModal();
-				window.portalToast?.({ kind: "success", message: "Quick link added" });
-				loadLinks();
-			} catch (err) {
-				if (errorEl) {
-					errorEl.textContent = err?.message || "Could not add quick link";
-					errorEl.classList.remove("hidden");
-				}
-			} finally {
-				submitting = false;
-				if (submitBtn) {
-					submitBtn.disabled = false;
-					submitBtn.classList.remove("btn-disabled");
-				}
-			}
-		}
-
-		submitBtn?.addEventListener("click", submitQuickLink);
-		// Pressing Enter inside any field should also submit (and only once).
-		form?.addEventListener("submit", (event) => {
+			const editBtn = event.target.closest("[data-ql-edit]");
+			if (!editBtn) return;
 			event.preventDefault();
-			submitQuickLink();
+			const link = links.find((l) => String(l.id) === editBtn.getAttribute("data-ql-edit"));
+			if (link) openModal(link);
 		});
 
-		render(fallbackLinks);
+		form.addEventListener("submit", async (event) => {
+			event.preventDefault();
+			if (saving) return;   // a double-click must not create the link twice
+
+			const name = (form.elements.name.value || "").trim();
+			const url = (form.elements.url.value || "").trim();
+			const isMulti = !!multiTgl.checked;
+			const children = isMulti ? kids.read(kidsBody) : [];
+			if (!name) return fail("A name is required.");
+			if (isMulti ? !children.length : !url) {
+				return fail(isMulti
+					? "Add at least one link — both a name and a link — to the group."
+					: "A URL is required.");
+			}
+
+			saving = true;
+			submitEl.disabled = true;
+			try {
+				const res = await fetch(
+					editingId ? `/api/quick-links/mine/${encodeURIComponent(editingId)}` : "/api/quick-links/mine",
+					{
+						method: editingId ? "PATCH" : "POST",
+						credentials: "same-origin",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({
+							name,
+							url: isMulti ? "" : url,
+							icon_url: (form.elements.icon_url.value || "").trim(),
+							kind: isMulti ? "multi" : "single",
+							children,
+						}),
+					}
+				);
+				const json = await res.json().catch(() => ({}));
+				if (!res.ok) throw new Error(json?.detail || "Could not save that link.");
+				modal.close();
+				await loadLinks();
+			} catch (err) {
+				fail(err?.message || "Could not save that link.");
+			} finally {
+				saving = false;
+				submitEl.disabled = false;
+			}
+		});
+
+		// Remove, with Undo in the toast rather than a confirm dialog in front of it.
+		// The delete is a soft one, so undo is the same row coming back in the same
+		// place — not a re-create that would land at the end of the list.
+		removeEl?.addEventListener("click", async () => {
+			if (!editingId) return;
+			const id = editingId;
+			const name = (form.elements.name.value || "").trim() || "That link";
+			try {
+				const res = await fetch(`/api/quick-links/mine/${encodeURIComponent(id)}`, {
+					method: "DELETE",
+					credentials: "same-origin",
+				});
+				if (!res.ok) throw new Error("delete");
+				modal.close();
+				await loadLinks();
+				window.portalToast?.({
+					kind: "success",
+					message: `${name} removed.`,
+					action: {
+						label: "Undo",
+						run: async () => {
+							await fetch(`/api/quick-links/mine/${encodeURIComponent(id)}/restore`, {
+								method: "POST",
+								credentials: "same-origin",
+							});
+							await loadLinks();
+						},
+					},
+				});
+			} catch (_) {
+				fail("Could not remove that link.");
+			}
+		});
+
 		loadLinks();
 	})();
 </script>

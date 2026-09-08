@@ -1,0 +1,47 @@
+{{/*
+  Horizontal autoscaling for the backend.
+
+  SIZING NOTE, because the numbers are not arbitrary. Every open dashboard asks for
+  roughly eleven widgets, and auto-refresh repeats that on a timer. At 500 concurrent
+  users on a 60-second refresh that is on the order of 90 requests per second of
+  template rendering — before anyone clicks anything. One replica on half a CPU
+  cannot serve that, which is what the current values.yaml asks for.
+
+  Autoscaling is the honest answer rather than a fixed high replica count: the portal
+  is idle at night and busy at stand-up, and the floor below is what carries the
+  quiet hours.
+
+  Disabled by default so a cluster without metrics-server is unaffected; test leaves
+  it off, prod turns it on.
+*/}}
+{{- if .Values.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ .Chart.Name }}{{ .Values.global.nameSuffix }}
+  labels:
+    app: {{ .Chart.Name }}{{ .Values.global.nameSuffix }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ .Chart.Name }}{{ .Values.global.nameSuffix }}
+  minReplicas: {{ .Values.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}
+  behavior:
+    scaleUp:
+      # React quickly: the load pattern here is everyone opening the portal within a
+      # few minutes of each other in the morning.
+      stabilizationWindowSeconds: 30
+    scaleDown:
+      # Retreat slowly. Scaling down eagerly between refresh bursts would thrash,
+      # and every removed pod drops its warm Redis connections and DB pool.
+      stabilizationWindowSeconds: 300
+{{- end }}

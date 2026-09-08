@@ -1,3 +1,86 @@
+<style>
+	/* Widget visibility state. It used to be a red or green DaisyUI `badge` — a filled
+	   pill next to a toggle that already says the same thing, so the row carried two
+	   competing indicators and the loudest one was a red oval reading "Hidden", which
+	   looks like an error rather than a setting.
+
+	   Now it is a dot and a word: the circle carries the colour, the label carries the
+	   meaning, and neither shouts. Hand-written because output.css is precompiled. */
+	.dw-state {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		font-size: 0.75rem;
+		line-height: 1.1;
+		color: hsl(var(--bc) / 0.6);
+	}
+
+	.dw-state::before {
+		content: "";
+		width: 0.5rem;
+		height: 0.5rem;
+		border-radius: 9999px;
+		background-color: hsl(var(--bc) / 0.25);
+		flex: none;
+	}
+
+	.dw-state.is-shown::before {
+		background-color: hsl(var(--su));
+	}
+
+	/* Hidden is a neutral state, not a failure — an outlined grey dot, not a red one. */
+	.dw-state.is-hidden::before {
+		background-color: transparent;
+		box-shadow: inset 0 0 0 1.5px hsl(var(--bc) / 0.35);
+	}
+
+	/* Hand-written: `table-fixed` is not compiled into output.css, so as a utility
+	   class it would silently do nothing — and it is the one property that actually
+	   fixes this. With the default `auto` layout a table grows to fit its widest
+	   cell, so one long URL pushed the whole table past the card and put the Remove
+	   button off the right-hand edge behind a horizontal scrollbar. Fixed layout
+	   makes the columns obey their declared widths instead, so what does not fit is
+	   the text's problem, not the table's. */
+	.ql-table {
+		table-layout: fixed;
+		width: 100%;
+	}
+
+	/* Cut long names and URLs to one line with an ellipsis. Each cell keeps the full
+	   value in `title`, so nothing becomes unreadable — it becomes hover-to-read. */
+	.ql-clip {
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		max-width: 0; /* required: a fixed-layout cell needs this to clip rather than push */
+	}
+
+	/* The user list scrolls INSIDE the card, so the card is the same size with six
+	   accounts and with five hundred. Without this the page height is a function of
+	   how many people work here. */
+	.um-scroll {
+		max-height: 26rem;
+		overflow-y: auto;
+		border: 1px solid hsl(var(--b3));
+		border-radius: 0.75rem;
+	}
+
+	/* Sticky header, or scrolling past row forty leaves three unlabelled columns. */
+	.um-scroll thead th {
+		position: sticky;
+		top: 0;
+		z-index: 1;
+		background-color: hsl(var(--b1));
+	}
+
+	/* Rows are uniform, so the browser can skip laying out the ones out of view and
+	   still scroll to the right place. */
+	.um-scroll tbody tr {
+		content-visibility: auto;
+		contain-intrinsic-size: auto 3.25rem;
+	}
+</style>
+
 <div class="page-shell">
 	<header class="page-header">
 		<div>
@@ -31,6 +114,16 @@
 				<div id="safe-mode-alert" class="hidden alert text-sm" role="status"></div>
 			</div>
 		</section>
+
+		{# Second from the top on purpose: this is the one control on the page whose
+		   effect every user sees, and burying it under the configuration cards makes
+		   it something admins forget exists. #}
+		{% include "partials/components/announcements-admin.html" %}
+
+		{# Third, for the same reason. It is the only place in the portal that says
+		   whether the database is recoverable, and a backup nobody looks at is a
+		   backup nobody has. #}
+		{% include "partials/components/backup-status-admin.html" %}
 
 		<section class="section-card">
 			<div class="card-body p-5 gap-4">
@@ -80,7 +173,7 @@
 				</div>
 
 				<div class="flex flex-wrap items-center gap-3">
-					<button id="sso-test-btn" type="button" class="btn btn-outline">
+					<button id="sso-test-btn" type="button" class="btn btn-outline btn-primary">
 						Test Connection
 					</button>
 					<span id="sso-config-state" class="badge badge-ghost">Loading…</span>
@@ -160,6 +253,111 @@
 					class="hidden alert text-sm"
 					role="status"
 				></div>
+
+				{#
+					Everyone, and what they can do — the half that was missing.
+
+					The control above only ever pointed one way: it could make somebody an
+					Admin and there was no way to take it back, and no way to set any of the
+					other five roles the RBAC seed defines. So a screen called "User Role
+					Management" could perform exactly one of the operations it appeared to
+					offer, and an admin granted by mistake was permanent.
+				#}
+				<div class="divider" style="margin-top: 0.25rem; margin-bottom: 0.25rem"></div>
+				<div>
+					<h3 class="font-semibold text-base-content">All users</h3>
+					<p class="text-sm text-base-content/60">
+						Change anyone's role, or deactivate an account so it can no longer sign
+						in. Accounts appear here after their owner has signed in once.
+					</p>
+				</div>
+
+				<div id="um-alert" class="hidden alert text-sm" role="status"></div>
+
+				{#
+					Six users fit. Five hundred do not.
+
+					This was a bare table in a card that grows with its content, so every
+					user added roughly 3rem to the page — at 500 accounts the card is
+					around twenty thousand pixels tall, the browser holds 500 <select>
+					elements, and finding one person means scrolling past everyone whose
+					address sorts before theirs.
+
+					Three things fix that and none of them need a backend change: a filter
+					box (you type a name instead of hunting), a fixed-height scroll area
+					with a sticky header (the card's size stops depending on the number of
+					accounts), and a render cap so the DOM holds a screenful rather than
+					the whole directory.
+				#}
+				<div class="flex flex-wrap items-center gap-3">
+					<input
+						id="um-search"
+						type="search"
+						class="input input-bordered input-sm"
+						style="min-width: 16rem; flex: 1 1 18rem"
+						placeholder="Filter by name, e-mail or role…"
+						autocomplete="off"
+						aria-label="Filter users"
+					/>
+					<span id="um-count" class="text-xs text-base-content/50"></span>
+				</div>
+
+				<div class="um-scroll">
+					<table class="table table-sm ql-table">
+						<thead>
+							<tr>
+								<th>User</th>
+								<th style="width: 14rem">Role</th>
+								<th class="text-right" style="width: 8rem">Account</th>
+							</tr>
+						</thead>
+						<tbody id="um-tbody">
+							<tr><td colspan="3" class="text-sm text-base-content/50 italic">Loading…</td></tr>
+						</tbody>
+					</table>
+				</div>
+				<div class="text-center">
+					<button id="um-more" type="button" class="btn btn-ghost btn-xs hidden"></button>
+				</div>
+			</div>
+		</section>
+
+		{#
+			Quick Links.
+
+			These were managed from the dashboard widget itself: a "+" tile, and a pencil
+			and a delete cross that appeared on hover over each admin-added link. That put
+			platform configuration on the one screen every user stares at all day, where
+			the controls were clutter to everyone who could not use them — and where the
+			only way to keep them out of the way was to hide them until hover, which is how
+			the delete button became something you could not find and could barely see.
+
+			They belong here, with every other platform-wide setting: one place that is
+			already admin-only, where a table with real buttons costs nobody anything.
+			The widget now just shows the links.
+		#}
+		<!--
+			Dashboard widget visibility. Distinct from each user's Customize drawer:
+			this decides which widgets EXIST for users at all, the drawer decides which
+			of the permitted ones a given person wants. Hiding one here removes it from
+			every dashboard and from every drawer, immediately.
+		-->
+		<section class="section-card">
+			<div class="card-body p-5 gap-4">
+				<div>
+					<h2 class="section-title">Dashboard Widgets</h2>
+					<p class="text-sm text-base-content/60">
+						Which widgets users can put on their dashboard. Hiding one removes it
+						from everyone's dashboard and from their Customize panel — useful when
+						a system is unreachable and its widget would only ever show an error.
+					</p>
+				</div>
+
+				<div id="dw-alert" class="hidden alert text-sm" role="status"></div>
+
+				<div id="dw-list" class="flex flex-col gap-1">
+					<p class="text-sm text-base-content/50 italic">Loading widgets…</p>
+				</div>
 			</div>
 		</section>
 
@@ -167,55 +365,149 @@
 			<div class="card-body p-5 gap-4">
 				<div class="flex items-start justify-between gap-4">
 					<div>
-						<h2 class="section-title mb-2">User Suggestions</h2>
+						<h2 class="section-title">Quick Links</h2>
 						<p class="text-sm text-base-content/60">
-							Feedback submitted from the Settings page. Mark items as
-							reviewed once you've triaged them.
+							Shown to every user on the dashboard, after the four built-in system
+							links. Those four come from the configured system URLs and cannot be
+							edited here.
 						</p>
 					</div>
-					<button
-						id="suggestions-refresh-btn"
-						type="button"
-						class="btn btn-ghost btn-sm"
-						title="Reload suggestions"
-					>
-						&#8635; Refresh
+					<button id="ql-add-btn" type="button" class="btn btn-primary btn-sm shrink-0">
+						Add Quick Link
 					</button>
 				</div>
 
-				<div
-					id="suggestions-empty"
-					class="hidden text-sm text-base-content/60 py-6 text-center"
-				>
-					No suggestions yet.
-				</div>
+				<div id="ql-alert" class="hidden alert text-sm" role="status"></div>
 
-				<div
-					id="suggestions-loading"
-					class="text-sm text-base-content/50 py-2"
-				>
-					Loading…
-				</div>
-
-				<div class="overflow-x-auto max-h-[28rem] overflow-y-auto hidden" id="suggestions-wrap">
-					<table class="table table-sm">
-						<thead class="sticky top-0 bg-base-100 z-10">
-							<tr>
-								<th class="w-1/5">Title</th>
-								<th>Description</th>
-								<th class="w-40">From</th>
-								<th class="w-32">When</th>
-								<th class="w-28 text-right">Reviewed</th>
-							</tr>
-						</thead>
-						<tbody id="suggestions-tbody"></tbody>
-					</table>
-				</div>
+				<table class="table table-sm ql-table">
+					<thead>
+						<tr>
+							<th style="width: 3.5rem">Icon</th>
+							<th style="width: 26%">Name</th>
+							<!-- Its own column rather than a tag beside the name: the name cell
+							     clips to one line with an ellipsis, so a marker inside it would
+							     vanish exactly when the name is long enough to need one. -->
+							<th style="width: 8rem">Visibility</th>
+							<th>URL</th>
+							<!-- Wide enough for Edit and Remove side by side, so neither can be
+							     pushed out of reach by a long URL in the column beside them. -->
+							<th class="text-right" style="width: 12.5rem">Actions</th>
+						</tr>
+					</thead>
+					<tbody id="ql-tbody"></tbody>
+				</table>
+				<p id="ql-empty" class="hidden text-sm text-base-content/50 italic">
+					No custom quick links yet. Users still see the four built-in system links.
+				</p>
 			</div>
 		</section>
+
 		</div>
 	</div>
 </div>
+
+{% include "partials/components/quick-link-children.html" %}
+
+<dialog id="ql-modal" class="modal">
+	<div class="modal-box">
+		<h3 id="ql-modal-title" class="font-bold text-lg">Add Quick Link</h3>
+		{# Follows the Admin only toggle. A fixed "visible to all users" under a form that
+		   can restrict the link is a sentence that is sometimes simply false. #}
+		<p id="ql-modal-note" class="text-sm text-base-content/60 mt-1">
+			This link will be visible to all users.
+		</p>
+
+		<form id="ql-form" class="grid grid-cols-1 gap-3 mt-4" novalidate>
+			<label class="form-control w-full">
+				<span class="label-text mb-1">System Name</span>
+				<input name="name" class="input input-bordered w-full" required />
+			</label>
+			<!--
+				Multi-link. Ticking this turns one circle into a small group: instead of
+				navigating anywhere itself it opens a panel listing the rows below. The URL
+				field and the table are mutually exclusive — only the one in play is shown,
+				so the form is never ambiguously half-filled.
+			-->
+			<label class="flex items-start gap-3 rounded-xl border border-base-300 bg-base-200/50 p-3 cursor-pointer">
+				<input id="ql-multi-toggle" type="checkbox" class="checkbox checkbox-sm mt-0.5" />
+				<span>
+					<span class="label-text font-semibold">Multi-link (a group of links)</span>
+					<span class="block text-xs opacity-60">
+						One circle that opens a list of links instead of opening a site.
+					</span>
+				</span>
+			</label>
+
+			<!--
+				Who can see it. Off means everybody, which is what every link created
+				before this existed means and what an admin adding a link almost always
+				wants — so the restrictive answer is the one you have to ask for.
+			-->
+			<label class="flex items-start gap-3 rounded-xl border border-base-300 bg-base-200/50 p-3 cursor-pointer">
+				<input id="ql-admin-toggle" type="checkbox" class="checkbox checkbox-sm mt-0.5" />
+				<span>
+					<span class="label-text font-semibold">Admins only</span>
+					<span class="block text-xs opacity-60">
+						Only admins see this link. Leave off and everyone sees it, admins
+						included.
+					</span>
+				</span>
+			</label>
+
+			<label id="ql-url-wrap" class="form-control w-full">
+				<span class="label-text mb-1">URL</span>
+				<input name="url" class="input input-bordered w-full" placeholder="https://example.internal" />
+			</label>
+
+			<div id="ql-children-wrap" class="hidden form-control w-full">
+				<span class="label-text mb-1">Links in this group</span>
+				<div class="overflow-x-auto rounded-xl border border-base-300">
+					<table class="table table-sm w-full">
+						<thead>
+							<tr>
+								<th class="w-56">Name</th>
+								<th>Link</th>
+								<th class="w-12"></th>
+							</tr>
+						</thead>
+						<tbody id="ql-children-tbody" data-kid-body></tbody>
+					</table>
+				</div>
+				<!-- align-self inline: `self-start` is not in the precompiled output.css. -->
+				<button type="button" id="ql-child-add" class="btn btn-ghost btn-xs mt-2" style="align-self: flex-start">
+					+ Add link
+				</button>
+			</div>
+			<label class="form-control w-full">
+				<span class="label-text mb-1">Icon URL <span class="opacity-60">(optional)</span></span>
+				<input name="icon_url" class="input input-bordered w-full" placeholder="https://example.internal/icon.png" />
+			</label>
+			<label class="form-control w-full">
+				<span class="label-text mb-1">…or upload an image</span>
+				<input id="ql-icon-file" type="file" accept="image/*" class="file-input file-input-bordered w-full" />
+			</label>
+
+			<div class="flex items-center gap-3 rounded-xl border border-base-300 bg-base-200/50 p-3">
+				<div class="flex h-16 w-16 items-center justify-center rounded-full border border-base-content/25 bg-base-200/30 overflow-hidden">
+					<img id="ql-preview" class="hidden h-10 w-10 object-contain" alt="Icon preview" />
+					<span id="ql-preview-fallback" class="text-2xl font-bold text-primary">+</span>
+				</div>
+				<div>
+					<div class="text-sm font-semibold">Preview</div>
+					<div class="text-xs opacity-60">The icon appears inside the same circle on the dashboard.</div>
+				</div>
+			</div>
+
+			<div id="ql-form-error" class="hidden alert alert-error alert-soft text-xs"></div>
+
+			<div class="modal-action">
+				<button type="button" id="ql-cancel" class="btn">Cancel</button>
+				<button type="submit" id="ql-submit" class="btn btn-primary">Add Link</button>
+			</div>
+		</form>
+	</div>
+	<form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
 
 <script>
 	(function () {
@@ -580,104 +872,603 @@
 		loadStatus();
 	})();
 
-	// ── User Suggestions admin viewer ────────────────────────────────────
-	// Fetches /api/suggestions, renders rows, and lets admins toggle the
-	// "reviewed" state in place. Mirrors the observability viewer style.
+	// ── Quick Links ─────────────────────────────────────────────────────────
+	// Full CRUD, in the one place that is already admin-only. The dashboard widget
+	// is now display-only and just reads the same /api/quick-links list.
 	(function () {
-		const tbody = document.getElementById("suggestions-tbody");
-		const wrap = document.getElementById("suggestions-wrap");
-		const loadingEl = document.getElementById("suggestions-loading");
-		const emptyEl = document.getElementById("suggestions-empty");
-		const refreshBtn = document.getElementById("suggestions-refresh-btn");
-		if (!tbody) return;
+		const tbody     = document.getElementById("ql-tbody");
+		const emptyEl   = document.getElementById("ql-empty");
+		const alertEl   = document.getElementById("ql-alert");
+		const addBtn    = document.getElementById("ql-add-btn");
+		const modal     = document.getElementById("ql-modal");
+		const form      = document.getElementById("ql-form");
+		const titleEl   = document.getElementById("ql-modal-title");
+		const submitBtn = document.getElementById("ql-submit");
+		const cancelBtn = document.getElementById("ql-cancel");
+		const errorEl   = document.getElementById("ql-form-error");
+		const preview   = document.getElementById("ql-preview");
+		const previewFb = document.getElementById("ql-preview-fallback");
+		const iconFile  = document.getElementById("ql-icon-file");
+		const multiTgl  = document.getElementById("ql-multi-toggle");
+		const adminTgl  = document.getElementById("ql-admin-toggle");
+		const modalNote = document.getElementById("ql-modal-note");
+		const urlWrap   = document.getElementById("ql-url-wrap");
+		const kidsWrap  = document.getElementById("ql-children-wrap");
+		const kidsBody  = document.getElementById("ql-children-tbody");
+		const kidAddBtn = document.getElementById("ql-child-add");
+		if (!tbody || !modal || !form) return;
 
-		function esc(str) {
-			return String(str == null ? "" : str)
+		// null = adding, an id = editing that link. One dialog, two jobs: the fields are
+		// identical and a second near-identical modal would be two things to keep in step.
+		let editingId = null;
+		let links = [];
+		let submitting = false;
+
+		function esc(v) {
+			return String(v ?? "")
 				.replace(/&/g, "&amp;")
 				.replace(/</g, "&lt;")
 				.replace(/>/g, "&gt;")
-				.replace(/"/g, "&quot;");
+				.replace(/"/g, "&quot;")
+				.replace(/'/g, "&#39;");
 		}
 
-		function fmtWhen(iso) {
-			if (!iso) return "";
-			try {
-				const d = new Date(iso);
-				return d.toLocaleString();
-			} catch {
-				return iso;
+		function showAlert(kind, text) {
+			alertEl.classList.remove("hidden", "alert-success", "alert-error");
+			alertEl.classList.add(kind === "err" ? "alert-error" : "alert-success");
+			alertEl.textContent = text;
+			setTimeout(() => alertEl.classList.add("hidden"), 4000);
+		}
+
+		/* ── Multi-link child table ──────────────────────────────────────────
+		   The rows live in the DOM rather than in a JS array: an admin types into
+		   them, and mirroring every keystroke into state just to render it back is
+		   how you lose someone's half-typed URL. Read them out only on submit. */
+		// The children editor is shared with the dashboard widget's personal quick-link
+		// form (partials/components/quick-link-children.html). Only the markup of the
+		// table is local; how rows are read, written and removed is defined once, or the
+		// two forms drift and one of them starts saving fewer links than it displays.
+		const kids = window.portalQuickLinkChildren;
+
+		function setChildren(rows) { kids.set(kidsBody, rows); }
+		function readChildren() { return kids.read(kidsBody); }
+
+		function applyKind(isMulti) {
+			urlWrap?.classList.toggle("hidden", isMulti);
+			kidsWrap?.classList.toggle("hidden", !isMulti);
+			if (isMulti && !kidsBody.children.length) setChildren([]);
+		}
+
+		kidAddBtn?.addEventListener("click", () => kids.addRow(kidsBody));
+
+		multiTgl?.addEventListener("change", () => applyKind(multiTgl.checked));
+
+		// The line under the title states who will see the link, so it has to follow
+		// the toggle rather than assert one of the two answers permanently.
+		function syncVisibilityNote() {
+			if (!modalNote) return;
+			modalNote.textContent = adminTgl?.checked
+				? "Only admins will see this link."
+				: "This link will be visible to all users, admins included.";
+		}
+		adminTgl?.addEventListener("change", syncVisibilityNote);
+
+		function setPreview(src) {
+			if (src) {
+				preview.src = src;
+				preview.classList.remove("hidden");
+				previewFb.classList.add("hidden");
+			} else {
+				preview.removeAttribute("src");
+				preview.classList.add("hidden");
+				previewFb.classList.remove("hidden");
 			}
 		}
 
-		function render(rows) {
-			tbody.innerHTML = "";
-			if (!rows || rows.length === 0) {
-				wrap.classList.add("hidden");
+		function render() {
+			if (!links.length) {
+				tbody.innerHTML = "";
 				emptyEl.classList.remove("hidden");
 				return;
 			}
 			emptyEl.classList.add("hidden");
-			wrap.classList.remove("hidden");
-			rows.forEach((r) => {
-				const tr = document.createElement("tr");
-				tr.innerHTML = `
-					<td class="font-medium align-top">${esc(r.title)}</td>
-					<td class="text-sm text-base-content/70 whitespace-pre-wrap align-top">${esc(r.description || "")}</td>
-					<td class="text-xs text-base-content/60 align-top">${esc(r.user_email)}</td>
-					<td class="text-xs text-base-content/60 align-top">${esc(fmtWhen(r.created_at))}</td>
-					<td class="text-right align-top">
-						<input
-							type="checkbox"
-							class="toggle toggle-sm toggle-success"
-							data-suggestion-id="${esc(r.id)}"
-							${r.reviewed ? "checked" : ""}
-						/>
+			tbody.innerHTML = links.map((l) => `
+				<tr>
+					<td>
+						${l.icon_url
+							? `<img src="${esc(l.icon_url)}" alt="" class="h-8 w-8 object-contain" />`
+							: `<span class="text-base-content/30 text-xs">—</span>`}
 					</td>
-				`;
-				tbody.appendChild(tr);
-			});
+					<td class="font-medium ql-clip" title="${esc(l.name)}">${esc(l.name)}</td>
+					<td class="whitespace-nowrap">
+						${l.admin_only
+							? `<span class="badge badge-ghost badge-sm shrink-0">Admins only</span>`
+							: `<span class="text-xs text-base-content/50">Everyone</span>`}
+					</td>
+					<td class="text-xs ql-clip" title="${esc(l.kind === "multi"
+							? (l.children || []).map((c) => `${c.name} — ${c.url}`).join("\n")
+							: l.url)}">
+						${l.kind === "multi"
+							? `<span class="opacity-70">Group of ${(l.children || []).length} link(s): </span>` +
+							  (l.children || []).map((c) => esc(c.name)).join(", ")
+							: `<a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer" class="link">${esc(l.url)}</a>`}
+					</td>
+					<td class="text-right whitespace-nowrap">
+						<button type="button" class="btn btn-ghost btn-xs" data-ql-edit="${esc(l.id)}" aria-label="Edit ${esc(l.name)}">
+							<svg viewBox="0 0 24 24" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+								<path d="M12 20h9" />
+								<path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+							</svg>
+							Edit
+						</button>
+						<button type="button" class="btn btn-ghost btn-xs text-error" data-ql-delete="${esc(l.id)}" aria-label="Remove ${esc(l.name)}">
+							<svg viewBox="0 0 24 24" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+								<path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+							</svg>
+							Remove
+						</button>
+					</td>
+				</tr>`).join("");
 		}
 
 		async function load() {
-			loadingEl.classList.remove("hidden");
-			wrap.classList.add("hidden");
-			emptyEl.classList.add("hidden");
 			try {
-				const res = await fetch("/api/suggestions", { credentials: "same-origin" });
+				const res = await fetch("/api/quick-links", { credentials: "same-origin" });
 				const json = await res.json();
-				if (!res.ok) throw new Error(json?.detail || "Failed to load suggestions");
-				render(json.data || []);
-			} catch (e) {
-				tbody.innerHTML = "";
-				emptyEl.textContent = e?.message || "Failed to load suggestions.";
-				emptyEl.classList.remove("hidden");
+				links = Array.isArray(json?.data) ? json.data : [];
+			} catch (_) {
+				links = [];
+			}
+			render();
+		}
+
+		function openModal(link) {
+			editingId = link?.id ?? null;
+			form.reset();
+			errorEl.classList.add("hidden");
+			titleEl.textContent = link ? "Edit Quick Link" : "Add Quick Link";
+			submitBtn.textContent = link ? "Save Changes" : "Add Link";
+			const isMulti = link?.kind === "multi";
+			if (link) {
+				form.elements.name.value = link.name || "";
+				form.elements.url.value = link.url || "";
+				form.elements.icon_url.value = link.icon_url || "";
+			}
+			// form.reset() does not clear the child rows (they are built by hand, not
+			// part of the form's initial markup), so set them explicitly every time.
+			if (multiTgl) multiTgl.checked = isMulti;
+			// form.reset() leaves this unchecked, which is correct for Add and wrong
+			// for Edit - so it is set explicitly from the link every time.
+			if (adminTgl) adminTgl.checked = !!link?.admin_only;
+			syncVisibilityNote();
+			setChildren(isMulti ? link.children || [] : []);
+			applyKind(isMulti);
+			setPreview(link?.icon_url || "");
+			modal.showModal();
+			form.elements.name.focus();
+		}
+
+		function closeModal() {
+			modal.close();
+			editingId = null;
+		}
+
+		addBtn?.addEventListener("click", () => openModal(null));
+		cancelBtn?.addEventListener("click", closeModal);
+
+		iconFile?.addEventListener("change", () => {
+			const file = iconFile.files && iconFile.files[0];
+			if (!file) return;
+			const reader = new FileReader();
+			reader.onload = () => {
+				const dataUrl = String(reader.result || "");
+				form.elements.icon_url.value = dataUrl;
+				setPreview(dataUrl);
+			};
+			reader.readAsDataURL(file);
+		});
+		form.elements.icon_url?.addEventListener("input", (e) => setPreview(e.target.value.trim()));
+
+		tbody.addEventListener("click", async (event) => {
+			const editBtn = event.target.closest("[data-ql-edit]");
+			if (editBtn) {
+				const link = links.find((l) => String(l.id) === editBtn.getAttribute("data-ql-edit"));
+				if (link) openModal(link);
+				return;
+			}
+
+			const delBtn = event.target.closest("[data-ql-delete]");
+			if (!delBtn) return;
+			const id = delBtn.getAttribute("data-ql-delete");
+			const link = links.find((l) => String(l.id) === id);
+			// Name the thing. "Remove this quick link?" is a question you cannot answer
+			// without first checking which row you clicked.
+			const label = link?.name ? `"${link.name}"` : "this quick link";
+			if (!window.confirm(`Remove ${label}? Every user will lose this link.`)) return;
+			try {
+				const res = await fetch(`/api/admin/quick-links/${encodeURIComponent(id)}`, {
+					method: "DELETE",
+					credentials: "same-origin",
+				});
+				if (!res.ok) throw new Error("Could not remove");
+				showAlert("ok", "Quick link removed.");
+				load();
+			} catch (_) {
+				showAlert("err", "Could not remove that quick link.");
+			}
+		});
+
+		form.addEventListener("submit", async (event) => {
+			event.preventDefault();
+			if (submitting) return;   // a double-click must not create the link twice
+
+			const name = (form.elements.name.value || "").trim();
+			const url = (form.elements.url.value || "").trim();
+			const iconUrl = (form.elements.icon_url.value || "").trim();
+			const isMulti = !!multiTgl?.checked;
+			const adminOnly = !!adminTgl?.checked;
+			const children = isMulti ? readChildren() : [];
+			if (!name) {
+				errorEl.textContent = "System Name is required.";
+				errorEl.classList.remove("hidden");
+				return;
+			}
+			if (isMulti ? !children.length : !url) {
+				errorEl.textContent = isMulti
+					? "Add at least one link (both a name and a link) to the group."
+					: "URL is required.";
+				errorEl.classList.remove("hidden");
+				return;
+			}
+
+			const editing = editingId !== null && editingId !== undefined;
+			submitting = true;
+			submitBtn.disabled = true;
+			try {
+				const res = await fetch(
+					editing
+						? `/api/admin/quick-links/${encodeURIComponent(editingId)}`
+						: "/api/admin/quick-links",
+					{
+						method: editing ? "PATCH" : "POST",
+						credentials: "same-origin",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({
+							name,
+							url: isMulti ? "" : url,
+							icon_url: iconUrl,
+							kind: isMulti ? "multi" : "single",
+							children,
+							admin_only: adminOnly,
+						}),
+					}
+				);
+				const json = await res.json().catch(() => ({}));
+				if (!res.ok) throw new Error(json?.detail || "Could not save the quick link");
+				closeModal();
+				showAlert("ok", editing ? "Quick link updated." : "Quick link added.");
+				load();
+			} catch (err) {
+				errorEl.textContent = err?.message || "Could not save the quick link";
+				errorEl.classList.remove("hidden");
 			} finally {
-				loadingEl.classList.add("hidden");
+				submitting = false;
+				submitBtn.disabled = false;
+			}
+		});
+
+		load();
+	})();
+</script>
+
+<script>
+	// ── Dashboard widget visibility ────────────────────────────────────────────
+	// Reads and writes the portal-wide show/hide policy. Deliberately does NOT try
+	// to keep a local copy in sync: every write returns the full catalogue, and the
+	// list re-renders from that. The server's answer is the state.
+	(function () {
+		const listEl = document.getElementById("dw-list");
+		const alertEl = document.getElementById("dw-alert");
+		if (!listEl) return;
+
+		let alertTimer = null;
+		function showAlert(kind, text) {
+			if (!alertEl) return;
+			alertEl.className =
+				"alert text-sm " + (kind === "ok" ? "alert-success" : "alert-error");
+			alertEl.textContent = text;
+			clearTimeout(alertTimer);
+			alertTimer = setTimeout(() => alertEl.classList.add("hidden"), 4000);
+		}
+
+		function esc(v) {
+			return String(v ?? "")
+				.replace(/&/g, "&amp;")
+				.replace(/</g, "&lt;")
+				.replace(/>/g, "&gt;")
+				.replace(/"/g, "&quot;")
+				.replace(/'/g, "&#39;");
+		}
+
+		function render(widgets) {
+			if (!widgets.length) {
+				listEl.innerHTML =
+					'<p class="text-sm text-base-content/50 italic">No widgets to configure.</p>';
+				return;
+			}
+			// `hidden` is the stored state, but the control reads as "Shown" — a switch
+			// labelled by what it turns ON is the one people get right. So the checkbox
+			// is the inverse of the flag, and the write inverts it back.
+			listEl.innerHTML = widgets
+				.map(
+					(w) => `
+				<label class="label cursor-pointer justify-between gap-3 py-2" style="border-bottom: 1px solid hsl(var(--b2))">
+					<span class="flex items-center gap-2 min-w-0">
+						<span class="font-medium text-base-content truncate">${esc(w.label)}</span>
+						${w.admin_only
+							? '<span class="badge badge-ghost badge-sm shrink-0">Admins only</span>'
+							: ""}
+					</span>
+					<span class="flex items-center gap-3 shrink-0">
+						<span class="dw-state ${w.hidden ? "is-hidden" : "is-shown"}" data-dw-state>
+							${w.hidden ? "Hidden" : "Shown"}
+						</span>
+						<input
+							type="checkbox"
+							class="toggle toggle-success toggle-sm"
+							data-dw-key="${esc(w.key)}"
+							${w.hidden ? "" : "checked"}
+							aria-label="Show ${esc(w.label)} to users"
+						/>
+					</span>
+				</label>`
+				)
+				.join("");
+		}
+
+		async function load() {
+			try {
+				const res = await (window.portalFetch || fetch)(
+					"/api/admin/dashboard-widgets",
+					{ credentials: "same-origin" },
+					20000
+				);
+				const json = await res.json().catch(() => ({}));
+				if (!res.ok) throw new Error(json?.detail || "Could not load the widget list");
+				render(json?.data?.widgets || []);
+			} catch (err) {
+				listEl.innerHTML =
+					'<p class="text-sm text-error">' +
+					esc(err?.message || "Could not load the widget list") +
+					"</p>";
 			}
 		}
 
-		tbody.addEventListener("change", async (e) => {
-			const input = e.target.closest("input[data-suggestion-id]");
+		listEl.addEventListener("change", async (event) => {
+			const input = event.target.closest("[data-dw-key]");
 			if (!input) return;
-			const id = input.dataset.suggestionId;
-			const reviewed = !!input.checked;
+			const key = input.getAttribute("data-dw-key");
+			const hidden = !input.checked;
+
+			// Locked while the write is in flight, so a double-click cannot queue two
+			// opposite writes and leave the switch disagreeing with what was stored.
 			input.disabled = true;
 			try {
-				const res = await fetch(`/api/suggestions/${encodeURIComponent(id)}`, {
-					method: "PATCH",
-					credentials: "same-origin",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ reviewed }),
-				});
-				if (!res.ok) throw new Error("Failed");
-			} catch {
-				input.checked = !reviewed;
+				const res = await (window.portalFetch || fetch)(
+					"/api/admin/dashboard-widgets",
+					{
+						method: "PUT",
+						credentials: "same-origin",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({ key, hidden }),
+					},
+					20000
+				);
+				const json = await res.json().catch(() => ({}));
+				if (!res.ok) throw new Error(json?.detail || "Could not save");
+				render(json?.data?.widgets || []);
+				showAlert("ok", hidden ? "Widget hidden from users." : "Widget shown to users.");
+			} catch (err) {
+				// Put the switch back where it was: leaving it showing a state the server
+				// did not accept is how an admin ends up sure they hid something.
+				input.checked = !input.checked;
+				showAlert("err", err?.message || "Could not save the change");
 			} finally {
 				input.disabled = false;
 			}
 		});
 
-		refreshBtn?.addEventListener("click", load);
+		load();
+	})();
+</script>
+
+<script>
+	// ── User management ────────────────────────────────────────────────────────
+	// Roles and account state for everyone. Every write returns nothing but success,
+	// so the table is re-read afterwards rather than patched locally: the server
+	// refuses some changes (the last administrator, chiefly) and the row must show
+	// what was actually stored, not what was clicked.
+	(function () {
+		const tbody = document.getElementById("um-tbody");
+		const alertEl = document.getElementById("um-alert");
+		const searchEl = document.getElementById("um-search");
+		const countEl = document.getElementById("um-count");
+		const moreBtn = document.getElementById("um-more");
+		if (!tbody) return;
+
+		let roles = [];
+		let alertTimer = null;
+
+		function esc(v) {
+			return String(v ?? "")
+				.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+				.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+		}
+
+		function showAlert(kind, text) {
+			if (!alertEl) return;
+			alertEl.className = "alert text-sm " + (kind === "ok" ? "alert-success" : "alert-error");
+			alertEl.textContent = text;
+			alertEl.classList.remove("hidden");
+			clearTimeout(alertTimer);
+			// Errors here explain a refusal ("this is the last admin") and are worth
+			// reading, so they linger noticeably longer than a success confirmation.
+			alertTimer = setTimeout(() => alertEl.classList.add("hidden"), kind === "ok" ? 4000 : 9000);
+		}
+
+		async function api(url, options) {
+			const res = await (window.portalFetch || fetch)(
+				url, Object.assign({ credentials: "same-origin" }, options || {}), 20000
+			);
+			const json = await res.json().catch(() => ({}));
+			if (!res.ok) throw new Error(json?.detail || "Request failed");
+			return json;
+		}
+
+		// Everything loaded, what the filter matches, and how much of it is drawn.
+		// PAGE is a DOM budget, not a data limit: the filter searches all of `allUsers`.
+		const PAGE = 60;
+		let allUsers = [];
+		let shown = PAGE;
+
+		function matching() {
+			const q = String(searchEl?.value || "").trim().toLowerCase();
+			if (!q) return allUsers;
+			return allUsers.filter(
+				(u) =>
+					String(u.display_name || "").toLowerCase().includes(q) ||
+					String(u.email || "").toLowerCase().includes(q) ||
+					String(u.role_name || "").toLowerCase().includes(q)
+			);
+		}
+
+		function paint() {
+			const list = matching();
+			const slice = list.slice(0, shown);
+			render(slice);
+
+			if (countEl) {
+				countEl.textContent = !allUsers.length
+					? ""
+					: list.length === allUsers.length
+						? `${slice.length} of ${allUsers.length} ${allUsers.length === 1 ? "user" : "users"}`
+						: `${slice.length} of ${list.length} matching (${allUsers.length} total)`;
+			}
+			if (moreBtn) {
+				const remaining = list.length - slice.length;
+				moreBtn.classList.toggle("hidden", remaining <= 0);
+				moreBtn.textContent = remaining > 0 ? `Show ${Math.min(remaining, PAGE)} more` : "";
+			}
+		}
+
+		function render(users) {
+			if (!users.length) {
+				tbody.innerHTML =
+					'<tr><td colspan="3" class="text-sm text-base-content/50 italic">' +
+					(allUsers.length
+						? "No user matches that filter."
+						: "No other users have signed in yet.") +
+					"</td></tr>";
+				return;
+			}
+			tbody.innerHTML = users.map((u) => {
+				const opts = roles.map((r) =>
+					'<option value="' + esc(r.name) + '"' +
+					(r.name === u.role_name ? " selected" : "") + ">" + esc(r.name) + "</option>"
+				).join("");
+				return (
+					'<tr' + (u.is_active === false ? ' style="opacity:.55"' : "") + '>' +
+					'<td class="ql-clip" title="' + esc(u.email) + '">' +
+						'<span class="font-medium">' + esc(u.display_name || u.email) + "</span>" +
+						'<br><span class="text-xs text-base-content/50">' + esc(u.email) + "</span>" +
+					"</td>" +
+					'<td><select class="select select-bordered select-xs w-full" data-um-role="' +
+						esc(u.email) + '">' + opts + "</select></td>" +
+					'<td class="text-right">' +
+						'<button type="button" class="btn btn-ghost btn-xs ' +
+						(u.is_active === false ? "text-success" : "text-error") +
+						'" data-um-active="' + esc(u.email) + '" data-active="' +
+						(u.is_active === false ? "0" : "1") + '">' +
+						(u.is_active === false ? "Reactivate" : "Deactivate") +
+					"</button></td></tr>"
+				);
+			}).join("");
+		}
+
+		let searchTimer = null;
+		searchEl?.addEventListener("input", () => {
+			clearTimeout(searchTimer);
+			searchTimer = setTimeout(() => {
+				// A new filter starts a new page: keeping the old offset would show
+				// "60 of 3 matching", which is nonsense.
+				shown = PAGE;
+				paint();
+			}, 150);
+		});
+		moreBtn?.addEventListener("click", () => {
+			shown += PAGE;
+			paint();
+		});
+
+		async function load() {
+			try {
+				const [r, u] = await Promise.all([api("/api/admin/roles"), api("/api/admin/users")]);
+				roles = r.data || [];
+				allUsers = u.data || u.users || [];
+				shown = PAGE;
+				paint();
+			} catch (err) {
+				tbody.innerHTML =
+					'<tr><td colspan="3" class="text-sm text-error">' +
+					esc(err?.message || "Could not load users") + "</td></tr>";
+			}
+		}
+
+		tbody.addEventListener("change", async (event) => {
+			const sel = event.target.closest("[data-um-role]");
+			if (!sel) return;
+			const email = sel.getAttribute("data-um-role");
+			sel.disabled = true;
+			try {
+				const res = await api("/api/admin/users/role", {
+					method: "PUT",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ email, role_name: sel.value }),
+				});
+				// The warning is the part an admin needs: a demotion does not take hold
+				// until the person's session expires, so "done" on its own would be a lie.
+				const warn = res?.data?.warning;
+				showAlert("ok", res.message + (warn ? " " + warn : ""));
+				load();
+			} catch (err) {
+				showAlert("err", err?.message || "Could not change the role");
+				load();   // put the dropdown back to what is actually stored
+			} finally {
+				sel.disabled = false;
+			}
+		});
+
+		tbody.addEventListener("click", async (event) => {
+			const btn = event.target.closest("[data-um-active]");
+			if (!btn) return;
+			const email = btn.getAttribute("data-um-active");
+			const makeActive = btn.getAttribute("data-active") === "0";
+			btn.disabled = true;
+			try {
+				const res = await api("/api/admin/users/active", {
+					method: "PUT",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ email, is_active: makeActive }),
+				});
+				showAlert("ok", res.message);
+				load();
+			} catch (err) {
+				showAlert("err", err?.message || "Could not update the account");
+			} finally {
+				btn.disabled = false;
+			}
+		});
+
 		load();
 	})();
 </script>

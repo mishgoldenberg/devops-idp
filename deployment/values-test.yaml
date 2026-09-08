@@ -1,0 +1,68 @@
+# Test overlay. Applied on top of values.yaml for builds of `dev`.
+#
+# Every name carries `-test`, so this is a completely separate stack living beside
+# production in the same namespace: `backend-test`, `frontend-test`, `postgres-test`,
+# `postgres-service-test`, `all-secrets-test`.
+#
+# Its Postgres and Redis are its own — a separate StatefulSet and a separate volume.
+# That is the whole point: a dev-branch migration, a wiped table or a load test can
+# never reach production data. The cost is one extra PVC.
+
+global:
+  nameSuffix: "-test"
+
+  # One of each. Test does not need to survive a node drain, and halving the pod
+  # count keeps the second environment cheap. Note the PodDisruptionBudgets are
+  # skipped automatically at one replica — a budget there would block node drains
+  # rather than protect anything.
+  replicaCount: 1
+
+  revisionHistoryLimit: 2
+
+  # Points at the -test datastores. Getting this wrong is the one mistake in this
+  # file that would be silent AND destructive: test would run happily against
+  # production's database and nothing on screen would say so.
+  endpoints:
+    postgresHost: "postgres-service-test"
+    postgresPort: 5432
+    postgresUser: "devops"
+    postgresDB: "devops_control_center"
+    databaseUrl: "postgresql://devops:$(POSTGRES_PASSWORD)@postgres-service-test:5432/devops_control_center"
+    redisHost: "redis-service-test"
+    redisPort: 6379
+
+backend:
+  # No autoscaling in test: it competes for the same node CPU as production, and a
+  # runaway test build should not be able to take capacity away from real users.
+  autoscaling:
+    enabled: false
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+frontend:
+  secretName: all-secrets-test
+  autoscaling:
+    enabled: false
+
+infrastructure:
+  postgres:
+    secretName: "all-secrets-test"
+    serviceName: "postgres-service-test"
+    storageSize: 5Gi
+  redis:
+    serviceName: "redis-service-test"
+
+postgres:
+  secretName: "all-secrets-test"
+  serviceName: "postgres-service-test"
+  postgresUser: "devops"
+  postgresDB: "devops_control_center"
+  storageSize: 5Gi
+
+redis:
+  serviceName: "redis-service-test"

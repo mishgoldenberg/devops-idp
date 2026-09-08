@@ -1,0 +1,343 @@
+{#
+	Command palette (Ctrl / ⌘ + K).
+
+	Ctrl+K used to focus the header search box. That is a search shortcut, not a
+	palette: it can only find *content*, so "go to Approvals", "switch the theme" or
+	"replay the tour" were still things you had to know where to click.
+
+	This is the pattern from every tool these users already live in — one keystroke,
+	type a few letters, hit Enter. Commands are matched instantly from a local list;
+	content results come from /api/search and stream in underneath, so the palette is
+	useful on the first keystroke and better on the third.
+#}
+<style>
+	.cmdk-backdrop {
+		position: fixed;
+		inset: 0;
+		z-index: 10000;
+		/* A fixed dark scrim, not a theme variable: --nc is 'neutral content', which is
+		   LIGHT in the portal's light themes, so using it washed the backdrop out to
+		   almost nothing and the palette floated on a barely-dimmed page. The tour uses
+		   the same fixed value, so the two overlays dim identically. */
+		background-color: rgba(15, 23, 42, 0.5);
+		display: flex;
+		align-items: flex-start;
+		justify-content: center;
+		padding-top: 12vh;
+	}
+
+	.cmdk-panel {
+		width: 40rem;
+		max-width: calc(100vw - 2rem);
+		max-height: 70vh;
+		display: flex;
+		flex-direction: column;
+		background-color: hsl(var(--b1));
+		color: hsl(var(--bc));
+		border: 1px solid hsl(var(--b3));
+		border-radius: 0.85rem;
+		box-shadow: 0 24px 60px rgba(15, 23, 42, 0.35);
+		overflow: hidden;
+	}
+
+	.cmdk-input {
+		width: 100%;
+		border: 0;
+		outline: 0;
+		background: transparent;
+		color: inherit;
+		font-size: 1rem;
+		padding: 1rem 1.1rem;
+		border-bottom: 1px solid hsl(var(--b3));
+	}
+
+	.cmdk-list {
+		overflow-y: auto;
+		padding: 0.4rem;
+	}
+
+	.cmdk-group {
+		font-size: 0.625rem;
+		text-transform: uppercase;
+		letter-spacing: 0.09em;
+		color: hsl(var(--bc) / 0.45);
+		padding: 0.5rem 0.6rem 0.25rem;
+	}
+
+	.cmdk-item {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		width: 100%;
+		text-align: left;
+		padding: 0.5rem 0.6rem;
+		border-radius: 0.5rem;
+		font-size: 0.875rem;
+		cursor: pointer;
+		border: 0;
+		background: transparent;
+		color: inherit;
+	}
+
+	.cmdk-item[aria-selected="true"] {
+		background-color: hsl(var(--p) / 0.12);
+	}
+
+	.cmdk-sub {
+		margin-left: auto;
+		font-size: 0.6875rem;
+		color: hsl(var(--bc) / 0.45);
+		flex: none;
+	}
+
+	.cmdk-empty {
+		padding: 1.5rem 1rem;
+		text-align: center;
+		font-size: 0.8125rem;
+		color: hsl(var(--bc) / 0.55);
+	}
+</style>
+
+<script>
+	(function () {
+		if (window.__cmdk) return;
+		window.__cmdk = true;
+
+		// Pages and actions. `run` is what Enter does; anything with `href` navigates.
+		// Admin-only entries are filtered at build time from the rendered sidebar, so
+		// the palette can never offer a page the user would be bounced from.
+		const COMMANDS = [
+			{ label: "Go to Home", href: "/ui/", group: "Navigate" },
+			{ label: "Go to Search", href: "/ui/search", group: "Navigate" },
+			{ label: "Go to Requests", href: "/ui/automations", group: "Navigate" },
+			{ label: "Go to My Requests", href: "/ui/my-requests", group: "Navigate" },
+			{ label: "Go to Support", href: "/ui/support", group: "Navigate" },
+			{ label: "Go to Suggestions", href: "/ui/suggestions", group: "Navigate" },
+			{ label: "Go to Connections", href: "/ui/connections", group: "Navigate" },
+			{ label: "Go to Profile", href: "/ui/profile", group: "Navigate" },
+			{ label: "Go to Settings", href: "/ui/settings", group: "Navigate" },
+			{
+				label: "Switch light / dark theme",
+				group: "Actions",
+				sub: "t",
+				run: () => document.querySelector("[data-theme-toggle]")?.click(),
+			},
+			{
+				label: "Refresh every widget",
+				group: "Actions",
+				sub: "r",
+				run: () => document.getElementById("refresh-btn")?.click(),
+			},
+			{
+				label: "Collapse or expand the sidebar",
+				group: "Actions",
+				sub: "[",
+				run: () => document.querySelector("[data-sidebar-toggle]")?.click(),
+			},
+			{
+				label: "Replay the guided tour",
+				group: "Actions",
+				run: () => window.portalTour?.start(),
+			},
+			{
+				label: "Show keyboard shortcuts",
+				group: "Actions",
+				sub: "?",
+				run: () =>
+					document.dispatchEvent(new KeyboardEvent("keydown", { key: "?", bubbles: true })),
+			},
+		];
+
+		let backdrop = null;
+		let input = null;
+		let listEl = null;
+		let items = [];
+		let cursor = 0;
+		let searchTimer = null;
+		let searchToken = 0;
+
+		function esc(s) {
+			return String(s ?? "").replace(/[&<>"']/g, (c) => ({
+				"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+			}[c]));
+		}
+
+		function availableCommands() {
+			// Only offer pages this user actually has, read off the rendered sidebar —
+			// one source of truth for navigation rather than a second list here that
+			// would drift the moment a page is added or made admin-only.
+			const hrefs = new Set(
+				Array.from(document.querySelectorAll("[data-portal-sidebar] a[href]")).map(
+					(a) => a.getAttribute("href")
+				)
+			);
+			return COMMANDS.filter((c) => !c.href || hrefs.has(c.href) || c.href === "/ui/profile" || c.href === "/ui/settings");
+		}
+
+		function score(text, needle) {
+			const t = text.toLowerCase();
+			const i = t.indexOf(needle);
+			if (i === 0) return 3;
+			if (i > 0) return 2;
+			// Subsequence match, so "gtc" finds "Go to Connections".
+			let k = 0;
+			for (const ch of t) if (ch === needle[k]) k++;
+			return k === needle.length ? 1 : 0;
+		}
+
+		function render() {
+			if (!items.length) {
+				listEl.innerHTML =
+					'<p class="cmdk-empty">Nothing matches. Try fewer letters, or press Enter to search everything.</p>';
+				return;
+			}
+			let html = "";
+			let group = null;
+			items.forEach((it, i) => {
+				if (it.group !== group) {
+					group = it.group;
+					html += '<div class="cmdk-group">' + esc(group) + "</div>";
+				}
+				html +=
+					'<button type="button" class="cmdk-item" role="option" data-i="' + i + '"' +
+					(i === cursor ? ' aria-selected="true"' : "") + ">" +
+					"<span>" + esc(it.label) + "</span>" +
+					(it.sub ? '<span class="cmdk-sub">' + esc(it.sub) + "</span>" : "") +
+					"</button>";
+			});
+			listEl.innerHTML = html;
+			listEl.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+		}
+
+		function compute(query) {
+			const q = query.trim().toLowerCase();
+			const cmds = availableCommands();
+			if (!q) {
+				items = cmds.slice(0, 12);
+			} else {
+				items = cmds
+					.map((c) => ({ c, s: score(c.label, q) }))
+					.filter((x) => x.s > 0)
+					.sort((a, b) => b.s - a.s)
+					.map((x) => x.c);
+			}
+			cursor = 0;
+			render();
+		}
+
+		async function searchContent(query) {
+			const q = query.trim();
+			if (q.length < 2) return;
+			const mine = ++searchToken;
+			try {
+				const res = await (window.portalFetch || fetch)(
+					"/api/search?q=" + encodeURIComponent(q),
+					{ credentials: "same-origin" },
+					12000
+				);
+				if (!res.ok || mine !== searchToken) return;
+				const json = await res.json();
+				const groups = json?.data?.groups || json?.data || [];
+				const found = [];
+				(Array.isArray(groups) ? groups : []).forEach((g) => {
+					(g.items || g.results || []).slice(0, 4).forEach((r) => {
+						found.push({
+							label: r.title || r.name || "(untitled)",
+							sub: g.label || g.source || "",
+							group: "Results",
+							href: r.url || r.link,
+						});
+					});
+				});
+				if (!found.length || mine !== searchToken) return;
+				// Commands stay on top: an exact command match must never be pushed
+				// below a fuzzy content hit.
+				items = items.filter((i) => i.group !== "Results").concat(found);
+				render();
+			} catch (_) {
+				/* the palette still works as a command list without search */
+			}
+		}
+
+		function activate(item) {
+			close();
+			if (!item) return;
+			if (item.run) item.run();
+			else if (item.href) {
+				if (/^https?:/i.test(item.href)) window.open(item.href, "_blank", "noopener");
+				else window.location.href = item.href;
+			}
+		}
+
+		function close() {
+			backdrop?.remove();
+			backdrop = input = listEl = null;
+			searchToken++;
+		}
+
+		function open() {
+			if (backdrop) return;
+			backdrop = document.createElement("div");
+			backdrop.className = "cmdk-backdrop";
+			backdrop.innerHTML =
+				'<div class="cmdk-panel" role="dialog" aria-label="Command palette">' +
+				'<input class="cmdk-input" type="text" autocomplete="off" spellcheck="false" ' +
+				'placeholder="Type a command, a page, or something to find…" aria-label="Command palette" />' +
+				'<div class="cmdk-list" role="listbox"></div>' +
+				"</div>";
+			document.body.appendChild(backdrop);
+			input = backdrop.querySelector(".cmdk-input");
+			listEl = backdrop.querySelector(".cmdk-list");
+
+			backdrop.addEventListener("mousedown", (e) => {
+				if (e.target === backdrop) close();
+			});
+			listEl.addEventListener("click", (e) => {
+				const btn = e.target.closest("[data-i]");
+				if (btn) activate(items[Number(btn.dataset.i)]);
+			});
+			input.addEventListener("input", () => {
+				compute(input.value);
+				clearTimeout(searchTimer);
+				const q = input.value;
+				searchTimer = setTimeout(() => searchContent(q), 220);
+			});
+			input.addEventListener("keydown", (e) => {
+				if (e.key === "ArrowDown") {
+					e.preventDefault();
+					cursor = Math.min(items.length - 1, cursor + 1);
+					render();
+				} else if (e.key === "ArrowUp") {
+					e.preventDefault();
+					cursor = Math.max(0, cursor - 1);
+					render();
+				} else if (e.key === "Enter") {
+					e.preventDefault();
+					if (items[cursor]) activate(items[cursor]);
+					else if (input.value.trim()) {
+						close();
+						window.location.href = "/ui/search?q=" + encodeURIComponent(input.value.trim());
+					}
+				} else if (e.key === "Escape") {
+					e.preventDefault();
+					close();
+				}
+			});
+
+			compute("");
+			input.focus();
+		}
+
+		window.portalPalette = { open: open, close: close };
+
+		// Ctrl/Cmd+K anywhere, including from inside another input — that is the whole
+		// point of a palette, and is why it does not use the "/" rules.
+		document.addEventListener("keydown", (e) => {
+			if ((e.ctrlKey || e.metaKey) && window.portalKey(e, "k", "KeyK")) {
+				e.preventDefault();
+				e.stopPropagation();
+				backdrop ? close() : open();
+			}
+		}, true);
+	})();
+</script>

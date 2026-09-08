@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: infra-config
+  name: infra-config{{ .Values.global.nameSuffix }}
 data:
   POSTGRES_HOST: {{ .Values.global.endpoints.postgresHost | quote }}
   POSTGRES_PORT: {{ .Values.global.endpoints.postgresPort | quote }}
@@ -11,6 +11,15 @@ data:
   REDIS_HOST: {{ .Values.global.endpoints.redisHost | quote }}
   REDIS_PORT: {{ .Values.global.endpoints.redisPort | quote }}
   INTEGRATION_TLS_VERIFY: {{ .Values.global.integrationTlsVerify | default "true" | quote }}
+  # Artifactory reports its filestore as whichever mount its data dir sits on, which
+  # here is a partition far smaller than the real disk — so the storage widget cannot
+  # draw an honest usage bar from it. Set this to the true capacity (e.g. "6 TB") to
+  # give the bar a total. Empty means "capacity unknown" and the widget says so.
+  #
+  # This is a RUNTIME value: it has to reach the backend container. Defining it only
+  # in the Azure DevOps variable group makes it available to the pipeline, not to the
+  # running pod — which is why setting it there alone had no effect.
+  ARTIFACTORY_DISK_TOTAL: {{ .Values.global.artifactoryDiskTotal | default "" | quote }}
   # Trust the OpenShift router's X-Forwarded-Proto so request.url.scheme is
   # https — required for the SSO redirect_uri to match the registered value.
   FORWARDED_ALLOW_IPS: "*"

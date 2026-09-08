@@ -1,3 +1,28 @@
+<style>
+	/* "More info" disclosure inside the request detail. Inputs and the raw result
+	   are reference material, not what you open a request to see — so they live
+	   behind this, and Progress + Request info are what greets you. */
+	.req-more {
+		border-top: 1px solid hsl(var(--bc) / 0.12);
+		padding-top: 0.75rem;
+	}
+	.req-more-summary {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+		cursor: pointer;
+		list-style: none;
+		font-size: 0.8rem;
+		font-weight: 600;
+		color: hsl(var(--bc) / 0.7);
+		user-select: none;
+	}
+	.req-more-summary::-webkit-details-marker { display: none; }
+	.req-more-summary:hover { color: hsl(var(--p)); }
+	.req-more-chevron { transition: transform 200ms ease; }
+	.req-more[open] .req-more-chevron { transform: rotate(180deg); }
+</style>
+
 <div class="page-shell">
 	<header class="page-header">
 		<div>
@@ -5,15 +30,28 @@
 			<p class="page-subtitle">Track the status of your self-service requests</p>
 		</div>
 		<div class="flex items-center gap-2">
-			<a href="/ui/automations" class="btn btn-primary btn-sm">New Request</a>
-			<button id="my-requests-refresh" class="btn btn-outline btn-sm" title="Refresh">
+			<button id="my-requests-refresh" class="btn btn-outline btn-primary btn-sm" title="Refresh">
 				<svg viewBox="0 0 24 24" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"></path></svg>
 				Refresh
 			</button>
+			<a href="/ui/automations" class="btn btn-primary btn-sm">New Request</a>
 		</div>
 	</header>
 
 	<div class="page-content">
+		{#
+			Cleaners this person owns.
+
+			They live HERE and not on the Requests page, which is a catalogue of things you
+			can ask for. A cleaner you already have is not something to ask for -- it is one
+			of your requests, and this is where you come to see what became of them. It also
+			carries the only ways to change or remove one.
+		#}
+		<section id="cleaners-section" class="hidden" style="margin-bottom:2rem">
+			<h2 class="section-title mb-3">Your Artifactory cleaners</h2>
+			<div id="cleaners-list" class="grid gap-3"></div>
+		</section>
+
 		<div class="flex-1 min-h-0" data-my-root>
 			<div class="py-6 space-y-3" data-my-status>
 				<div class="sk-line h-5 w-1/3"></div>
@@ -28,12 +66,13 @@
 </div>
 
 <dialog id="my-requests-modal" class="modal" data-is-admin="{% if is_admin %}1{% else %}0{% endif %}">
-	<div class="modal-box max-w-2xl">
+	<div class="modal-box max-w-2xl" style="display:flex;flex-direction:column;max-height:calc(100vh - 5em);overflow:hidden">
 		<form method="dialog" class="absolute right-2 top-2">
 			<button class="btn btn-sm btn-circle btn-ghost" aria-label="Close">&#10005;</button>
 		</form>
 		<h3 class="font-bold text-lg" data-my-detail-title>Request</h3>
-		<div class="mt-4 space-y-4" data-my-detail-body></div>
+		<div class="mt-4 space-y-4" data-my-detail-body
+			 style="flex:1 1 auto;min-height:0;overflow-y:auto"></div>
 		<!--
 			Admin-only recovery actions for stuck requests. Hidden by default
 			and only surfaced when (1) the viewer is admin and (2) the active
@@ -42,7 +81,13 @@
 			the existing My Requests layout and avoids accidental clicks.
 		-->
 		<div class="modal-action justify-between flex-wrap gap-2">
-			<div class="flex items-center gap-2" data-my-admin-actions hidden>
+			<!--
+				display:none, not the `hidden` attribute. `hidden` is a UA-stylesheet
+				rule and any class that sets `display` beats it, so this block sat
+				open to every user on every request: an admin control offered to
+				somebody the API would refuse.
+			-->
+			<div class="flex items-center gap-2" data-my-admin-actions style="display:none">
 				<button
 					type="button"
 					class="btn btn-outline btn-warning btn-sm"
@@ -131,7 +176,7 @@
 				<li class="section-card hover:shadow-lg transition-shadow cursor-pointer" data-request-id="${r.id}">
 					<div class="card-body p-5 gap-3">
 						<div class="flex items-start justify-between gap-3">
-							<h3 class="card-title text-base leading-snug">${escapeHtml(r.request_title || r.request_type || "Request")}</h3>
+							<h3 class="card-title text-base leading-snug" dir="auto">${escapeHtml(r.request_title || r.request_type || "Request")}</h3>
 							<span class="badge ${badge} badge-sm whitespace-nowrap">${statusStr.replace("_", " ")}</span>
 						</div>
 						<div class="text-xs text-base-content/60 flex flex-col gap-1">
@@ -254,16 +299,174 @@
 				</ol>`;
 		}
 
+		// The approver's display name, with their email on hover. A name is who
+		// approved it; the email is the detail you only want when you reach for it.
+		function approverCell(r) {
+			const name = r.approver_name || r.approver_username || r.approver_email || "";
+			const email = r.approver_email || "";
+			if (email && email !== name) {
+				return `<span style="cursor:help;text-decoration:underline dotted;text-underline-offset:2px;" title="${escapeHtml(email)}">${escapeHtml(name)}</span>`;
+			}
+			return escapeHtml(name);
+		}
+
+		// The project can be created and the chosen admin still not be granted — the
+		// grants are best-effort so a refused one never destroys a working project. That
+		// used to be invisible: the request said COMPLETED and nobody found out for weeks
+		// that the requested user had no access. If the backend reports grants_ok=false,
+		// say so in words, above the raw result rather than buried inside it.
+		function renderGrantsWarning(result) {
+			if (!result || typeof result !== "object" || result.grants_ok !== false) return "";
+			const lines = (result.results || [])
+				.filter((r) => r && r.grants)
+				.map((r) => {
+					const g = r.grants;
+					const bits = [];
+					if (g.project_admin && g.project_admin !== "granted")
+						bits.push(`project admin: ${g.project_admin}`);
+					if (g.process_admin && g.process_admin !== "granted")
+						bits.push(`process admin: ${g.process_admin}`);
+					if (!bits.length) return "";
+					return `<li>${escapeHtml(r.collection || "")} — ${escapeHtml(bits.join(", "))}</li>`;
+				})
+				.filter(Boolean)
+				.join("");
+			return `
+				<div role="alert" class="alert alert-warning alert-soft text-sm mb-3">
+					<div>
+						<p class="font-semibold">The project was created, but not every permission was granted.</p>
+						<p class="mt-1">The chosen user may need to be added by hand. Details are in the result below.</p>
+						${lines ? `<ul class="mt-2" style="list-style: disc; padding-left: 1.25rem">${lines}</ul>` : ""}
+					</div>
+				</div>`;
+		}
+
+		// The whole point of the request, one click away.
+		//
+		// The project URL was already in the result — but only as one line of a JSON
+		// blob, behind "More info", which is not somewhere anyone looks for a link to
+		// the thing they just asked for.
+		function renderProjectLink(result) {
+			if (!result || typeof result !== "object") return "";
+			const url =
+				result.project_url ||
+				((result.results || []).find((r) => r && r.project_url) || {}).project_url ||
+				"";
+			// Safe Mode hands back marker URLs; those are not openable.
+			if (!url || !/^https?:/i.test(url)) return "";
+			return `
+				<a class="btn btn-primary btn-sm mt-1" href="${escapeHtml(url)}"
+				   target="_blank" rel="noopener noreferrer">
+					Go to project
+				</a>`;
+		}
+
+		// What became of an Artifactory cleaner, which is a different question from
+		// what became of the request that asked for it.
+		//
+		// The request completes the moment its pull request is open, and then a
+		// reviewer merges it — or abandons it, which is what happened the first time
+		// one was reviewed. "Completed" was true about the request and wrong about the
+		// cleaner, and this is the line that tells them apart. The state comes from
+		// the backend so this page and the Requests page cannot disagree.
+		const OUTCOME_ALERT = { ok: "alert-success", error: "alert-error", pending: "alert-info" };
+
+		// No link to the pull request, for anyone — including an admin looking at
+		// their own request. Reviewing the change is something you do on the
+		// Approvals screen, in the role of approver; here you are the person who
+		// asked, and what you need is whether the thing you asked for exists. A
+		// requester offered a link into Azure DevOps just asks why it is there.
+		function renderCleanerOutcome(r) {
+			const outcome = ((r || {}).cleaner || {}).outcome;
+			if (!outcome || !outcome.label) return "";
+			return `
+				<div role="alert" class="alert ${OUTCOME_ALERT[outcome.tone] || "alert-info"} alert-soft text-sm mt-3">
+					<div>
+						<p class="font-semibold">${escapeHtml(outcome.label)}</p>
+						${outcome.detail ? `<p class="mt-1">${escapeHtml(outcome.detail)}</p>` : ""}
+					</div>
+				</div>`;
+		}
+
+		// Whether a ServiceNow item was actually raised.
+		//
+		// It is ordered after the work is done and is not allowed to fail it, so
+		// "the team has a ticket" and "the team has no ticket" both look like a
+		// completed request. Only one of them means somebody is going to act on it.
+		function renderServiceNow(result) {
+			if (!result || typeof result !== "object") return "";
+			if (result.servicenow_number) {
+				return `
+					<dt class="text-base-content/60">ServiceNow</dt>
+					<dd>${escapeHtml(result.servicenow_number)}</dd>`;
+			}
+			if (result.servicenow_error) {
+				return `
+					<dt class="text-base-content/60">ServiceNow</dt>
+					<dd class="text-warning">No item was raised — ${escapeHtml(result.servicenow_error)}</dd>`;
+			}
+			return "";
+		}
+
+		// Raw payload keys are field names, not English, and two of them are whole
+		// JSON objects. An approver was reading "increase_by_bytes 10737418240" and a
+		// brace-delimited blob of somebody's phone number. Known keys get their label,
+		// machine-only keys are dropped, and the requester's details are flattened
+		// into rows instead of printed as an object.
+		//
+		// dir="auto" on every value: this portal is used in Hebrew, and a right-to-left
+		// answer rendered left-to-right puts the punctuation on the wrong end and
+		// reorders anything mixed with Latin text or digits. The browser picks the
+		// direction from the first strong character, which is exactly the rule wanted
+		// here — per value, not per page.
+		const PAYLOAD_LABELS = {
+			project_key: "Project", increase_by: "Add", justification: "Why",
+			cleaner_name: "Cleaner", repository: "Repository",
+			older_than_days: "Older than", keep_last: "Always keep newest",
+			name_pattern: "Name matches", path_pattern: "Path matches",
+			file_types: "File types", schedule: "Schedule",
+			project_name: "Project name", collection: "Collection",
+			process_type: "Process", description: "Description",
+			project_admin: "Project administrator",
+			full_name: "Full name", phone_number: "Phone", branch: "Branch",
+			section: "Section", team: "Team", role: "Role",
+			summary: "What it does", way_to_enlarge: "Kind of request",
+		};
+		// Machine bookkeeping: the same fact as a row above it, in bytes, or a
+		// snapshot the live panel already shows better.
+		const PAYLOAD_HIDDEN = new Set([
+			"increase_by_bytes", "snapshot_at_request", "cleaner_id", "slug",
+			"requester_details", "attachments",
+		]);
+
+		function payloadRow(key, value) {
+			const label = PAYLOAD_LABELS[key] || key.replace(/_/g, " ");
+			const text = (value === null || value === undefined) ? ""
+				: (typeof value === "object" ? JSON.stringify(value) : String(value));
+			if (!text.trim()) return "";
+			// The value is wrapped in a shrink-to-fit box rather than carrying dir on
+			// the cell itself. A right-to-left value in a full-width cell aligns to the
+			// far right and ends up an inch away from the label that names it; inside a
+			// box the width of its own text, it reads right-to-left AND stays next to
+			// its label.
+			return `
+				<dt class="text-base-content/60">${escapeHtml(label)}</dt>
+				<dd class="break-words"><span dir="auto" style="display:inline-block;max-width:100%">${escapeHtml(text)}</span></dd>`;
+		}
+
 		function renderPayloadFields(payload) {
 			if (!payload || typeof payload !== "object") return `<p class="text-sm text-base-content/60">No inputs.</p>`;
-			const entries = Object.entries(payload);
-			if (!entries.length) return `<p class="text-sm text-base-content/60">No inputs.</p>`;
+			const details = payload.requester_details && typeof payload.requester_details === "object"
+				? payload.requester_details : {};
+			const rows = Object.entries(payload)
+				.filter(([k]) => !PAYLOAD_HIDDEN.has(k))
+				.map(([k, v]) => payloadRow(k, v))
+				.concat(Object.entries(details).map(([k, v]) => payloadRow(k, v)))
+				.filter(Boolean);
+			if (!rows.length) return `<p class="text-sm text-base-content/60">No inputs.</p>`;
 			return `
-				<dl class="grid grid-cols-[auto,1fr] gap-x-4 gap-y-1 text-sm">
-					${entries.map(([k, v]) => `
-						<dt class="text-base-content/60">${escapeHtml(k)}</dt>
-						<dd class="break-words">${escapeHtml(typeof v === "object" ? JSON.stringify(v) : v)}</dd>
-					`).join("")}
+				<dl class="grid gap-x-4 gap-y-1 text-sm" style="grid-template-columns: auto 1fr">
+					${rows.join("")}
 				</dl>`;
 		}
 
@@ -279,7 +482,7 @@
 			// is pointless for COMPLETED/FAILED/REJECTED rows.
 			if (adminActionsEl) {
 				const show = isAdmin && RECOVERABLE.has(statusStr);
-				adminActionsEl.hidden = !show;
+				adminActionsEl.style.display = show ? "flex" : "none";
 			}
 			modalBody.innerHTML = `
 				<section>
@@ -288,16 +491,16 @@
 				</section>
 				<section>
 					<h4 class="text-xs font-semibold uppercase tracking-widest text-base-content/50 mb-2">Request Info</h4>
-					<dl class="grid grid-cols-[auto,1fr] gap-x-4 gap-y-1 text-sm">
+					<dl class="grid gap-x-4 gap-y-1 text-sm" style="grid-template-columns: auto 1fr">
 						<dt class="text-base-content/60">Status</dt>
 						<dd><span class="badge ${badge} badge-sm">${statusStr.replace("_", " ")}</span></dd>
 						<dt class="text-base-content/60">Service type</dt>
 						<dd>${escapeHtml(r.request_type || "")}</dd>
 						<dt class="text-base-content/60">Requested at</dt>
 						<dd>${fmtDate(r.created_at)}</dd>
-						${r.approver_email ? `
+						${(r.approver_name || r.approver_username || r.approver_email) ? `
 							<dt class="text-base-content/60">Approved by</dt>
-							<dd>${escapeHtml(r.approver_email)}</dd>
+							<dd>${approverCell(r)}</dd>
 							<dt class="text-base-content/60">Approved at</dt>
 							<dd>${fmtDate(r.approved_at)}</dd>
 						` : ""}
@@ -305,22 +508,43 @@
 							<dt class="text-base-content/60">Rejection reason</dt>
 							<dd class="text-error">${escapeHtml(r.rejection_reason)}</dd>
 						` : ""}
+						${renderServiceNow(r.execution_result)}
 					</dl>
+					${renderProjectLink(r.execution_result)}
+					${renderCleanerOutcome(r)}
 				</section>
-				<section>
-					<h4 class="text-xs font-semibold uppercase tracking-widest text-base-content/50 mb-2">Inputs</h4>
-					${renderPayloadFields(r.request_payload)}
-				</section>
-				${r.execution_result ? `
-					<section>
-						<h4 class="text-xs font-semibold uppercase tracking-widest text-base-content/50 mb-2">Result</h4>
-						<pre class="text-xs bg-base-200 rounded p-3 overflow-x-auto">${escapeHtml(JSON.stringify(r.execution_result, null, 2))}</pre>
-					</section>` : ""}
+				<details class="req-more">
+					<summary class="req-more-summary">
+						<span>More info</span>
+						<svg class="req-more-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg>
+					</summary>
+					<div class="mt-4 space-y-4">
+						<section>
+							<h4 class="text-xs font-semibold uppercase tracking-widest text-base-content/50 mb-2">Inputs</h4>
+							${renderPayloadFields(r.request_payload)}
+						</section>
+						${r.execution_result ? `
+							<section>
+								<h4 class="text-xs font-semibold uppercase tracking-widest text-base-content/50 mb-2">Result</h4>
+								${renderGrantsWarning(r.execution_result)}
+								${isAdmin
+									? `<pre class="text-xs bg-base-200 rounded p-3 overflow-x-auto">${escapeHtml(JSON.stringify(r.execution_result, null, 2))}</pre>`
+									: renderPayloadFields(r.execution_result)}
+							</section>` : ""}
+					</div>
+				</details>
 			`;
 			modal.showModal();
 		}
 
-		refreshBtn?.addEventListener("click", load);
+		// One button, both lists. The cleaners live in their own block below with
+		// their own fetch, and this used to reload only the requests — so the one
+		// thing on the page whose state is read from Azure DevOps was the one thing
+		// Refresh did not refresh.
+		refreshBtn?.addEventListener("click", () => {
+			load();
+			document.dispatchEvent(new CustomEvent("portal:requests-reload"));
+		});
 
 		// ── Admin recovery handlers ────────────────────────────────────────
 		// Both actions require a confirmation because they're irreversible
@@ -376,5 +600,299 @@
 		deleteBtn?.addEventListener("click", () => runAdminAction("delete"));
 
 		load();
+	})();
+</script>
+
+{#
+	The form renderer, because the cleaner cards below open it. It used to live only
+	on the Requests page; moving the cards here without it left Change and Submit
+	again wired to `window.portalCatalogForm?.open(...)`, where the optional chaining
+	turns "the component is not on this page" into a button that does nothing at all
+	and reports nothing.
+#}
+{% include "partials/components/catalog-form.html" %}
+
+<script>
+	// ── Cleaners this person owns ───────────────────────────────
+	(function () {
+		const section = document.getElementById("cleaners-section");
+		const list = document.getElementById("cleaners-list");
+		if (!section || !list) return;
+
+		let rows = [];
+
+		function esc(v) {
+			return String(v === null || v === undefined ? "" : v)
+				.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+				.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+		}
+
+		// A cleaner's state answers "is this thing running", and there are four
+		// answers, not two. The colour is a dot beside a word rather than a coloured
+		// badge: "Abandoned" and "Running" must not be told apart by hue alone.
+		const TONE = { ok: "--su", pending: "--wa", error: "--er" };
+
+		function stateChip(outcome) {
+			if (!outcome || !outcome.label) return "";
+			const colour = "hsl(var(" + (TONE[outcome.tone] || "--bc") + "))";
+			return '<span class="text-xs" style="display:inline-flex;align-items:center;gap:0.35rem">' +
+				'<span style="width:0.5rem;height:0.5rem;border-radius:9999px;background:' + colour + '"></span>' +
+				esc(outcome.label) + "</span>";
+		}
+
+		// No pull request link on this page, for anybody. Reviewing the change is the
+		// approver's job and it belongs on the Approvals screen. The person who asked
+		// for a cleaner needs to know whether it runs, not where the diff is.
+		function card(row) {
+			const outcome = row.outcome || {};
+			const snow = row.snow_number ? '<span class="text-xs opacity-60">' + esc(row.snow_number) + "</span>" : "";
+			const gone = outcome.status === "ABANDONED" || outcome.status === "FAILED";
+			// Which buttons exist is the SERVER's answer, not this file's. Both sides
+			// used to work it out from the status separately, and they agreed on the
+			// one case that mattered: while a pull request was open, Change was
+			// disabled, Remove was not drawn, and the endpoints would have refused
+			// both — so a cleaner in that state had no action available at all and no
+			// way to say so. Now the endpoints and these buttons read one decision.
+			const can = row.actions || {};
+			const change = can.change
+				? '<button type="button" class="btn btn-outline btn-xs" data-cleaner-edit="' + esc(row.id) + '">' +
+				  (gone ? "Submit again" : "Change") + "</button>"
+				: "";
+			const remove = can.remove
+				? '<button type="button" class="btn btn-ghost btn-xs text-error" data-cleaner-remove="' + esc(row.id) + '">Remove</button>'
+				: "";
+			// The way out of "waiting for review" without leaving the portal. It
+			// abandons the pull request, which is always a legitimate thing to do to
+			// an unreviewed change of your own.
+			const withdraw = can.withdraw
+				? '<button type="button" class="btn btn-ghost btn-xs" data-cleaner-withdraw="' + esc(row.id) + '">Withdraw</button>'
+				: "";
+			const detail = outcome.detail
+				? '<p class="text-xs text-base-content/60">' + esc(outcome.detail) + "</p>"
+				: "";
+			return '<div class="section-card"><div class="card-body p-4 gap-2">' +
+				'<div class="flex items-center gap-3 flex-wrap">' +
+				'<span class="font-semibold" dir="auto">' + esc(row.cleaner_name) + "</span>" +
+				'<span class="text-xs opacity-60">' + esc(row.repository) + "</span>" +
+				stateChip(outcome) +
+				'<span style="margin-left:auto;display:flex;gap:0.5rem;align-items:center">' +
+				snow + change + withdraw + remove +
+				"</span></div>" +
+				'<p class="text-sm text-base-content/70" dir="auto">' + esc(row.summary || "") + "</p>" +
+				detail +
+				clusterBlock(row) +
+				"</div></div>";
+		}
+
+		// The two objects a cleaner owns on the OpenShift cluster.
+		//
+		// Drawn in two quite different weights on purpose. While the cleaner is alive
+		// this is a pair of quiet links — useful for "what is this thing actually
+		// doing", and nothing more. Once the removal has been merged it becomes the
+		// loudest thing on the card, because at that moment every other signal says
+		// the cleaner is gone and the CronJob is still up there deleting artifacts
+		// every night. The portal cannot reach that cluster to check or to fix it, so
+		// the only honest thing it can do is refuse to look finished.
+		function clusterLink(object) {
+			return '<a class="btn btn-outline btn-xs" href="' + esc(object.url) + '" ' +
+				'target="_blank" rel="noopener noreferrer">' +
+				esc(object.kind) + " ↗</a>";
+		}
+
+		function clusterBlock(row) {
+			const cluster = row.cluster || {};
+			const objects = cluster.objects || [];
+			if (!objects.length) return "";
+
+			if (cluster.state !== "PENDING") {
+				// Not while it is still only a pull request, and not before the first
+				// build has finished: until then neither object exists and both links
+				// land on a "not found" page. `applied` is the server's answer to
+				// that, and the only thing that can answer it -- a build reporting
+				// success is the sole evidence this portal ever gets that the objects
+				// were created on a cluster it cannot see.
+				if ((row.outcome || {}).status !== "RUNNING" || !cluster.applied) {
+					return cluster.run_url && cluster.run_state === "failed"
+						? '<p class="text-xs" style="color:hsl(var(--er))">' +
+						  'Nothing is on the cluster yet — ' +
+						  '<a class="link" href="' + esc(cluster.run_url) + '" ' +
+						  'target="_blank" rel="noopener noreferrer">the first run failed</a>.</p>'
+						: "";
+				}
+				return '<p class="text-xs text-base-content/50" ' +
+					'style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap">' +
+					"On the cluster:" +
+					objects.map((o) =>
+						'<a class="link" href="' + esc(o.url) + '" target="_blank" ' +
+						'rel="noopener noreferrer">' + esc(o.name) + "</a>"
+					).join('<span style="opacity:0.4">·</span>') +
+					"</p>";
+			}
+
+			const confirm = (row.actions || {}).clear
+				? '<button type="button" class="btn btn-primary btn-xs" data-cleaner-cleared="' +
+				  esc(row.id) + '">Both are deleted</button>'
+				: "";
+			return '<div style="margin-top:0.25rem;padding:0.6rem 0.75rem;border-radius:0.5rem;' +
+				'border:1px solid hsl(var(--er) / 0.35);background:hsl(var(--er) / 0.07)">' +
+				'<p class="text-xs font-semibold" style="color:hsl(var(--er))">' +
+				"Still on the OpenShift cluster</p>" +
+				'<p class="text-xs text-base-content/70" style="margin-top:0.2rem">' +
+				"Delete both of these, then confirm. Until then this cleaner keeps " +
+				"running on its schedule.</p>" +
+				'<div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-top:0.5rem;align-items:center">' +
+				objects.map(clusterLink).join("") + confirm +
+				"</div>" +
+				(cluster.command
+					? '<p class="text-xs" style="margin-top:0.5rem;opacity:0.7">' +
+					  '<code style="font-size:0.7rem;word-break:break-all" dir="ltr">' +
+					  esc(cluster.command) + "</code></p>"
+					: "") +
+				"</div>";
+		}
+
+		async function loadCleaners() {
+			try {
+				const res = await fetch("/api/catalog/cleaners", { credentials: "same-origin" });
+				const json = await res.json().catch(() => ({}));
+				rows = json.data || [];
+			} catch (_) {
+				rows = [];
+			}
+			// Hidden entirely when there are none rather than an empty shell: an account
+			// with no cleaners has nothing to say here.
+			section.classList.toggle("hidden", rows.length === 0);
+			list.innerHTML = rows.map(card).join("");
+		}
+
+		document.addEventListener("click", (event) => {
+			const button = event.target.closest("[data-cleaner-edit]");
+			if (!button) return;
+			const row = rows.filter((r) => String(r.id) === button.getAttribute("data-cleaner-edit"))[0];
+			if (!row) return;
+			// The same form, prefilled from the record. The name is fixed while changing
+			// one: it names the folder the files live in, so a rename would open a pull
+			// request that adds a SECOND cleaner and leaves this one running. Whether
+			// this becomes a change to a merged cleaner or a fresh submission of an
+			// abandoned one is decided on the server, never from this label.
+			const rules = row.rules || {};
+			const again = (row.outcome || {}).status === "ABANDONED" || (row.outcome || {}).status === "FAILED";
+			window.portalCatalogForm?.open("artifactory_cleaner", {
+				title: (again ? "Submit again: " : "Change cleaner: ") + row.cleaner_name,
+				submitLabel: again ? "Submit it again" : "Request the change",
+				submitUrl: "/api/catalog/cleaners/" + row.id + "/edit",
+				values: {
+					cleaner_name: row.cleaner_name,
+					repository: row.repository,
+					older_than_days: rules.older_than_days,
+					keep_last: rules.keep_last,
+					name_pattern: rules.name_pattern,
+					path_pattern: rules.path_pattern,
+					file_types: (rules.file_types || []).join(", "),
+					schedule: rules.schedule,
+				},
+			});
+		});
+
+		// Removing. What actually happens depends on whether anything was ever
+		// applied, and the server decides that -- this only has to say which of the two
+		// it will be before asking, because one of them opens a pull request against a
+		// shared repository and the other quietly forgets a row.
+		document.addEventListener("click", async (event) => {
+			const button = event.target.closest("[data-cleaner-remove]");
+			if (!button) return;
+			const row = rows.filter((r) => String(r.id) === button.getAttribute("data-cleaner-remove"))[0];
+			if (!row) return;
+			const running = (row.outcome || {}).status === "RUNNING";
+			const question = running
+				? "Remove " + row.cleaner_name + "?\n\nIt is running, so this opens a pull request that deletes its files. It keeps deleting artifacts on schedule until that is merged."
+				: "Remove " + row.cleaner_name + "?\n\nIt was never applied, so nothing changes in Artifactory or in the repository - the portal just forgets it.";
+			if (!window.confirm(question)) return;
+			button.disabled = true;
+			try {
+				const res = await fetch("/api/catalog/cleaners/" + row.id + "/remove", {
+					method: "POST", credentials: "same-origin",
+				});
+				const json = await res.json().catch(() => ({}));
+				if (!res.ok) throw new Error(json.detail || "That did not work.");
+				window.alert(
+					json.kind === "deleted"
+						? (json.data && json.data.message) || "Removed."
+						: "A request to remove it has been submitted for approval."
+				);
+				loadCleaners();
+			} catch (err) {
+				window.alert(err.message || "That did not work.");
+				button.disabled = false;
+			}
+		});
+
+		// Withdrawing. The state it lands in depends on what the open pull request was
+		// FOR: withdrawing a change means nothing was applied, withdrawing a removal
+		// means the cleaner carries on running. The server decides that; this only has
+		// to ask the right question first.
+		document.addEventListener("click", async (event) => {
+			const button = event.target.closest("[data-cleaner-withdraw]");
+			if (!button) return;
+			const row = rows.filter((r) => String(r.id) === button.getAttribute("data-cleaner-withdraw"))[0];
+			if (!row) return;
+			if (!window.confirm(
+				"Withdraw the open pull request for " + row.cleaner_name + "?\n\n" +
+				"It is abandoned in Azure DevOps and nothing from it is applied. " +
+				"You can change it and submit it again afterwards."
+			)) return;
+			button.disabled = true;
+			try {
+				const res = await fetch("/api/catalog/cleaners/" + row.id + "/withdraw", {
+					method: "POST", credentials: "same-origin",
+				});
+				const json = await res.json().catch(() => ({}));
+				if (!res.ok) throw new Error(json.detail || "That did not work.");
+				window.alert((json.data && json.data.message) || "Withdrawn.");
+				loadCleaners();
+			} catch (err) {
+				window.alert(err.message || "That did not work.");
+				button.disabled = false;
+			}
+		});
+
+		// Confirming that the cluster objects are gone. This is the step that finishes
+		// a removal, and it is an assertion nobody can check — so the wording asks the
+		// question as a check rather than as a formality, and the server records who
+		// answered it.
+		document.addEventListener("click", async (event) => {
+			const button = event.target.closest("[data-cleaner-cleared]");
+			if (!button) return;
+			const row = rows.filter((r) => String(r.id) === button.getAttribute("data-cleaner-cleared"))[0];
+			if (!row) return;
+			const objects = ((row.cluster || {}).objects || []).map((o) => o.name).join("\n  ");
+			if (!window.confirm(
+				"Have both of these been deleted from the cluster?\n\n  " + objects +
+				"\n\nConfirming removes " + row.cleaner_name + " from the portal for good, " +
+				"and your name is recorded against it."
+			)) return;
+			button.disabled = true;
+			try {
+				const res = await fetch("/api/catalog/cleaners/" + row.id + "/cluster-cleared", {
+					method: "POST", credentials: "same-origin",
+				});
+				const json = await res.json().catch(() => ({}));
+				if (!res.ok) throw new Error(json.detail || "That did not work.");
+				window.alert((json.data && json.data.message) || "Confirmed.");
+				loadCleaners();
+			} catch (err) {
+				window.alert(err.message || "That did not work.");
+				button.disabled = false;
+			}
+		});
+
+		// Refresh has to mean this list too. It was wired to the requests loader in
+		// the block above and nothing else, so pressing it re-read the requests and
+		// left every cleaner showing the state it had when the page opened — which is
+		// precisely the list whose state is read from another system and therefore the
+		// one that goes stale.
+		document.addEventListener("portal:requests-reload", loadCleaners);
+
+		loadCleaners();
 	})();
 </script>

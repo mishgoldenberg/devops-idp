@@ -10,23 +10,28 @@ All code lives in `backend/app/api/approvals.py`. Supporting modules:
 - `backend/app/audit.py` — writes rows to `audit_events`
 - `backend/app/api/notifications.py` — creates bell notifications
 - `backend/app/safe_mode.py` — global simulate-only toggle
-- `backend/app/terraform_runner.py` — submits Kubernetes Terraform Jobs
+- `backend/app/terraform_runner.py` — **legacy**. Nothing in the live path calls it;
+  projects are created by direct REST calls in `azure_devops.py`.
 - `backend/app/api/azure_devops.py` — pre-flight (custom process creation) for ADO project requests
 
 ## Supported request types
 
-Defined by the `approval_request_type` enum in `00_schema.sql`:
+The single source of truth is `SUPPORTED_REQUEST_TYPES` in
+`backend/app/api/approvals.py`. A type must be in that set **and** have a branch
+in `_execute_approved_request` to run.
 
 | `request_type`                | What it does                                                   | Executor                             |
 | ----------------------------- | -------------------------------------------------------------- | ------------------------------------ |
-| `ADO_PROJECT_CREATE`          | Creates an Azure DevOps project via Terraform                  | `_execute_ado_project_create(...)`   |
-| `SONAR_PR_SCANNING_ENABLE`    | Enables SonarQube PR scanning for a repository (stub)          | `_execute_approved_request(...)`     |
-| `AI_MODEL_ACCESS`             | Grants access to an internal AI model (stub)                   | `_execute_approved_request(...)`     |
-| `CUSTOM`                      | Catch-all for anything admin-defined (stub)                    | `_execute_approved_request(...)`     |
+| `ADO_PROJECT_CREATE`          | Creates an Azure DevOps project via the REST API (no Terraform) | `_execute_ado_project_create(...)`   |
 
-Today only `ADO_PROJECT_CREATE` has a real executor. The others reach the
-"executed" state with a canned success payload — they're scaffolding for
-future integrations.
+`ADO_PROJECT_CREATE` is the only executable type. The `approval_request_type`
+enum in `00_schema.sql` still carries the historical values
+(`SONAR_PR_SCANNING_ENABLE`, `AI_MODEL_ACCESS`, `CUSTOM`) so old rows remain
+valid, but they are **not** offered in the UI, are refused at submission by
+`create_request`, and fail loudly if somehow approved — a request is never
+reported as done unless a real executor actually did the work. Adding a new
+self-service means adding its type to `SUPPORTED_REQUEST_TYPES` **and** wiring
+its executor branch, never one without the other.
 
 ## Lifecycle
 
@@ -44,13 +49,14 @@ existed; list/filter queries treat it as equivalent to `COMPLETED`.
 ### 1. User submits the request
 
 - Endpoint: `POST /api/approvals/requests`
-- Frontend: `frontend/templates/partials/components/self-service-*.html`
+- Frontend: `frontend/templates/partials/components/automations-container.html`
 - Backend actions:
   1. `_validate_request_payload()` checks:
      - No empty required fields.
      - For `ADO_PROJECT_CREATE`: project name matches
-       `^[A-Za-z0-9][A-Za-z0-9 _\-.]{1,62}$` and admin user looks like an
-       email.
+       `^[A-Za-z0-9][A-Za-z0-9 _\-.]{1,62}$`, and `admin_username` is any
+       non-empty principal (an e-mail *or* an Active-Directory `DOMAIN\user`;
+       the real existence check happens against Azure DevOps).
   2. Duplicate guard: if the same user already has a `PENDING` request with
      the same `request_type` and essentially the same payload, returns a
      409 Conflict. This avoids double-clicks creating two projects.
@@ -89,44 +95,34 @@ existed; list/filter queries treat it as equivalent to `COMPLETED`.
 
 ### 4. Background execution
 
-`_execute_request_worker` runs in a thread. Its first action is the Safe
-Mode short-circuit:
+`_run_execution_safely(request_id)` runs in a daemon thread and never
+raises. `_execute_approved_request` then dispatches. Its checks, in order:
 
-```python
-if safe_mode.is_enabled():
-    # Mark COMPLETED with a simulated-success payload.
-    # Audit event + notification still fire so the user experience matches
-    # a real run. No external systems are contacted.
-    ...
-    return
-```
-
-If Safe Mode is off, the worker:
-
-1. Sets status to `IN_PROGRESS`.
-2. Dispatches on `request_type`:
-   - **`ADO_PROJECT_CREATE`** → `_execute_ado_project_create()`:
-     1. `azure_devops.ensure_custom_ado_process(process_type, project_name)`
-        creates a per-project inherited process on ADO.
-     2. `terraform_runner.submit_terraform_job(payload)` builds a
-        ConfigMap with a small Terraform module, creates a BatchV1 `Job`
-        using the `hashicorp/terraform:1.6` image, and returns a job id.
-        The Job writes its state to GCS
-        (`devops-control-center-tfstate`).
-     3. `audit.log(Action.TERRAFORM_STARTED, …)`.
-     4. Polls the K8s Job status (`_poll_terraform_job`) until it reaches
-        a terminal state. The Job also has
-        `active_deadline_seconds=TERRAFORM_JOB_TIMEOUT_SECONDS` (default
-        1200 s) so a stuck pod can't hang forever — the poller detects
-        `DeadlineExceeded` and surfaces a human-readable error.
-   - **Other types** → stub success.
-3. Writes final status (`COMPLETED` or `FAILED`), updates the
-   `approval_requests` row.
-4. `audit.log(Action.SELF_SERVICE_REQUEST_COMPLETED | …_FAILED, …)`.
-5. `create_notification(...)` to the requester with a
-   click-through link back to the request.
-6. `observability_tracking.record_self_service(...)` and, for ADO,
-   `record_azure_project(...)` increment the observability counters.
+1. **Unsupported type → fail loudly.** If `request_type` is not in
+   `SUPPORTED_REQUEST_TYPES`, the request is marked `FAILED` with a clear
+   message and nothing runs. This is checked *before* Safe Mode, because Safe
+   Mode simulates *available* actions, not absent ones. It only ever fires for
+   a legacy row created before this gate existed — the submission endpoint
+   already refuses unsupported types.
+2. **Safe Mode short-circuit.** If `safe_mode.is_enabled()`, the request is
+   marked `COMPLETED` with a `safe_mode: true` payload. The audit event and
+   notification still fire so the user experience matches a real run, and no
+   external systems are contacted. (`provision_ado_project` re-checks Safe Mode
+   itself, so the guard also holds if the orchestrator is called directly.)
+3. **Dispatch on `request_type`:**
+   - **`ADO_PROJECT_CREATE`** → `_execute_ado_project_create()` →
+     `azure_devops.provision_ado_project()`. This is **REST-only**: for each
+     target collection it ensures a per-project inherited process, creates the
+     project via the ADO REST API under the admin PAT, polls the returned
+     operation to completion, and best-effort-adds the requested administrator
+     to the project's Project Administrators group. There is **no Terraform, no
+     Kubernetes Job and no tfstate** — that legacy path (`terraform_runner.py`)
+     is retained but not used here. A per-collection failure is recorded and
+     does not undo the others; the executor raises only if *every* collection
+     failed, otherwise it returns a `partial` result.
+4. `_finish_completed` / `_finish_failed` write the terminal status, emit the
+   audit event, notify the requester with a click-through link, and (for a
+   completed ADO create) add a "Created project" entry to the activity feed.
 
 ### 5. User sees the outcome
 
@@ -146,7 +142,7 @@ Implemented in `_validate_request_payload()`:
     `^[A-Za-z0-9][A-Za-z0-9 _\-.]{1,62}$` (ADO's own rules, minus a few
     characters we've found to cause friction).
   - `process_type` ∈ `{Scrum, Agile, CMMI, Basic}`.
-  - `admin_username` must look like an email.
+  - `admin_username` must be non-empty (e-mail or `DOMAIN\user`).
 - Any failure raises `HTTPException(400)` with a user-friendly message.
 
 ## Duplicate prevention
@@ -155,15 +151,19 @@ A request is considered a duplicate if **all** of the following are true:
 
 - Same `requester_id`.
 - Same `request_type`.
-- Request is currently `PENDING` or `IN_PROGRESS`.
-- Same "identity key" inside `request_payload` (e.g. same `project_name`
-  for `ADO_PROJECT_CREATE`).
+- Request is currently `PENDING`.
+- Same `request_title` (which encodes the project name for
+  `ADO_PROJECT_CREATE`, e.g. `Azure DevOps project: <name>`).
+
+Submitting a duplicate returns `409 Conflict`.
 
 ## Safe Mode: when to use it
 
 - Dev environments where ADO/ServiceNow are unreachable.
 - Demos where you want the full UX without side effects.
-- Rolling out a new `request_type` before the executor is wired up.
+- Dry-running a supported action (e.g. an admin verifying the flow) without
+  touching Azure DevOps. Note that Safe Mode only simulates *supported* types;
+  an unsupported type fails whether Safe Mode is on or off.
 
 Toggle from **Admin → Platform Managing → Safe Mode**, or set
 `SAFE_MODE=true` in the environment. Either source is fine — the DB flag

@@ -34,7 +34,12 @@
 		const root = document.querySelector("[data-arti-storage-root]");
 		if (!root) return;
 		const bodyEl = root.querySelector("[data-arti-storage-body]");
-		const statusEl = root.querySelector("[data-arti-storage-status]");
+
+		// View state. "" = all repositories, "__projects__" = the project quota view,
+		// anything else = a single repository.
+		const ALL_PROJECTS = "__projects__";
+		let storage = {};
+		let view = "";
 
 		function esc(value) {
 			return String(value == null ? "" : value)
@@ -55,52 +60,139 @@
 		function connectPrompt() {
 			showConnectStatus(`
 				<div class="w-full rounded-xl border border-primary/30 bg-primary/5 p-4 text-left opacity-100 scale-100 translate-y-0 transform transition-all duration-150 ease-out">
-					<h4 class="font-semibold text-sm text-base-content">Connect to Artifactory</h4>
+					<div class="flex items-center gap-1.5">
+						<h4 class="font-semibold text-sm text-base-content flex-1">Connect to Artifactory</h4>
+						<button type="button" class="btn btn-ghost btn-xs btn-circle text-primary" data-pat-help="artifactory" title="How do I create this token?" aria-label="How do I create this token?">?</button>
+					</div>
 					<p class="mt-1 text-xs text-base-content/60">Generate an API Key or Access Token from your profile</p>
 					<input data-arti-storage-token type="password" class="input input-bordered input-sm mt-3 w-full" placeholder="Paste API Key or Access Token" />
 					<div class="mt-3 flex gap-2">
-						<button type="button" class="btn btn-primary btn-xs" data-arti-storage-save-token>Save</button>
-						<button type="button" class="btn btn-ghost btn-xs" data-arti-storage-cancel-token>Cancel</button>
+						<button type="button" class="btn btn-primary btn-xs rounded-full px-4" data-arti-storage-save-token>Save</button>
+						<button type="button" class="btn btn-ghost btn-xs rounded-full px-4" data-arti-storage-cancel-token>Cancel</button>
 					</div>
 				</div>
 			`);
 		}
 
-		function render(storage) {
-			const repos = Array.isArray(storage.repositories) ? storage.repositories : [];
-			bodyEl.innerHTML = `
+		// ── Headline ────────────────────────────────────────────────────────────
+		// The figure people actually want is "how much space is Artifactory using",
+		// so THAT is the headline — a bare percentage read as a random number with no
+		// context. The percentage is still shown, but underneath and only when the
+		// instance reports a total to be a percentage OF.
+		function headline() {
+			if (view && view !== ALL_PROJECTS) {
+				const repo = (storage.repositories || []).find((r) => r.name === view);
+				return `
+					<div class="flex flex-col items-center gap-1.5">
+						<span class="text-4xl font-bold text-info">${esc((repo && repo.used) || "0 B")}</span>
+						<span class="text-xs text-base-content/60">used by ${esc(view)}</span>
+					</div>
+				`;
+			}
+			// The headline is the DEDUPLICATED footprint — the space Artifactory actually
+			// occupies — because the logical per-repo sum double-counts every shared binary
+			// and reads far larger than the disk. The logical sum is still shown, labelled,
+			// on the second line, and the bar measures the real usage against disk capacity.
+			const repoCount = (storage.repositories || []).length;
+			const logical = String(storage.logical || "");
+			const diskTotal = String(storage.disk_total || storage.total || "");
+			const pct = Number(storage.disk_percentage || storage.percentage || 0);
+			// A bar is only drawn when the server vouches for the capacity (disk_reliable).
+			// If Artifactory reports a filestore mount smaller than what's stored — a single
+			// partition, not the whole VM — the server sends disk_reliable=false and we show a
+			// one-line hint to set the real size instead of a bar pinned at a bogus 100%.
+			const reliable = storage.disk_reliable !== false;
+			const hasBar = reliable && diskTotal && diskTotal !== "Unknown" && pct > 0;
+			return `
 				<div class="flex flex-col items-center gap-1.5">
-					<span class="text-4xl font-bold text-info">${esc(storage.percentage || 0)}%</span>
-					<span class="text-xs text-base-content/60">${esc(storage.used || "0 B")} of ${esc(storage.total || "Unknown")} used</span>
-					<progress class="progress progress-info w-full mt-1" value="${esc(storage.percentage || 0)}" max="100"></progress>
+					<span class="text-4xl font-bold text-info">${esc(storage.used || "0 B")}</span>
+					<span class="text-xs text-base-content/60">
+						in use${logical ? ` · ${esc(logical)} logical` : ""} · ${repoCount || 0} repositor${repoCount === 1 ? "y" : "ies"}
+					</span>
+					${hasBar ? `
+						<span class="text-xs text-base-content/50">${esc(pct)}% of ${esc(diskTotal)}</span>
+						<progress class="progress progress-info w-full mt-1" value="${esc(pct)}" max="100"></progress>
+					` : !reliable ? `
+						<span class="text-xs text-base-content/40 text-center">Disk capacity unavailable — Artifactory reports only a partition. Set <span class="font-mono">ARTIFACTORY_DISK_TOTAL</span> (e.g. 5 TB) for the usage bar.</span>
+					` : ""}
 				</div>
-				${repos.length ? `
-					<label class="label py-1"><span class="label-text text-xs">Repository</span></label>
-					<select class="select select-bordered select-xs w-full mb-2" data-arti-storage-repo-select>
-						<option value="">All repositories</option>
-						${repos.map((repo) => `<option value="${esc(repo.name)}">${esc(repo.name)}</option>`).join("")}
-					</select>
-					<ul class="flex flex-col gap-2 flex-1 min-h-0 overflow-y-auto overscroll-contain" data-arti-storage-list>
-						${repoRows(repos)}
-					</ul>` : '<p class="text-xs text-base-content/50 text-center py-4">No repositories reported yet.</p>'}
 			`;
-			const select = bodyEl.querySelector("[data-arti-storage-repo-select]");
-			const list = bodyEl.querySelector("[data-arti-storage-list]");
-			select?.addEventListener("change", () => {
-				const selected = select.value;
-				const visible = selected ? repos.filter((repo) => repo.name === selected) : repos;
-				if (list) list.innerHTML = repoRows(visible);
-			});
 		}
 
+		// Repositories: the size IS the information, so no per-row bar — a bar implies a
+		// per-repo limit, and repositories don't have one.
 		function repoRows(repos) {
 			return repos.map((repo) => `
-				<li class="flex items-center gap-2">
-					<span class="text-xs text-base-content/70 w-28 shrink-0 truncate">${esc(repo.name)}</span>
-					<progress class="progress progress-info flex-1" value="${esc(repo.percentage || 0)}" max="100"></progress>
-					<span class="text-xs text-base-content/60 shrink-0 w-16 text-right">${esc(repo.used || "0 B")}</span>
+				<li class="flex items-center gap-2 py-1">
+					<span class="text-xs text-base-content/70 flex-1 truncate">${esc(repo.name)}</span>
+					<span class="text-xs font-medium text-base-content/60 shrink-0" style="font-variant-numeric: tabular-nums;">${esc(repo.used || "0 B")}</span>
 				</li>
 			`).join("");
+		}
+
+		// Projects DO have a quota, so here a bar is meaningful — it's the one place
+		// "how full am I" is a real question. Only `progress-info` is compiled into
+		// output.css, so the near-limit warning is carried by the figure's colour
+		// rather than by a progress-error/-warning class that would silently no-op.
+		function projectRows(projects) {
+			if (!projects.length) {
+				return '<li class="py-4 text-center text-xs text-base-content/50">No projects, or your token cannot read them.</li>';
+			}
+			return projects.map((proj) => {
+				const pct = Number(proj.percentage || 0);
+				const figureCls = pct >= 90 ? "text-error" : pct >= 75 ? "text-warning" : "text-base-content/60";
+				const bar = proj.has_quota
+					? `<progress class="progress progress-info w-full" value="${esc(pct)}" max="100"></progress>`
+					: '<div class="text-[10px] text-base-content/40">No quota set</div>';
+				return `
+					<li class="flex flex-col gap-1 py-1.5">
+						<div class="flex items-center gap-2">
+							<span class="text-xs font-medium text-base-content flex-1 truncate">${esc(proj.name)}</span>
+							<span class="text-xs shrink-0 ${figureCls}" style="font-variant-numeric: tabular-nums;">
+								${esc(proj.used)}${proj.has_quota ? " / " + esc(proj.quota) + " (" + esc(pct) + "%)" : ""}
+							</span>
+						</div>
+						${bar}
+					</li>
+				`;
+			}).join("");
+		}
+
+		function render() {
+			const repos = Array.isArray(storage.repositories) ? storage.repositories : [];
+			const projects = Array.isArray(storage.projects) ? storage.projects : [];
+
+			const options = [
+				`<option value=""${view === "" ? " selected" : ""}>All repositories</option>`,
+				`<option value="${ALL_PROJECTS}"${view === ALL_PROJECTS ? " selected" : ""}>All projects</option>`,
+			].concat(
+				repos.map((repo) => `<option value="${esc(repo.name)}"${view === repo.name ? " selected" : ""}>${esc(repo.name)}</option>`)
+			).join("");
+
+			let rows;
+			if (view === ALL_PROJECTS) {
+				rows = projectRows(projects);
+			} else if (view) {
+				rows = repoRows(repos.filter((repo) => repo.name === view));
+			} else {
+				rows = repoRows(repos);
+			}
+
+			bodyEl.innerHTML = `
+				${headline()}
+				<label class="label py-1"><span class="label-text text-xs">Show</span></label>
+				<select class="select select-bordered select-xs w-full mb-2" data-arti-storage-view-select>
+					${options}
+				</select>
+				<ul class="flex flex-col flex-1 min-h-0 overflow-y-auto overscroll-contain" data-arti-storage-list>
+					${rows || '<li class="py-4 text-center text-xs text-base-content/50">Nothing to show.</li>'}
+				</ul>
+			`;
+
+			bodyEl.querySelector("[data-arti-storage-view-select]")?.addEventListener("change", (event) => {
+				view = event.target.value;
+				render();
+			});
 		}
 
 		async function loadStorage() {
@@ -118,16 +210,17 @@
 						<div class="w-full rounded-xl border border-warning/30 bg-warning/5 p-4 text-left">
 							<h4 class="font-semibold text-sm text-base-content">Admin token required</h4>
 							<p class="mt-1 text-xs text-base-content/60">Artifactory storage stats need a token with <b>admin</b> rights. Your current token works for repositories but isn't admin-scoped.</p>
-							<button type="button" class="btn btn-warning btn-xs mt-3" data-arti-storage-reconnect>Use a different token</button>
+							<button type="button" class="btn btn-warning btn-xs rounded-full px-4 mt-3" data-arti-storage-reconnect>Use a different token</button>
 						</div>
 					`);
 					return;
 				}
 				if (!res.ok) throw new Error("Invalid token or connection failed");
 				const json = await res.json();
-				render(json.data || {});
+				storage = json.data || {};
+				render();
 			} catch {
-				showStatus('<div class="text-center"><p class="text-error">Invalid token or connection failed</p><button type="button" class="btn btn-ghost btn-xs mt-2" data-arti-storage-retry>Retry</button></div>');
+				showStatus('<div class="text-center"><p class="text-error">Invalid token or connection failed</p><button type="button" class="btn btn-ghost btn-xs rounded-full px-4 mt-2" data-arti-storage-retry>Retry</button></div>');
 			}
 		}
 

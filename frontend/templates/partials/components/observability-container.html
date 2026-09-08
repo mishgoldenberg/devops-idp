@@ -4,10 +4,32 @@
 			<h1 class="page-title">Observability</h1>
 			<p class="page-subtitle">Portal usage and integration activity (Admin only)</p>
 		</div>
-		<button id="obs-refresh-btn" type="button" class="btn btn-outline btn-sm">
-			&#8635; Refresh
-		</button>
+		<div class="flex items-center gap-2">
+			<button id="obs-refresh-btn" type="button" class="btn btn-outline btn-primary btn-sm">
+				&#8635; Refresh
+			</button>
+			<button id="obs-clear-btn" type="button" class="btn btn-outline btn-error btn-sm">
+				Clear data
+			</button>
+		</div>
 	</header>
+
+	<dialog id="obs-clear-modal" class="modal">
+		<div class="modal-box">
+			<h3 class="font-bold text-lg">Clear observability data?</h3>
+			<p class="text-sm text-base-content/70 mt-2">
+				This permanently deletes the observability records shown here — the ServiceNow
+				ticket data, the request counters, and the Azure DevOps project records. Widget-usage stats are kept. Your live systems
+				(ServiceNow, Azure DevOps) are not touched — only the portal's copy. This can't
+				be undone.
+			</p>
+			<div class="modal-action">
+				<button type="button" id="obs-clear-no" class="btn">No</button>
+				<button type="button" id="obs-clear-yes" class="btn btn-error">Yes, clear</button>
+			</div>
+		</div>
+		<form method="dialog" class="modal-backdrop"><button>close</button></form>
+	</dialog>
 
 	<div class="page-content flex flex-col gap-6">
 		<div id="obs-error" class="hidden alert alert-error text-sm"></div>
@@ -28,12 +50,12 @@
 			<div class="section-card"><div class="card-body p-4">
 				<div class="text-xs text-base-content/50">Successful</div>
 				<div id="obs-sum-ok" class="text-2xl font-semibold text-success">—</div>
-				<div class="text-[10px] text-base-content/40">Self-services completed</div>
+				<div class="text-[10px] text-base-content/40">Requests completed</div>
 			</div></div>
 			<div class="section-card"><div class="card-body p-4">
 				<div class="text-xs text-base-content/50">Failed</div>
 				<div id="obs-sum-fail" class="text-2xl font-semibold text-error">—</div>
-				<div class="text-[10px] text-base-content/40">Self-services failed</div>
+				<div class="text-[10px] text-base-content/40">Requests failed</div>
 			</div></div>
 			<div class="section-card"><div class="card-body p-4">
 				<div class="text-xs text-base-content/50">Pending</div>
@@ -47,7 +69,7 @@
 			</div></div>
 		</section>
 
-		<!-- Row 1: Widget usage + Self-service side by side -->
+		<!-- Row 1: Widget usage + Requests side by side -->
 		<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
 
 			<!-- Widget usage -->
@@ -73,16 +95,16 @@
 				</div>
 			</section>
 
-			<!-- Self-service usage -->
+			<!-- Requests, by type -->
 			<section class="section-card">
 				<div class="card-body p-5">
-					<h2 class="card-title text-base">Self-service usage</h2>
-					<p class="text-xs text-base-content/50 mb-2">Requests submitted through the approval workflow, by lifecycle status</p>
+					<h2 class="card-title text-base">Requests</h2>
+					<p class="text-xs text-base-content/50 mb-2">Every request the portal offers, by lifecycle status. A type nobody has asked for yet shows zero rather than being absent.</p>
 					<div class="overflow-x-auto max-h-72 overflow-y-auto">
 						<table class="table table-xs">
 							<thead class="sticky top-0 bg-base-100 z-10">
 								<tr>
-									<th>Service</th>
+									<th>Request</th>
 									<th class="text-right">Opened</th>
 									<th class="text-right">Approved</th>
 									<th class="text-right">Completed</th>
@@ -154,8 +176,8 @@
 			<!-- Azure DevOps projects -->
 			<section class="section-card">
 				<div class="card-body p-5">
-					<h2 class="card-title text-base">Azure DevOps projects (self-service)</h2>
-					<p class="text-xs text-base-content/50 mb-2">Projects after successful Terraform provisioning</p>
+					<h2 class="card-title text-base">Azure DevOps projects</h2>
+					<p class="text-xs text-base-content/50 mb-2">Projects the portal has created, once the request completed</p>
 					<div class="overflow-x-auto max-h-72 overflow-y-auto">
 						<table class="table table-xs">
 							<thead class="sticky top-0 bg-base-100 z-10">
@@ -177,6 +199,40 @@
 			</section>
 
 		</div>
+
+		<!--
+			Row 3: the requests themselves.
+
+			The table above counts them by type; this one names them, the way the
+			Azure DevOps table names the projects it made. Both routes are in it --
+			the requests approved here and the items ordered from ServiceNow -- so
+			"what has been asked for" has one answer rather than two.
+		-->
+		<section class="section-card">
+			<div class="card-body p-5">
+				<h2 class="card-title text-base">Every request made</h2>
+				<p class="text-xs text-base-content/50 mb-2">The 500 most recent, newest first, across every request type</p>
+				<div class="overflow-x-auto max-h-96 overflow-y-auto">
+					<table class="table table-xs">
+						<thead class="sticky top-0 bg-base-100 z-10">
+							<tr>
+								<th>Request</th>
+								<th>What for</th>
+								<th>Asked by</th>
+								<th>Status</th>
+								<th>Reference</th>
+								<th>Date</th>
+							</tr>
+						</thead>
+						<tbody id="obs-requests-body">
+							<tr>
+								<td colspan="6" class="text-base-content/50">Loading…</td>
+							</tr>
+						</tbody>
+					</table>
+				</div>
+			</div>
+		</section>
 	</div>
 </div>
 
@@ -186,6 +242,7 @@
 		const noticeEl = document.getElementById("obs-notice");
 		const widgetsBody = document.getElementById("obs-widgets-body");
 		const selfBody = document.getElementById("obs-self-body");
+		const requestsBody = document.getElementById("obs-requests-body");
 		const adoBody = document.getElementById("obs-ado-body");
 		const snBody = document.getElementById("obs-sn-body");
 		const snTotal = document.getElementById("obs-sn-total");
@@ -274,12 +331,15 @@
 			clearError();
 			clearNotice();
 			try {
-				const [w, s, a, t, sum] = await Promise.all([
+				const [w, s, a, t, sum, reqs] = await Promise.all([
 					loadJson("/api/observability/widgets/usage"),
 					loadJson("/api/observability/self-services"),
 					loadJson("/api/observability/azure-projects"),
 					loadJson("/api/observability/tickets"),
 					loadJson("/api/observability/summary").catch(() => null),
+					// Newest of the tables here, so an older backend that does not
+					// serve it leaves an empty table rather than emptying the page.
+					loadJson("/api/observability/requests").catch(() => null),
 				]);
 				if (sum) renderSummary(sum.data || sum);
 
@@ -342,6 +402,41 @@
 								)
 								.join("");
 
+				// Colour by outcome, not by name: an admin scanning this column is
+				// looking for the ones that did not work.
+				const STATUS_TONE = {
+					COMPLETED: "text-success", EXECUTED: "text-success", ORDERED: "text-success",
+					FAILED: "text-error", REJECTED: "text-base-content/60",
+					PENDING: "text-warning", IN_PROGRESS: "text-info", APPROVED: "text-info",
+				};
+
+				const rRows = reqs?.data || [];
+				if (requestsBody) {
+					requestsBody.innerHTML =
+						rRows.length === 0
+							? '<tr><td colspan="6" class="text-base-content/50">No requests yet</td></tr>'
+							: rRows
+									.map((r) => {
+										const status = String(r.status || "");
+										const tone = STATUS_TONE[status] || "";
+										const label = status.replace(/_/g, " ");
+										// The failure reason belongs next to the failure. It is
+										// stored either way; a column nothing renders is not a record.
+										const note = r.error ? ` title="${esc(r.error)}"` : "";
+										return (
+											`<tr>` +
+											`<td>${esc(r.name || r.kind)}</td>` +
+											`<td dir="auto">${esc(r.title)}</td>` +
+											`<td>${esc(r.requester)}</td>` +
+											`<td class="${tone}"${note}>${esc(label)}</td>` +
+											`<td class="font-mono">${esc(r.reference || "—")}</td>` +
+											`<td>${esc(fmtDt(r.created_at))}</td>` +
+											`</tr>`
+										);
+									})
+									.join("");
+				}
+
 				const td = t?.data || {};
 				const by = td.bySeverity || {};
 				snTotal.textContent = String(td.total ?? 0);
@@ -371,6 +466,29 @@
 		}
 
 		document.getElementById("obs-refresh-btn")?.addEventListener("click", loadAll);
+
+		// ── Clear observability data (admin) ────────────────────────────────
+		const obsClearModal = document.getElementById("obs-clear-modal");
+		document.getElementById("obs-clear-btn")?.addEventListener("click", () => obsClearModal?.showModal());
+		document.getElementById("obs-clear-no")?.addEventListener("click", () => obsClearModal?.close());
+		document.getElementById("obs-clear-yes")?.addEventListener("click", async () => {
+			const yesBtn = document.getElementById("obs-clear-yes");
+			yesBtn.disabled = true;
+			try {
+				const res = await fetch("/api/observability/data", {
+					method: "DELETE",
+					credentials: "same-origin",
+				});
+				if (!res.ok) throw new Error("http " + res.status);
+				obsClearModal?.close();
+				window.portalToast?.({ kind: "success", message: "Observability data cleared." });
+				loadAll();
+			} catch (_) {
+				window.portalToast?.({ kind: "error", message: "Could not clear observability data." });
+			} finally {
+				yesBtn.disabled = false;
+			}
+		});
 		loadAll();
 	})();
 </script>

@@ -25,11 +25,25 @@ environment variables it reads, and how it fails.
 | `health`          | `/api/health`       | [health.md](./health.md)               |
 | `metrics`         | `/api/metrics`      | [metrics.md](./metrics.md)             |
 | `pins`            | `/api`              | [pins.md](./pins.md)                   |
+| `announcements`   | `/api/announcements`| the billboard on every dashboard; admin CRUD + per-user, per-version dismissals |
+| `inbox`           | `/api/inbox`        | "Needs you" — one list across five systems, with per-item dismissals |
+| `integrations`    | `/api/integrations` | per-user tokens and the real SonarQube / Artifactory / Confluence reads |
+| `quick_links`     | `/api/quick-links`  | admin-managed dashboard links |
+| `favorites`       | `/api/favorites`    | per-user bookmarks |
+| `activity`        | `/api/activity`     | recent activity feed |
+| `suggestions`     | `/api/suggestions`  | the suggestion board, votes and comments |
+| `search`          | `/api/search`       | portal-wide search, fans out across the integrations |
+| `system_urls`     | `/api` (no prefix)  | the configured external system links |
+| `user_prefs`      | `/api/me`           | theme, density, display name, avatar |
 
 ## Cross-cutting modules
 
 | Module                | Doc                                         |
 | --------------------- | ------------------------------------------- |
-| `terraform_runner.py` | [terraform_runner.md](./terraform_runner.md) |
+| `terraform_runner.py` | [terraform_runner.md](./terraform_runner.md) — **legacy**, not the live path |
+| `widget_registry.py`  | the one dashboard widget catalogue; imported everywhere |
+| `request_audit.py`    | HTTP middleware + Python-log mirror into `audit_events` |
+| `sso_config.py`       | OIDC config, secret encryption, and the JWT_SECRET self-check |
+| `login_guard.py`      | per-account and per-address lockout for local sign-in |
 | `resilient_http.py`   | [resilient_http.md](./resilient_http.md)    |
 | `integrations_cache.py` | [integrations_cache.md](./integrations_cache.md) |

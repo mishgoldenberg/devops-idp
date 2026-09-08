@@ -8,7 +8,7 @@
 			{% with system_key = 'artifactory' %}
 				{% include "partials/components/open-system-button.html" %}
 			{% endwith %}
-			<button id="refresh-btn" class="btn btn-outline btn-sm">
+			<button id="refresh-btn" class="btn btn-outline btn-primary btn-sm">
 				&#8635; Refresh
 			</button>
 		</div>
@@ -16,12 +16,22 @@
 
 	<div class="page-content-flush">
 		<div class="widget-grid">
+			{#
+				Storage is Platform-Admin only: Artifactory's /api/storageinfo refuses a
+				non-admin token, and the route that serves this widget's markup enforces
+				that with a 403. Rendering it anyway meant a normal user got a card that
+				could only ever say "failed to load (HTTP 403)" — an error about a
+				permission they were never going to have, on a page they are entitled to
+				use. The dashboard already omits it for non-admins; this page now agrees.
+			#}
+			{% if request.state.portal_is_admin %}
 			<!-- Artifactory Storage Widget -->
 			<div
 				id="artifactory-storage-component"
 				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
 				hx-get="/ui/components/artifactory-storage"
-				hx-trigger="load, every 60s, click from:#refresh-btn"
+				hx-trigger="load, refresh, click from:#refresh-btn"
+				data-autorefresh
 				hx-target="find .widget-content"
 				hx-swap="innerHTML"
 			>
@@ -30,12 +40,14 @@
 				</div>
 				<div class="widget-content h-full"></div>
 			</div>
-			<!-- New mocked repo browser widget. The storage/quota widget above is unchanged. -->
+			{% endif %}
+			<!-- Repo browser widget. The storage/quota widget above is separate. -->
 			<div
 				id="artifactory-repos-component"
 				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
 				hx-get="/ui/components/artifactory-repos"
-				hx-trigger="load, every 60s, click from:#refresh-btn"
+				hx-trigger="load, refresh, click from:#refresh-btn"
+				data-autorefresh
 				hx-target="find .widget-content"
 				hx-swap="innerHTML"
 			>

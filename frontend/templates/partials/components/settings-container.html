@@ -2,7 +2,7 @@
 	<header class="page-header">
 		<div>
 			<h1 class="page-title">Settings</h1>
-			<p class="page-subtitle">Portal preferences, suggestions, and account session.</p>
+			<p class="page-subtitle">Portal preferences and account session.</p>
 		</div>
 	</header>
 	<div class="page-content-flush">
@@ -13,19 +13,31 @@
 			<div class="card-body p-5">
 				<h2 class="section-title mb-4">Appearance</h2>
 				<div class="space-y-4">
+					{#
+						A three-way select, not a dark-mode toggle.
+
+						"System" is a third option, and a two-state switch cannot express it:
+						with the preference set to System the toggle had to show either
+						"light" or "dark", one of which is a lie about what is stored.
+					#}
 					<div class="flex items-center justify-between gap-4">
 						<div class="min-w-0">
-							<p class="font-medium">Dark mode</p>
+							<p class="font-medium">Theme</p>
 							<p class="text-xs text-base-content/60 mt-0.5">
-								Saved to your account and applied on every device.
+								Saved to your account and applied on every device. "System" follows
+								this computer's own light/dark setting.
 							</p>
 						</div>
-						<input
-							type="checkbox"
-							class="toggle toggle-primary shrink-0"
-							id="settings-theme-toggle"
-							aria-label="Toggle dark mode"
-						/>
+						<select
+							class="select select-bordered select-sm shrink-0"
+							id="settings-theme-select"
+							aria-label="Theme"
+							style="min-width: 9rem"
+						>
+							<option value="light">Light</option>
+							<option value="night">Dark</option>
+							<option value="system">System</option>
+						</select>
 					</div>
 					<div class="flex items-center justify-between gap-4">
 						<div class="min-w-0">
@@ -57,67 +69,87 @@
 							</button>
 						</div>
 					</div>
+					<div class="flex items-center justify-between gap-4">
+						<div class="min-w-0">
+							<p class="font-medium">Reduce motion</p>
+							<p class="text-xs text-base-content/60 mt-0.5">
+								Turns off sliding and fading — the sidebar, panels and
+								widget rearranging all snap instead. Worth turning on if
+								this machine has no graphics acceleration, where those
+								animations are drawn by the processor and feel slow.
+								Loading spinners keep spinning.
+							</p>
+						</div>
+						<input
+							type="checkbox"
+							class="toggle toggle-primary shrink-0"
+							id="settings-motion-toggle"
+							aria-label="Reduce motion"
+						/>
+					</div>
+					<div class="flex items-center justify-between gap-4">
+						<div class="min-w-0">
+							<p class="font-medium">Auto-refresh</p>
+							<p class="text-xs text-base-content/60 mt-0.5">
+								How often widgets quietly re-fetch in the background. They
+								never refresh while you are using them, and the Refresh
+								button always works regardless of this setting.
+							</p>
+						</div>
+						<select
+							id="settings-refresh-interval"
+							class="select select-bordered select-sm shrink-0"
+							aria-label="Auto-refresh interval"
+						>
+							<option value="0">Off</option>
+							<option value="60">Every minute</option>
+							<option value="300">Every 5 minutes</option>
+							<option value="900">Every 15 minutes</option>
+							<option value="1800">Every 30 minutes</option>
+						</select>
+					</div>
 				</div>
 			</div>
 		</section>
 
-		<!-- Suggestions -->
+		<!-- Keyboard -->
 		<section class="section-card">
 			<div class="card-body p-5">
-				<h2 class="section-title mb-4">Suggestions</h2>
-				<form id="suggestion-form" class="space-y-4">
-					<div>
-						<label class="label pb-1" for="suggestion-title">
-							<span class="label-text text-xs">Title</span>
-						</label>
-						<input
-							id="suggestion-title"
-							name="title"
-							class="input input-bordered w-full"
-							maxlength="255"
-							required
-							placeholder="Short summary"
-						/>
+				<h2 class="section-title mb-4">Keyboard</h2>
+				<div class="flex items-start justify-between gap-4">
+					<div class="min-w-0">
+						<p class="font-medium">Shortcuts</p>
+						<p class="text-sm text-base-content/60 mt-0.5">
+							The portal has shortcuts for search, navigation and refresh. Press
+							<kbd class="kbd kbd-xs">?</kbd> anywhere to see them.
+						</p>
 					</div>
-					<div>
-						<label class="label pb-1" for="suggestion-description">
-							<span class="label-text text-xs">Description</span>
-						</label>
-						<textarea
-							id="suggestion-description"
-							name="description"
-							class="textarea textarea-bordered w-full"
-							rows="4"
-							maxlength="5000"
-							placeholder="What would make your day better?"
-						></textarea>
+					<button type="button" class="btn btn-outline btn-sm shrink-0" data-show-shortcuts>
+						Show shortcuts
+					</button>
+				</div>
+			</div>
+		</section>
+
+		<!-- Dashboard -->
+		<section class="section-card">
+			<div class="card-body p-5">
+				<h2 class="section-title mb-4">Dashboard</h2>
+				<div class="flex items-start justify-between gap-4">
+					<div class="min-w-0">
+						<p class="font-medium">Reset layout</p>
+						<p class="text-sm text-base-content/60 mt-0.5">
+							Put every widget back to its original position and size. Which widgets
+							you have stays as it is — this only undoes dragging and resizing.
+						</p>
 					</div>
-					<div
-						class="alert alert-success alert-soft text-sm hidden"
-						data-suggestion-success
-					>
-						<span>
-							Thanks! Your suggestion was sent to the platform team.
-						</span>
-					</div>
-					<div
-						class="alert alert-error alert-soft text-sm hidden"
-						data-suggestion-error
-					>
-						<span data-suggestion-error-message>
-							Could not submit suggestion.
-						</span>
-					</div>
-					<div class="flex justify-end pt-1">
-						<button
-							class="btn btn-primary"
-							type="submit"
-							data-suggestion-submit
-						>
-							Send suggestion
-						</button>
-					</div>
-				</form>
+					<button type="button" class="btn btn-outline btn-sm shrink-0" data-reset-layout>
+						Reset layout
+					</button>
+				</div>
+				<p class="hidden text-sm text-success mt-2" data-reset-layout-done>
+					Layout reset. Open the dashboard to see it.
+				</p>
 			</div>
 		</section>
 
@@ -151,33 +183,69 @@
 </div>
 
 <script>
-	// --- Theme toggle (moved from sidebar) ---------------------------------
-	// On change we update localStorage for instant paint on the next nav AND
-	// persist to the server so the preference follows the user across devices.
-	// The sidebar's theme initializer seeds localStorage from the server value
-	// on first login, so these two sources stay in sync.
+	// --- Theme (light / dark / system) --------------------------------------
+	// Everything goes through portalSetTheme, which owns the preference, localStorage
+	// AND the server write. Two controls for one setting that each persist it their own
+	// way is how they end up disagreeing about what is stored.
 	(function () {
-		const toggle = document.getElementById("settings-theme-toggle");
-		if (!toggle) return;
-		const key = "portal-theme";
-		const root = document.documentElement;
-		const current = localStorage.getItem(key) || "night";
-		toggle.checked = current === "night";
+		const select = document.getElementById("settings-theme-select");
+		if (!select) return;
+		let pref = "night";
+		try { pref = localStorage.getItem("portal-theme") || "night"; } catch (_) {}
+		if (!["light", "night", "system"].includes(pref)) pref = "night";
+		select.value = pref;
 
-		toggle.addEventListener("change", async () => {
-			const theme = toggle.checked ? "night" : "light";
-			root.setAttribute("data-theme", theme);
-			try { localStorage.setItem(key, theme); } catch (_) {}
+		select.addEventListener("change", async () => {
+			if (window.portalSetTheme) {
+				await window.portalSetTheme(select.value);
+				return;
+			}
+			// Standalone fallback: the chrome helper is always present in the portal
+			// shell, so this only runs if this page is ever rendered on its own.
+			document.documentElement.setAttribute(
+				"data-theme",
+				select.value === "system"
+					? (window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "night" : "light")
+					: select.value
+			);
+			try { localStorage.setItem("portal-theme", select.value); } catch (_) {}
 			try {
 				await fetch("/api/me/theme", {
 					method: "PUT",
 					credentials: "same-origin",
 					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ theme }),
+					body: JSON.stringify({ theme: select.value }),
 				});
 			} catch (_err) {
 				// Non-fatal: LS still has the new value, sync resumes on next change.
 			}
+		});
+	})();
+
+	// --- Reduce motion -------------------------------------------------------
+	// Browser-only, unlike theme and density: this describes the MACHINE you are
+	// sitting at (whether it has graphics acceleration), not you — syncing it to
+	// the account would push one slow workstation's setting onto every other
+	// device you sign in from.
+	(function () {
+		const toggle = document.getElementById("settings-motion-toggle");
+		if (!toggle) return;
+		const key = "portal-motion";
+		const root = document.documentElement;
+
+		let current = localStorage.getItem(key);
+		if (current !== "reduced" && current !== "full") {
+			current = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches
+				? "reduced"
+				: "full";
+		}
+		root.setAttribute("data-motion", current);
+		toggle.checked = current === "reduced";
+
+		toggle.addEventListener("change", () => {
+			current = toggle.checked ? "reduced" : "full";
+			root.setAttribute("data-motion", current);
+			try { localStorage.setItem(key, current); } catch (_) {}
 		});
 	})();
 
@@ -227,119 +295,61 @@
 		});
 	})();
 
-	// --- Suggestions form --------------------------------------------------
-	// Live validation rules: title must be 3+ chars, description must not
-	// exceed its maxlength. Errors render under the specific field so the
-	// user can fix inline without scanning a summary panel. The existing
-	// success/error alert blocks inside the form are preserved so nothing
-	// that used to render still does.
+	// --- Auto-refresh interval ---------------------------------------------
+	// Stored in localStorage and read by the scheduler in portal-chrome.html.
+	// Deliberately a device preference rather than an account one: how often you
+	// want a screen to refresh depends on the screen — a wall display and a laptop
+	// you keep tabbed away from are not the same, and the same person owns both.
 	(function () {
-		const form = document.getElementById("suggestion-form");
-		if (!form) return;
-		const successEl = form.querySelector("[data-suggestion-success]");
-		const errorEl = form.querySelector("[data-suggestion-error]");
-		const errorMsg = form.querySelector("[data-suggestion-error-message]");
-		const submitBtn = form.querySelector("[data-suggestion-submit]");
-		const titleInput = form.querySelector("#suggestion-title");
-		const descInput = form.querySelector("#suggestion-description");
+		const select = document.getElementById("settings-refresh-interval");
+		if (!select) return;
+		const DEFAULT_SECS = 300;
+		let current = DEFAULT_SECS;
+		try {
+			const raw = parseInt(localStorage.getItem("portal-refresh-secs") || "", 10);
+			if (Number.isFinite(raw)) current = raw;
+		} catch (_) {}
+		select.value = String(current);
+		// An unrecognised stored value (an old build, a hand-edit) must not leave the
+		// select blank and looking broken.
+		if (!select.value) select.value = String(DEFAULT_SECS);
 
-		function ensureErrorEl(input, id) {
-			let el = document.getElementById(id);
-			if (el) return el;
-			el = document.createElement("p");
-			el.id = id;
-			el.className = "text-xs text-error mt-1 hidden";
-			input.parentElement.appendChild(el);
-			return el;
-		}
-		const titleErr = ensureErrorEl(titleInput, "suggestion-title-err");
-		const descErr = ensureErrorEl(descInput, "suggestion-description-err");
-
-		function setFieldError(input, errEl, msg) {
-			if (msg) {
-				errEl.textContent = msg;
-				errEl.classList.remove("hidden");
-				input.classList.add("input-error", "textarea-error");
-			} else {
-				errEl.textContent = "";
-				errEl.classList.add("hidden");
-				input.classList.remove("input-error", "textarea-error");
+		select.addEventListener("change", () => {
+			const secs = parseInt(select.value, 10) || 0;
+			if (window.portalRefresh) window.portalRefresh.setSeconds(secs);
+			else {
+				try { localStorage.setItem("portal-refresh-secs", String(secs)); } catch (_) {}
 			}
-		}
-		function validateTitle(v) {
-			const t = String(v || "").trim();
-			if (!t) return "Title is required.";
-			if (t.length < 3) return "Title must be at least 3 characters.";
-			if (t.length > 255) return "Title must be 255 characters or less.";
-			return "";
-		}
-		function validateDesc(v) {
-			const t = String(v || "");
-			if (t.length > 5000) return "Description must be 5000 characters or less.";
-			return "";
-		}
+			window.portalToast?.({
+				kind: "success",
+				message: secs
+					? `Widgets will refresh every ${secs >= 60 ? secs / 60 + " min" : secs + "s"}.`
+					: "Auto-refresh is off. Use the Refresh button.",
+			});
+		});
+	})();
 
-		titleInput?.addEventListener("input", () =>
-			setFieldError(titleInput, titleErr, validateTitle(titleInput.value))
-		);
-		descInput?.addEventListener("input", () =>
-			setFieldError(descInput, descErr, validateDesc(descInput.value))
-		);
+</script>
 
-		form.addEventListener("submit", async (e) => {
-			e.preventDefault();
-			successEl?.classList.add("hidden");
-			errorEl?.classList.add("hidden");
-
-			const title = titleInput.value.trim();
-			const description = descInput.value.trim();
-			const titleProblem = validateTitle(title);
-			const descProblem = validateDesc(description);
-			setFieldError(titleInput, titleErr, titleProblem);
-			setFieldError(descInput, descErr, descProblem);
-			if (titleProblem || descProblem) {
-				(titleProblem ? titleInput : descInput)?.focus();
+<script>
+	// Two small controls that belong next to each other: both are "put the portal
+	// back the way it was" affordances for things the user changed by accident.
+	(function () {
+		document.addEventListener("click", (event) => {
+			if (event.target.closest("[data-show-shortcuts]")) {
+				// Reuses the same overlay the "?" key opens, rather than a second copy of
+				// the list that would drift out of step with the real shortcuts.
+				document.dispatchEvent(new KeyboardEvent("keydown", { key: "?", bubbles: true }));
 				return;
 			}
-
-			submitBtn.disabled = true;
-			submitBtn.classList.add("btn-disabled");
+			if (!event.target.closest("[data-reset-layout]")) return;
+			// The layout lives in this browser, so clearing the keys IS the reset.
 			try {
-				const res = await fetch("/api/suggestions", {
-					method: "POST",
-					credentials: "same-origin",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ title, description }),
-				});
-				if (!res.ok) {
-					const msg = await res.text();
-					if (errorMsg) errorMsg.textContent = `Could not submit: ${msg || res.status}`;
-					errorEl?.classList.remove("hidden");
-					window.portalToast?.({
-						kind: "error",
-						message: "Could not submit suggestion.",
-					});
-					return;
-				}
-				form.reset();
-				setFieldError(titleInput, titleErr, "");
-				setFieldError(descInput, descErr, "");
-				successEl?.classList.remove("hidden");
-				window.portalToast?.({
-					kind: "success",
-					message: "Thanks! Your suggestion was sent.",
-				});
-			} catch (err) {
-				if (errorMsg) errorMsg.textContent = "Network error while submitting.";
-				errorEl?.classList.remove("hidden");
-				window.portalToast?.({
-					kind: "error",
-					message: "Network error while submitting.",
-				});
-			} finally {
-				submitBtn.disabled = false;
-				submitBtn.classList.remove("btn-disabled");
-			}
+				localStorage.removeItem("portal-widget-order");
+				localStorage.removeItem("portal-widget-sizes");
+			} catch (_) {}
+			const done = document.querySelector("[data-reset-layout-done]");
+			if (done) done.classList.remove("hidden");
 		});
 	})();
 </script>

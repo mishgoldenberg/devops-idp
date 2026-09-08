@@ -1,0 +1,264 @@
+/* ─────────────────────────────────────────────────────────────────────────
+   DevOps Hub — Catppuccin palette (Latte / Mocha)
+
+   WHY THIS FILE EXISTS AND NOT A TAILWIND REBUILD
+   output.css is generated and is never rebuilt in CI, so a new
+   DaisyUI theme cannot be compiled in. It does not need to be: DaisyUI stores a
+   theme as nothing more than custom properties on a [data-theme] selector, in
+   space-separated HSL. Redeclaring those same properties in a plain stylesheet
+   loaded AFTER output.css replaces the palette wholesale — no build step, no new
+   utility classes, and scripts/check_css_classes.py never sees a thing, because
+   there are no classes here at all.
+
+   LOAD ORDER MATTERS. This must come after output.css in every page's <head>.
+   Both this and output.css declare the same properties at the same specificity,
+   so the later declaration wins purely on source order.
+
+   WHICH SELECTORS
+   The app only ever sets data-theme="nord" (server-rendered default) or flips it
+   to "light" / "night" at runtime. "light" was never compiled into output.css,
+   so it falls through to :root — which is why :root is covered here too. All
+   three light spellings therefore land on Latte, and "night" lands on Mocha.
+
+   ONE CASCADE SUBTLETY WORTH KNOWING. output.css also carries a
+   `@media (prefers-color-scheme: dark) { :root { …night… } }` block, so an
+   unstyled :root would follow the visitor's OS setting. The plain :root rule
+   below is declared later at equal specificity, so it beats that media query
+   and the OS preference no longer leaks in. That is intended: every page sets
+   data-theme explicitly and portal-chrome.html resolves the user's saved
+   preference on load, so the attribute — not the OS — decides.
+
+   COLOUR SPACE. HSL only. No oklch() or color-mix(): those need Chromium 111+,
+   and the network still has older browsers on it.
+
+   Palette: https://catppuccin.com — Latte (light) and Mocha (dark).
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* ── Latte ──────────────────────────────────────────────────────────────── */
+:root,
+[data-theme="nord"],
+[data-theme="light"] {
+	color-scheme: light;
+
+	/* Surfaces: base-100 is the card, base-200 the page behind it, base-300 the
+	   borders.
+
+	   SOFTENED FROM STOCK LATTE. Published Latte grounds at 95% lightness with a
+	   fairly cool cast, which read as visibly blue-grey rather than white across
+	   a whole page of cards. These are lifted close to white with only a trace of
+	   the palette's hue left, and the border tone is softened to match. Body-text
+	   contrast IMPROVES as a result — 7.2:1 up to 8.3:1 — because the ground is
+	   lighter; this reduces colour intensity, not legibility. */
+	--b1: 220 24% 98%;
+	--b2: 220 20% 96%;
+	--b3: 222 14% 89%;
+	--bc: 234 16% 33%;
+
+	/* Brand. `-f` variants are the darker hover/active states DaisyUI derives
+	   buttons from; without them a hover would fall back to the base colour and
+	   buttons would look inert.
+
+	   ALSO SOFTENED. Stock Latte's blue is 91% saturation, which fights a pale
+	   ground hard. At 62% it is the same hue, noticeably calmer, and measures
+	   3.93:1 against the ground — ample for buttons, borders, icons and headings,
+	   but it is now a UI colour rather than one to set small body text in. Use
+	   --bc for prose, as every widget already does. */
+	--p: 220 62% 57%;
+	--pf: 220 62% 49%;
+	--pc: 0 0% 100%;
+
+	--s: 266 60% 62%;
+	--sf: 266 60% 54%;
+	--sc: 0 0% 100%;
+
+	--a: 183 52% 40%;
+	--af: 183 52% 33%;
+	--ac: 0 0% 100%;
+
+	--n: 233 10% 47%;
+	--nf: 233 10% 39%;
+	--nc: 220 23% 95%;
+
+	/* Semantic. These are read directly by the widgets — a failed pipeline dot,
+	   the storage bar, the pinned-row tint — so they are part of the interface,
+	   not decoration. */
+	--in: 220 62% 57%;
+	--inc: 0 0% 100%;
+	--su: 109 45% 42%;
+	--suc: 0 0% 100%;
+	--wa: 35 70% 50%;
+	--wac: 234 16% 15%;
+	--er: 347 70% 50%;
+	--erc: 0 0% 100%;
+}
+
+/* ── Mocha ──────────────────────────────────────────────────────────────── */
+[data-theme="night"],
+[data-theme="dark"] {
+	color-scheme: dark;
+
+	/* Not a pure black ground, and blue-biased rather than neutral grey — both
+	   deliberate: pure black maximises contrast against light text, which is the
+	   combination that tires eyes over a working day. */
+	--b1: 240 21% 15%;
+	--b2: 240 21% 12%;
+	--b3: 237 16% 23%;
+	--bc: 226 64% 88%;
+
+	/* Every accent is lighter and less saturated than its Latte counterpart.
+	   Saturated colour on a dark ground optically vibrates at the edges; the
+	   pastel is what makes Mocha readable rather than merely dark. Their content
+	   colours are dark, because text on these pastels must be dark to be legible. */
+	--p: 217 92% 76%;
+	--pf: 217 92% 68%;
+	--pc: 240 21% 12%;
+
+	--s: 267 84% 81%;
+	--sf: 267 84% 73%;
+	--sc: 240 21% 12%;
+
+	--a: 170 57% 73%;
+	--af: 170 57% 65%;
+	--ac: 240 21% 12%;
+
+	--n: 240 13% 31%;
+	--nf: 240 13% 25%;
+	--nc: 226 64% 88%;
+
+	--in: 217 92% 76%;
+	--inc: 240 21% 12%;
+	--su: 115 54% 76%;
+	--suc: 240 21% 12%;
+	--wa: 41 86% 83%;
+	--wac: 240 21% 12%;
+	--er: 343 81% 75%;
+	--erc: 240 21% 12%;
+}
+
+/* ── Sign-in ────────────────────────────────────────────────────────────────
+   The photographic hero background stays exactly as it is — it is only listed
+   here to say so explicitly, because the obvious next edit is to "finish the
+   job" and tint it. Do not. The card over it sets its own near-opaque white in
+   login.html and is likewise left alone; the only things the palette touches on
+   that page are the buttons and links, which now read Latte blue.
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* ── Loading skeletons ──────────────────────────────────────────────────────
+   output.css defines the shimmer ONLY as `.widget-skeleton .sk-line`. Skeleton
+   markup written without that ancestor therefore produces zero-height,
+   transparent, unanimated divs — and five places had exactly that: Quick Links,
+   Approvals, My Requests, Confluence Pages and the notifications panel all
+   showed an empty grey box while they loaded, which reads as "broken", not
+   "loading".
+
+   Fixed once, here, rather than by adding a wrapper class in five templates:
+   output.css ships precompiled and is never rebuilt, and theme.css is loaded
+   after it, so this is the place a missing rule gets added. Same declarations
+   as the compiled rule, at one lower specificity, so `.widget-skeleton .sk-line`
+   still wins wherever it already applies and nothing that works today changes.
+   ───────────────────────────────────────────────────────────────────────── */
+.sk-line {
+	will-change: background-position;
+	animation: portal-skeleton 1.8s ease-in-out infinite;
+	background-image: linear-gradient(
+		105deg,
+		transparent 0%,
+		transparent 40%,
+		hsl(var(--b1) / 0.6) 50%,
+		transparent 60%,
+		transparent 100%
+	);
+	background-size: 200% auto;
+	background-repeat: no-repeat;
+	background-position-x: -50%;
+	border-radius: 0.25rem;
+	background-color: hsl(var(--b3) / 0.7);
+}
+
+/* ── Announcement cards ─────────────────────────────────────────────────────
+   One definition, two pages. The billboard renders these on the dashboard and
+   the admin editor renders the same markup as a live preview on Platform
+   Managing — a second copy of the rules in the second template is how the two
+   drift until the preview stops resembling the thing being previewed.
+
+   Hand-written rather than Tailwind utilities because output.css ships
+   precompiled and is never rebuilt, so a class that is not already in it does
+   nothing at all.
+   ───────────────────────────────────────────────────────────────────────── */
+.ann-card {
+	position: relative;
+	display: flex;
+	align-items: flex-start;
+	gap: 0.85rem;
+	padding: 0.9rem 2.5rem 0.9rem 1rem;
+	border: 1px solid hsl(var(--bc) / 0.12);
+	border-left: 4px solid hsl(var(--in));
+	border-radius: 0.75rem;
+	background: hsl(var(--in) / 0.06);
+	box-shadow: 0 1px 2px hsl(var(--bc) / 0.06);
+}
+
+.ann-card[data-kind="success"]  { border-left-color: hsl(var(--su)); background: hsl(var(--su) / 0.07); }
+.ann-card[data-kind="warning"]  { border-left-color: hsl(var(--wa)); background: hsl(var(--wa) / 0.09); }
+.ann-card[data-kind="critical"] { border-left-color: hsl(var(--er)); background: hsl(var(--er) / 0.09); }
+
+.ann-icon {
+	flex: 0 0 auto;
+	width: 1.35rem;
+	height: 1.35rem;
+	margin-top: 0.1rem;
+	opacity: 0.85;
+}
+
+.ann-body { min-width: 0; flex: 1 1 auto; }
+
+.ann-title { font-weight: 600; font-size: 0.98rem; line-height: 1.35; }
+
+/* pre-line keeps the line breaks the author typed. The text is always inserted
+   with textContent, never as markup: an announcement is shown to every user in
+   the portal, which makes it the worst possible place to interpret HTML. */
+.ann-text {
+	margin-top: 0.2rem;
+	font-size: 0.875rem;
+	line-height: 1.5;
+	opacity: 0.85;
+	white-space: pre-line;
+	overflow-wrap: anywhere;
+}
+
+.ann-meta {
+	margin-top: 0.35rem;
+	font-size: 0.72rem;
+	letter-spacing: 0.02em;
+	opacity: 0.6;
+}
+
+.ann-link {
+	display: inline-block;
+	margin-top: 0.5rem;
+	font-size: 0.82rem;
+	font-weight: 600;
+	text-decoration: underline;
+	text-underline-offset: 2px;
+}
+
+.ann-dismiss {
+	position: absolute;
+	top: 0.5rem;
+	right: 0.5rem;
+	width: 1.6rem;
+	height: 1.6rem;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	border: 0;
+	border-radius: 999px;
+	background: transparent;
+	color: inherit;
+	opacity: 0.45;
+	cursor: pointer;
+	line-height: 1;
+}
+
+.ann-dismiss:hover,
+.ann-dismiss:focus-visible { opacity: 1; background: hsl(var(--bc) / 0.1); }

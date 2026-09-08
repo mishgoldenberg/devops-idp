@@ -1,0 +1,1640 @@
+{#
+	Portal chrome — the shell every page shares.
+
+	Included once, from banner.html, which every page includes. Four things live here
+	because they are cross-cutting and were previously either absent or duplicated:
+
+	  1. The app shell   — the document itself never scrolls; panes scroll inside it.
+	  2. Scrollbars      — themed, thin, and absent where they were only noise.
+	  3. Compact density — one place, so "compact" means compact on every page.
+	  4. Auto-refresh    — a scheduler that refreshes widgets WITHOUT stealing the page
+	                       out from under whoever is using it.
+
+	Everything is written as plain CSS in a <style> block rather than Tailwind classes.
+	output.css is committed and never rebuilt on this network, so a class that is not
+	already compiled does nothing at all; hand-written CSS always works.
+#}
+<style>
+	/* ─────────────────────────────────────────────────────────────────────
+	   1. The app shell.
+
+	   Every page is banner + (sidebar | content). The content pane scrolls;
+	   the document must not. Without this, a long page (Platform Managing is
+	   the worst) scrolls the whole document — which drags the banner off the
+	   top of the screen and takes the sidebar with it. Pinning the shell is
+	   what stops the top bar from "disappearing".
+	   ───────────────────────────────────────────────────────────────────── */
+	html,
+	body {
+		height: 100%;
+	}
+
+	body {
+		overflow: hidden;
+	}
+
+	/* The banner. `flex: 0 0 auto` keeps it from being squeezed by a tall page. */
+	body > header:first-of-type {
+		flex: 0 0 auto;
+		position: relative;
+		z-index: 30;
+	}
+
+	/* ─────────────────────────────────────────────────────────────────────
+	   2. Scrollbars.
+
+	   The browser default is a grey slab that belongs to no theme. These
+	   follow the DaisyUI palette (--bc is the base content colour) so they
+	   look right in both light and dark, and they get out of the way until
+	   you point at them.
+	   ───────────────────────────────────────────────────────────────────── */
+	* {
+		scrollbar-width: thin;
+		scrollbar-color: hsl(var(--bc) / 0.22) transparent;
+	}
+
+	::-webkit-scrollbar {
+		width: 10px;
+		height: 10px;
+	}
+
+	::-webkit-scrollbar-track {
+		background: transparent;
+	}
+
+	::-webkit-scrollbar-thumb {
+		background-color: hsl(var(--bc) / 0.22);
+		border: 3px solid transparent;
+		background-clip: content-box;
+		border-radius: 9999px;
+	}
+
+	::-webkit-scrollbar-thumb:hover {
+		background-color: hsl(var(--bc) / 0.45);
+		background-clip: content-box;
+	}
+
+	::-webkit-scrollbar-corner {
+		background: transparent;
+	}
+
+	/* The sidebar still scrolls with the wheel on a short screen — it just does
+	   not show a bar to do it. A scrollbar inside 16rem of navigation is all
+	   cost and no benefit. */
+	[data-portal-sidebar] nav {
+		scrollbar-width: none;
+	}
+
+	[data-portal-sidebar] nav::-webkit-scrollbar {
+		width: 0;
+		height: 0;
+	}
+
+	/* ─────────────────────────────────────────────────────────────────────
+	   3. The sidebar: resizable, and collapsible to an icon rail.
+
+	   COLLAPSED keeps the icons (the Azure DevOps behaviour). Hiding it
+	   entirely was the wrong call: a rail you can still navigate is worth far
+	   more than four extra rem of dashboard, and it means the toggle can live
+	   ON the sidebar in both states instead of being exiled to the banner.
+
+	   Width is a custom property so the drag handle has one thing to set.
+	   ───────────────────────────────────────────────────────────────────── */
+	[data-portal-sidebar] {
+		position: relative;
+		flex: 0 0 auto;
+		width: var(--portal-sidebar-w, 16rem);
+	}
+
+	/*
+	   The width transition is back, by request — the instant toggle was correct about
+	   the cost and wrong about the feel.
+
+	   Animating width does re-run layout for the page each frame, so it is kept cheap
+	   rather than removed: 160ms (short enough that a dropped frame is not readable as
+	   a stutter), and `contain: layout paint` on the sidebar so its own subtree is not
+	   re-laid-out as part of every frame. The transition is scoped to `width` alone —
+	   never `all` — so nothing else animates by accident.
+
+	   The collapsed labels stay `display: none` rather than fading: they have to stop
+	   taking horizontal space for the rail to be a rail, and an element cannot both
+	   fade and stop occupying width. The width animation is the part that reads as
+	   smooth anyway.
+	*/
+	[data-portal-sidebar] {
+		contain: layout paint;
+		transition: width 160ms cubic-bezier(0.4, 0, 0.2, 1);
+	}
+
+	/* Dragging the sidebar wider must track the pointer exactly — a transition there
+	   would make the edge lag behind the cursor. `data-portal-dragging` is what the
+	   resize handle already sets on <body> for the duration of a drag. */
+	body[data-portal-dragging] [data-portal-sidebar] {
+		transition: none;
+	}
+
+	/* Anyone who has asked their OS for less motion gets the instant toggle back. */
+	@media (prefers-reduced-motion: reduce) {
+		[data-portal-sidebar] {
+			transition: none;
+		}
+	}
+
+	/* ─────────────────────────────────────────────────────────────────────
+	   REDUCE MOTION — the portal's own switch, in Settings.
+
+	   Transitions only. Animations are deliberately left running: the loading
+	   spinners are the one piece of motion that carries information ("this is
+	   still working"), they are tiny in area, and freezing them makes a widget
+	   look hung rather than calm. What this kills is the expensive category —
+	   the sidebar's width animation, the widget reflow, panel and toast
+	   transitions — all of which move large areas and, without a GPU, are
+	   composited by the CPU one frame at a time.
+	   ───────────────────────────────────────────────────────────────────── */
+	html[data-motion="reduced"] *,
+	html[data-motion="reduced"] *::before,
+	html[data-motion="reduced"] *::after {
+		transition-duration: 0.01ms !important;
+		transition-delay: 0ms !important;
+		scroll-behavior: auto !important;
+	}
+
+	html[data-sidebar="collapsed"] [data-portal-sidebar] {
+		width: 4.25rem;
+	}
+
+	/* The labels and section headings go; the icons stay. */
+	html[data-sidebar="collapsed"] .portal-nav-label,
+	html[data-sidebar="collapsed"] .portal-nav-heading {
+		display: none;
+	}
+
+	/* ── Sidebar navigation rhythm ────────────────────────────────────────────
+	   The nav used to sit as a tight block at the top of a mostly empty rail: on a
+	   1080p screen the links occupied about a third of it and the remaining two thirds
+	   were blank. The items are the sidebar's whole job, so they should use it.
+
+	   Roomier rows plus real separation between sections. Everything is in rem, so
+	   compact density scales it down with the root font-size rather than needing a
+	   second set of numbers. The nav still scrolls on a short screen — it is
+	   `overflow-y-auto` — so growing the rows cannot make anything unreachable.
+
+	   Third pass, and the numbers matter. 0.5rem is DaisyUI's own default, so setting
+	   that undid the change entirely and put the nav back where it started. These sit
+	   deliberately between the default and the roomy first pass (0.7rem): still open,
+	   noticeably tighter than before. The separation between GROUPS does the structural
+	   work, so the gaps between rows within a group stay small. */
+	.portal-nav-link {
+		padding-top: 0.6rem;
+		padding-bottom: 0.6rem;
+	}
+
+	.portal-nav-list > li + li {
+		margin-top: 0.28rem;
+	}
+
+	/* The unread mark beside What's New. Pushed to the end of the row by margin
+	   rather than by a flex utility, so it stays put when the labels are hidden and
+	   the rail collapses to icons — that is the state it most needs to survive, since
+	   a collapsed rail has no words left to notice. */
+	.portal-nav-dot {
+		width: 0.45rem;
+		height: 0.45rem;
+		border-radius: 9999px;
+		background: hsl(var(--p));
+		flex: 0 0 auto;
+		margin-inline-start: auto;
+	}
+
+	html[data-sidebar="collapsed"] .portal-nav-dot {
+		margin-inline-start: 0;
+		position: absolute;
+		top: 0.5rem;
+		inset-inline-end: 0.6rem;
+	}
+
+	html[data-sidebar="collapsed"] .portal-nav-link {
+		position: relative;
+	}
+
+	/* First heading hugs the top; every later one gets air above it, so the sections
+	   read as groups rather than as one long list. */
+	.portal-nav-heading + .portal-nav-list {
+		margin-bottom: 0.45rem;
+	}
+
+	.portal-nav-group + .portal-nav-group {
+		margin-top: 1.2rem;
+	}
+
+	/* ── Centring the icon rail ───────────────────────────────────────────────
+	   `justify-content: center` was already here and the icons still sat right of
+	   centre, because centring cannot help an element that is WIDER than its parent.
+	   Measured in the collapsed state: the rail is 68px, and the padding chain — 16px
+	   from the nav, 8px from DaisyUI's `.menu` on the <ul>, 8px from the link itself,
+	   on each side — leaves the <ul> 35px of content box while the link needs 36px.
+	   It overflowed to the right, and the icon went with it.
+
+	   So the rail zeroes the horizontal padding it cannot afford. The link then spans
+	   the full 68px and the icon lands on the centre line, level with the footer
+	   buttons underneath it. */
+	html[data-sidebar="collapsed"] [data-portal-sidebar] nav {
+		padding-left: 0;
+		padding-right: 0;
+	}
+
+	html[data-sidebar="collapsed"] .portal-nav-list {
+		padding-left: 0;
+		padding-right: 0;
+	}
+
+	html[data-sidebar="collapsed"] .portal-nav-link {
+		justify-content: center;
+		width: 100%;
+		padding-left: 0;
+		padding-right: 0;
+		gap: 0;
+	}
+
+	html[data-sidebar="collapsed"] .portal-nav-footer {
+		padding-left: 0;
+		padding-right: 0;
+	}
+
+	/* Three buttons do not fit across a 4.25rem rail, so they stack. */
+	html[data-sidebar="collapsed"] .portal-nav-footer {
+		flex-direction: column;
+		gap: 0.25rem;
+	}
+
+	/* ── Drag handle, sitting on the sidebar's right border ───────────────────
+	   It used to be completely invisible until the pointer happened to land on a 6px
+	   strip, so the sidebar was resizable and nothing said so. An affordance nobody
+	   can see is a feature nobody has.
+
+	   The grip is three dots on the border, centred vertically: quiet enough to ignore
+	   at 35% opacity, and the universally understood "drag me" shape. It brightens and
+	   the border tints on hover, so the discovery path is see it -> hover it -> drag. */
+	.portal-sidebar-resizer {
+		position: absolute;
+		top: 0;
+		right: -3px;
+		width: 6px;
+		height: 100%;
+		z-index: 20;
+		cursor: col-resize;
+		background: transparent;
+		transition: background 120ms ease;
+	}
+
+	.portal-sidebar-resizer::before {
+		content: "";
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+		width: 3px;
+		height: 22px;
+		border-radius: 9999px;
+		/* Three dots: a repeating dot-then-gap gradient, not three elements. */
+		background-image: radial-gradient(
+			circle at center,
+			hsl(var(--bc) / 0.55) 0 1.5px,
+			transparent 1.6px
+		);
+		background-size: 3px 7px;
+		background-repeat: repeat-y;
+		opacity: 0.35;
+		transition: opacity 120ms ease;
+		pointer-events: none;
+	}
+
+	.portal-sidebar-resizer:hover::before,
+	.portal-sidebar-resizer[data-dragging]::before {
+		opacity: 1;
+	}
+
+	.portal-sidebar-resizer:hover,
+	.portal-sidebar-resizer[data-dragging] {
+		background: hsl(var(--p) / 0.45);
+	}
+
+	/* Nothing to resize when it is a fixed-width rail. */
+	html[data-sidebar="collapsed"] .portal-sidebar-resizer {
+		display: none;
+	}
+
+	/* ─────────────────────────────────────────────────────────────────────
+	   3b. Hebrew, and any other right-to-left text.
+
+	   The portal's own chrome is English and left-to-right, and it should stay
+	   that way — flipping the whole app would be a much bigger, much worse bug
+	   than the one being fixed. What is actually broken is narrower: a Hebrew
+	   sentence rendered inside a left-to-right box gets its punctuation thrown
+	   to the wrong end and reads backwards. A ticket that says "?האם אפשר" comes
+	   out as "האם אפשר?" with the question mark stranded on the left.
+
+	   `dir="auto"` is the fix, and it is the RIGHT fix: the browser looks at the
+	   first strong directional character in each string and lays that string out
+	   accordingly. A Hebrew ticket aligns right and reads right; the English one
+	   under it aligns left. Both correct, in the same list, with no language
+	   setting to configure and nothing for anyone to get wrong.
+
+	   The JS below stamps it onto every text input and textarea. Templates that
+	   render user-written text carry it in the markup.
+	   ───────────────────────────────────────────────────────────────────── */
+	[dir="auto"] {
+		text-align: start;
+	}
+
+	/* An RTL paragraph's bullets, padding and borders must flip with it. These are
+	   the logical properties — they follow the element's direction rather than
+	   hard-coding "left". */
+	[dir="auto"] ul,
+	[dir="auto"] ol {
+		padding-inline-start: 1.25rem;
+		padding-inline-end: 0;
+	}
+
+	/* ─────────────────────────────────────────────────────────────────────
+	   4. Resizable split panes (Support: "My Tickets" | "Select a ticket").
+	   ───────────────────────────────────────────────────────────────────── */
+	.portal-split {
+		display: flex;
+		min-height: 0;
+	}
+
+	/* Without this a flex child refuses to shrink below its content, and a wide
+	   screenshot in the conversation pane pushes the whole layout sideways. */
+	.portal-split > [data-split-pane] {
+		min-width: 0;
+	}
+
+	.portal-splitter {
+		flex: 0 0 12px;
+		cursor: col-resize;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		touch-action: none;
+	}
+
+	.portal-splitter::after {
+		content: "";
+		width: 3px;
+		height: 40px;
+		border-radius: 9999px;
+		background: hsl(var(--bc) / 0.2);
+		transition: background 120ms ease, height 120ms ease;
+	}
+
+	.portal-splitter:hover::after,
+	.portal-splitter[data-dragging]::after {
+		background: hsl(var(--p));
+		height: 72px;
+	}
+
+	/* While dragging, the cursor must not flicker as it passes over text. */
+	body[data-portal-dragging] {
+		cursor: col-resize;
+		-webkit-user-select: none;
+		user-select: none;
+	}
+
+	/* Below `lg` the panes stack, so there is nothing to drag. */
+	@media (max-width: 1023px) {
+		.portal-split {
+			flex-direction: column;
+		}
+
+		.portal-splitter {
+			display: none;
+		}
+
+		.portal-split > [data-split-pane] {
+			flex: 1 1 auto !important;
+		}
+	}
+
+	/* ─────────────────────────────────────────────────────────────────────
+	   5. Auto-refresh, seen from the page.
+
+	   A background refresh must not look like a page load. The widget shells
+	   carry Tailwind variants that swap the content for a skeleton whenever
+	   htmx is in flight — right for a first load or a refresh you asked for,
+	   wrong for a poll you didn't, which is what made the dashboard strobe
+	   every 60 seconds. `data-refresh-quiet` marks a poll: the content stays
+	   put and just dims a little.
+	   ───────────────────────────────────────────────────────────────────── */
+	.widget-shell[data-refresh-quiet].htmx-request .widget-loading {
+		display: none !important;
+	}
+
+	.widget-shell[data-refresh-quiet].htmx-request .widget-content {
+		display: block !important;
+		opacity: 0.6;
+		transition: opacity 150ms ease;
+	}
+
+	/* ─────────────────────────────────────────────────────────────────────
+	   6. Compact density.
+
+	   The old compact rules keyed off specific utility classes (`gap-6`), so
+	   the moment a grid moved to `gap-8` compact silently stopped applying to
+	   it. These key off the semantic classes instead, and the root font-size
+	   drop scales every rem-based size in the design system at once — which is
+	   what makes compact actually compact rather than a few tighter gaps.
+	   ───────────────────────────────────────────────────────────────────── */
+	/* ── The dashboard grid's metrics live here, as variables ─────────────────
+	   The widget grid used to hard-code its row height (320px) in the markup, its
+	   gap (gap-8) as a utility class, and BOTH again as constants in the resize
+	   JavaScript. Compact could not move any of them: it dropped the root font-size,
+	   so the widget SHELLS shrank to 17rem while the grid rows stayed 320px — every
+	   card floating in a track 80px too tall, with resized widgets keeping their
+	   inline 320px-derived height and not shrinking at all. That is what made
+	   compact look broken on the dashboard specifically.
+
+	   One declaration each, overridden for compact, read by the CSS and by the
+	   JavaScript (which measures the computed values instead of assuming them). */
+	:root {
+		--widget-row-h: 320px;
+		--widget-gap: 2rem;
+	}
+
+	html[data-density="compact"] {
+		font-size: 14px;
+		--widget-row-h: 232px;
+		--widget-gap: 1rem;
+	}
+
+	html[data-density="compact"] .page-header {
+		padding: 0.6rem 1.15rem;
+	}
+
+	/* Theme switch must be ATOMIC. When data-theme flips, DaisyUI swaps every colour
+	   variable at once — but if some elements carry a background/colour transition and
+	   others don't, they repaint at slightly different times and you SEE the page change
+	   in pieces (the background turns first, the widget contents a beat later). Killing
+	   transitions for the one frame of the switch makes the whole page turn over
+	   together, which is what "smooth" actually means here.
+
+	   TRANSITIONS ONLY. This rule used to kill `animation` too, which made every button
+	   on the page pop each time the theme changed: DaisyUI gives `.btn` an unconditional
+	   `animation: button-pop` (scale 0.98 -> 1.02 -> 1), and setting `animation: none`
+	   and then removing it RESTARTS that animation on every button at once. Spamming the
+	   theme button made the whole page look like it was being clicked repeatedly. An
+	   animation mid-swap was never the problem transitions were — a running shimmer does
+	   not make the page turn over in pieces. */
+	html.theme-switching,
+	html.theme-switching *,
+	html.theme-switching *::before,
+	html.theme-switching *::after {
+		transition: none !important;
+	}
+
+	html[data-density="compact"] .page-content {
+		padding: 0.85rem;
+	}
+
+	html[data-density="compact"] .page-content,
+	html[data-density="compact"] .page-content .grid {
+		gap: 0.85rem;
+	}
+
+	/* The widget grid takes its gap and row height from the variables above, in both
+	   densities — so there is nothing density-specific to state here. */
+
+	html[data-density="compact"] .portal-content-container {
+		max-width: 72rem;
+		padding: 0.85rem 1rem;
+	}
+
+	html[data-density="compact"] .section-card .card-body {
+		padding: 0.8rem;
+		gap: 0.5rem;
+	}
+
+	/* ONE widget height, everywhere, in both densities. `h-80` stays on the markup as
+	   a fallback for a page that somehow loads without this stylesheet; this wins on
+	   source order (output.css is in the head, this block is in the body) and it is the
+	   value the dashboard's grid tracks and its resize arithmetic also use. Previously
+	   the card said `h-80`, the dashboard's grid row said 320px, compact said 17rem and
+	   the resize script said 320 — four numbers for one measurement, and in compact
+	   three of them disagreed. */
+	.widget-shell {
+		height: var(--widget-row-h);
+	}
+
+	/* `kbd-sm` is a DaisyUI class that is NOT in the compiled stylesheet, so the
+	   shortcut keys in the help dialog were rendering at full size — the silent
+	   no-op this codebase keeps hitting. Written out by hand instead. */
+	.kbd.kbd-sm {
+		padding-left: 0.5rem;
+		padding-right: 0.5rem;
+		min-height: 1.5rem;
+		height: 1.5rem;
+		font-size: 0.75rem;
+		line-height: 1;
+	}
+
+	/* Same story for `checkbox-sm`: not compiled, so the checkbox sat at full size
+	   beside `input-sm` / `btn-sm` controls in the Quick Links dialog. */
+	.checkbox.checkbox-sm {
+		width: 1.25rem;
+		height: 1.25rem;
+	}
+
+	/* And `file-input-sm`, which left the reply attachment picker on the Support page
+	   a full head taller than the controls beside it. */
+	.file-input.file-input-sm {
+		height: 2rem;
+		font-size: 0.875rem;
+		line-height: 2rem;
+	}
+
+	.file-input.file-input-sm::file-selector-button {
+		height: 2rem;
+		font-size: 0.875rem;
+		padding-left: 1rem;
+		padding-right: 1rem;
+	}
+
+	html[data-density="compact"] .section-card ul > li {
+		padding-top: 0.3rem;
+		padding-bottom: 0.3rem;
+	}
+
+	/* One more column on a wide screen: the point of compact is more on screen.
+	   Scoped to the widget grid by its own hook. It used to be `main .grid.items-start`,
+	   which is a shape several unrelated pages happen to have — so compact silently
+	   re-columned layouts that were never meant to be four across. */
+	@media (min-width: 1280px) {
+		html[data-density="compact"] [data-widget-grid] {
+			grid-template-columns: repeat(4, minmax(0, 1fr));
+		}
+	}
+</style>
+
+<script>
+	/* ═══════════════════════════════════════════════════════════════════════
+	   Portal chrome behaviour: sidebar, splitters, auto-refresh.
+
+	   Loaded from the banner on every page. Everything is defensive — a page
+	   without a sidebar, or without widgets, must not throw.
+	   ═══════════════════════════════════════════════════════════════════════ */
+	(function () {
+		if (window.__portalChrome) return; // banner is included once, but be certain
+		window.__portalChrome = true;
+
+		const root = document.documentElement;
+		const LS = {
+			get(key, fallback) {
+				try {
+					const v = localStorage.getItem(key);
+					return v === null ? fallback : v;
+				} catch (_) {
+					return fallback;
+				}
+			},
+			set(key, value) {
+				try {
+					localStorage.setItem(key, String(value));
+				} catch (_) {
+					/* private mode — the preference just won't persist */
+				}
+			},
+		};
+
+		/* ── Theme + display density ─────────────────────────────────────────
+		   This lived in sidebar.html. It has moved here for two reasons: the theme
+		   toggle itself now sits in the banner (the sidebar collapses to a rail with
+		   no room for a third button), and this block ALSO applies the persisted theme
+		   and density on load — which is not sidebar business at all, and meant a page
+		   without a sidebar rendered with the wrong theme.
+
+		   localStorage first so an F5 never flashes the wrong theme; the server value
+		   is the cross-device fallback. */
+		const THEME_KEY = "portal-theme";
+		const DENSITY_KEY = "portal-density";
+		const serverTheme = {{ (user.preferred_theme or '')|tojson }};
+		const serverDensity = {{ (user.preferred_density or '')|tojson }};
+
+		/* Three PREFERENCES, two themes.
+
+		   "system" is not a DaisyUI theme — it is an instruction to follow the OS. So
+		   the preference and the applied theme are deliberately separate: `data-theme`
+		   is always a real theme (light or night), and "system" resolves to one of them
+		   on every load and again whenever the OS flips. Storing the resolved value
+		   instead would freeze whichever mode the machine happened to be in at the
+		   moment of choosing, which is exactly what "follow the system" must not do. */
+		const osDark = window.matchMedia
+			? window.matchMedia("(prefers-color-scheme: dark)")
+			: null;
+
+		function resolveTheme(pref) {
+			if (pref === "system") return osDark && osDark.matches ? "night" : "light";
+			return pref;
+		}
+
+		let themePref = LS.get(THEME_KEY, "") || serverTheme;
+		// "nord" is the light theme's old name. Normalise it, or a stored light
+		// preference reads as unknown here and silently falls back to dark on every F5.
+		if (themePref === "nord") themePref = "light";
+		if (themePref !== "light" && themePref !== "system") themePref = "night";
+		LS.set(THEME_KEY, themePref);
+		root.setAttribute("data-theme", resolveTheme(themePref));
+
+		let density = LS.get(DENSITY_KEY, "") || serverDensity;
+		if (density !== "compact") density = "comfortable";
+		LS.set(DENSITY_KEY, density);
+		root.setAttribute("data-density", density);
+
+		/* Reduce motion. Browser-level `prefers-reduced-motion` is an accessibility
+		   preference and not everyone who needs this has set it — the case here is a
+		   workstation with no GPU, where the browser composites in software and every
+		   transition is CPU work. That is a performance problem, not an accessibility
+		   one, so it needs a switch inside the portal. The OS setting still seeds the
+		   default, so anyone who has already asked for less motion gets it. */
+		const MOTION_KEY = "portal-motion";
+		let motion = LS.get(MOTION_KEY, "");
+		if (motion !== "reduced" && motion !== "full") {
+			motion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches
+				? "reduced"
+				: "full";
+		}
+		LS.set(MOTION_KEY, motion);
+		root.setAttribute("data-motion", motion);
+
+		/* The icon shows the CURRENT preference, not the one you would get by clicking.
+		   With two states those are interchangeable; with three they are not, and a
+		   button that shows "what's next" makes the middle state unreadable. */
+		function paintThemeIcons() {
+			const want = {
+				light: "sun",
+				night: "moon",
+				system: "system",
+			}[themePref] || "moon";
+			["sun", "moon", "system"].forEach((icon) => {
+				document.querySelectorAll(`[data-theme-icon='${icon}']`).forEach((el) =>
+					el.classList.toggle("hidden", icon !== want)
+				);
+			});
+			const label = {
+				light: "Theme: light. Click for dark.",
+				night: "Theme: dark. Click to follow the system.",
+				system: "Theme: follows the system. Click for light.",
+			}[themePref] || "";
+			document.querySelectorAll("[data-theme-toggle]").forEach((el) => {
+				el.setAttribute("title", label);
+				el.setAttribute("aria-label", label);
+			});
+			// The Settings page shows the same setting as a select. Cycling from the
+			// banner while that page is open must move it too, or one control sits there
+			// stating the opposite of what is stored.
+			const settingsSelect = document.getElementById("settings-theme-select");
+			if (settingsSelect && settingsSelect.value !== themePref) {
+				settingsSelect.value = themePref;
+			}
+		}
+
+		// The OS flipping while the portal is open only matters in "system".
+		osDark?.addEventListener?.("change", () => {
+			if (themePref !== "system") return;
+			applyTheme(resolveTheme("system"));
+		});
+		paintThemeIcons();
+		// The Settings page has its own theme switch. It changes data-theme directly, so
+		// without this the banner's sun/moon would go on showing the old state until the
+		// next page load — two controls for one setting, disagreeing on screen.
+		window.portalPaintTheme = paintThemeIcons;
+
+		// Flip the theme atomically: suppress transitions, swap data-theme, force the
+		// new variables to apply in that same frame, then let transitions back in. This
+		// is what stops the background changing a beat before the widgets do. Shared so
+		// the Settings page's own switch gets the same clean flip.
+		function applyTheme(next) {
+			root.classList.add("theme-switching");
+			root.setAttribute("data-theme", next);
+			void root.offsetWidth; // force a synchronous style flush while transitions are off
+			paintThemeIcons();
+			requestAnimationFrame(() =>
+				requestAnimationFrame(() => root.classList.remove("theme-switching"))
+			);
+		}
+		/* One entry point for changing the theme, so the banner's three-way cycle and
+		   the Settings page's switch cannot end up holding different ideas of what the
+		   preference is. Callers pass a PREFERENCE ("light" | "night" | "system"); the
+		   resolution to an actual theme happens here, once. */
+		async function setThemePreference(pref, persist) {
+			themePref = ["light", "night", "system"].includes(pref) ? pref : "night";
+			applyTheme(resolveTheme(themePref));
+			LS.set(THEME_KEY, themePref);
+			if (persist === false) return;
+			try {
+				await fetch("/api/me/theme", {
+					method: "PUT",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ theme: themePref }),
+				});
+			} catch (_) {
+				// Non-fatal: localStorage already reflects it; sync resumes next change.
+			}
+		}
+		window.portalSetTheme = setThemePreference;
+
+		const THEME_CYCLE = ["light", "night", "system"];
+
+		document.addEventListener("click", (event) => {
+			if (!event.target.closest("[data-theme-toggle]")) return;
+			const idx = THEME_CYCLE.indexOf(themePref);
+			setThemePreference(THEME_CYCLE[(idx + 1) % THEME_CYCLE.length]);
+		});
+
+		/* ── portalUrlState: filters that survive being sent to someone ─────
+		   Widget filters were kept in localStorage only, which makes a filtered view
+		   private to one browser. In a portal whose whole job is being pasted into a
+		   ticket or a chat message, "look at this collection's failing pipelines" was
+		   not something you could send — the recipient got their own last view.
+
+		   The URL is now the shared truth and localStorage the personal fallback:
+		     * a link WITH parameters shows exactly what the sender saw;
+		     * a link WITHOUT them falls back to what you last chose yourself.
+		   Written with replaceState, so changing a filter never adds history entries
+		   the Back button then has to be pressed through. */
+		window.portalUrlState = {
+			get: function (key) {
+				try {
+					const v = new URLSearchParams(window.location.search).get(key);
+					return v === null ? null : v;
+				} catch (_) {
+					return null;
+				}
+			},
+			// URL first, then this browser's last choice. Returns "" rather than null so
+			// callers can use it directly as a select value.
+			resolve: function (key, storageKey) {
+				const fromUrl = this.get(key);
+				if (fromUrl !== null) return fromUrl;
+				try {
+					return (storageKey && localStorage.getItem(storageKey)) || "";
+				} catch (_) {
+					return "";
+				}
+			},
+			set: function (key, value, storageKey) {
+				try {
+					const url = new URL(window.location.href);
+					// An empty filter is "no filter", so it leaves the URL entirely rather
+					// than sitting there as `?project=` — a shared link should carry what
+					// was chosen, not a record of what was cleared.
+					if (value === "" || value === null || value === undefined) {
+						url.searchParams.delete(key);
+					} else {
+						url.searchParams.set(key, value);
+					}
+					window.history.replaceState({}, "", url.toString());
+				} catch (_) {
+					/* history is not essential; the widget still works */
+				}
+				try {
+					if (storageKey) localStorage.setItem(storageKey, value == null ? "" : value);
+				} catch (_) {}
+			},
+		};
+
+		/* ── "?" — the shortcuts, written down ──────────────────────────────
+		   There are five keyboard shortcuts and, until now, nothing anywhere that says
+		   so. A shortcut nobody can discover is a shortcut only its author uses. */
+		(function shortcutHelp() {
+			const SHORTCUTS = [
+				["Ctrl / ⌘ + K", "Open the command palette"],
+				["/", "Jump to search"],
+				["[", "Collapse or expand the sidebar"],
+				["r", "Refresh every widget on the page"],
+				["t", "Switch between light and dark"],
+				["g then h", "Go to the dashboard"],
+				["?", "Show this list"],
+				["Esc", "Close a panel, menu or dialog"],
+			];
+
+			let dialog = null;
+			function build() {
+				if (dialog) return dialog;
+				dialog = document.createElement("dialog");
+				dialog.className = "modal";
+				dialog.innerHTML =
+					'<div class="modal-box max-w-md">' +
+					'<h3 class="font-bold text-lg mb-3">Keyboard shortcuts</h3>' +
+					'<ul class="flex flex-col gap-2">' +
+					SHORTCUTS.map(
+						(s) =>
+							'<li class="flex items-center justify-between gap-4 text-sm">' +
+							'<span class="text-base-content/70">' + s[1] + "</span>" +
+							'<kbd class="kbd kbd-sm">' + s[0] + "</kbd>" +
+							"</li>"
+					).join("") +
+					"</ul>" +
+					// The one shortcut that is not on the list above, because finding it is
+					// the point. Small enough to be a footnote, present enough that it is
+					// findable by someone who reads the page rather than only by whoever
+					// wrote it — which is the same argument as the "?" chip itself.
+					'<p class="text-center" style="font-size:10px;opacity:.45;margin-top:0.75rem">' +
+					"Try the Konami code &nbsp;&uarr; &uarr; &darr; &darr; &larr; &rarr; &larr; &rarr; B A" +
+					"</p>" +
+					// Somewhere to replay the tour from. The shortcuts dialog is where
+					// people already come to ask "what can this do?", so the walkthrough
+					// belongs next to the answer rather than buried in Settings.
+					'<div class="modal-action justify-between">' +
+					'<button type="button" class="btn btn-ghost btn-sm" data-tour-replay>Replay the tour</button>' +
+					'<form method="dialog"><button class="btn btn-sm">Close</button></form></div>' +
+					"</div>" +
+					'<form method="dialog" class="modal-backdrop"><button>close</button></form>';
+				dialog.addEventListener("click", (event) => {
+					if (!event.target.closest("[data-tour-replay]")) return;
+					dialog.close();
+					// The tour measures live elements, so it must not start while the
+					// dialog is still on screen dimming them.
+					setTimeout(() => window.portalTour?.start(), 120);
+				});
+				document.body.appendChild(dialog);
+				return dialog;
+			}
+
+			/* Single-key shortcuts, sharing one guard: never steal a key from a text
+			   field, and never fight a modifier combination the browser owns. */
+			function typing(el) {
+				return !!el && (el.isContentEditable ||
+					["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName));
+			}
+
+			let gPending = null;
+			document.addEventListener("keydown", (event) => {
+				if (event.ctrlKey || event.metaKey || event.altKey) return;
+				if (typing(event.target)) return;
+
+				// "g then h" — the two-key form every developer tool uses for "go to".
+				// The pending state expires so a stray g does not swallow the next key
+				// forever.
+				if (gPending) {
+					clearTimeout(gPending);
+					gPending = null;
+					if (window.portalKey(event, "h", "KeyH")) {
+						event.preventDefault();
+						window.location.href = "/ui/";
+						return;
+					}
+				}
+				if (window.portalKey(event, "g", "KeyG")) {
+					gPending = setTimeout(() => { gPending = null; }, 1200);
+					return;
+				}
+
+				if (window.portalKey(event, "r", "KeyR")) {
+					// Exactly what the Refresh button does, rather than reloading the page:
+					// a browser reload would also throw away the widget layout state.
+					event.preventDefault();
+					document.getElementById("refresh-btn")?.click();
+					return;
+				}
+
+				if (window.portalKey(event, "t", "KeyT")) {
+					event.preventDefault();
+					document.querySelector("[data-theme-toggle]")?.click();
+					return;
+				}
+			});
+
+			document.addEventListener("keydown", (event) => {
+				// "?" is Shift and the key that carries "/" on most layouts; on a
+				// Hebrew one that key produces a full stop, so the character never
+				// arrives and the shortcuts dialog was unreachable.
+				const asks = event.key === "?" ||
+					(event.shiftKey && event.code === "Slash");
+				if (!asks || event.ctrlKey || event.metaKey || event.altKey) return;
+				const el = event.target;
+				// "?" is a character people type. Never steal it from a text field.
+				if (el && (el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName))) return;
+				event.preventDefault();
+				const d = build();
+				if (!d.open) d.showModal();
+			});
+		})();
+
+		/* ── htmx requests must finish too ─────────────────────────────────
+		   THE actual cause of the widget stuck on its spinner, and the reason the
+		   previous fix changed nothing.
+
+		   A dashboard widget is loaded in two steps. htmx fetches the widget's HTML
+		   into the card, and only then does that HTML's own script fetch the data.
+		   `portalFetch` put a deadline on the SECOND step. The first step is an htmx
+		   request, which portalFetch never touches — and htmx ships with
+		   `config.timeout = 0`, meaning no timeout at all.
+
+		   So if the request for the widget's markup stalls, the card sits on its
+		   skeleton forever and none of the widget's own error handling ever runs,
+		   because the code containing it never arrived. That is indistinguishable
+		   from "loading forever", and no amount of care inside the widget can fix it.
+
+		   Note this also makes the `htmx:timeout` handler in banner.html reachable:
+		   it was written against an event that, with a timeout of 0, could never
+		   fire. */
+		if (window.htmx) {
+			window.htmx.config.timeout = 20000;
+		}
+
+		/* ── One explanation for every failure the user can see ─────────────
+		   The backend now classifies outbound failures and returns a sentence that
+		   names the system, the likely cause and who fixes it (see
+		   resilient_http.explain_integration_failure). This is the browser half:
+		   pull that sentence out of the response instead of printing a status code.
+
+		   "This widget failed to load (HTTP 502)" told the user nothing they could
+		   act on, and behind a corporate proxy the answer is nearly always the same one —
+		   the portal cannot reach that host because the route is not open. */
+		window.portalExplain = function (status, responseText) {
+			// The server's own explanation wins whenever there is one.
+			if (responseText) {
+				try {
+					const parsed = JSON.parse(responseText);
+					const detail = parsed?.detail || parsed?.message;
+					if (detail && typeof detail === "string") return detail;
+				} catch (_) {
+					/* not JSON — fall through to the status-based text */
+				}
+			}
+			if (status === 0 || status === undefined || status === null) {
+				return "The portal itself could not be reached.\nCheck your network connection, then reload.";
+			}
+			if (status === 401) return "Your session has expired.\nReload the page to sign in again.";
+			if (status === 403) return "You do not have access to this.\nAsk a platform admin if you think you should.";
+			if (status === 404) return "This is not available on the server.\nIt may have moved or been removed.";
+			if (status === 408 || status === 504) {
+				return "The request took too long.\nThe system behind it is slow or unreachable.";
+			}
+			if (status === 502 || status === 503) {
+				return (
+					"The portal could not reach the system behind this.\n" +
+					"Usually a firewall rule that does not allow the portal through, or that " +
+					"system being down. Retrying will not help — a platform admin needs to look."
+				);
+			}
+			if (status >= 500) return "Something went wrong on the server (HTTP " + status + ").";
+			return "This request failed (HTTP " + status + ").";
+		};
+
+		/* A widget shell whose request fails must say so. The global htmx error
+		   handler deliberately stays quiet for GETs on the grounds that "every widget
+		   shows its own inline error" — true only when the widget's markup arrived.
+		   When the shell request itself fails there is no widget yet, so the skeleton
+		   is all there is, and it looks exactly like loading. */
+		(function widgetShellErrors() {
+			function failShell(event, message) {
+				const shell = event?.target?.closest?.("[data-autorefresh], .widget-shell");
+				if (!shell) return;
+				const content = shell.querySelector(".widget-content");
+				if (!content) return;
+				// htmx toggles the skeleton off the `htmx-request` class; the request has
+				// ended by the time we get here, so writing into .widget-content shows.
+				content.innerHTML =
+					'<div class="h-full flex flex-col items-center justify-center gap-2 p-4 text-center">' +
+					'<p class="text-xs text-error" style="white-space:pre-line">' +
+					String(message).replace(/[&<>"]/g, (c) =>
+						({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])
+					) +
+					"</p>" +
+					'<div class="flex items-center gap-2">' +
+					'<button type="button" class="btn btn-ghost btn-xs" data-widget-shell-retry>Retry</button>' +
+					// A dead end becomes a next step. Most widget failures in this portal
+					// are an integration that is not reachable yet, and Connections is
+					// where that is diagnosed and fixed.
+					'<a class="btn btn-ghost btn-xs" href="/ui/connections">Connections</a>' +
+					"</div>" +
+					"</div>";
+			}
+
+			document.body.addEventListener("htmx:timeout", (event) =>
+				failShell(event, "This widget took too long to load.\nThe server did not answer within 20 seconds.")
+			);
+			document.body.addEventListener("htmx:sendError", (event) =>
+				failShell(event, "This widget could not be reached.\nCheck your connection to the portal.")
+			);
+			document.body.addEventListener("htmx:responseError", (event) => {
+				const xhr = event?.detail?.xhr;
+				failShell(event, window.portalExplain(xhr?.status, xhr?.responseText));
+			});
+
+			// Retry re-issues the shell's own request rather than reloading the page.
+			document.addEventListener("click", (event) => {
+				if (!event.target.closest("[data-widget-shell-retry]")) return;
+				const shell = event.target.closest("[data-autorefresh], .widget-shell");
+				if (shell) window.htmx?.trigger(shell, "refresh");
+			});
+		})();
+
+		/* ── A shortcut is the KEY, not the character ──────────────────────
+		   `event.key` is what the layout produced. On a Hebrew keyboard the R
+		   key reports "ר", so every `event.key === "r"` in this portal was false
+		   and every single-key shortcut silently did nothing -- no error, no
+		   clue, just a feature that exists only in English.
+
+		   `event.code` is the physical key ("KeyR"), which is the one printed on
+		   the keycap whatever the layout is set to. Match either: `code` makes
+		   the shortcut work from the key it is drawn on, and `key` keeps it
+		   working for anyone whose layout moves the letters somewhere else.
+
+		   Modifiers are the caller's business -- some shortcuts want Shift.
+		   Called at keydown time, so it is defined by then wherever it is used. */
+		window.portalKey = function (event, character, code) {
+			if (!event) return false;
+			if (code && event.code === code) return true;
+			return String(event.key || "").toLowerCase() === character;
+		};
+
+		/* ── portalFetch: a fetch that always finishes ──────────────────────
+		   Every widget draws a spinner, calls fetch, and shows an error in .catch().
+		   That is only safe if the fetch is guaranteed to settle — and it is not. A
+		   request can sit in the browser's per-host connection queue behind slower
+		   ones (the dashboard fires eleven at once, and the pull-request call walks
+		   every project in every collection), or stall inside a proxy, and never
+		   reject. The spinner then spins for as long as the tab is open, which is
+		   indistinguishable from the widget being broken.
+
+		   A hard client-side deadline removes the failure mode entirely, whatever
+		   the cause. Widgets get an error they can show instead of a spinner
+		   forever. */
+		window.portalFetch = function (url, options, timeoutMs) {
+			const ms = timeoutMs || 20000;
+			// AbortController is what actually cancels the in-flight request; without
+			// it a Promise.race would leave the request running and only hide it.
+			const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+			const opts = Object.assign({ credentials: "same-origin" }, options || {});
+			if (controller) opts.signal = controller.signal;
+
+			const timer = setTimeout(function () {
+				if (controller) controller.abort();
+			}, ms);
+
+			return fetch(url, opts).then(
+				function (res) { clearTimeout(timer); return res; },
+				function (err) {
+					clearTimeout(timer);
+					// An abort is our deadline firing, not a network fault — say so, because
+					// "took too long" and "refused" need different things done about them.
+					if (err && err.name === "AbortError") {
+						throw new Error("Timed out after " + Math.round(ms / 1000) + "s — the server did not answer.");
+					}
+					throw err;
+				}
+			);
+		};
+
+		/* ── Sidebar: width + collapsed state ───────────────────────────── */
+		const SIDEBAR_W_KEY = "portal-sidebar-width";
+		const SIDEBAR_STATE_KEY = "portal-sidebar-state";
+		const MIN_W = 180;
+		const MAX_W = 460;
+
+		function applySidebarWidth(px) {
+			const clamped = Math.min(MAX_W, Math.max(MIN_W, Math.round(px)));
+			root.style.setProperty("--portal-sidebar-w", clamped + "px");
+			return clamped;
+		}
+
+		const storedWidth = parseInt(LS.get(SIDEBAR_W_KEY, ""), 10);
+		if (Number.isFinite(storedWidth)) applySidebarWidth(storedWidth);
+
+		// "hidden" is the old value from the previous build, when collapsing meant
+		// collapsing to nothing. Anyone who left it that way would otherwise come back
+		// to a sidebar that is simply gone, with no obvious way to get it back.
+		const storedState = LS.get(SIDEBAR_STATE_KEY, "expanded");
+		let sidebarState = storedState === "collapsed" || storedState === "hidden"
+			? "collapsed"
+			: "expanded";
+		root.setAttribute("data-sidebar", sidebarState);
+
+		function paintSidebarToggle() {
+			const collapsed = root.getAttribute("data-sidebar") === "collapsed";
+			document.querySelectorAll("[data-sidebar-icon-collapse]").forEach((el) =>
+				el.classList.toggle("hidden", collapsed)
+			);
+			document.querySelectorAll("[data-sidebar-icon-expand]").forEach((el) =>
+				el.classList.toggle("hidden", !collapsed)
+			);
+			document.querySelectorAll("[data-sidebar-toggle]").forEach((el) => {
+				el.title = collapsed ? "Expand sidebar ([)" : "Collapse sidebar ([)";
+			});
+		}
+		paintSidebarToggle();
+
+		function toggleSidebar() {
+			const next =
+				root.getAttribute("data-sidebar") === "collapsed" ? "expanded" : "collapsed";
+			root.setAttribute("data-sidebar", next);
+			LS.set(SIDEBAR_STATE_KEY, next);
+			paintSidebarToggle();
+		}
+		window.portalToggleSidebar = toggleSidebar;
+
+		document.addEventListener("click", (event) => {
+			if (event.target.closest("[data-sidebar-toggle]")) {
+				event.preventDefault();
+				toggleSidebar();
+			}
+		});
+
+		// `[` — the shortcut every IDE and Confluence already uses for this.
+		document.addEventListener("keydown", (event) => {
+			if (!window.portalKey(event, "[", "BracketLeft") ||
+				event.metaKey || event.ctrlKey || event.altKey) return;
+			const el = event.target;
+			const typing =
+				el &&
+				(el.isContentEditable ||
+					["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName));
+			if (typing) return;
+			event.preventDefault();
+			toggleSidebar();
+		});
+
+		function initSidebarResizer() {
+			const aside = document.querySelector("[data-portal-sidebar]");
+			if (!aside || aside.querySelector(".portal-sidebar-resizer")) return;
+
+			const handle = document.createElement("div");
+			handle.className = "portal-sidebar-resizer";
+			handle.setAttribute("role", "separator");
+			handle.setAttribute("aria-orientation", "vertical");
+			handle.setAttribute("aria-label", "Resize sidebar");
+			handle.title = "Drag to resize · double-click to reset";
+			aside.appendChild(handle);
+
+			let dragging = false;
+
+			handle.addEventListener("pointerdown", (event) => {
+				dragging = true;
+				handle.setAttribute("data-dragging", "");
+				document.body.setAttribute("data-portal-dragging", "");
+				handle.setPointerCapture(event.pointerId);
+				event.preventDefault();
+			});
+
+			handle.addEventListener("pointermove", (event) => {
+				if (!dragging) return;
+				// The sidebar starts at the left edge of the viewport, so the pointer's
+				// x IS the width. No offset bookkeeping, nothing to drift.
+				applySidebarWidth(event.clientX);
+			});
+
+			function endDrag(event) {
+				if (!dragging) return;
+				dragging = false;
+				handle.removeAttribute("data-dragging");
+				document.body.removeAttribute("data-portal-dragging");
+				try {
+					handle.releasePointerCapture(event.pointerId);
+				} catch (_) {}
+				const current = parseInt(
+					getComputedStyle(root).getPropertyValue("--portal-sidebar-w"),
+					10
+				);
+				if (Number.isFinite(current)) LS.set(SIDEBAR_W_KEY, current);
+			}
+			handle.addEventListener("pointerup", endDrag);
+			handle.addEventListener("pointercancel", endDrag);
+
+			handle.addEventListener("dblclick", () => {
+				root.style.removeProperty("--portal-sidebar-w");
+				LS.set(SIDEBAR_W_KEY, 256);
+				applySidebarWidth(256);
+			});
+		}
+
+		/* ── Split panes ────────────────────────────────────────────────────
+		   Any `.portal-split` containing a `.portal-splitter` becomes draggable.
+		   The pane BEFORE the splitter owns the flex-basis; the pane after it
+		   takes the remainder, so there is only ever one number to store.       */
+		function initSplitters() {
+			document.querySelectorAll(".portal-splitter").forEach((splitter) => {
+				if (splitter.dataset.bound) return;
+				splitter.dataset.bound = "1";
+
+				const container = splitter.closest(".portal-split");
+				const first = splitter.previousElementSibling;
+				if (!container || !first) return;
+
+				const key = "portal-split:" + (container.id || "default");
+
+				// The default is the markup's, read BEFORE anything stored overwrites
+				// it. Double-click used to reset to a literal written here, so a page
+				// that changed its own default reset to somebody else's number.
+				const declared = parseFloat(first.dataset.splitDefault || "");
+				const fallback = Number.isFinite(declared) ? declared : parseFloat(first.style.flexBasis) || 38;
+
+				const stored = parseFloat(LS.get(key, ""));
+				if (Number.isFinite(stored)) first.style.flexBasis = stored + "%";
+
+				let dragging = false;
+
+				function setFromPointer(clientX) {
+					const rect = container.getBoundingClientRect();
+					if (!rect.width) return;
+					const pct = ((clientX - rect.left) / rect.width) * 100;
+					const clamped = Math.min(75, Math.max(20, pct));
+					first.style.flexBasis = clamped + "%";
+					return clamped;
+				}
+
+				splitter.addEventListener("pointerdown", (event) => {
+					dragging = true;
+					splitter.setAttribute("data-dragging", "");
+					document.body.setAttribute("data-portal-dragging", "");
+					splitter.setPointerCapture(event.pointerId);
+					event.preventDefault();
+				});
+
+				splitter.addEventListener("pointermove", (event) => {
+					if (dragging) setFromPointer(event.clientX);
+				});
+
+				function endDrag(event) {
+					if (!dragging) return;
+					dragging = false;
+					splitter.removeAttribute("data-dragging");
+					document.body.removeAttribute("data-portal-dragging");
+					try {
+						splitter.releasePointerCapture(event.pointerId);
+					} catch (_) {}
+					const pct = parseFloat(first.style.flexBasis);
+					if (Number.isFinite(pct)) LS.set(key, pct);
+				}
+				splitter.addEventListener("pointerup", endDrag);
+				splitter.addEventListener("pointercancel", endDrag);
+
+				splitter.addEventListener("dblclick", () => {
+					first.style.flexBasis = fallback + "%";
+					LS.set(key, fallback);
+				});
+			});
+		}
+
+		/* ── Auto-refresh ───────────────────────────────────────────────────
+
+		   The old model: every widget carried `every 60s` in its hx-trigger, so
+		   every widget on the page re-fetched on its own timer and swapped its
+		   content for a skeleton while it did. Ten widgets doing that at once,
+		   once a minute, reads as the page reloading itself — and anything you
+		   were part-way through inside a widget was thrown away.
+
+		   The new model, in one sentence: the page refreshes when you are not
+		   using it.
+
+		     * ONE scheduler, not one timer per widget, so refreshes are staggered
+		       instead of arriving as a single flash.
+		     * Nothing refreshes while the tab is in the background — a widget
+		       nobody is looking at does not need to be current.
+		     * A widget is skipped while it is BUSY: you are hovering it, focus is
+		       inside it, or it is holding unsaved state (`data-refresh-hold`).
+		     * NOTHING refreshes while a dialog is open. That is the quick-link
+		       case: an admin typing into the Add-Link modal no longer has the
+		       page pulled out from under them.
+		     * A background refresh is quiet — the content stays on screen and
+		       dims briefly instead of collapsing to a skeleton.
+		     * The default interval is 5 minutes, not 60 seconds. None of this
+		       data changes second to second, and the Refresh button was always
+		       there for when you want it now.                                    */
+		const REFRESH_KEY = "portal-refresh-secs";
+		const DEFAULT_SECS = 300;
+		const TICK_MS = 15000;
+		const STAGGER_MS = 250;
+		const lastRefreshed = new WeakMap();
+
+		function refreshSeconds() {
+			const raw = parseInt(LS.get(REFRESH_KEY, ""), 10);
+			return Number.isFinite(raw) ? raw : DEFAULT_SECS;
+		}
+
+		function anyDialogOpen() {
+			// <dialog open>, plus the hand-rolled overlays that predate <dialog>
+			// (quick links, the Support ticket wizard) — those are a fixed-position
+			// div toggled with `.hidden`.
+			if (document.querySelector("dialog[open]")) return true;
+			const overlays = document.querySelectorAll(
+				'.fixed.inset-0:not(.hidden), .modal-open, .drawer-toggle:checked'
+			);
+			return overlays.length > 0;
+		}
+
+		function isBusy(el) {
+			if (el.hasAttribute("data-refresh-hold")) return true;
+			if (el.classList.contains("htmx-request")) return true;
+			if (el.matches(":hover")) return true;
+			const active = document.activeElement;
+			if (active && active !== document.body && el.contains(active)) return true;
+			return false;
+		}
+
+		function targets() {
+			return Array.from(document.querySelectorAll("[data-autorefresh]")).filter(
+				(el) => el.offsetParent !== null // skip widgets the user has switched off
+			);
+		}
+
+		function tick() {
+			const secs = refreshSeconds();
+			if (secs <= 0) return; // "Off"
+			if (document.visibilityState !== "visible") return;
+			if (anyDialogOpen()) return;
+
+			const now = Date.now();
+			const due = targets().filter((el) => {
+				const last = lastRefreshed.get(el) || 0;
+				return now - last >= secs * 1000 && !isBusy(el);
+			});
+
+			due.forEach((el, index) => {
+				// Staggered: ten simultaneous requests is what made it a "reload".
+				setTimeout(() => {
+					if (isBusy(el) || anyDialogOpen()) return;
+					el.setAttribute("data-refresh-quiet", "");
+					lastRefreshed.set(el, Date.now());
+					window.htmx?.trigger(el, "refresh");
+				}, index * STAGGER_MS);
+			});
+		}
+
+		// A widget that has just been swapped in is current by definition.
+		document.body.addEventListener("htmx:afterSwap", (event) => {
+			const el = event.target.closest?.("[data-autorefresh]");
+			if (el) lastRefreshed.set(el, Date.now());
+		});
+		document.body.addEventListener("htmx:afterRequest", (event) => {
+			const el = event.target.closest?.("[data-autorefresh]");
+			if (el) el.removeAttribute("data-refresh-quiet");
+			window.dispatchEvent(new CustomEvent("portal:refreshed"));
+		});
+
+		// The Refresh button is an explicit ask: it is loud (skeletons show), it
+		// hits everything, and it restarts the clock.
+		document.addEventListener("click", (event) => {
+			if (!event.target.closest("#refresh-btn")) return;
+			targets().forEach((el) => {
+				el.removeAttribute("data-refresh-quiet");
+				lastRefreshed.set(el, Date.now());
+			});
+		});
+
+		window.portalRefresh = {
+			seconds: refreshSeconds,
+			setSeconds(value) {
+				LS.set(REFRESH_KEY, parseInt(value, 10) || 0);
+				window.dispatchEvent(new CustomEvent("portal:refresh-interval"));
+			},
+			lastAt(el) {
+				return lastRefreshed.get(el) || 0;
+			},
+			now: tick,
+		};
+
+		setInterval(tick, TICK_MS);
+
+		/* ── Hebrew / RTL ───────────────────────────────────────────────────
+		   Every box a user types into gets dir="auto", so what they type lays itself
+		   out correctly as they type it. This is done in one place rather than by
+		   remembering to add the attribute to a hundred inputs — and it keeps working
+		   for markup that arrives later from an htmx swap or from a widget's own JS.
+
+		   Passwords, emails, URLs and search boxes are skipped: they are never natural
+		   language, and a URL that reverses itself because it happens to start with a
+		   Hebrew character would be a new bug, not a fix. */
+		const RTL_SKIP_TYPES = new Set(["password", "email", "url", "number", "tel", "search", "date"]);
+
+		function stampDirAuto(scope) {
+			const nodes = (scope || document).querySelectorAll("input, textarea");
+			nodes.forEach((el) => {
+				if (el.hasAttribute("dir")) return;
+				if (el.tagName === "INPUT" && RTL_SKIP_TYPES.has((el.type || "text").toLowerCase())) return;
+				el.setAttribute("dir", "auto");
+			});
+		}
+
+		/* ── Boot ───────────────────────────────────────────────────────────── */
+		function boot() {
+			initSidebarResizer();
+			initSplitters();
+			stampDirAuto(document);
+		}
+		if (document.readyState === "loading") {
+			document.addEventListener("DOMContentLoaded", boot);
+		} else {
+			boot();
+		}
+		// Panes and sidebars can arrive with an htmx swap.
+		document.body.addEventListener("htmx:afterSettle", boot);
+	})();
+</script>
+
+{#
+	The people who built it.
+
+	Reachable two ways, both deliberately quiet — a portal for 500 people should not
+	put its authors on the dashboard, but it should not pretend it built itself either:
+
+	  * the console signature below, which is where a developer looks first;
+	  * the Konami code, which is where everyone else eventually looks.
+
+	The dialog's markup is written here as plain HTML rather than assembled in the
+	script. A JS template literal holding markup is how the whole <script> block gets
+	silently discarded (see scripts/check_inline_js.py) — and an easter egg is not
+	worth taking every handler on the page down with it.
+#}
+<dialog class="modal" data-credits-modal aria-label="Credits">
+	<div class="modal-box max-w-sm text-center">
+		{#
+			OPTIONAL PICTURE — drop any image at:
+
+			    frontend/static/images/credits.png
+
+			and it appears here. Nothing else to change: if the file is not there the
+			<img> removes itself on the error event, so the card is exactly as it is
+			now. PNG, JPG or GIF all work; rename whatever you use to credits.png.
+
+			Anything roughly 3:2 and at least 600px wide looks right — it is capped at
+			180px tall and the full width of the card, so a very tall image is scaled
+			down rather than cropped.
+		#}
+		<img
+			data-credits-image
+			src="/static/images/credits.png"
+			alt=""
+			class="mx-auto rounded-lg"
+			style="max-width: 100%; max-height: 180px; margin-bottom: 0.75rem"
+		/>
+		<h3 class="text-base font-bold">DevOps Hub</h3>
+		<p class="mt-1 text-xs text-base-content/60">Built by</p>
+		<p class="mt-3 font-bold">Michael Goldenberg</p>
+		<p class="font-bold">Eyal Maor</p>
+		<p class="font-bold">Elizabeth Zonshtein</p>
+		<form method="dialog" class="mt-5 flex justify-center">
+			<button class="btn btn-primary btn-sm rounded-full px-5">Close</button>
+		</form>
+	</div>
+	<form method="dialog" class="modal-backdrop">
+		<button aria-label="Close">close</button>
+	</form>
+</dialog>
+
+<script>
+	(function () {
+		var SEQ = [
+			"arrowup", "arrowup", "arrowdown", "arrowdown",
+			"arrowleft", "arrowright", "arrowleft", "arrowright",
+			"b", "a"
+		];
+		var at = 0;
+
+		document.addEventListener("keydown", function (e) {
+			/* Never while someone is typing. An easter egg that fires out of a search
+			   box or a PAT field is not an easter egg, it is a bug. */
+			var el = e.target;
+			if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) {
+				at = 0;
+				return;
+			}
+			/* The arrows are the same on every layout; "b" and "a" are not, so the
+			   sequence is matched on the physical key where there is one. */
+			var CODES = { b: "KeyB", a: "KeyA" };
+			var key = String(e.key || "").toLowerCase();
+			if (CODES[SEQ[at]] && e.code === CODES[SEQ[at]]) key = SEQ[at];
+			else if (CODES[SEQ[0]] && e.code === CODES[SEQ[0]]) key = SEQ[0];
+			/* Restart on a mismatch rather than resetting to zero, so a false start on
+			   the first key does not swallow the real attempt that follows it. */
+			at = key === SEQ[at] ? at + 1 : (key === SEQ[0] ? 1 : 0);
+			if (at === SEQ.length) {
+				at = 0;
+				var modal = document.querySelector("[data-credits-modal]");
+				if (modal && typeof modal.showModal === "function") modal.showModal();
+			}
+		});
+
+		/* No picture in static/images? Take the placeholder out rather than leaving a
+		   broken-image icon in the middle of the card. Bound to the error event instead
+		   of an inline onerror so the whole block stays in one place. */
+		var art = document.querySelector("[data-credits-image]");
+		if (art) {
+			art.addEventListener("error", function () {
+				art.remove();
+			});
+		}
+
+		console.log("%cDevOps Hub", "font-weight:bold;font-size:13px");
+		console.log("Built by Michael Goldenberg, Eyal Maor and Elizabeth Zonshtein.");
+	})();
+</script>
+
+{#
+	Session expiry.
+
+	The JWT is good for eight hours. A dashboard left open past that does not log
+	itself out — it keeps polling, every request comes back 401, and the page fills
+	up with widgets reporting errors that read like the portal is broken. People
+	reported "everything says I have no permissions", which is exactly what an
+	expired session looks like when nothing says so.
+
+	One dialog, once, the moment the first 401 arrives. It is deliberately modal and
+	deliberately has no Escape: there is nothing behind it that works, and dismissing
+	it would just return someone to a screen full of red boxes.
+
+	It does NOT fire on 403. A 403 is "you are signed in and not allowed" — the
+	admin-only Artifactory storage widget answers that to ordinary users on a normal
+	day — and telling those people their session has ended would be a lie that makes
+	them sign in again for nothing.
+#}
+<dialog id="portal-session-modal" class="modal">
+	<div class="modal-box max-w-sm text-center">
+		<h3 class="font-bold text-lg">Your session has ended</h3>
+		<p class="text-sm text-base-content/70 mt-2">
+			You have been signed out after a period of inactivity. Sign in again to pick
+			up where you left off.
+		</p>
+		<div class="modal-action justify-center">
+			<button type="button" class="btn btn-primary" data-session-relogin>Sign in again</button>
+		</div>
+	</div>
+</dialog>
+
+<script>
+	(function () {
+		if (window.__portalSessionWatch) return;
+		window.__portalSessionWatch = true;
+
+		const modal = document.getElementById("portal-session-modal");
+		let shown = false;
+
+		// Plain /ui/auth, with no "come back here afterwards" parameter: the sign-in
+		// route does not read one, and a URL that looks like it returns you to the page
+		// you were on — but silently does not — is worse than one that never promised.
+		// If that is wanted later it belongs in the auth flow (the local POST and the
+		// SSO callback both have to carry it), not in a query string nothing reads.
+		const SIGN_IN_URL = "/ui/auth";
+
+		function expired() {
+			if (shown) return;
+			shown = true;
+			// Stop the widget auto-refresh: every tick would be another handful of 401s
+			// behind a dialog nobody can act on yet.
+			try { window.portalRefresh?.setSeconds(0); } catch (_) {}
+			if (!modal || typeof modal.showModal !== "function") {
+				window.location.href = SIGN_IN_URL;
+				return;
+			}
+			// Close anything already open, or showModal() throws and the page is left
+			// with no explanation at all.
+			document.querySelectorAll("dialog[open]").forEach((d) => {
+				if (d !== modal) { try { d.close(); } catch (_) {} }
+			});
+			try { modal.showModal(); } catch (_) { window.location.href = SIGN_IN_URL; }
+		}
+
+		modal?.addEventListener("cancel", (event) => event.preventDefault());
+		modal?.addEventListener("click", (event) => {
+			if (event.target.closest("[data-session-relogin]")) window.location.href = SIGN_IN_URL;
+		});
+
+		// A UI partial answers an expired cookie with a 303 to the sign-in page, which
+		// fetch follows — so the widget would quietly swap an entire login screen into
+		// a card. `redirected` plus the final URL is the only way to see that from here.
+		function looksLikeSignIn(res) {
+			try {
+				return !!res && res.redirected && new URL(res.url).pathname.startsWith("/ui/auth");
+			} catch (_) {
+				return false;
+			}
+		}
+
+		const nativeFetch = window.fetch.bind(window);
+		window.fetch = function (input, init) {
+			return nativeFetch(input, init).then((res) => {
+				if (res && (res.status === 401 || looksLikeSignIn(res))) expired();
+				return res;
+			});
+		};
+
+		// htmx does not go through window.fetch.
+		document.body.addEventListener("htmx:responseError", (event) => {
+			if (event.detail?.xhr?.status === 401) expired();
+		});
+		document.body.addEventListener("htmx:beforeSwap", (event) => {
+			const xhr = event.detail?.xhr;
+			if (!xhr) return;
+			if (xhr.status === 401) { event.detail.shouldSwap = false; expired(); return; }
+			// XHR follows the redirect too; responseURL is where it actually ended up.
+			try {
+				if (xhr.responseURL && new URL(xhr.responseURL).pathname.startsWith("/ui/auth")) {
+					event.detail.shouldSwap = false;   // never paint a login page into a widget
+					expired();
+				}
+			} catch (_) {}
+		});
+	})();
+</script>

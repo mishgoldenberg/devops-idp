@@ -13,11 +13,81 @@ postgres:
   # Fire-and-forget Job each upgrade — Helm does not wait; applies 06_observability.sql in cluster.
   observabilityMigrateAsyncJob: true
 
+  # ── Backups ──────────────────────────────────────────────────────────────
+  # Nightly pg_dump to an Artifactory generic repository, plus a weekly job that
+  # restores the newest dump into a scratch database to prove it works.
+  #
+  # Rendered in PRODUCTION ONLY (global.nameSuffix == ""). Test data is
+  # disposable, and two stacks in one namespace writing same-named dumps into the
+  # same repository would have them overwrite each other.
+  #
+  # `enabled` is set by the pipeline from whether the Artifactory backup
+  # credentials exist, so it is never quietly true-with-no-credentials. If it is
+  # true and the settings below are blank, the chart REFUSES to render rather
+  # than creating a CronJob that 401s every night where nobody is looking.
+  backup:
+    enabled: false
+    schedule: "15 1 * * *"
+    timeZone: "UTC"
+    # The retention COUNT lives at global.backupKeepLast, because the portal needs
+    # the same number to know which recorded backups still exist. Same policy shape
+    # as scripts/artifactory_image_retention.py keeps for image tags.
+    #
+    # Pruned by the backup job itself, right after each upload, because that is when
+    # new dumps appear.
+    # Names the dump file and the status rows. Only prod is backed up today, but
+    # the dumps are keyed by it so a future second environment cannot collide.
+    environment: "prod"
+    # Image for the pg_dump / pg_restore phases. Blank = postgres.image, which
+    # keeps the client tools on the same major version as the server.
+    image: ""
+    # Image for every phase that speaks HTTP or writes backup_runs — the portal's
+    # own backend image, set by the pipeline to the build being deployed.
+    #
+    # It is a second image because it has to be: the Postgres image here
+    # (bitnami/postgresql:14.5.0) has no curl and no wget, so it cannot upload a
+    # dump, and the backend image has no pg_dump, so it cannot make one. Building a
+    # combined image would need an OS package mirror an offline installation does not
+    # have — the backend Dockerfile avoids apt-get for exactly that reason.
+    pythonImage: ""
+    # Where Artifactory presents an internal-CA certificate, the
+    # same reason global.integrationTlsVerify is false for the backend.
+    tlsVerify: false
+    # Scratch space for the dump before upload. The job is evicted if it exceeds
+    # this, so it must stay ahead of the database size.
+    workDirSize: "4Gi"
+    artifactory:
+      # Fed from the EXISTING ARTIFACTORY_BASE_URL pipeline variable — the same
+      # host the portal's Artifactory widgets and the image cleaner already use.
+      # There is no separate backup URL to keep in step with it.
+      baseUrl: ""
+      # Must be a GENERIC repository, not a Docker one, and separate from the
+      # image repo so the two retention policies cannot reach each other.
+      repo: "devops-hub-backups"
+      path: "postgres"
+    verify:
+      enabled: true
+      # Sunday 03:40 — after the nightly dump, well clear of it.
+      schedule: "40 3 * * 0"
+      # Must end in _restore_check: verify-restore.sh refuses to drop anything
+      # that does not, which is the last guard between a restore test and the
+      # live database. Blank = "<postgresDB>_restore_check".
+      scratchDatabase: ""
+
 redis:
   image: "redis:7-alpine"
   storageSize: 500Mi
   serviceName: "redis-service"
   port: 6379
+  # A cache, capped and evicting, not a database. Well under the container's 1Gi
+  # limit on purpose: the limit is where the kernel kills the pod, maxmemory is
+  # where Redis starts forgetting things, and the second one has to happen first.
+  maxMemory: "256mb"
+  maxMemoryPolicy: "allkeys-lru"
+  # Turn on ONLY once REDIS_PASSWORD is a real value in the all-secrets secret.
+  # Until then the cache is readable by anything in the namespace — see
+  # docs/RED_TEAM_BRIEF.md.
+  requirePass: false
 
 config:
   nodeEnv: "production"

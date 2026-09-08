@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, Optional
 
-from db import execute, query_all
+from db import execute, execute_returning, query_all
 
 log = logging.getLogger(__name__)
 
@@ -79,3 +79,27 @@ def recent_for_user(user_email: str, limit: int = 20) -> list[Dict[str, Any]]:
     except Exception as exc:  # noqa: BLE001
         log.debug("activity.recent_for_user failed: %s", exc)
         return []
+
+
+def clear_for_user(user_email: str) -> int:
+    """
+    Delete the caller's own activity rows and return how many were removed.
+
+    Scoped to one user by ``user_email`` in the WHERE clause — this is the whole
+    safety property of the function, since it is reachable from a button any
+    signed-in person can press. A blank email deletes nothing rather than
+    everything, which is the failure mode that matters: without the guard, an
+    empty string would match no rows only by luck of the data.
+
+    Unlike the rest of this module, failures are NOT swallowed. A clear that
+    quietly does nothing but reports success is worse than an error message —
+    the user would believe their feed was wiped when it was not.
+    """
+    email = (user_email or "").strip().lower()
+    if not email:
+        return 0
+    rows = execute_returning(
+        "DELETE FROM activity_log WHERE user_email = %s RETURNING id",
+        [email],
+    )
+    return len(rows or [])

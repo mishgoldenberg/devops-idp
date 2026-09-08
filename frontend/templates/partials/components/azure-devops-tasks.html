@@ -1,17 +1,24 @@
 {#
     Azure DevOps work-items widget.
 
-    The shell is server-rendered (icon + title + list skeleton); the rows are
-    fetched client-side from GET /api/dashboard/ado-items. Keeping the fetch
-    client-side lets us render pin/seen state without round-tripping to ui.py
-    and lets HTMX continue to own the simple "reload skeleton every 60s" loop.
+    The shell is server-rendered (icon + title + filters + list skeleton); the rows
+    are fetched client-side from GET /api/dashboard/ado-items. Keeping the fetch
+    client-side lets us render pin/seen state without round-tripping to ui.py, while
+    HTMX still owns the reload — now driven by the scheduler in portal-chrome.html
+    rather than by a hardcoded 60-second poll.
 
-    The server-side `error` branch is still used for the ADO PAT-missing
-    flow, because that requires the PAT capture form.
+    Scope: the list used to be every work item ever assigned to you, which read as a
+    pile of unrelated tasks. It is now scoped to a sprint — by default the project's
+    CURRENT iteration — and filterable by work item type. The type list comes from the
+    project's process (Agile / Scrum / CMMI / custom all define different types), so it
+    is fetched per project rather than hard-coded.
+
+    The server-side `error` branch is still used for the ADO PAT-missing flow,
+    because that requires the PAT capture form.
 #}
 <div class="section-card h-full flex flex-col" data-ado-widget-root>
 	<div class="card-body p-5 flex flex-col h-full gap-3">
-		<div class="flex items-center gap-3">
+		<div class="flex items-center gap-3 flex-wrap">
 			<div
 				class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/30 bg-primary/10"
 			>
@@ -31,13 +38,6 @@
 				Azure DevOps – My Work Items
 			</h3>
 			<div class="ml-auto flex items-center gap-1">
-				<select
-					class="select select-bordered select-xs w-32"
-					data-ado-project-select
-					aria-label="Azure DevOps project"
-				>
-					<option value="">All projects</option>
-				</select>
 				<button
 					type="button"
 					class="btn btn-ghost btn-xs px-2 text-base-content/60 hover:text-base-content"
@@ -54,12 +54,14 @@
 				>
 					Pinned
 				</button>
-				<!--
-					Per-widget refresh button removed: dashboard widgets now share the
-					single top-right refresh control on the dashboard container. The
-					widget still exposes the `[data-ado-refresh]` hook in JS (no-op
-					when the button is absent) for future reuse.
-				-->
+				<button
+					type="button"
+					class="btn btn-ghost btn-xs px-2 text-base-content/60 hover:text-base-content"
+					data-ado-share
+					title="Copy a link to this view"
+				>
+					Share
+				</button>
 			</div>
 		</div>
 
@@ -70,6 +72,43 @@
 			{{ error }}
 		</div>
 		{% else %}
+		<!--
+			Three scoping selects on one row. Type and Sprint are disabled until a
+			project is chosen: work item types are defined by the project's process and
+			iterations belong to the project's team, so neither exists without one.
+		-->
+		<!--
+			Inline grid rather than `grid-cols-3`: output.css is shipped precompiled and
+			only carries the responsive variants of that class, so the bare one would be
+			a no-op. Inline styles need no CSS rebuild.
+		-->
+		<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.5rem;">
+			<label class="form-control">
+				<span class="label-text text-[11px] uppercase tracking-wide text-base-content/50">Project</span>
+				<select class="select select-bordered select-xs w-full" data-ado-project-select aria-label="Project">
+					<option value="">All projects</option>
+				</select>
+			</label>
+			<label class="form-control">
+				<span class="label-text text-[11px] uppercase tracking-wide text-base-content/50">Type</span>
+				<select class="select select-bordered select-xs w-full" data-ado-type-select aria-label="Work item type" disabled>
+					<option value="">All types</option>
+				</select>
+			</label>
+			<label class="form-control">
+				<span class="label-text text-[11px] uppercase tracking-wide text-base-content/50">Sprint</span>
+				<select class="select select-bordered select-xs w-full" data-ado-iteration-select aria-label="Sprint" disabled>
+					<option value="all">All sprints</option>
+				</select>
+			</label>
+			<label class="form-control">
+				<span class="label-text text-[11px] uppercase tracking-wide text-base-content/50">Area</span>
+				<select class="select select-bordered select-xs w-full" data-ado-area-select aria-label="Area path" disabled>
+					<option value="all">All area paths</option>
+				</select>
+			</label>
+		</div>
+
 		<div
 			class="flex-1 min-h-0 flex flex-col relative"
 			data-ado-body
@@ -84,10 +123,6 @@
 				class="hidden flex-1 min-h-0 overflow-y-auto overscroll-contain flex flex-col gap-2 pr-1"
 				data-ado-list
 			></ul>
-			<div
-				class="hidden absolute right-6 top-20 z-10 w-80 origin-top-right rounded-xl border border-base-300 bg-base-100 p-4 shadow-xl opacity-0 scale-95 translate-y-1 transform transition-all duration-150 ease-out"
-				data-ado-task-panel
-			></div>
 		</div>
 		{% endif %}
 	</div>
@@ -105,16 +140,52 @@
 		const listEl = root.querySelector("[data-ado-list]");
 		const statusEl = root.querySelector("[data-ado-status]");
 		const filterBtns = root.querySelectorAll("[data-ado-filter]");
-		const refreshBtn = root.querySelector("[data-ado-refresh]");
 		const projectSelect = root.querySelector("[data-ado-project-select]");
-		const taskPanel = root.querySelector("[data-ado-task-panel]");
+		const typeSelect = root.querySelector("[data-ado-type-select]");
+		const iterationSelect = root.querySelector("[data-ado-iteration-select]");
+		const areaSelect = root.querySelector("[data-ado-area-select]");
 		const projectKey = "ado-workitems-project";
+		const typeKey = "ado-workitems-type";
+		const iterationKey = "ado-workitems-iteration";
+		const areaKey = "ado-workitems-area";
 		const taskCache = new Map();
-		let taskPanelTimer = null;
+		// Which row is showing its children. Kept across a re-render (the widget polls)
+		// so an auto-refresh does not silently collapse what someone is reading.
+		let expandedId = null;
 
 		let items = [];
 		let filter = "all";
 		let selectedProject = localStorage.getItem(projectKey) || "";
+		let selectedType = localStorage.getItem(typeKey) || "";
+		// "current" is the default scope once a project is picked — the whole point of
+		// the rework is that you see this sprint, not everything you have ever owned.
+		let selectedIteration = localStorage.getItem(iterationKey) || "current";
+		// Area defaults to everything: unlike a sprint, there is no "current" area, and
+		// scoping to one by default would silently hide work.
+		let selectedArea = localStorage.getItem(areaKey) || "all";
+
+		// ── Shareable views ──────────────────────────────────────────────────────
+		// The filters live in localStorage, which is per-browser: there was no way to
+		// say "look at THIS". A view is now addressable — the URL wins over the saved
+		// filters when present, so a link opens on the sender's exact view without
+		// permanently hijacking the recipient's own default.
+		(function applyViewFromUrl() {
+			const params = new URLSearchParams(window.location.search);
+			if (!params.has("project")) return;
+			selectedProject = params.get("project") || "";
+			selectedType = params.get("type") || "";
+			selectedIteration = params.get("sprint") || "current";
+			selectedArea = params.get("area") || "all";
+		})();
+
+		function shareLink() {
+			const url = new URL(window.location.href);
+			url.searchParams.set("project", selectedProject);
+			url.searchParams.set("type", selectedType);
+			url.searchParams.set("sprint", selectedIteration);
+			url.searchParams.set("area", selectedArea);
+			return url.toString();
+		}
 
 		function setStatus(msg) {
 			if (!msg) {
@@ -125,7 +196,6 @@
 			}
 			statusEl.classList.remove("hidden");
 			statusEl.textContent = msg;
-			statusEl.classList.remove("flex");
 			statusEl.classList.add("flex");
 			listEl.classList.add("hidden");
 		}
@@ -165,39 +235,33 @@
 
 		function taskStateClass(state) {
 			const s = String(state || "").toLowerCase();
-			if (s === "done" || s === "closed" || s === "completed") return "badge-success";
-			if (s === "in progress" || s === "active" || s === "doing") return "badge-info";
-			return "badge-ghost";
+			if (s === "done" || s === "closed" || s === "completed") return "text-success";
+			if (s === "in progress" || s === "active" || s === "doing") return "text-primary";
+			return "text-base-content/50";
 		}
 
-		function scheduleHideTaskPanel() {
-			if (!taskPanel) return;
-			clearTimeout(taskPanelTimer);
-			taskPanelTimer = setTimeout(hideTaskPanel, 180);
-		}
-
-		function showTaskPanel() {
-			if (!taskPanel) return;
-			taskPanel.classList.remove("hidden");
-			requestAnimationFrame(() => {
-				taskPanel.classList.remove("opacity-0", "scale-95", "translate-y-1");
-				taskPanel.classList.add("opacity-100", "scale-100", "translate-y-0");
-			});
-		}
-
-		function hideTaskPanel() {
-			if (!taskPanel) return;
-			taskPanel.classList.remove("opacity-100", "scale-100", "translate-y-0");
-			taskPanel.classList.add("opacity-0", "scale-95", "translate-y-1");
-			setTimeout(() => {
-				if (taskPanel.classList.contains("opacity-0")) taskPanel.classList.add("hidden");
-			}, 160);
-		}
-
+		// The children used to open on HOVER, in a floating panel positioned over the
+		// list. It covered the row it belonged to — including the title you were trying
+		// to read — and it needed hover-intent delays, a grace period on the way out, a
+		// guard against re-triggering while the pointer was inside it, and a positioning
+		// pass after paint to stay attached to its row. All of that was scaffolding for a
+		// popover that should not have been a popover.
+		//
+		// Now: an explicit button, and the children open INSIDE the row, underneath it.
+		// Nothing overlaps anything, nothing needs positioning, and the list can be read
+		// with a pointer resting anywhere.
 		function renderPinSvg(pinned) {
 			return pinned
 				? '<svg viewBox="0 0 20 20" class="h-4 w-4 fill-current text-warning" aria-hidden="true"><path d="M11.7 1.7a1 1 0 011.4 0l5.2 5.2a1 1 0 010 1.4l-1.4 1.4a1 1 0 01-1 .26l-2.9-.82-3.6 3.6.73 3a1 1 0 01-1.67.94l-2.65-2.65-3.3 3.3a1 1 0 01-1.41-1.41l3.3-3.3L1.78 9.97a1 1 0 01.94-1.67l3 .73 3.6-3.6-.82-2.9a1 1 0 01.26-1L11.7 1.7z"/></svg>'
 				: '<svg viewBox="0 0 20 20" class="h-4 w-4 fill-current text-base-content/40 hover:text-warning transition" aria-hidden="true"><path d="M11.7 1.7a1 1 0 011.4 0l5.2 5.2a1 1 0 010 1.4l-1.4 1.4a1 1 0 01-1 .26l-2.9-.82-3.6 3.6.73 3a1 1 0 01-1.67.94l-2.65-2.65-3.3 3.3a1 1 0 01-1.41-1.41l3.3-3.3L1.78 9.97a1 1 0 01.94-1.67l3 .73 3.6-3.6-.82-2.9a1 1 0 01.26-1L11.7 1.7zm.7 2.12l-.42 2.07a1 1 0 01-.73.76L8 7.2l4.8 4.8 .55-2.25a1 1 0 01.76-.73l2.07-.42L12.4 3.82z"/></svg>';
+		}
+
+		function emptyMessage() {
+			if (filter === "pinned") return "No pinned items yet.";
+			if (selectedProject && selectedIteration !== "all") {
+				return "Nothing assigned to you in this sprint.";
+			}
+			return "No work items assigned to you.";
 		}
 
 		function render() {
@@ -207,7 +271,7 @@
 
 			if (!visible.length) {
 				listEl.innerHTML = "";
-				setStatus(filter === "pinned" ? "No pinned items yet." : "No work items assigned to you.");
+				setStatus(emptyMessage());
 				return;
 			}
 
@@ -226,62 +290,64 @@
 						: '<span class="w-2 h-2 shrink-0"></span>';
 					const pin = renderPinSvg(!!it.pinned);
 					const pinnedCls = it.pinned ? "bg-warning/5 border-warning/30" : "bg-base-200/60 border-base-300";
+					const isOpen = String(expandedId) === idStr;
 					return (
-						'<li class="rounded-lg border ' + pinnedCls + ' px-3 py-2 flex items-center gap-2 transition hover:border-primary/50 hover:bg-base-200" data-id="' + idStr + '" data-ado-hover-id="' + idStr + '">' +
+						'<li class="rounded-lg border ' + pinnedCls + ' px-3 py-2 transition hover:border-primary/50 hover:bg-base-200" data-id="' + idStr + '" data-ado-hover-id="' + idStr + '">' +
+							'<div class="flex items-center gap-2">' +
 							'<div class="flex-1 min-w-0">' +
 								'<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer" class="block text-sm font-medium text-base-content hover:text-primary truncate" data-ado-open>' +
 									title +
 								'</a>' +
 								'<div class="flex items-center gap-2 text-xs text-base-content/60 mt-0.5">' +
-									(type ? '<span class="badge badge-outline badge-xs">' + type + '</span>' : '') +
+									// The type is a label, not a status chip — the pill made it read like a button.
+									(type ? '<span class="text-[11px] uppercase tracking-wide text-base-content/50">' + type + '</span>' : '') +
 									'<span class="' + statusCls + ' font-medium truncate">' + status + '</span>' +
 									(ago ? '<span class="ml-auto shrink-0 text-base-content/40">' + ago + '</span>' : '') +
 								'</div>' +
-								'<div class="text-[10px] text-base-content/40 mt-0.5 truncate">' + idDisplay + '</div>' +
+								'<div class="text-[10px] text-base-content/40 mt-0.5 truncate font-mono">' + idDisplay + '</div>' +
 							'</div>' +
 							dot +
+							// The disclosure button. Its own control, at the end of the row next
+							// to the pin, so it can never sit on top of the title.
+							'<button type="button" class="btn btn-ghost btn-xs btn-circle" data-ado-expand aria-label="Show child tasks" aria-expanded="' + (isOpen ? "true" : "false") + '" title="Child tasks">' +
+								'<svg viewBox="0 0 24 24" class="h-4 w-4" data-chevron style="transition:transform 150ms ease;' + (isOpen ? "transform:rotate(180deg)" : "") + '" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>' +
+							'</button>' +
 							'<button type="button" class="btn btn-ghost btn-xs btn-circle" data-ado-pin aria-label="Toggle pin" title="' + (it.pinned ? "Unpin" : "Pin to top") + '">' +
 								pin +
 							'</button>' +
+							'</div>' +
+							'<div class="' + (isOpen ? "" : "hidden ") + 'mt-2 border-t border-base-300 pt-2" data-ado-children></div>' +
 						'</li>'
 					);
 				})
 				.join("");
 
 			setStatus(null);
+			restoreExpanded();
 		}
 
-		function renderTaskPanel(itemId, tasks, anchor) {
-			if (!taskPanel) return;
-			const rowRect = anchor.getBoundingClientRect();
-			const rootRect = root.getBoundingClientRect();
-			taskPanel.style.top = `${Math.max(72, rowRect.top - rootRect.top)}px`;
+		function renderChildren(itemId, tasks, box) {
+			if (!box) return;
 			const rows = tasks.map((task) => `
 				<li class="rounded-lg bg-base-200 px-2 py-1.5">
 					<a href="${escapeHtml(task.url || "#")}" target="_blank" rel="noopener noreferrer" class="flex items-center gap-2 hover:text-primary">
 						<span class="truncate text-xs font-medium">${escapeHtml(task.title || "")}</span>
-						<span class="badge badge-xs ${taskStateClass(task.state)} ml-auto">${escapeHtml(task.state || "")}</span>
+						<span class="ml-auto shrink-0 text-[11px] font-medium ${taskStateClass(task.state)}">${escapeHtml(task.state || "")}</span>
 					</a>
 				</li>
 			`).join("");
-			taskPanel.innerHTML = `
-				<div class="flex items-center justify-between gap-2">
-					<p class="text-sm font-semibold">Child tasks</p>
-					<span class="text-xs text-base-content/50">#${escapeHtml(itemId)}</span>
-				</div>
-				${tasks.length ? `<ul class="mt-3 flex max-h-48 flex-col gap-2 overflow-y-auto pr-1">${rows}</ul>` : '<p class="mt-3 text-xs text-base-content/50">No child tasks.</p>'}
-			`;
-			showTaskPanel();
+			box.innerHTML = tasks.length
+				? `<ul class="flex max-h-48 flex-col gap-1.5 overflow-y-auto pr-1">${rows}</ul>`
+				: '<p class="text-xs text-base-content/50">No child tasks.</p>';
 		}
 
-		async function loadTasksFor(itemId, anchor) {
-			if (!taskPanel) return;
+		async function loadChildren(itemId, box) {
+			if (!box) return;
 			if (taskCache.has(itemId)) {
-				renderTaskPanel(itemId, taskCache.get(itemId), anchor);
+				renderChildren(itemId, taskCache.get(itemId), box);
 				return;
 			}
-			taskPanel.innerHTML = '<div class="flex items-center gap-2 text-xs text-base-content/50"><span class="loading loading-spinner loading-xs"></span> Loading child tasks…</div>';
-			showTaskPanel();
+			box.innerHTML = '<div class="flex items-center gap-2 text-xs text-base-content/50"><span class="loading loading-spinner loading-xs"></span> Loading child tasks…</div>';
 			const res = await fetch(`/api/azure-devops/workitem-tasks?id=${encodeURIComponent(itemId)}`, {
 				credentials: "same-origin",
 				headers: { Accept: "application/json" },
@@ -290,13 +356,39 @@
 			const body = await res.json();
 			const tasks = Array.isArray(body && body.data) ? body.data : [];
 			taskCache.set(itemId, tasks);
-			renderTaskPanel(itemId, tasks, anchor);
+			renderChildren(itemId, tasks, box);
+		}
+
+		// After a re-render the expanded row is a NEW element, so its children have to be
+		// put back. From the cache, without a request: the widget polls, and re-fetching
+		// every open row on every poll would be a request per open row per refresh.
+		function restoreExpanded() {
+			if (!expandedId) return;
+			const row = listEl.querySelector('li[data-id="' + String(expandedId).replace(/"/g, '') + '"]');
+			const box = row && row.querySelector("[data-ado-children]");
+			if (!box) { expandedId = null; return; }
+			box.classList.remove("hidden");
+			if (taskCache.has(String(expandedId))) {
+				renderChildren(String(expandedId), taskCache.get(String(expandedId)), box);
+			} else {
+				loadChildren(String(expandedId), box).catch(() => {
+					box.innerHTML = '<p class="text-xs text-error">Could not load child tasks.</p>';
+				});
+			}
 		}
 
 		async function load() {
 			try {
-				const url = "/api/dashboard/ado-items" + (selectedProject ? `?project=${encodeURIComponent(selectedProject)}` : "");
-				const res = await fetch(url, {
+				const params = new URLSearchParams();
+				if (selectedProject) params.set("project", selectedProject);
+				if (selectedType) params.set("work_item_type", selectedType);
+				// Sprint and area scoping only make sense within a project.
+				if (selectedProject && selectedIteration) params.set("iteration", selectedIteration);
+				if (selectedProject && selectedArea && selectedArea !== "all") {
+					params.set("area_path", selectedArea);
+				}
+				const query = params.toString();
+				const res = await fetch("/api/dashboard/ado-items" + (query ? `?${query}` : ""), {
 					credentials: "same-origin",
 					headers: { Accept: "application/json" },
 				});
@@ -345,6 +437,140 @@
 				projectSelect.value = selectedProject;
 			} catch (_) {
 				/* selector stays on All projects */
+			}
+		}
+
+		// Types come from the project's process, so they are reloaded whenever the
+		// project changes and the select is disabled until then.
+		async function loadTypes() {
+			if (!typeSelect) return;
+			if (!selectedProject) {
+				typeSelect.innerHTML = '<option value="">All types</option>';
+				typeSelect.disabled = true;
+				selectedType = "";
+				return;
+			}
+			typeSelect.disabled = false;
+			try {
+				const res = await fetch(`/api/azure-devops/work-item-types?project=${encodeURIComponent(selectedProject)}`, {
+					credentials: "same-origin",
+					headers: { Accept: "application/json" },
+				});
+				if (!res.ok) throw new Error("http " + res.status);
+				const body = await res.json();
+				const types = Array.isArray(body && body.data) ? body.data : [];
+				// A type from a previous project may not exist in this one.
+				if (selectedType && !types.some((t) => t.name === selectedType)) selectedType = "";
+				typeSelect.innerHTML =
+					'<option value="">All types</option>' +
+					types.map((t) => {
+						const name = String(t.name || "");
+						const selected = name === selectedType ? " selected" : "";
+						return `<option value="${escapeHtml(name)}"${selected}>${escapeHtml(name)}</option>`;
+					}).join("");
+				typeSelect.value = selectedType;
+			} catch (_) {
+				typeSelect.innerHTML = '<option value="">All types</option>';
+				selectedType = "";
+			}
+		}
+
+		// Iterations belong to the project's default team. The current sprint is
+		// pre-selected and labelled so it's obvious which one you're looking at.
+		async function loadAreaPaths() {
+			if (!areaSelect) return;
+			if (!selectedProject) {
+				areaSelect.innerHTML = '<option value="all">All area paths</option>';
+				areaSelect.disabled = true;
+				return;
+			}
+			areaSelect.disabled = false;
+			try {
+				const res = await fetch(`/api/azure-devops/area-paths?project=${encodeURIComponent(selectedProject)}`, {
+					credentials: "same-origin",
+					headers: { Accept: "application/json" },
+				});
+				if (!res.ok) throw new Error("http " + res.status);
+				const body = await res.json();
+				const areas = Array.isArray(body && body.data) ? body.data : [];
+
+				// An area path from a previously selected project won't exist in this one.
+				if (selectedArea !== "all" && !areas.some((a) => a.path === selectedArea)) {
+					selectedArea = "all";
+				}
+
+				areaSelect.innerHTML =
+					`<option value="all"${selectedArea === "all" ? " selected" : ""}>All area paths</option>` +
+					areas.map((area) => {
+						const path = String(area.path || "");
+						// Areas are a tree; indent by depth so the hierarchy is readable in a
+						// flat <select>. The root node is the project itself.
+						const indent = "  ".repeat(Math.max(0, Number(area.depth || 0)));
+						// Show enough of the path to tell two areas apart. The leaf name
+						// alone is ambiguous — the same "Backend" or "Platform" can sit
+						// under several different parents, and the list rendered them as
+						// identical rows. Last two segments, with the full path on hover.
+						const parts = path.split("\\").filter(Boolean);
+						const tail = parts.slice(-2).join(" / ");
+						const label = indent + (tail || String(area.name || path));
+						const selected = path === selectedArea ? " selected" : "";
+						return `<option value="${escapeHtml(path)}" title="${escapeHtml(path)}"${selected}>${escapeHtml(label)}</option>`;
+					}).join("");
+				areaSelect.value = selectedArea;
+			} catch (_) {
+				areaSelect.innerHTML = '<option value="all">All area paths</option>';
+				selectedArea = "all";
+			}
+		}
+
+		async function loadIterations() {
+			if (!iterationSelect) return;
+			if (!selectedProject) {
+				iterationSelect.innerHTML = '<option value="all">All sprints</option>';
+				iterationSelect.disabled = true;
+				return;
+			}
+			iterationSelect.disabled = false;
+			try {
+				const res = await fetch(`/api/azure-devops/iterations?project=${encodeURIComponent(selectedProject)}`, {
+					credentials: "same-origin",
+					headers: { Accept: "application/json" },
+				});
+				if (!res.ok) throw new Error("http " + res.status);
+				const body = await res.json();
+				const iterations = Array.isArray(body && body.data) ? body.data : [];
+				if (!iterations.length) {
+					// No sprints configured (e.g. a Basic-process project) — don't strand
+					// the user on an empty sprint filter.
+					iterationSelect.innerHTML = '<option value="all">All sprints</option>';
+					selectedIteration = "all";
+					iterationSelect.value = "all";
+					return;
+				}
+				const hasCurrent = iterations.some((i) => i.is_current);
+				// A sprint path from a previous project won't exist in this one.
+				if (
+					selectedIteration !== "all" &&
+					selectedIteration !== "current" &&
+					!iterations.some((i) => i.path === selectedIteration)
+				) {
+					selectedIteration = hasCurrent ? "current" : "all";
+				}
+				if (selectedIteration === "current" && !hasCurrent) selectedIteration = "all";
+
+				iterationSelect.innerHTML =
+					(hasCurrent ? `<option value="current"${selectedIteration === "current" ? " selected" : ""}>Current sprint</option>` : "") +
+					`<option value="all"${selectedIteration === "all" ? " selected" : ""}>All sprints</option>` +
+					iterations.map((it) => {
+						const path = String(it.path || "");
+						const label = String(it.name || path) + (it.is_current ? " (current)" : "");
+						const selected = path === selectedIteration ? " selected" : "";
+						return `<option value="${escapeHtml(path)}"${selected}>${escapeHtml(label)}</option>`;
+					}).join("");
+				iterationSelect.value = selectedIteration;
+			} catch (_) {
+				iterationSelect.innerHTML = '<option value="all">All sprints</option>';
+				selectedIteration = "all";
 			}
 		}
 
@@ -413,23 +639,52 @@
 			}
 		});
 
-		body.addEventListener("mouseover", (e) => {
-			const row = e.target.closest("[data-ado-hover-id]");
+		// One row open at a time. Two half-expanded rows in a list this narrow is a list
+		// nobody can scan, and the second click is the natural way to close the first.
+		body.addEventListener("click", (e) => {
+			const btn = e.target.closest("[data-ado-expand]");
+			if (!btn) return;
+			e.preventDefault();
+			e.stopPropagation();
+			const row = btn.closest("li[data-id]");
 			if (!row) return;
-			clearTimeout(taskPanelTimer);
-			loadTasksFor(row.dataset.adoHoverId, row).catch(() => {
-				if (!taskPanel) return;
-				taskPanel.innerHTML = '<p class="text-xs text-error">Could not load child tasks.</p>';
-				showTaskPanel();
+			const id = row.dataset.id;
+			const box = row.querySelector("[data-ado-children]");
+			if (!box) return;
+
+			const wasOpen = String(expandedId) === String(id);
+			listEl.querySelectorAll("[data-ado-children]").forEach((el) => el.classList.add("hidden"));
+			listEl.querySelectorAll("[data-ado-expand]").forEach((el) => {
+				el.setAttribute("aria-expanded", "false");
+				const icon = el.querySelector("[data-chevron]");
+				if (icon) icon.style.transform = "";
+			});
+			if (wasOpen) {
+				expandedId = null;
+				return;
+			}
+
+			expandedId = id;
+			box.classList.remove("hidden");
+			btn.setAttribute("aria-expanded", "true");
+			const icon = btn.querySelector("[data-chevron]");
+			if (icon) icon.style.transform = "rotate(180deg)";
+			loadChildren(id, box).catch(() => {
+				box.innerHTML = '<p class="text-xs text-error">Could not load child tasks.</p>';
 			});
 		});
 
-		body.addEventListener("mouseleave", () => {
-			scheduleHideTaskPanel();
+		root.querySelector("[data-ado-share]")?.addEventListener("click", async () => {
+			const link = shareLink();
+			try {
+				await navigator.clipboard.writeText(link);
+				window.portalToast?.({ kind: "success", message: "View link copied." });
+			} catch (_) {
+				// Clipboard needs a secure context; on plain http it is unavailable, so
+				// fall back to putting the link where the user can copy it themselves.
+				window.prompt("Copy this link to share the view:", link);
+			}
 		});
-
-		taskPanel?.addEventListener("mouseenter", () => clearTimeout(taskPanelTimer));
-		taskPanel?.addEventListener("mouseleave", scheduleHideTaskPanel);
 
 		filterBtns.forEach((btn) => {
 			btn.addEventListener("click", () => {
@@ -444,16 +699,64 @@
 			});
 		});
 
-		refreshBtn?.addEventListener("click", load);
-		projectSelect?.addEventListener("change", () => {
+		// This widget could already OPEN a shared link, but never produced one: changing
+		// a filter wrote only to localStorage, so the address bar still said whatever it
+		// said when the page loaded and copying it shared the wrong view. Now every
+		// change updates the URL too, which is what makes "copy the link" mean anything.
+		// The parameter names are the ones the reader above already accepts, so links
+		// that exist keep working.
+		const URL_PARAM = {
+			[projectKey]: "project",
+			[typeKey]: "type",
+			[iterationKey]: "sprint",
+			[areaKey]: "area",
+		};
+
+		function remember(key, value) {
+			const US = window.portalUrlState;
+			if (US && URL_PARAM[key]) {
+				US.set(URL_PARAM[key], value, key);
+				return;
+			}
+			try { localStorage.setItem(key, value); } catch (_) {}
+		}
+
+		projectSelect?.addEventListener("change", async () => {
 			selectedProject = projectSelect.value || "";
-			try { localStorage.setItem(projectKey, selectedProject); } catch (_) {}
+			remember(projectKey, selectedProject);
+			// Both dependent filters are re-derived from the new project before reloading.
+			await Promise.all([loadTypes(), loadIterations(), loadAreaPaths()]);
+			remember(typeKey, selectedType);
+			remember(iterationKey, selectedIteration);
+			remember(areaKey, selectedArea);
 			taskCache.clear();
 			load();
 		});
 
-		loadProjects();
-		load();
+		typeSelect?.addEventListener("change", () => {
+			selectedType = typeSelect.value || "";
+			remember(typeKey, selectedType);
+			load();
+		});
+
+		areaSelect?.addEventListener("change", () => {
+			selectedArea = areaSelect.value || "all";
+			remember(areaKey, selectedArea);
+			taskCache.clear();
+			load();
+		});
+
+		iterationSelect?.addEventListener("change", () => {
+			selectedIteration = iterationSelect.value || "all";
+			remember(iterationKey, selectedIteration);
+			load();
+		});
+
+		(async function init() {
+			await loadProjects();
+			await Promise.all([loadTypes(), loadIterations(), loadAreaPaths()]);
+			load();
+		})();
 	})();
 
 	(function () {

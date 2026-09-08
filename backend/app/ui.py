@@ -17,21 +17,29 @@ writing a non-trivial query here, move it into the matching ``api`` module
 instead.
 """
 
+import hashlib
 import os
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Body, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from api.azure_devops import ProjectCreationPayload
-from api.azure_devops import create_ado_project as _ado_create_project
-from api.azure_devops import get_project_creation_status as _ado_project_status
+import audit
+import login_guard
+# Imported, not restated: the local sign-in and the SSO callback must decide the auth
+# cookie's Secure flag the same way, or one of them silently ships it without Secure.
+from api.auth import request_is_https as _forwarded_https
+from api.azure_devops import default_admin_principal as _ado_default_admin
 from api.azure_devops import get_pipelines as _ado_pipelines
 from api.azure_devops import get_pull_requests as _ado_pull_requests
 from api.azure_devops import get_work_items as _ado_work_items
+from api.azure_devops import probe_user_pat as _ado_probe_pat
+# The one definition of "I have already signed this off" — imported rather than
+# restated so the widget and the API can never disagree about it.
+from api.azure_devops import _VOTE_APPROVED as _ADO_VOTE_APPROVED
 from api.dashboards import DashboardUpdateRequest
 from api.dashboards import get_default_dashboard as _dash_get_default
 from api.dashboards import update_dashboard as _dash_update
@@ -44,29 +52,69 @@ from security import (
     decode_access_token,
     has_effective_admin_access,
     has_effective_admin_access_live,
+    is_platform_admin_level,
     verify_password,
 )
 
 ui_router = APIRouter()
 log = logging.getLogger(__name__)
 
-HOME_WIDGET_KEYS = {
-    "quick_links": "quick-links-component",
-    "ado_my_work_items": "ado-tasks-component",
-    "snow_my_tickets": "servicenow-tickets-component",
-    "ado_my_pull_requests": "pull-requests-component",
-    "ado_prs_for_review": "pull-requests-review-component",
-    "ado_pipeline_status": "pipelines-component",
-    "sonar_projects": "sonarqube-projects-component",
-    "artifactory_repos": "artifactory-repos-component",
-    "artifactory_storage": "artifactory-storage-component",
-    "confluence_pages": "confluence-pages-component",
-    "recent_activity": "recent-activity-component",
-}
+# The widget catalogue lives in one module now — it used to be written out by hand
+# here, in api/dashboards.py, and twice more in the dashboard template.
+from widget_registry import (  # noqa: E402  (kept beside the other app imports)
+    ADMIN_ONLY_WIDGETS,
+    HOME_WIDGET_KEYS,
+)
+import widget_registry
 
-# Widgets only usable by Platform Admins. Artifactory's /api/storageinfo is
-# admin-only, so a normal user token can never populate the storage widget.
-ADMIN_ONLY_WIDGETS = {"artifactory_storage"}
+
+# ── The greeting ─────────────────────────────────────────────────────────────
+#
+# "Welcome back, X" every single time stops being a greeting after the second day and
+# becomes a label. These rotate. Each entry is (prefix, suffix) around the name, which
+# is what lets a line put the name anywhere in the sentence rather than always first.
+#
+# Kept literal and server-side: the text is never user input, and choosing it here
+# rather than in the browser means the heading cannot flicker from one wording to
+# another as the page loads.
+# Kept SHORT on purpose. This renders at page-title size, so a long line wraps to two
+# or three rows on a laptop and shoves the Refresh and Customize buttons down with it —
+# a joke is not worth a heading that changes height depending on the day.
+_GREETINGS: List[Tuple[str, str]] = [
+    ("Welcome back, ", "!"),
+    ("Good to see you, ", "."),
+    ("Right then, ", "."),
+    ("At your service, ", "."),
+    ("Back in the saddle, ", "."),
+    ("Ah, ", ". Punctual as ever."),
+    ("The pipelines missed you, ", "."),
+    ("Enter ", "."),
+    ("Once more unto the dashboard, ", "."),
+    ("Hark! ", " approaches."),
+    ("Look who it is. Hello, ", "."),
+    ("", ", the builds await."),
+    ("A wild ", " appears."),
+    ("Steady as she goes, ", "."),
+    ("Deploy in haste, ", "."),
+    ("Nothing is on fire, ", ". Probably."),
+    ("", ", your kingdom of YAML awaits."),
+    ("Salutations, ", "."),
+    ("Here comes ", "."),
+    ("Fear not, ", " — the pods are Running."),
+]
+
+
+def _pick_greeting(seed: str) -> Tuple[str, str]:
+    """
+    A greeting that changes, but not mid-session.
+
+    Seeded by the person and the calendar day, so it is stable across a refresh and
+    across every page load that day — a heading that reshuffles on every F5 reads as a
+    glitch, not as personality — and different tomorrow.
+    """
+    key = f"{seed}:{datetime.utcnow().date().isoformat()}"
+    index = int(hashlib.sha256(key.encode("utf-8")).hexdigest(), 16) % len(_GREETINGS)
+    return _GREETINGS[index]
 
 
 def _is_portal_admin(request: Request) -> bool:
@@ -143,41 +191,59 @@ def _current_user_from_token(token: str) -> Optional[AuthUser]:
         return None
 
 
+# A real bcrypt hash of a value nobody knows, used to burn the same ~100ms on an
+# unknown username as on a known one. Without it, "no such user" returns immediately
+# and "wrong password" does not — which tells anyone with a stopwatch exactly which of
+# the portal's two local account names is real, for free.
+_TIMING_DECOY_HASH = "$2b$12$psz7TFA6lvR3.90E/cDdrORmL9bMflr8sR3s82u7fms7Ceza3XHgi"
+
+
 def _local_login_payload(username: str, password: str) -> Optional[Dict[str, Any]]:
-    """Authenticate the env bootstrap admin against the local password hash."""
+    """Authenticate one of the env bootstrap LOCAL accounts against its password hash.
+
+    Two accounts qualify: the Platform Admin (``is_bootstrap_admin``) and the optional
+    regular service account (``is_bootstrap_user``). Everyone else signs in through SSO
+    and has no password_hash at all, so they can never match here.
+
+    The role is taken from the account's own DB role, never assumed from the fact that
+    the sign-in was local — that is what keeps the second account a regular user.
+    """
     log.debug("Login attempt")
     if not username or not password:
-        log.debug("Password match: false")
         return None
     row = query_one(
         """
         SELECT u.id, u.username, u.email, u.password_hash,
-               r.name AS role_name, r.hierarchy_level, r.permissions
+               u.is_bootstrap_admin,
+               r.name AS role_name, r.hierarchy_level
         FROM users u
         JOIN roles r ON u.role_id = r.id
         WHERE LOWER(u.username) = %s
           AND u.is_active = true
-          AND u.is_bootstrap_admin = true
+          AND (u.is_bootstrap_admin = true OR u.is_bootstrap_user = true)
         LIMIT 1
         """,
         [username.strip().lower()],
     )
     if not row or not row.get("password_hash"):
-        log.debug("Password match: false")
+        verify_password(password, _TIMING_DECOY_HASH)
         return None
-    password_match = verify_password(password, str(row["password_hash"]))
-    log.debug("Password match: %s", str(password_match).lower())
-    if not password_match:
+    if not verify_password(password, str(row["password_hash"])):
         return None
     role_name = str(row.get("role_name") or "")
     try:
         hierarchy_level = int(row.get("hierarchy_level") or 99)
     except (TypeError, ValueError):
         hierarchy_level = 99
-    role = "Admin" if hierarchy_level == 1 or role_name.strip().lower() == "platform admin" else "User"
-    permissions = row.get("permissions") or []
-    if isinstance(permissions, str):
-        permissions = [permissions]
+    # Derived from the account's DB role and nothing else — the same source the live
+    # admin check reads. The service account is a regular user because its ROW says so,
+    # not because this function special-cases it.
+    role = (
+        "Admin"
+        if is_platform_admin_level(hierarchy_level)
+        or role_name.strip().lower() == "platform admin"
+        else "User"
+    )
     query_one("UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = %s RETURNING id", [row["id"]])
     return {
         "id": str(row["id"]),
@@ -185,7 +251,6 @@ def _local_login_payload(username: str, password: str) -> Optional[Dict[str, Any
         "email": row["email"],
         "role": role,
         "hierarchy_level": hierarchy_level,
-        "permissions": permissions,
     }
 
 
@@ -223,11 +288,20 @@ def ui_index(request: Request):
     # Resolve widget preferences from cookie — zero DB round-trip, no flash on F5.
     # Dashboard customisation is purely a UI concern now; observability is driven
     # by real widget_view events posted from the browser, not by preferences.
+    is_admin = _is_portal_admin(request)
+
+    # What this user is ALLOWED to see: the catalogue, minus anything a Platform
+    # Admin has switched off for everyone, minus admin-only widgets for non-admins.
+    allowed = widget_registry.visible_keys(is_admin=is_admin)
+    _greeting = _pick_greeting(str(user.get("display_name") or user.get("username") or ""))
+
+    # What they have CHOSEN to see, narrowed to what they are allowed. Intersecting
+    # rather than trusting the cookie is the point: a user who had a widget enabled
+    # before an admin hid it still carries it in their cookie, and a policy that only
+    # filtered the drawer would leave it on their dashboard forever.
     saved = _get_home_widget_prefs_from_cookie(request)
-    enabled_widgets: list = saved if saved else list(HOME_WIDGET_KEYS.keys())
-    # Admin-only widgets never appear for non-admins, even if an old cookie has them.
-    if not _is_portal_admin(request):
-        enabled_widgets = [w for w in enabled_widgets if w not in ADMIN_ONLY_WIDGETS]
+    chosen = saved if saved else list(HOME_WIDGET_KEYS.keys())
+    enabled_widgets: list = [w for w in allowed if w in chosen]
 
     templates = _get_templates(request)
     return templates.TemplateResponse(
@@ -237,7 +311,16 @@ def ui_index(request: Request):
             "user": user,
             "current_page": "home",
             "now": datetime.utcnow().isoformat() + "Z",
+            "greeting": _greeting[0],
+            "greeting_suffix": _greeting[1],
             "enabled_widgets": enabled_widgets,
+            # Drives both the drawer's checkbox list and its JS map, so neither can
+            # offer a widget the server would refuse to render.
+            "widget_catalogue": widget_registry.catalogue(is_admin=is_admin),
+            "widget_component_map": {
+                w["key"]: w["component"]
+                for w in widget_registry.catalogue(is_admin=is_admin)
+            },
         },
     )
 
@@ -285,6 +368,73 @@ def ui_artifactory_page(request: Request):
             "request": request,
             "user": user,
             "current_page": "artifactory",
+            "now": datetime.utcnow().isoformat() + "Z",
+        },
+    )
+
+
+@ui_router.get("/ui/connections", response_class=HTMLResponse)
+def ui_connections_page(request: Request):
+    """Integration health: which systems are connected, which tokens still work.
+
+    The portal's most common failure is a missing or silently-expired token, which
+    surfaces as an empty widget somewhere and leaves the user guessing which system to
+    fix. This page answers it in one place and lets them reconnect on the spot.
+    """
+    token = request.cookies.get("auth_token")
+    if not token:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+
+    try:
+        user = _get_ui_user(token)
+    except HTTPException:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+
+    templates = _get_templates(request)
+    return templates.TemplateResponse(
+        "connections.html",
+        {
+            "request": request,
+            "user": user,
+            "current_page": "connections",
+            "now": datetime.utcnow().isoformat() + "Z",
+            # Only offer to connect systems the portal still shows data from. Once an
+            # admin hides every widget belonging to a system, asking for a token to it
+            # is asking for setup work with no visible result anywhere.
+            "connectable_systems": sorted(
+                widget_registry.systems_with_visible_widgets(
+                    is_admin=_is_portal_admin(request)
+                )
+            ),
+        },
+    )
+
+
+@ui_router.get("/ui/search", response_class=HTMLResponse)
+def ui_search_page(request: Request):
+    """Full-page search results.
+
+    The header dropdown shows a few hits per system and links here with ?q=… so the
+    query survives the jump and the page can run it immediately — the user never types
+    the same thing twice.
+    """
+    token = request.cookies.get("auth_token")
+    if not token:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+
+    try:
+        user = _get_ui_user(token)
+    except HTTPException:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+
+    templates = _get_templates(request)
+    return templates.TemplateResponse(
+        "search.html",
+        {
+            "request": request,
+            "user": user,
+            "current_page": "search",
+            "query": request.query_params.get("q", ""),
             "now": datetime.utcnow().isoformat() + "Z",
         },
     )
@@ -460,7 +610,8 @@ def ui_grafana_page(request: Request):
 
 @ui_router.get("/ui/automations", response_class=HTMLResponse)
 def ui_automations_page(request: Request):
-    """Render the Automations tab page."""
+    """Render the Requests page (the route keeps its /ui/automations path: renaming
+    it would break every link, bookmark and notification already pointing at it)."""
     token = request.cookies.get("auth_token")
     if not token:
         return RedirectResponse(url="/ui/auth", status_code=303)
@@ -476,7 +627,80 @@ def ui_automations_page(request: Request):
         {
             "request": request,
             "user": user,
+            # Prefill the project-admin field with DOMAIN\<username> (the form the
+            # AD-backed lookup resolves) when a NetBIOS domain is configured, else the
+            # bare username. Editable — a full e-mail or another account also works.
+            "ado_admin_default": _ado_default_admin(user.get("email") or ""),
             "current_page": "automations",
+            "now": datetime.utcnow().isoformat() + "Z",
+        },
+    )
+
+
+@ui_router.get("/ui/suggestions", response_class=HTMLResponse)
+def ui_suggestions_page(request: Request):
+    """The suggestions board. Deliberately NOT admin-gated: a feedback board nobody
+    can read is a suggestions box, which is what this used to be."""
+    token = request.cookies.get("auth_token")
+    if not token:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+
+    try:
+        user = _get_ui_user(token)
+    except HTTPException:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+
+    templates = _get_templates(request)
+    return templates.TemplateResponse(
+        "suggestions.html",
+        {
+            "request": request,
+            "user": user,
+            "current_page": "suggestions",
+            "now": datetime.utcnow().isoformat() + "Z",
+        },
+    )
+
+
+@ui_router.get("/ui/changelog", response_class=HTMLResponse)
+def ui_changelog_page(request: Request):
+    """What's New. Signed in is the only requirement -- a changelog is for users.
+
+    Rendered on the SERVER, unlike most of this portal's lists. The content is a
+    Python module baked into the image, not an integration read: there is nothing to
+    poll, nothing to cache and nothing that can be slow, so fetching it over the wire
+    afterwards would only add a way for the page to arrive empty.
+    """
+    token = request.cookies.get("auth_token")
+    if not token:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+
+    try:
+        user = _get_ui_user(token)
+    except HTTPException:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+
+    import changelog
+    import release_notes
+
+    releases = changelog.releases()
+    # When each version arrived HERE, which is the half the image cannot know. The
+    # page renders in full without it -- see deployed_map, which never raises.
+    arrived = release_notes.deployed_map()
+    for entry in releases:
+        entry["arrived_at"] = arrived.get(entry["version"], "")
+
+    templates = _get_templates(request)
+    return templates.TemplateResponse(
+        "changelog.html",
+        {
+            "request": request,
+            "user": user,
+            "current_page": "changelog",
+            "releases": releases,
+            "sections": changelog.SECTIONS,
+            "running_version": changelog.version(),
+            "environment": release_notes.environment(),
             "now": datetime.utcnow().isoformat() + "Z",
         },
     )
@@ -688,9 +912,23 @@ _HOME_WIDGETS_COOKIE = "home_widgets"
 _HOME_WIDGETS_COOKIE_MAX_AGE = 365 * 24 * 3600  # 1 year
 
 
+# Widgets introduced after the cookie format was already in the wild. A saved list
+# records what is ON, so a key that did not exist when it was written is absent for
+# exactly the same reason a switched-off widget is absent — the two are impossible to
+# tell apart. Without this, shipping a new widget silently hides it from every existing
+# user, who then reports it as missing rather than as off.
+_WIDGETS_ADDED_IN_V2 = ["needs_you"]
+
+
 def _get_home_widget_prefs_from_cookie(request: Request) -> list:
     """
     Read home widget preferences from the browser cookie.
+
+    Two shapes are accepted. ``{"v": 2, "keys": [...]}`` is current and trusted
+    exactly as written. A bare ``[...]`` predates the widgets listed above, so those
+    are added — this is a migration, not a default, and it happens once: the next save
+    writes v2 and a user who then switches the widget off stays switched off.
+
     Returns the valid saved list, or [] if no cookie / invalid.
     """
     import json as _json
@@ -699,8 +937,16 @@ def _get_home_widget_prefs_from_cookie(request: Request) -> list:
         return []
     try:
         prefs = _json.loads(raw)
+        if isinstance(prefs, dict):
+            keys = prefs.get("keys") if int(prefs.get("v") or 0) >= 2 else None
+            if isinstance(keys, list):
+                return [k for k in keys if k in HOME_WIDGET_KEYS]
+            return []
         if isinstance(prefs, list):
-            return [k for k in prefs if k in HOME_WIDGET_KEYS]
+            saved = [k for k in prefs if k in HOME_WIDGET_KEYS]
+            if not saved:
+                return []
+            return saved + [k for k in _WIDGETS_ADDED_IN_V2 if k not in saved]
     except Exception:
         pass
     return []
@@ -713,9 +959,12 @@ def ui_dashboard_preferences(request: Request):
     if not current_user:
         return JSONResponse(status_code=401, content={"success": False, "detail": "Not authenticated"})
 
+    allowed = widget_registry.visible_keys(is_admin=_is_portal_admin(request))
     saved = _get_home_widget_prefs_from_cookie(request)
-    enabled = saved if saved else list(HOME_WIDGET_KEYS.keys())
-    return {"success": True, "data": {"enabled": enabled}}
+    chosen = saved if saved else list(HOME_WIDGET_KEYS.keys())
+    # Same narrowing as the render path. Two places answering "which widgets?" must
+    # answer it the same way, or the drawer and the dashboard disagree.
+    return {"success": True, "data": {"enabled": [k for k in allowed if k in chosen]}}
 
 
 @ui_router.post("/ui/dashboard/preferences")
@@ -734,12 +983,20 @@ def ui_dashboard_preferences_save(
     if not isinstance(requested, list):
         raise HTTPException(status_code=400, detail="'enabled' must be a list")
 
-    enabled_keys = [k for k in requested if isinstance(k, str) and k in HOME_WIDGET_KEYS]
+    # Saving is filtered by policy too, not only reading: a stale browser tab open
+    # from before a widget was hidden would otherwise write it straight back in.
+    allowed = set(widget_registry.visible_keys(is_admin=_is_portal_admin(request)))
+    enabled_keys = [
+        k for k in requested if isinstance(k, str) and k in HOME_WIDGET_KEYS and k in allowed
+    ]
 
     response = JSONResponse({"success": True, "data": {"enabled": enabled_keys}})
     response.set_cookie(
         _HOME_WIDGETS_COOKIE,
-        _json.dumps(enabled_keys),
+        # v2: an explicit list, taken literally on read. Writing the version is what
+        # lets the reader tell "switched this off" apart from "wrote this before the
+        # widget existed" — see _get_home_widget_prefs_from_cookie.
+        _json.dumps({"v": 2, "keys": enabled_keys}),
         max_age=_HOME_WIDGETS_COOKIE_MAX_AGE,
         httponly=False,
         samesite="lax",
@@ -754,8 +1011,12 @@ def ui_get_ado_pat_status(request: Request):
     current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
     if not current_user:
         return JSONResponse(status_code=401, content={"success": False, "detail": "Not authenticated"})
-    has_pat = bool(get_user_azure_devops_pat(str(current_user.get("id"))))
-    return {"success": True, "data": {"configured": has_pat, "has_personal_pat": has_pat}}
+    # Same answer as /api/azure-devops/pat, from the same cached probe. These two
+    # endpoints reported different things — this one only knew whether a token was
+    # STORED — so the dashboard prompt stayed quiet while the Connections page said
+    # the token was dead. It is also the hook that raises the "reconnect" notice, so
+    # it has to be the health check and not the existence check.
+    return {"success": True, "data": _ado_probe_pat(current_user)}
 
 
 @ui_router.post("/ui/azure-devops/pat")
@@ -778,35 +1039,6 @@ def ui_delete_ado_pat(request: Request):
         return JSONResponse(status_code=401, content={"success": False, "detail": "Not authenticated"})
     delete_user_azure_devops_pat(str(current_user.get("id")))
     return {"success": True}
-
-
-@ui_router.post("/ui/automations/azure-devops/create")
-def ui_create_ado_project(
-    request: Request,
-    project_name: str = Form(""),
-    process_type: str = Form("Scrum"),
-    admin_username: str = Form(""),
-):
-    """Submit an Azure DevOps project creation automation from the UI."""
-    current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
-    if not current_user:
-        return JSONResponse(status_code=401, content={"success": False, "detail": "Not authenticated"})
-
-    payload = ProjectCreationPayload(
-        project_name=project_name,
-        process_type=process_type,
-        admin_username=admin_username,
-    )
-    return _ado_create_project(payload=payload, current_user=current_user)
-
-
-@ui_router.get("/ui/automations/azure-devops/status/{job_id}")
-def ui_ado_project_status(request: Request, job_id: str):
-    """Poll Azure DevOps automation job status."""
-    current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
-    if not current_user:
-        return JSONResponse(status_code=401, content={"success": False, "detail": "Not authenticated"})
-    return _ado_project_status(job_id=job_id, current_user=current_user)
 
 
 @ui_router.get("/ui/auth", response_class=HTMLResponse)
@@ -840,30 +1072,98 @@ def ui_auth_login():
 
 @ui_router.post("/ui/auth/login")
 def ui_auth_local_login(request: Request, username: str = Form(""), password: str = Form("")):
-    """Authenticate the local bootstrap admin, otherwise preserve SSO fallback."""
+    """Authenticate a local bootstrap account, otherwise preserve SSO fallback."""
+    attempted = (username or "").strip()
+    client_ip = login_guard.client_ip_of(request)
+
+    # Refuse before touching the password at all: an account (or a source address) that
+    # has spent its attempts gets no further guesses and no timing signal either.
+    if login_guard.is_locked(attempted, client_ip):
+        audit.log(
+            audit.Action.LOGIN_FAILED,
+            level=audit.Level.WARNING,
+            user_email=attempted,
+            metadata={
+                "username": attempted, "method": "local", "reason": "locked_out",
+                "client_ip": client_ip,
+            },
+        )
+        qs = urlencode({"error": "locked_out", "username": attempted})
+        return RedirectResponse(url=f"/ui/auth?{qs}", status_code=303)
+
     auth_user = _local_login_payload(username, password)
     if not auth_user:
-        qs = urlencode({"error": "invalid_credentials", "username": (username or "").strip()})
+        login_guard.record_failure(attempted, client_ip)
+        # A failed sign-in is logged by name, at WARNING. The HTTP middleware would
+        # only ever see this as a 303 redirect — a success, as far as it can tell —
+        # because that is how a failed form post looks from the outside. A repeated
+        # failure against one account is the single most useful thing a portal log
+        # can show an admin, and it would have been invisible.
+        audit.log(
+            audit.Action.LOGIN_FAILED,
+            level=audit.Level.WARNING,
+            user_email=attempted,
+            metadata={
+                "username": attempted, "method": "local",
+                "reason": "invalid_credentials", "client_ip": client_ip,
+            },
+        )
+        qs = urlencode({"error": "invalid_credentials", "username": attempted})
         return RedirectResponse(
             url=f"/ui/auth?{qs}",
             status_code=303,
         )
+    login_guard.record_success(attempted, client_ip)
     token = create_access_token(auth_user)
+    # A local ADMIN sign-in is break-glass once SSO is live: the account's password
+    # comes from a pipeline variable, never rotates, and is shared by whoever set the
+    # portal up. It is the credential an attacker most wants and the one nobody
+    # watches, so it is recorded at WARNING — visible in the default Logs view and in
+    # the pod log — while an ordinary local sign-in stays at INFO.
+    is_admin_login = str(auth_user.get("role") or "").strip().lower() == "admin"
+    audit.log(
+        audit.Action.LOGIN_SUCCEEDED,
+        level=audit.Level.WARNING if is_admin_login else audit.Level.INFO,
+        user_email=auth_user.get("email") or attempted,
+        metadata={
+            "what": (
+                "Signed in with the local ADMIN account (break-glass)"
+                if is_admin_login else "Signed in locally"
+            ),
+            "username": attempted, "method": "local",
+            "role": auth_user.get("role"), "client_ip": client_ip,
+            "break_glass": is_admin_login,
+        },
+    )
     response = RedirectResponse(url="/ui/", status_code=303)
     response.set_cookie(
         key="auth_token",
         value=token,
         httponly=True,
         samesite="lax",
-        secure=request.url.scheme == "https",
+        # TLS terminates at the proxy, so the backend hop is plain HTTP and
+        # request.url.scheme is always "http" in the cluster — reading it here left the
+        # session cookie without Secure on every real deployment. X-Forwarded-Proto is
+        # the browser-facing scheme; this is the same rule /api/auth already follows.
+        secure=_forwarded_https(request),
         path="/",
     )
     return response
 
 
 @ui_router.post("/ui/auth/logout")
-def ui_auth_logout():
+def ui_auth_logout(request: Request):
     """Clear auth cookie and return user to login page."""
+    try:
+        payload = decode_access_token(request.cookies.get("auth_token") or "")
+        audit.log(
+            audit.Action.LOGOUT,
+            user_email=(payload or {}).get("email"),
+            metadata={"method": "local"},
+        )
+    except Exception:
+        # An expired or malformed cookie is not a reason to refuse to sign someone out.
+        pass
     response = RedirectResponse(url="/ui/auth", status_code=303)
     response.delete_cookie("auth_token")
     return response
@@ -891,22 +1191,22 @@ def ui_sidebar_component(request: Request):
 
 @ui_router.get("/ui/components/quick-links", response_class=HTMLResponse)
 def ui_quick_links_component(request: Request):
-    """Render the Quick Links dashboard component for HTMX partial loading."""
-    current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
-    is_admin = bool(current_user and has_effective_admin_access_live(current_user))
+    """Render the Quick Links dashboard component for HTMX partial loading.
+
+    No admin check any more. The widget used to carry the add/edit/delete UI and so
+    needed to know whether you were an admin — which cost a live privilege lookup on
+    every dashboard load, for every user, to decide whether to draw three buttons.
+    Managing quick links now lives in Platform Managing, so this component just shows
+    the links, and the lookup is gone with the buttons that needed it.
+    """
     templates = _get_templates(request)
     return templates.TemplateResponse(
         "partials/components/quick-links.html",
         {
             "request": request,
-            "is_admin": is_admin,
             "now": datetime.utcnow().isoformat() + "Z",
         },
     )
-
-
-def _mock_ado_task_counts() -> Dict[str, int]:
-    return {"todo": 12, "in_progress": 4, "blocked": 2, "done": 7}
 
 
 def _describe_ado_error(exc: Exception) -> str:
@@ -972,15 +1272,6 @@ def ui_azure_devops_tasks_component(request: Request):
     )
 
 
-def _mock_pr_data() -> list:
-    return [
-        {"id": 1, "title": "feat: Add user authentication flow", "repository": "my-app", "source_branch": "feat/auth", "target_branch": "main", "age": "1d ago", "url": ""},
-        {"id": 2, "title": "fix: Null pointer in dashboard service", "repository": "devops-idp", "source_branch": "fix/null-ptr", "target_branch": "develop", "age": "3d ago", "url": ""},
-        {"id": 3, "title": "chore: Bump dependency versions", "repository": "pipeline-lib", "source_branch": "chore/deps", "target_branch": "main", "age": "5d ago", "url": ""},
-        {"id": 4, "title": "refactor: Extract metrics collector", "repository": "my-app", "source_branch": "refactor/metrics", "target_branch": "develop", "age": "7d ago", "url": ""},
-    ]
-
-
 def _get_pr_data(current_user: Optional[AuthUser]) -> Dict[str, Any]:
     if not current_user:
         return {"prs": [], "error": "Sign in to load your Azure DevOps pull requests."}
@@ -993,12 +1284,17 @@ def _get_pr_data(current_user: Optional[AuthUser]) -> Dict[str, Any]:
                     "id": pr.get("id"),
                     "title": pr.get("title"),
                     "repository": pr.get("repository"),
+                    "collection": pr.get("collection", ""),
+                    "project": pr.get("project", ""),
                     "source_branch": pr.get("source_branch"),
                     "target_branch": pr.get("target_branch"),
                     "age": _time_ago(pr.get("created_date", "")),
+                    "created_date": pr.get("created_date", ""),
                     "url": pr.get("url", ""),
                     "created_by_email": pr.get("created_by_email", ""),
+                    "is_creator": bool(pr.get("is_creator")),
                     "is_reviewer": bool(pr.get("is_reviewer")),
+                    "my_vote": int(pr.get("my_vote") or 0),
                 }
                 for pr in rows
             ],
@@ -1009,34 +1305,37 @@ def _get_pr_data(current_user: Optional[AuthUser]) -> Dict[str, Any]:
 
 
 def _get_pr_created_data(current_user: Optional[AuthUser]) -> Dict[str, Any]:
+    """PRs the signed-in user opened.
+
+    Trusts the API's ``is_creator`` flag. This used to compare the PR's
+    ``created_by_email`` against the portal username as raw lowercase strings — but
+    on-prem Azure DevOps writes an author as ``DOMAIN\\user`` while the portal knows
+    the user by email, so the comparison never matched and this widget was ALWAYS
+    empty, even for a PR the user had just opened. The API already resolves identity
+    across both namespaces; re-deriving it here only reintroduced the bug.
+    """
     state = _get_pr_data(current_user)
     if state.get("error"):
         return state
-    username = (current_user or {}).get("username", "").lower() if current_user else ""
-    prs = state.get("prs", [])
-    created = [
-        pr for pr in prs
-        if (pr.get("created_by_email", "").lower() == username)
-    ]
+    created = [pr for pr in state.get("prs", []) if pr.get("is_creator")]
     return {"prs": created, "error": ""}
 
 
 def _get_pr_review_data(current_user: Optional[AuthUser]) -> Dict[str, Any]:
+    """PRs still waiting on this user's review.
+
+    A PR the user has already approved is not waiting on them, so it is dropped.
+    Rejected, waiting-for-author and not-yet-voted all remain — those still want
+    something from the reviewer.
+    """
     state = _get_pr_data(current_user)
     if state.get("error"):
         return state
-    review = [pr for pr in state.get("prs", []) if pr.get("is_reviewer")]
-    return {"prs": review, "error": ""}
-
-
-def _mock_pipeline_data() -> list:
-    return [
-        {"name": "Build & Test", "project": "my-app", "result": "succeeded", "age": "1h ago", "url": ""},
-        {"name": "Deploy to Dev", "project": "my-app", "result": "succeeded", "age": "2h ago", "url": ""},
-        {"name": "Security Scan", "project": "pipeline-lib", "result": "running", "age": "4h ago", "url": ""},
-        {"name": "Build & Test", "project": "devops-idp", "result": "failed", "age": "5h ago", "url": ""},
-        {"name": "Deploy to Staging", "project": "my-app", "result": "succeeded", "age": "1d ago", "url": ""},
+    review = [
+        pr for pr in state.get("prs", [])
+        if pr.get("is_reviewer") and int(pr.get("my_vote") or 0) < _ADO_VOTE_APPROVED
     ]
+    return {"prs": review, "error": ""}
 
 
 def _get_pipeline_data(current_user: Optional[AuthUser]) -> Dict[str, Any]:
@@ -1133,7 +1432,7 @@ def ui_pipelines_component(request: Request):
 
 @ui_router.get("/ui/components/sonarqube-projects", response_class=HTMLResponse)
 def ui_sonarqube_projects_component(request: Request):
-    """Render mocked SonarQube project list widget; details load client-side."""
+    """Render the SonarQube project list widget; details load client-side."""
     templates = _get_templates(request)
     return templates.TemplateResponse(
         "partials/components/sonarqube-projects.html",
@@ -1159,7 +1458,7 @@ def ui_artifactory_storage_component(request: Request):
 
 @ui_router.get("/ui/components/artifactory-repos", response_class=HTMLResponse)
 def ui_artifactory_repos_component(request: Request):
-    """Render mocked Artifactory repositories widget; storage widget is untouched."""
+    """Render the Artifactory repositories widget; the storage widget is separate."""
     templates = _get_templates(request)
     return templates.TemplateResponse(
         "partials/components/artifactory-repos.html",

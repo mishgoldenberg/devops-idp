@@ -106,12 +106,21 @@
 			statusEl.classList.add("block", "text-base-content");
 			statusEl.innerHTML = `
 				<div class="w-full rounded-xl border border-primary/30 bg-primary/5 p-4 text-left opacity-100 scale-100 translate-y-0 transform transition-all duration-150 ease-out">
-					<h4 class="font-semibold text-sm text-base-content">Connect to SonarQube</h4>
-					<p class="mt-1 text-xs text-base-content/60">Generate a User Token in your profile → Security</p>
+					<div class="flex items-center gap-1.5">
+						<h4 class="font-semibold text-sm text-base-content flex-1">Connect to SonarQube</h4>
+						<button type="button" class="btn btn-ghost btn-xs btn-circle text-primary" data-pat-help="sonarqube" title="How do I create this token?" aria-label="How do I create this token?">?</button>
+					</div>
+					<p class="mt-1 text-xs text-base-content/60">Generate a User Token in your profile → Security. Not sure how? Click the <b>?</b> above.</p>
 					<input data-sonar-token type="password" class="input input-bordered input-sm mt-3 w-full" placeholder="Paste SonarQube User Token" />
+					<!-- Border colour inline: the border-error/30 utility is not in the
+					     precompiled output.css. NOTE: no backticks in this comment. It sits
+					     inside a JS template literal, so a backtick here CLOSES the literal
+					     and the rest of the markup is parsed as JavaScript — which threw a
+					     SyntaxError and killed this entire script block. -->
+					<p data-sonar-token-error class="hidden mt-2 rounded-lg border bg-error/5 p-2 text-xs text-error" style="white-space: pre-line; border-color: hsl(var(--er) / 0.3)"></p>
 					<div class="mt-3 flex gap-2">
-						<button type="button" class="btn btn-primary btn-xs" data-sonar-save-token>Save</button>
-						<button type="button" class="btn btn-ghost btn-xs" data-sonar-cancel-token>Cancel</button>
+						<button type="button" class="btn btn-primary btn-xs rounded-full px-4" data-sonar-save-token>Save</button>
+						<button type="button" class="btn btn-ghost btn-xs rounded-full px-4" data-sonar-cancel-token>Cancel</button>
 					</div>
 				</div>
 			`;
@@ -149,6 +158,14 @@
 			return allProjects.filter((p) => `${p.name || ""} ${p.project_key || p.key || ""}`.toLowerCase().includes(q));
 		}
 
+		// Same pin glyph as the Azure DevOps / ServiceNow widgets — pinning used to be
+		// a star here and a pin there, which read like two different features.
+		function renderPinSvg(pinned) {
+			return pinned
+				? '<svg viewBox="0 0 20 20" class="h-4 w-4 fill-current text-warning" aria-hidden="true"><path d="M11.7 1.7a1 1 0 011.4 0l5.2 5.2a1 1 0 010 1.4l-1.4 1.4a1 1 0 01-1 .26l-2.9-.82-3.6 3.6.73 3a1 1 0 01-1.67.94l-2.65-2.65-3.3 3.3a1 1 0 01-1.41-1.41l3.3-3.3L1.78 9.97a1 1 0 01.94-1.67l3 .73 3.6-3.6-.82-2.9a1 1 0 01.26-1L11.7 1.7z"/></svg>'
+				: '<svg viewBox="0 0 20 20" class="h-4 w-4 fill-current text-base-content/40 hover:text-warning transition" aria-hidden="true"><path d="M11.7 1.7a1 1 0 011.4 0l5.2 5.2a1 1 0 010 1.4l-1.4 1.4a1 1 0 01-1 .26l-2.9-.82-3.6 3.6.73 3a1 1 0 01-1.67.94l-2.65-2.65-3.3 3.3a1 1 0 01-1.41-1.41l3.3-3.3L1.78 9.97a1 1 0 01.94-1.67l3 .73 3.6-3.6-.82-2.9a1 1 0 01.26-1L11.7 1.7zm.7 2.12l-.42 2.07a1 1 0 01-.73.76L8 7.2l4.8 4.8 .55-2.25a1 1 0 01.76-.73l2.07-.42L12.4 3.82z"/></svg>';
+		}
+
 		function render(projects) {
 			if (!projects.length) {
 				showEmpty('<span class="text-base-content/50">No projects found</span>');
@@ -162,16 +179,15 @@
 				const pinned = !!p.pinned;
 				return `
 					<li
-						class="rounded-lg border border-base-300 bg-base-200/60 px-3 py-2.5 transition hover:border-warning/50 hover:bg-base-200"
+						class="rounded-lg border ${pinned ? "border-warning/30 bg-warning/5" : "border-base-300 bg-base-200/60"} px-3 py-2.5 transition hover:border-warning/50 hover:bg-base-200"
 						data-sonar-project="${key}"
 						data-sonar-project-name="${name}"
 					>
 						<div class="flex items-center justify-between gap-2">
 							<span class="text-sm font-semibold truncate">${name}</span>
 							<div class="flex items-center gap-1">
-								${pinned ? '<span class="badge badge-warning badge-xs">Pinned</span>' : ""}
-								<button type="button" class="btn btn-ghost btn-xs px-1" title="${pinned ? "Unpin" : "Pin"}" data-sonar-pin="${key}" data-pinned="${pinned ? "1" : "0"}">${pinned ? "★" : "☆"}</button>
-								<span class="badge badge-outline badge-xs">${lang}</span>
+								<span class="text-[11px] uppercase tracking-wide text-base-content/50">${lang}</span>
+								<button type="button" class="btn btn-ghost btn-xs btn-circle" title="${pinned ? "Unpin" : "Pin to top"}" aria-label="Toggle pin" data-sonar-pin="${key}" data-pinned="${pinned ? "1" : "0"}">${renderPinSvg(pinned)}</button>
 							</div>
 						</div>
 						<div class="mt-1 flex items-center gap-2 text-xs text-base-content/50">
@@ -290,12 +306,29 @@
 					headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({ token }),
 				});
-				if (!res.ok) throw new Error("Invalid token");
+				if (!res.ok) {
+					// The server says exactly what went wrong — whether the token was
+					// rejected or SonarQube could not be reached at all. That used to be
+					// thrown away here and replaced with "Invalid token or connection
+					// failed", so the only copy of the real reason was in the browser
+					// console. Read it and show it.
+					let detail = "";
+					try { detail = (await res.json())?.detail || ""; } catch (_) {}
+					throw new Error(detail || `SonarQube rejected the request (HTTP ${res.status}).`);
+				}
 				if (input) input.value = "";
 				window.portalToast?.({ kind: "success", message: "SonarQube connected." });
 				loadProjects();
-			} catch {
-				window.portalToast?.({ kind: "error", message: "Invalid token or connection failed" });
+			} catch (err) {
+				const message = String(err?.message || err || "Connection failed");
+				window.portalToast?.({ kind: "error", message });
+				// A toast disappears; a connection error is something you read twice and
+				// then go and fix. Keep it on the card, under the input, until dismissed.
+				const box = statusEl.querySelector("[data-sonar-token-error]");
+				if (box) {
+					box.textContent = message;
+					box.classList.remove("hidden");
+				}
 			} finally {
 				saveBtn.disabled = false;
 			}
@@ -303,13 +336,25 @@
 
 		function loadProjects() {
 			showStatus('<span class="loading loading-spinner loading-sm text-base-content/30"></span>');
-			fetch("/api/integrations/sonarqube/projects", { credentials: "same-origin" })
-				.then((res) => {
+			// portalFetch, not fetch: this widget was reported stuck on its spinner
+			// indefinitely. Every path below already handles failure — but only if the
+			// request settles at all, and a queued or proxy-stalled request may never
+			// do so. The 20s deadline guarantees this ends in a message either way.
+			(window.portalFetch || fetch)("/api/integrations/sonarqube/projects", { credentials: "same-origin" }, 20000)
+				.then(async (res) => {
 					if (res.status === 428) {
 						connectPrompt();
 						return null;
 					}
-					if (!res.ok) throw new Error("http " + res.status);
+					if (!res.ok) {
+						// Carry the server's explanation up to the catch instead of
+						// collapsing every failure into "Invalid token or connection
+						// failed" — which named the one cause that was usually wrong and
+						// left the real reason visible only in the browser console.
+						let detail = "";
+						try { detail = (await res.json())?.detail || ""; } catch (_) {}
+						throw new Error(detail || "SonarQube request failed (HTTP " + res.status + ").");
+					}
 					return res.json();
 				})
 				.then((body) => {
@@ -317,7 +362,14 @@
 					allProjects = Array.isArray(body && body.data) ? body.data : [];
 					render(filteredProjects());
 				})
-				.catch(() => showStatus('<span class="text-error">Invalid token or connection failed</span>'));
+				.catch((err) => {
+					const message = String(err?.message || err || "Connection failed");
+					showStatus(
+						'<span class="text-error text-xs" style="white-space:pre-line;text-align:center">' +
+							escapeHtml(message) +
+						"</span>"
+					);
+				});
 		}
 
 		searchEl?.addEventListener("input", () => {

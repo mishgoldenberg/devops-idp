@@ -9,6 +9,7 @@ from uuid import uuid4
 import db
 from db import query_all, query_one, execute_returning, execute
 from security import AuthUser, get_current_user
+from .notifications import notify_once
 from .pins import load_pin_index, load_seen_index
 
 
@@ -18,21 +19,10 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 
-# Stable set of widget keys that may appear on the home dashboard.
-# Kept in-sync with HOME_WIDGET_KEYS in backend/app/ui.py.
-_ALLOWED_WIDGET_KEYS = {
-    "quick_links",
-    "ado_my_work_items",
-    "snow_my_tickets",
-    "ado_my_pull_requests",
-    "ado_prs_for_review",
-    "ado_pipeline_status",
-    "sonar_projects",
-    "artifactory_repos",
-    "artifactory_storage",
-    "confluence_pages",
-    "recent_activity",
-}
+# Stable set of widget keys that may appear on the home dashboard. This used to be
+# a second hand-written copy of the list, annotated "kept in-sync with ui.py" — which
+# is a comment asking a human to do what an import does reliably.
+from widget_registry import ALL_KEYS as _ALLOWED_WIDGET_KEYS  # noqa: E402
 
 
 @router.post("/widgets/sync")
@@ -369,10 +359,18 @@ def _apply_user_flags(
         item["pinned"] = iid in pins
         updated_ts = _parse_ts(item.get("updated_at"))
         seen_ts = _parse_ts(seen.get(iid)) if iid in seen else 0.0
-        # If the user never opened it, treat as new (has_update=true); else
-        # compare timestamps. Small slack avoids false positives on identical stamps.
+        # The dot means "there is an update you have not seen" — not "you have never
+        # clicked this". Treating never-opened as unread put a red dot on EVERY row,
+        # including tickets the user raised seconds ago that nobody has touched, which
+        # made the indicator meaningless.
+        #
+        # Never opened  -> unread only if the item has actually CHANGED since it was
+        #                  created (i.e. someone updated it after you filed it).
+        # Opened before -> unread if it changed after you last looked. The 1s slack
+        #                  absorbs identical stamps.
+        created_ts = _parse_ts(item.get("created_at") or (item.get("meta") or {}).get("created_at"))
         if seen_ts == 0.0:
-            item["has_update"] = True
+            item["has_update"] = bool(created_ts) and updated_ts > created_ts + 1.0
         else:
             item["has_update"] = updated_ts > seen_ts + 1.0
     items.sort(
@@ -387,16 +385,31 @@ def _apply_user_flags(
 @router.get("/ado-items")
 def get_ado_items(
     project: Optional[str] = Query(None),
+    work_item_type: Optional[str] = Query(None),
+    iteration: Optional[str] = Query(None),
+    area_path: Optional[str] = Query(None),
     current_user: AuthUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    """Latest Azure DevOps work items assigned to the current user, normalized."""
+    """Latest Azure DevOps work items assigned to the current user, normalized.
+
+    The type/iteration/area filters are passed straight through so the widget can scope
+    the list to one work item type, sprint or area path. ``area_path`` was previously
+    dropped here — the widget sent it, this proxy never forwarded it, and the filter did
+    nothing.
+    """
     from api.azure_devops import get_work_items as _ado_work_items
 
     uid = _user_id(current_user)
     error = ""
     items: List[Dict[str, Any]] = []
     try:
-        result = _ado_work_items(project=project, current_user=current_user)
+        result = _ado_work_items(
+            project=project,
+            work_item_type=work_item_type,
+            iteration=iteration,
+            area_path=area_path,
+            current_user=current_user,
+        )
         rows = result.get("data", []) if isinstance(result, dict) else []
         for wi in rows:
             assigned = wi.get("assigned_to")
@@ -416,6 +429,8 @@ def get_ado_items(
                         "id_display": f"#{wi.get('id', '')}" if wi.get("id") else "",
                         "type": wi.get("type") or "",
                         "project": wi.get("project") or "",
+                        "iteration": wi.get("iteration") or "",
+                        "area_path": wi.get("area_path") or "",
                         "state_category": wi.get("state_category") or "",
                         "assigned_to": assigned_name,
                     },
@@ -429,7 +444,9 @@ def get_ado_items(
         log.warning("get_ado_items: unexpected error: %s", exc)
         error = "Service unavailable"
 
-    items = _apply_user_flags(items[:20], user_id=uid, source="azure_devops")
+    # The widget is a double-width sprint board now, so it has room for more than
+    # the 20 rows the old narrow list showed.
+    items = _apply_user_flags(items[:50], user_id=uid, source="azure_devops")
     return {
         "success": True,
         "data": items,
@@ -458,12 +475,23 @@ def get_snow_items(current_user: AuthUser = Depends(get_current_user)) -> Dict[s
                     "title": t.get("short_description") or t.get("number") or "Incident",
                     "status": t.get("state") or "",
                     "updated_at": t.get("updated_at") or t.get("opened_at") or "",
+                    # Needed by _apply_user_flags: an unopened ticket only counts as
+                    # unread if it changed AFTER it was raised.
+                    "created_at": t.get("opened_at") or "",
                     # Clicking navigates inside the portal; the support page
                     # picks up ?ticket=<sys_id> and auto-opens the conversation.
                     "url": f"/ui/support?ticket={sys_id}" if sys_id else "/ui/support",
                     "source": "servicenow",
+                    # The widgets show SEVERITY as a word (Urgent/High/Medium/Low).
+                    # Priority is a derived number and is not what anyone asked for, so
+                    # it is carried but no longer displayed.
+                    "urgency": t.get("urgency") or "",
+                    # Whether THIS user has an update they haven't opened — computed in
+                    # servicenow.py against their read receipts.
+                    "unread": bool(t.get("unread")),
                     "meta": {
                         "id_display": t.get("number") or "",
+                        "urgency": t.get("urgency") or "",
                         "priority": t.get("priority") or "",
                         "assigned_to": t.get("assigned_to") or "",
                     },
@@ -478,6 +506,24 @@ def get_snow_items(current_user: AuthUser = Depends(get_current_user)) -> Dict[s
         error = "Service unavailable"
 
     items = _apply_user_flags(items[:20], user_id=uid, source="servicenow")
+
+    # A ticket with an unseen update is exactly what deserves a notification, and we have
+    # just worked out which ones those are — so no background poller is needed. notify_once
+    # keys on the specific update, so a given change notifies once and not again on every
+    # 60s widget refresh.
+    for item in items:
+        if not item.get("has_update"):
+            continue
+        number = (item.get("meta") or {}).get("id_display") or item.get("id")
+        notify_once(
+            user_email=uid,
+            message=f"{number} has a new update: {item.get('title') or 'ticket'}",
+            group_key=f"snow-update:{item.get('id')}:{item.get('updated_at')}",
+            notif_type="ticket_update",
+            related_id=str(item.get("id") or ""),
+            link=item.get("url") or "/ui/support",
+        )
+
     return {
         "success": True,
         "data": items,

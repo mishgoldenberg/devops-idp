@@ -12,16 +12,30 @@
 				<h3 class="text-sm font-bold uppercase tracking-widest text-base-content/70">
 					Confluence Pages
 				</h3>
-				<p class="text-xs text-base-content/50" data-confluence-subtitle>Recently edited across your spaces</p>
+				<p class="text-xs text-base-content/50" data-confluence-subtitle>Pages you recently viewed or edited</p>
 			</div>
 		</div>
 
-		<div class="hidden items-center gap-2" data-confluence-controls>
+		{#
+			The search bar is VISIBLE from the first paint, just disabled.
+
+			It used to start `hidden`, so the browser painted the widget without it and
+			JavaScript revealed it a moment later — at which point everything below shifted
+			down by the height of a search bar. That is the flash: for one frame the loading
+			boxes are sitting exactly where the search bar is about to land, and it reads as
+			the articles being drawn on top of it.
+
+			The cure for a layout shift is not a faster script, it is to stop the layout
+			shifting: reserve the space up front. It is disabled until the data arrives so
+			nobody types into a box that cannot answer yet.
+		#}
+		<div class="flex items-center gap-2" data-confluence-controls>
 			<input
 				type="search"
 				class="input input-bordered input-sm w-full"
 				placeholder="Search pages..."
 				data-confluence-search
+				disabled
 			/>
 			<button
 				type="button"
@@ -31,9 +45,32 @@
 			>Clear</button>
 		</div>
 
+		{#
+			The first paint is the skeleton, server-rendered, in the same shape and the same
+			place as the real list. It is not centred: the list it stands in for is
+			top-aligned, and a skeleton that sits somewhere other than the content it
+			predicts just moves everything again when the content arrives.
+		#}
 		<div class="flex-1 min-h-0 relative">
-			<div class="h-full flex items-center justify-center text-xs text-base-content/50" data-confluence-status>
-				<span class="loading loading-spinner loading-sm text-base-content/30"></span>
+			<div class="h-full overflow-hidden text-xs text-base-content/50" data-confluence-status>
+				<ul class="w-full flex flex-col gap-2">
+					<li class="rounded-lg border border-base-300 bg-base-200/40 px-3 py-2.5">
+						<div class="sk-line h-4 w-2/3 rounded"></div>
+						<div class="sk-line h-3 w-1/3 rounded mt-2"></div>
+					</li>
+					<li class="rounded-lg border border-base-300 bg-base-200/40 px-3 py-2.5">
+						<div class="sk-line h-4 w-2/3 rounded"></div>
+						<div class="sk-line h-3 w-1/3 rounded mt-2"></div>
+					</li>
+					<li class="rounded-lg border border-base-300 bg-base-200/40 px-3 py-2.5">
+						<div class="sk-line h-4 w-2/3 rounded"></div>
+						<div class="sk-line h-3 w-1/3 rounded mt-2"></div>
+					</li>
+					<li class="rounded-lg border border-base-300 bg-base-200/40 px-3 py-2.5">
+						<div class="sk-line h-4 w-2/3 rounded"></div>
+						<div class="sk-line h-3 w-1/3 rounded mt-2"></div>
+					</li>
+				</ul>
 			</div>
 			<ul
 				class="hidden h-full overflow-y-auto overscroll-contain flex-col gap-2 pr-1"
@@ -79,24 +116,42 @@
 			return Math.floor(secs / 86400) + "d ago";
 		}
 
+		/*
+			One function owns the widget's layout, instead of five that each toggled seven
+			classes by hand and had already drifted apart from one another — which is how
+			the skeleton ended up vertically centred while the list it stands in for is
+			top-aligned, so the content jumped as it arrived.
+
+			  search   — is the search bar usable? (It is always PRESENT: hiding it is what
+			             caused the flash. When there is no token it is disabled, not gone.)
+			  center   — is the status content a message to be centred, or content that
+			             should sit at the top like the list does?
+			  showList — the real list, rather than the status area.
+		*/
+		function setState({ search = false, center = false, showList = false } = {}) {
+			if (searchEl) searchEl.disabled = !search;
+			if (controlsEl) controlsEl.style.opacity = search ? "" : "0.5";
+
+			statusEl.classList.toggle("hidden", showList);
+			statusEl.classList.toggle("flex", center && !showList);
+			statusEl.classList.toggle("items-center", center);
+			statusEl.classList.toggle("justify-center", center);
+			statusEl.classList.toggle("text-base-content/50", center);
+			statusEl.classList.toggle("text-base-content", !center);
+
+			listEl.classList.toggle("hidden", !showList);
+			listEl.classList.toggle("flex", showList);
+		}
+
 		function showStatus(message) {
-			controlsEl?.classList.add("hidden");
-			controlsEl?.classList.remove("flex");
-			statusEl.classList.remove("hidden");
-			statusEl.classList.remove("block", "text-base-content");
-			statusEl.classList.add("h-full", "items-center", "justify-center", "text-base-content/50");
-			statusEl.classList.add("flex");
+			setState({ search: false, center: true });
 			statusEl.innerHTML = message;
-			listEl.classList.add("hidden");
 		}
 
 		function showSkeleton() {
-			controlsEl?.classList.remove("hidden");
-			controlsEl?.classList.add("flex");
-			statusEl.classList.remove("block", "text-base-content");
-			statusEl.classList.add("h-full", "items-center", "justify-center", "text-base-content/50");
-			statusEl.classList.remove("hidden");
-			statusEl.classList.add("flex");
+			// Top-aligned, in the same shape as the list, so the real rows land exactly
+			// where the placeholder rows already were.
+			setState({ search: false, center: false });
 			statusEl.innerHTML = `
 				<ul class="w-full flex flex-col gap-2">
 					${[0,1,2,3].map(() => `
@@ -107,51 +162,41 @@
 					`).join("")}
 				</ul>
 			`;
-			listEl.classList.add("hidden");
 		}
 
 		function connectPrompt() {
-			controlsEl?.classList.add("hidden");
-			controlsEl?.classList.remove("flex");
-			statusEl.classList.remove("hidden");
-			statusEl.classList.remove("flex", "h-full", "items-center", "justify-center", "text-base-content/50");
-			statusEl.classList.add("block", "text-base-content");
+			setState({ search: false, center: false });
 			statusEl.innerHTML = `
 				<div class="w-full rounded-xl border border-primary/30 bg-primary/5 p-4 text-left opacity-100 scale-100 translate-y-0 transform transition-all duration-150 ease-out">
-					<h4 class="font-semibold text-sm text-base-content">Connect to Confluence</h4>
+					<div class="flex items-center gap-1.5">
+						<h4 class="font-semibold text-sm text-base-content flex-1">Connect to Confluence</h4>
+						<button type="button" class="btn btn-ghost btn-xs btn-circle text-primary" data-pat-help="confluence" title="How do I create this token?" aria-label="How do I create this token?">?</button>
+					</div>
 					<p class="mt-1 text-xs text-base-content/60">Generate a Personal Access Token in your Confluence profile</p>
 					<input data-confluence-token type="password" class="input input-bordered input-sm mt-3 w-full" placeholder="Paste Confluence Personal Access Token" />
 					<div class="mt-3 flex gap-2">
-						<button type="button" class="btn btn-primary btn-xs" data-confluence-save-token>Save</button>
-						<button type="button" class="btn btn-ghost btn-xs" data-confluence-cancel-token>Cancel</button>
+						<button type="button" class="btn btn-primary btn-xs rounded-full px-4" data-confluence-save-token>Save</button>
+						<button type="button" class="btn btn-ghost btn-xs rounded-full px-4" data-confluence-cancel-token>Cancel</button>
 					</div>
 				</div>
 			`;
-			listEl.classList.add("hidden");
 		}
 
 		function showList() {
-			controlsEl?.classList.remove("hidden");
-			controlsEl?.classList.add("flex");
-			statusEl.classList.remove("block", "text-base-content");
-			statusEl.classList.add("h-full", "items-center", "justify-center", "text-base-content/50");
-			statusEl.classList.add("hidden");
-			listEl.classList.remove("hidden");
-			listEl.classList.add("flex");
+			setState({ search: true, showList: true });
 		}
 
 		function showEmpty(message) {
-			controlsEl?.classList.remove("hidden");
-			controlsEl?.classList.add("flex");
-			statusEl.classList.remove("hidden");
-			statusEl.classList.remove("block", "text-base-content");
-			statusEl.classList.add("h-full", "items-center", "justify-center", "text-base-content/50");
-			statusEl.classList.add("flex");
+			// The search stays usable here: "no results" is the one moment you are most
+			// likely to want to change what you searched for.
+			setState({ search: true, center: true });
 			statusEl.innerHTML = message;
-			listEl.classList.add("hidden");
 		}
 
+		let lastPages = [];
+
 		function render(pages) {
+			lastPages = pages;
 			if (!pages.length) {
 				const msg = mode === "search"
 					? '<span class="text-base-content/50">No pages match your search</span>'
@@ -160,25 +205,80 @@
 				return;
 			}
 			listEl.innerHTML = pages.map((p) => {
+				const id = escapeHtml(p.id || "");
 				const title = escapeHtml(p.title || "Untitled");
 				const space = escapeHtml(p.space_name || "");
 				const ago = escapeHtml(timeAgo(p.last_updated));
 				const url = escapeHtml(p.url || "#");
+				// Say WHY the page is in the list — "viewed" comes from the user's own
+				// Confluence history, "edited" from pages they contributed to.
+				const how = p.interaction === "viewed" ? "Viewed" : p.interaction === "edited" ? "Edited" : "";
+				const pinnedCls = p.pinned
+					? "border-warning/30 bg-warning/5"
+					: "border-base-300 bg-base-200/60";
+				// Row shape matches the Artifactory repositories widget exactly: the
+				// short tag (space name here, repo type there) sits on the TITLE line
+				// grouped with the pin in one `items-center` flex, so the tag and the
+				// pin share a baseline. The earlier layout put the pin outside the text
+				// block and let it centre against two lines, which floated the space
+				// tag a few pixels above the pin — the misalignment we were chasing.
 				return `
 					<li
-						class="rounded-lg border border-base-300 bg-base-200/60 px-3 py-2.5 transition hover:border-info/50 hover:bg-base-200"
+						class="rounded-lg border ${pinnedCls} px-3 py-2.5 transition hover:border-info/50 hover:bg-base-200"
+						data-confluence-id="${id}"
 					>
-						<a href="${url}" target="_blank" rel="noopener noreferrer" class="block hover:text-info">
-							<div class="flex items-center justify-between gap-2">
-								<span class="text-sm font-semibold truncate">${title}</span>
-								${space ? `<span class="badge badge-outline badge-xs shrink-0">${space}</span>` : ""}
-							</div>
-							<p class="mt-1 text-xs text-base-content/50">${ago || ""}</p>
-						</a>
+						<div class="flex items-center justify-between gap-2">
+							<a href="${url}" target="_blank" rel="noopener noreferrer" class="min-w-0 flex-1 truncate text-sm font-semibold hover:text-info">${title}</a>
+							<span class="flex items-center gap-1 shrink-0">
+								${space ? `<span class="text-[11px] uppercase tracking-wide text-base-content/50">${space}</span>` : ""}
+								<button
+									type="button"
+									class="btn btn-ghost btn-xs btn-circle"
+									data-confluence-pin
+									aria-label="Toggle pin"
+									title="${p.pinned ? "Unpin" : "Pin to top"}"
+								>${renderPinSvg(!!p.pinned)}</button>
+							</span>
+						</div>
+						<p class="mt-1 text-xs text-base-content/50">
+							${how ? `<span class="text-base-content/60">${how}</span>` : ""}${how && ago ? " · " : ""}${ago || ""}
+						</p>
 					</li>`;
 			}).join("");
 			showList();
 		}
+
+		// Same pin icon as every other widget — no stars anywhere.
+		function renderPinSvg(pinned) {
+			return pinned
+				? '<svg viewBox="0 0 20 20" class="h-4 w-4 fill-current text-warning" aria-hidden="true"><path d="M11.7 1.7a1 1 0 011.4 0l5.2 5.2a1 1 0 010 1.4l-1.4 1.4a1 1 0 01-1 .26l-2.9-.82-3.6 3.6.73 3a1 1 0 01-1.67.94l-2.65-2.65-3.3 3.3a1 1 0 01-1.41-1.41l3.3-3.3L1.78 9.97a1 1 0 01.94-1.67l3 .73 3.6-3.6-.82-2.9a1 1 0 01.26-1L11.7 1.7z"/></svg>'
+				: '<svg viewBox="0 0 20 20" class="h-4 w-4 fill-current text-base-content/40 hover:text-warning transition" aria-hidden="true"><path d="M11.7 1.7a1 1 0 011.4 0l5.2 5.2a1 1 0 010 1.4l-1.4 1.4a1 1 0 01-1 .26l-2.9-.82-3.6 3.6.73 3a1 1 0 01-1.67.94l-2.65-2.65-3.3 3.3a1 1 0 01-1.41-1.41l3.3-3.3L1.78 9.97a1 1 0 01.94-1.67l3 .73 3.6-3.6-.82-2.9a1 1 0 01.26-1L11.7 1.7zm.7 2.12l-.42 2.07a1 1 0 01-.73.76L8 7.2l4.8 4.8 .55-2.25a1 1 0 01.76-.73l2.07-.42L12.4 3.82z"/></svg>';
+		}
+
+		listEl?.addEventListener("click", async (event) => {
+			const btn = event.target.closest("[data-confluence-pin]");
+			if (!btn) return;
+			event.preventDefault();
+			event.stopPropagation();
+			const row = btn.closest("[data-confluence-id]");
+			const id = row?.dataset.confluenceId;
+			if (!id) return;
+			const page = lastPages.find((p) => String(p.id) === String(id));
+			if (!page) return;
+			page.pinned = !page.pinned;
+			try {
+				await fetch("/api/integrations/confluence/pins", {
+					method: page.pinned ? "POST" : "DELETE",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ item_id: String(id) }),
+				});
+			} catch (_) {
+				/* the row already reflects the intent; a failed write self-heals on reload */
+			}
+			lastPages.sort((a, b) => (a.pinned === b.pinned ? 0 : a.pinned ? -1 : 1));
+			render(lastPages);
+		});
 
 		function setSubtitle(text) {
 			if (subtitleEl) subtitleEl.textContent = text;
@@ -191,7 +291,7 @@
 
 		function loadRecent() {
 			mode = "recent";
-			setSubtitle("Recently edited across your spaces");
+			setSubtitle("Pages you recently viewed or edited");
 			setClearVisible(false);
 			showSkeleton();
 			fetch("/api/integrations/confluence/recent", { credentials: "same-origin" })

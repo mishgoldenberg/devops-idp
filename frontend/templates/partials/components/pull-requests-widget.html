@@ -1,0 +1,448 @@
+{#
+	Shared body for BOTH pull-request widgets ("My Opened PRs" and "PRs Needing My
+	Review"). They differ only in a title, an empty state, and which role they ask the
+	API for — everything else (the three Azure DevOps selectors, sorting, pinning, the
+	row markup) was duplicated in two files that then drifted apart, which is how one
+	of them ended up with a badge around the repository name and the other didn't.
+
+	Caller sets, before including:
+	  pr_role         "created" | "review"
+	  pr_title        heading text
+	  pr_empty_title  headline for the empty state
+	  pr_empty_hint   sub-line for the empty state
+
+	Like the pipelines widget, the SHELL is server-rendered (so the PAT-missing prompt
+	still works) and the ROWS are fetched client-side, so changing a filter does not
+	reload the page. Filtering is done by the API — the widget never decides for itself
+	what "mine" means, which is the bug that kept "My Opened PRs" permanently empty.
+#}
+{#
+	This partial is included twice on the dashboard, so this block appears twice. The
+	rules are identical and idempotent, which is why it can live with the markup it
+	belongs to instead of being pushed into a global stylesheet that would then have to
+	know about a widget.
+#}
+<style>
+	/* A <select> clips its selected text with no ellipsis, so a value wider than the
+	   box just stops — and a name that stops without a mark reads as the whole name.
+	   These four selects are narrow on purpose (one row, one column), so this is the
+	   normal case rather than an edge case. `direction: ltr` is restated because the
+	   portal sets `dir="auto"` on inputs for Hebrew, and an RTL select would otherwise
+	   put the ellipsis on the wrong end. */
+	[data-pr-root] select {
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		overflow: hidden;
+		direction: ltr;
+	}
+</style>
+
+<div class="section-card h-full flex flex-col" data-pr-root="{{ pr_role }}">
+	<div class="card-body p-5 flex flex-col h-full gap-3">
+		<div class="flex items-center gap-3">
+			<div
+				class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-secondary/30 bg-secondary/10"
+			>
+				<svg viewBox="0 0 16 16" class="h-5 w-5 fill-current text-secondary" aria-hidden="true">
+					<path
+						d="M5 3.25a.75.75 0 11-1.5 0 .75.75 0 011.5 0zm0 2.122a2.25 2.25 0 10-1.5 0v.878A2.25 2.25 0 005.75 8.5h1.5v2.128a2.251 2.251 0 101.5 0V8.5h1.5a2.25 2.25 0 002.25-2.25v-.878a2.25 2.25 0 10-1.5 0v.878a.75.75 0 01-.75.75h-4.5A.75.75 0 015 6.25v-.878z"
+					/>
+				</svg>
+			</div>
+			<h3 class="text-sm font-bold uppercase tracking-widest text-base-content/70">
+				{{ pr_title }}
+			</h3>
+			<span class="ml-auto shrink-0 text-xs font-medium text-base-content/50" data-pr-count></span>
+		</div>
+
+		{% if error and needs_pat %}
+		{% include "partials/components/azure-pat-prompt.html" %}
+		{% elif error %}
+		<div class="flex flex-1 items-center justify-center rounded-xl border border-error/20 bg-error/5 p-4 text-center text-xs text-error">
+			{{ error }}
+		</div>
+		{% else %}
+		<!--
+			Inline grid: `grid-cols-4` is not in the precompiled output.css.
+
+			One row of four, matching My Work Items. This widget is one column wide where
+			that one is two, so each select is genuinely narrow — `minmax(0, 1fr)` lets
+			them shrink rather than overflow the card, and a select shows the chosen
+			option truncated rather than pushing the row wide. The full name is still in
+			the dropdown and in the title attribute. Buying back the vertical row this
+			frees is worth more here: it is a list widget, and the row it saves is a
+			pull request.
+		-->
+		<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.5rem">
+			<label class="form-control">
+				<span class="label-text text-[11px] uppercase tracking-wide text-base-content/50">Collection</span>
+				<select class="select select-bordered select-xs w-full" data-pr-collection aria-label="Collection">
+					<option value="">All collections</option>
+				</select>
+			</label>
+			<label class="form-control">
+				<span class="label-text text-[11px] uppercase tracking-wide text-base-content/50">Project</span>
+				<select class="select select-bordered select-xs w-full" data-pr-project aria-label="Project">
+					<option value="">All projects</option>
+				</select>
+			</label>
+			<label class="form-control">
+				<span class="label-text text-[11px] uppercase tracking-wide text-base-content/50">Repository</span>
+				<select class="select select-bordered select-xs w-full" data-pr-repo aria-label="Repository">
+					<option value="">All repositories</option>
+				</select>
+			</label>
+			<label class="form-control">
+				<span class="label-text text-[11px] uppercase tracking-wide text-base-content/50">Sort</span>
+				<select class="select select-bordered select-xs w-full" data-pr-sort aria-label="Sort pull requests">
+					<option value="newest">Newest</option>
+					<option value="collection">Collection</option>
+					<option value="project">Project</option>
+					<option value="repository">Repository</option>
+				</select>
+			</label>
+		</div>
+
+		<div class="flex-1 min-h-0 flex flex-col" data-pr-body>
+			<div class="flex-1 min-h-0 flex items-center justify-center text-xs text-base-content/50" data-pr-status>
+				<span class="loading loading-spinner loading-sm text-base-content/30"></span>
+			</div>
+			<ul class="hidden flex-1 min-h-0 overflow-y-auto overscroll-contain flex flex-col gap-2 pr-1" data-pr-list></ul>
+		</div>
+		{% endif %}
+	</div>
+</div>
+
+<script>
+	(function () {
+		const ROLE = "{{ pr_role }}";
+		const root = document.querySelector('[data-pr-root="' + ROLE + '"]');
+		if (!root) return;
+		const body = root.querySelector("[data-pr-body]");
+		if (!body) return; // error / PAT branch: nothing interactive to wire up
+
+		const listEl = root.querySelector("[data-pr-list]");
+		const statusEl = root.querySelector("[data-pr-status]");
+		const countEl = root.querySelector("[data-pr-count]");
+		const collectionSel = root.querySelector("[data-pr-collection]");
+		const projectSel = root.querySelector("[data-pr-project]");
+		const repoSel = root.querySelector("[data-pr-repo]");
+		const sortSel = root.querySelector("[data-pr-sort]");
+
+		// Namespaced per widget: the two PR widgets are scoped independently, so
+		// narrowing "needs my review" to one project does not also narrow "my opened".
+		const K = (name) => "portal-pr-" + ROLE + "-" + name;
+		// URL parameters are namespaced the same way, so a link can carry both PR
+		// widgets' filters at once without them overwriting each other.
+		const Q = (name) => ROLE + "_" + name;
+
+		// URL first, this browser's last choice second — so a link someone sends you
+		// shows what THEY were looking at, while opening the dashboard yourself still
+		// restores your own view.
+		const US = window.portalUrlState;
+		const initial = (name, fallback) =>
+			(US ? US.resolve(Q(name), K(name)) : localStorage.getItem(K(name)) || "") || fallback;
+
+		let selectedCollection = initial("collection", "");
+		let selectedProject = initial("project", "");
+		let selectedRepo = initial("repo", "");
+		let sortKey = initial("sort", "newest");
+		let rows = [];
+		let pinned = new Set();
+
+		function remember(name, value) {
+			if (US) {
+				US.set(Q(name), value, K(name));
+				return;
+			}
+			try { localStorage.setItem(K(name), value); } catch (_) {}
+		}
+
+		function esc(str) {
+			return String(str == null ? "" : str)
+				.replace(/&/g, "&amp;")
+				.replace(/</g, "&lt;")
+				.replace(/>/g, "&gt;")
+				.replace(/"/g, "&quot;")
+				.replace(/'/g, "&#39;");
+		}
+
+		function timeAgo(iso) {
+			if (!iso) return "";
+			const t = Date.parse(iso);
+			if (isNaN(t)) return "";
+			const secs = Math.max(1, Math.floor((Date.now() - t) / 1000));
+			if (secs < 60) return secs + "s ago";
+			if (secs < 3600) return Math.floor(secs / 60) + "m ago";
+			if (secs < 86400) return Math.floor(secs / 3600) + "h ago";
+			return Math.floor(secs / 86400) + "d ago";
+		}
+
+		function setStatus(msg) {
+			if (!msg) {
+				statusEl.classList.add("hidden");
+				listEl.classList.remove("hidden");
+				return;
+			}
+			statusEl.classList.remove("hidden");
+			statusEl.textContent = msg;
+			listEl.classList.add("hidden");
+		}
+
+		// The exact pin the Artifactory and SonarQube widgets use — same glyph, same
+		// amber-when-pinned treatment — so a pin looks like a pin everywhere in the
+		// portal instead of each widget inventing its own.
+		function renderPinSvg(pinned) {
+			return pinned
+				? '<svg viewBox="0 0 20 20" class="h-4 w-4 fill-current text-warning" aria-hidden="true"><path d="M11.7 1.7a1 1 0 011.4 0l5.2 5.2a1 1 0 010 1.4l-1.4 1.4a1 1 0 01-1 .26l-2.9-.82-3.6 3.6.73 3a1 1 0 01-1.67.94l-2.65-2.65-3.3 3.3a1 1 0 01-1.41-1.41l3.3-3.3L1.78 9.97a1 1 0 01.94-1.67l3 .73 3.6-3.6-.82-2.9a1 1 0 01.26-1L11.7 1.7z"/></svg>'
+				: '<svg viewBox="0 0 20 20" class="h-4 w-4 fill-current text-base-content/40 hover:text-warning transition" aria-hidden="true"><path d="M11.7 1.7a1 1 0 011.4 0l5.2 5.2a1 1 0 010 1.4l-1.4 1.4a1 1 0 01-1 .26l-2.9-.82-3.6 3.6.73 3a1 1 0 01-1.67.94l-2.65-2.65-3.3 3.3a1 1 0 01-1.41-1.41l3.3-3.3L1.78 9.97a1 1 0 01.94-1.67l3 .73 3.6-3.6-.82-2.9a1 1 0 01.26-1L11.7 1.7zm.7 2.12l-.42 2.07a1 1 0 01-.73.76L8 7.2l4.8 4.8 .55-2.25a1 1 0 01.76-.73l2.07-.42L12.4 3.82z"/></svg>';
+		}
+
+		function prRow(pr) {
+			const id = String(pr.id || "");
+			const on = pinned.has(id);
+			const url = String(pr.url || "");
+			const title = url
+				? '<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer" class="text-sm font-medium text-base-content hover:text-primary truncate">' + esc(pr.title) + "</a>"
+				: '<span class="text-sm font-medium text-base-content truncate">' + esc(pr.title) + "</span>";
+
+			// The repository used to sit in an outlined badge — an oval that read as a
+			// status chip when it is only a name. Plain text, same as the branches.
+			return (
+				// Pinned rows carry the same amber tint as the other widgets' pinned rows.
+				'<li class="rounded-lg border px-3 py-2.5 flex flex-col gap-1 ' +
+					(on ? "border-warning/30 bg-warning/5" : "border-base-300 bg-base-200/60") +
+					'" data-pr-id="' + esc(id) + '">' +
+					'<div class="flex items-center gap-2">' +
+						title +
+						'<button type="button" class="btn btn-ghost btn-xs btn-circle ml-auto shrink-0" ' +
+							'data-pr-pin="' + esc(id) + '" data-pinned="' + (on ? "1" : "0") + '" ' +
+							'title="' + (on ? "Unpin" : "Pin to top") + '" aria-label="Toggle pin">' + renderPinSvg(on) + "</button>" +
+					"</div>" +
+					'<div class="flex items-center gap-2 flex-wrap">' +
+						'<span class="text-[11px] uppercase tracking-wide text-base-content/50">' + esc(pr.repository) + "</span>" +
+						'<span class="text-xs text-base-content/60 truncate">' + esc(pr.source_branch) + " → " + esc(pr.target_branch) + "</span>" +
+						'<span class="text-xs text-base-content/40 ml-auto shrink-0">' + esc(timeAgo(pr.created_date)) + "</span>" +
+					"</div>" +
+				"</li>"
+			);
+		}
+
+		function sorted(list) {
+			const copy = list.slice();
+			copy.sort((a, b) => {
+				// Pinned always float, regardless of the chosen sort — that is the
+				// entire point of pinning one.
+				const pa = pinned.has(String(a.id)) ? 0 : 1;
+				const pb = pinned.has(String(b.id)) ? 0 : 1;
+				if (pa !== pb) return pa - pb;
+				if (sortKey === "newest") {
+					return String(b.created_date || "").localeCompare(String(a.created_date || ""));
+				}
+				return (
+					String(a[sortKey] || "").localeCompare(String(b[sortKey] || ""), undefined, { sensitivity: "base" }) ||
+					String(b.created_date || "").localeCompare(String(a.created_date || ""))
+				);
+			});
+			return copy;
+		}
+
+		function render() {
+			if (countEl) countEl.textContent = rows.length ? rows.length + " open" : "";
+			if (!rows.length) {
+				// One line, not a full illustrated empty state: with filters above it,
+				// "nothing here" usually means "nothing matches this filter", and a big
+				// celebratory panel for that is misleading.
+				setStatus("{{ pr_empty_title }} — {{ pr_empty_hint }}");
+				return;
+			}
+			listEl.innerHTML = sorted(rows).map(prRow).join("");
+			setStatus(null);
+		}
+
+		async function loadPins() {
+			try {
+				const res = await fetch("/api/pins?source=azure_devops", { credentials: "same-origin" });
+				if (!res.ok) return;
+				const data = (await res.json()).data || [];
+				pinned = new Set(
+					data
+						.map((p) => String(p.item_id || ""))
+						.filter((v) => v.startsWith("pr:"))
+						.map((v) => v.slice(3))
+				);
+			} catch (_) {
+				/* pins are a nicety; the list still works without them */
+			}
+		}
+
+		async function togglePin(id) {
+			const on = pinned.has(id);
+			// Optimistic: flip locally and re-render, then persist. A pin that only
+			// appears after a round-trip feels broken on a slow link.
+			if (on) pinned.delete(id); else pinned.add(id);
+			render();
+			try {
+				await fetch("/api/pins", {
+					method: on ? "DELETE" : "POST",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ source: "azure_devops", item_id: "pr:" + id }),
+				});
+			} catch (_) {
+				if (on) pinned.add(id); else pinned.delete(id);
+				render();
+			}
+		}
+
+		listEl?.addEventListener("click", (event) => {
+			const btn = event.target.closest("[data-pr-pin]");
+			if (!btn) return;
+			event.preventDefault();
+			togglePin(btn.getAttribute("data-pr-pin"));
+		});
+
+		// Four selects across one column is narrow by design (see the markup), so the
+		// chosen value is usually wider than the box. The browser clips it silently and
+		// with no ellipsis, which reads as a truncated NAME rather than a truncated
+		// BOX — "DevCollec" looks like the collection is called that. An ellipsis says
+		// "there is more", and the title says what.
+		function syncSelectTitle(sel) {
+			if (!sel) return;
+			const opt = sel.options[sel.selectedIndex];
+			sel.title = opt ? opt.textContent.trim() : "";
+		}
+
+		function fillSelect(sel, names, allLabel, current) {
+			if (!sel) return;
+			sel.innerHTML =
+				'<option value="">' + allLabel + "</option>" +
+				names.map((n) => {
+					const s = n === current ? " selected" : "";
+					return '<option value="' + esc(n) + '"' + s + ">" + esc(n) + "</option>";
+				}).join("");
+			sel.value = names.includes(current) ? current : "";
+			syncSelectTitle(sel);
+		}
+
+		// Every select in this widget keeps its tooltip current as the user changes it,
+		// registered once rather than on each one individually.
+		root.addEventListener("change", (event) => {
+			if (event.target.matches("select")) syncSelectTitle(event.target);
+		});
+
+		async function loadCollections() {
+			try {
+				const res = await fetch("/api/azure-devops/collections", {
+					credentials: "same-origin",
+					headers: { Accept: "application/json" },
+				});
+				if (!res.ok) throw new Error("http " + res.status);
+				const names = ((await res.json()).data || []).map((c) => String(c.name || "")).filter(Boolean);
+				fillSelect(collectionSel, names, "All collections", selectedCollection);
+			} catch (_) {
+				fillSelect(collectionSel, [], "All collections", "");
+			}
+		}
+
+		async function loadProjects() {
+			try {
+				const res = await fetch("/api/azure-devops/projects", {
+					credentials: "same-origin",
+					headers: { Accept: "application/json" },
+				});
+				if (!res.ok) throw new Error("http " + res.status);
+				const names = ((await res.json()).data || []).map((p) => String(p.name || "")).filter(Boolean);
+				fillSelect(projectSel, names, "All projects", selectedProject);
+			} catch (_) {
+				fillSelect(projectSel, [], "All projects", "");
+			}
+		}
+
+		// Repositories only exist within a project, so this list is reloaded whenever
+		// the project changes and is empty ("All repositories") until one is chosen.
+		async function loadRepos() {
+			if (!selectedProject) {
+				selectedRepo = "";
+				remember("repo", "");
+				fillSelect(repoSel, [], "All repositories", "");
+				if (repoSel) repoSel.disabled = true;
+				return;
+			}
+			if (repoSel) repoSel.disabled = false;
+			try {
+				const params = new URLSearchParams({ project: selectedProject });
+				if (selectedCollection) params.set("collection", selectedCollection);
+				const res = await fetch("/api/azure-devops/repositories?" + params.toString(), {
+					credentials: "same-origin",
+					headers: { Accept: "application/json" },
+				});
+				if (!res.ok) throw new Error("http " + res.status);
+				const names = ((await res.json()).data || []).map((r) => String(r.name || "")).filter(Boolean);
+				fillSelect(repoSel, names, "All repositories", selectedRepo);
+				if (!names.includes(selectedRepo)) {
+					selectedRepo = "";
+					remember("repo", "");
+				}
+			} catch (_) {
+				fillSelect(repoSel, [], "All repositories", "");
+			}
+		}
+
+		async function load() {
+			setStatus("");
+			statusEl.classList.remove("hidden");
+			statusEl.innerHTML = '<span class="loading loading-spinner loading-sm text-base-content/30"></span>';
+			listEl.classList.add("hidden");
+			try {
+				const params = new URLSearchParams({ role: ROLE });
+				if (selectedCollection) params.set("collection", selectedCollection);
+				if (selectedProject) params.set("project", selectedProject);
+				if (selectedRepo) params.set("repository", selectedRepo);
+				const res = await fetch("/api/azure-devops/pull-requests?" + params.toString(), {
+					credentials: "same-origin",
+					headers: { Accept: "application/json" },
+				});
+				if (!res.ok) throw new Error("http " + res.status);
+				rows = (await res.json()).data || [];
+				render();
+			} catch (_) {
+				rows = [];
+				setStatus("Service unavailable");
+			}
+		}
+
+		collectionSel?.addEventListener("change", async () => {
+			selectedCollection = collectionSel.value || "";
+			remember("collection", selectedCollection);
+			await loadRepos();
+			load();
+		});
+
+		projectSel?.addEventListener("change", async () => {
+			selectedProject = projectSel.value || "";
+			remember("project", selectedProject);
+			await loadRepos();
+			load();
+		});
+
+		repoSel?.addEventListener("change", () => {
+			selectedRepo = repoSel.value || "";
+			remember("repo", selectedRepo);
+			load();
+		});
+
+		sortSel?.addEventListener("change", () => {
+			sortKey = sortSel.value || "newest";
+			remember("sort", sortKey);
+			render();
+		});
+
+		(async function init() {
+			if (sortSel) sortSel.value = sortKey;
+			await Promise.all([loadCollections(), loadProjects(), loadPins()]);
+			await loadRepos();
+			load();
+		})();
+	})();
+</script>

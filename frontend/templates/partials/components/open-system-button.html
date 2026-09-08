@@ -8,8 +8,8 @@
 
 	Behavior:
 	  * Every system renders an enabled primary button.
-	  * Real env/config URLs win; otherwise backend/app/api/system_urls.py
-	    provides mock fallback URLs so the UX is testable everywhere.
+	  * The URL comes from env/config via backend/app/api/system_urls.py,
+	    which returns None when a system has no URL configured.
 
 	Hiding the button entirely was considered but would cause layout shifts
 	when toggling densities/themes, which the acceptance criteria explicitly

@@ -1,0 +1,158 @@
+<!--
+	Token help — one modal, every prompt.
+
+	Five different widgets ask for a token, and the Connections page asks for all four. Each
+	used to carry a one-line hint ("Generate a User Token in your profile → Security") which
+	is only useful to someone who already knows where to look. This is the full click path
+	for each system, written once and reachable from anywhere.
+
+	Usage: drop a button carrying data-pat-help="<system>" next to any token input, e.g.
+
+		<button type="button" data-pat-help="sonarqube" class="pat-help-btn">?</button>
+
+	This file is included ONCE, from banner.html, which every page includes — so the button
+	works on any page without that page knowing anything about the modal. The listener is
+	delegated, so it also picks up buttons in markup that JS builds at runtime (which is how
+	every one of the widget prompts is rendered).
+-->
+<dialog class="modal" data-pat-help-modal>
+	<div class="modal-box max-w-lg">
+		<div class="flex items-start gap-3">
+			<h3 class="text-base font-bold flex-1" data-pat-help-title>Create a token</h3>
+			<form method="dialog">
+				<button class="btn btn-ghost btn-xs rounded-full" aria-label="Close">✕</button>
+			</form>
+		</div>
+
+		<p class="mt-1 text-xs text-base-content/60" data-pat-help-intro></p>
+
+		<ol class="mt-4 flex flex-col gap-2" data-pat-help-steps></ol>
+
+		<p
+			class="mt-4 rounded-lg border border-warning/30 bg-warning/10 p-3 text-xs text-base-content/80"
+			data-pat-help-note
+		></p>
+
+		<form method="dialog" class="mt-4 flex justify-end">
+			<button class="btn btn-primary btn-sm rounded-full px-5">Got it</button>
+		</form>
+	</div>
+	<form method="dialog" class="modal-backdrop">
+		<button aria-label="Close">close</button>
+	</form>
+</dialog>
+
+<script>
+	(function () {
+		// Included from banner.html, which every page includes — so guard against a second
+		// copy binding a second listener.
+		if (window.__patHelpAttached) return;
+		window.__patHelpAttached = true;
+
+		// Menu wording drifts between versions and between Cloud and Data Center, so each
+		// step says WHAT to look for as well as where. The last step is always "paste it
+		// here", because the token is shown exactly once and people close the tab.
+		const GUIDES = {
+			azure: {
+				title: "Create an Azure DevOps token",
+				intro: "A Personal Access Token (PAT) lets the portal read your work items, pull requests and pipeline runs as you.",
+				steps: [
+					"In Azure DevOps, click your profile picture in the top-right corner, then choose <b>Security</b>.",
+					"Select <b>Personal access tokens</b>.",
+					"Click <b>+ New Token</b>.",
+					"Name it something you will recognise later — <b>DevOps Hub</b> works.",
+					"For <b>Collection</b>, pick the one you work in. If you work across several, choose <b>All accessible collections</b>.",
+					"For <b>Expiration</b>, choose the longest your organisation allows — a custom date up to the maximum. A short expiry means the portal stops working in a few weeks with no warning.",
+					"Under <b>Scopes</b>, the portal needs <b>Work Items (Read)</b>, <b>Code (Read)</b> and <b>Build (Read)</b>. If your organisation only offers <b>Full access</b>, that is fine too.",
+					"Click <b>Create</b>, then <b>copy the token</b>.",
+					"Paste it into the box you opened this from, and press Save.",
+				],
+				note: "Azure DevOps shows the token only once. If you close that dialog without copying it, you cannot get it back — you have to create a new one.",
+			},
+			sonarqube: {
+				title: "Create a SonarQube token",
+				intro: "A User Token lets the portal read your projects and their quality gates as you.",
+				steps: [
+					"Sign in to SonarQube and click your avatar in the top-right corner, then choose <b>My Account</b>.",
+					"Open the <b>Security</b> tab.",
+					"Under <b>Generate Tokens</b>, type a name — <b>DevOps Hub</b> works.",
+					"Set the type to <b>User Token</b>.",
+					"For <b>Expires in</b>, pick the longest option offered (some instances allow <b>No expiration</b>).",
+					"Click <b>Generate</b> and <b>copy the token</b>.",
+					"Paste it into the box you opened this from, and press Save.",
+				],
+				note: "The token is shown only once, right after you generate it. Copy it before leaving the page.",
+			},
+			artifactory: {
+				title: "Create an Artifactory token",
+				intro: "An access token lets the portal read your repositories and the artifacts in them as you.",
+				steps: [
+					"Sign in to Artifactory and click your username in the top-right corner, then choose <b>Edit Profile</b>.",
+					"Find <b>Identity Tokens</b> and click <b>Generate an Identity Token</b>. (On older Artifactory versions this is called <b>API Key</b> instead — either works.)",
+					"Give it a description you will recognise, such as <b>DevOps Hub</b>.",
+					"Generate it, then <b>copy the token</b>.",
+					"Paste it into the box you opened this from, and press Save.",
+				],
+				note: "The repository list works with any user token. The Storage widget additionally needs Artifactory admin rights — if you are not an admin it will stay empty, and that is expected, not a broken token.",
+			},
+			confluence: {
+				title: "Create a Confluence token",
+				intro: "A Personal Access Token lets the portal show the pages you have recently viewed and edited.",
+				steps: [
+					"Sign in to Confluence and click your profile picture in the top-right corner.",
+					"Choose <b>Settings</b>, then <b>Personal Access Tokens</b>. (On Confluence Cloud this lives instead under <b>Manage account → Security → Create and manage API tokens</b>.)",
+					"Click <b>Create token</b> and name it — <b>DevOps Hub</b> works.",
+					"For <b>Expiry</b>, choose the longest your instance allows, or clear the box if it lets you turn expiry off.",
+					"Create it, then <b>copy the token</b>.",
+					"Paste it into the box you opened this from, and press Save.",
+				],
+				note: "The token is shown only once. If your Confluence is Cloud rather than Data Center, the menus differ slightly but the token works the same way.",
+			},
+		};
+
+		const modal = document.querySelector("[data-pat-help-modal]");
+		if (!modal) return;
+		const titleEl = modal.querySelector("[data-pat-help-title]");
+		const introEl = modal.querySelector("[data-pat-help-intro]");
+		const stepsEl = modal.querySelector("[data-pat-help-steps]");
+		const noteEl = modal.querySelector("[data-pat-help-note]");
+
+		function open(system) {
+			const guide = GUIDES[String(system || "").toLowerCase()];
+			if (!guide) return;
+
+			titleEl.textContent = guide.title;
+			introEl.textContent = guide.intro;
+			noteEl.innerHTML = "<b>Note:</b> " + guide.note;
+
+			// Numbered by hand: `list-decimal` is not in the compiled CSS, and nothing
+			// rebuilds it — a numbered list styled with that class would render with no
+			// numbers at all.
+			stepsEl.innerHTML = guide.steps
+				.map(
+					(step, i) => `
+						<li class="flex gap-3 text-sm text-base-content/80">
+							<span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">
+								${i + 1}
+							</span>
+							<span class="flex-1" style="line-height: 1.6">${step}</span>
+						</li>`,
+				)
+				.join("");
+
+			modal.showModal();
+		}
+
+		// Delegated: every prompt in the portal is built by JS at runtime, so the buttons do
+		// not exist when this runs.
+		document.addEventListener("click", (event) => {
+			const btn = event.target.closest("[data-pat-help]");
+			if (!btn) return;
+			event.preventDefault();
+			event.stopPropagation();
+			open(btn.getAttribute("data-pat-help"));
+		});
+
+		window.patHelp = { open };
+	})();
+</script>

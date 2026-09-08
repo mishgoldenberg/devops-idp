@@ -1,0 +1,141 @@
+# Production overlay. Applied on top of values.yaml for builds of `main`.
+#
+# Prod keeps the UNSUFFIXED names, so this is the stack that already exists in the
+# cluster: `backend`, `frontend`, `postgres`, `postgres-service`, `all-secrets`.
+# Nothing is renamed, so applying this does not recreate or disturb live data.
+
+global:
+  nameSuffix: ""
+
+  # Two of each, minimum. One replica means every deploy and every node drain is a
+  # visible outage for 500 people; two is the smallest number where a rolling update
+  # can keep serving. The autoscaler below takes it further under real load.
+  replicaCount: 2
+
+  revisionHistoryLimit: 2
+
+  endpoints:
+    postgresHost: "postgres-service"
+    postgresPort: 5432
+    postgresUser: "devops"
+    postgresDB: "devops_control_center"
+    databaseUrl: "postgresql://devops:$(POSTGRES_PASSWORD)@postgres-service:5432/devops_control_center"
+    redisHost: "redis-service"
+    redisPort: 6379
+
+backend:
+  # No surge pod. The namespace ResourceQuota has no room for a THIRD backend at
+  # 2 CPU / 1Gi of limits, so `maxSurge: 1` did not slow the rollout down — it
+  # stopped it dead: `ReplicaFailure: FailedCreate`, NewReplicaSet 0/1, and the old
+  # version serving on behind a pipeline that had to time out to notice.
+  #
+  # Freeing a slot before filling one needs no extra quota, and at two replicas
+  # there is always one pod serving. The cost is half capacity for the ~30 seconds
+  # a pod takes to pass readiness, which is the correct trade against not being
+  # able to deploy at all.
+  #
+  # If the quota is ever raised, `maxUnavailable: 0 / maxSurge: 1` is the nicer
+  # setting and this block can go.
+  strategy:
+    maxUnavailable: 1
+    maxSurge: 0
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 1Gi
+
+frontend:
+  secretName: all-secrets
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+
+infrastructure:
+  postgres:
+    secretName: "all-secrets"
+    serviceName: "postgres-service"
+    # ⚠ THE LIVE PROD VOLUME IS 30Gi. THIS VALUE IS 1Gi ON PURPOSE. DO NOT "FIX" IT.
+    #
+    # postgres-storage-postgres-0 was expanded 1Gi -> 30Gi in place on 2026-08-17.
+    # Expanding a PVC does NOT update the StatefulSet that created it, so the live
+    # StatefulSet still carries volumeClaimTemplates.storage: 1Gi — and this file
+    # has to keep matching the StatefulSet, not the disk.
+    #
+    # `volumeClaimTemplates` is immutable: Kubernetes rejects any update to a
+    # StatefulSet that touches it, which fails the whole deploy — that is the
+    # "updates to statefulset for fields other than replicas, template, ..." error.
+    # So raising this number does not grow the disk. It stops you deploying, and
+    # the usual way people unstick a rejected deploy — deleting the StatefulSet —
+    # is what took the database with it the first time this was tried.
+    #
+    # The chart and the disk disagreeing is the CORRECT state. This value is only
+    # ever read when creating a volume that does not exist yet, i.e. a fresh
+    # install into an empty namespace, which is a disaster-recovery scenario where
+    # you are following docs/RUNBOOK.md anyway.
+    #
+    # To grow the disk again, see the note at the bottom of this file.
+    storageSize: 1Gi
+  redis:
+    serviceName: "redis-service"
+
+postgres:
+  secretName: "all-secrets"
+  serviceName: "postgres-service"
+  postgresUser: "devops"
+  postgresDB: "devops_control_center"
+  # Same immutability rule as above, and the same warning: the live disk is 30Gi
+  # and this stays 1Gi. Keep in step with infrastructure.postgres, not with df.
+  storageSize: 1Gi
+
+redis:
+  serviceName: "redis-service"
+
+# ── Growing the production database volume ───────────────────────────────────
+# Not done by changing storageSize above — that field cannot be updated on an
+# existing StatefulSet, and changing it is how you break the next deploy.
+#
+# Patching the PVC is the WHOLE operation. Nothing is redeployed, no pod restarts,
+# and the chart is not touched afterwards.
+#
+# Prod and test share the devops-hub namespace and are told apart only by name:
+#   prod  postgres-storage-postgres-0
+#   test  postgres-storage-postgres-test-0     <-- not this one
+# Patching by exact name is what makes this prod-only. List them first.
+#
+#   oc get pvc -n devops-hub
+#   oc auth can-i patch pvc -n devops-hub
+#
+# Take a dump before touching it (docs/RUNBOOK.md §6), then patch. A patch file
+# avoids the quoting differences between cmd.exe, PowerShell and bash:
+#
+#   echo {"spec":{"resources":{"requests":{"storage":"50Gi"}}}} > patch.json
+#   oc patch pvc postgres-storage-postgres-0 -n devops-hub --type=merge --patch-file patch.json
+#   oc exec statefulset/postgres -n devops-hub -- df -h /bitnami/postgresql
+#
+# The backing store is NetApp Trident over NFS, which expands online: the new size
+# shows up in df within seconds, with no FileSystemResizePending and no restart. On
+# a block-backed class you may see FileSystemResizePending instead, which needs the
+# pod recycled — `oc scale statefulset/postgres --replicas=0` and back to 1. SCALE,
+# never delete.
+#
+# Reading the reclaim policy needs cluster-scoped rights the namespace accounts do
+# not have (`oc get pv` returns Forbidden), so ask the OpenShift admins to confirm
+# the PV behind the PVC is persistentVolumeReclaimPolicy: Retain. That is the only
+# thing that makes an accidental PVC deletion survivable.
+#
+# AFTERWARDS: leave storageSize above at 1Gi. See the warning up there — matching it
+# to the new disk size is rejected on the next deploy, and unsticking that rejection
+# is what destroyed the database the first time. If chart/disk parity is ever truly
+# needed, it is `oc delete statefulset postgres --cascade=orphan` (pods and PVCs
+# survive, the next deploy re-creates the StatefulSet around them) — done together
+# with the values change, never separately, and never without a verified restore.

@@ -14,14 +14,18 @@ from fastapi import APIRouter
 
 from . import (
     admin,
+    announcements,
+    release_notes,
     auth,
+    backups,
+    catalog,
+    search,
     dashboards,
     health,
+    inbox,
     metrics,
     observability,
     azure_devops,
-    sonarqube,
-    artifactory,
     servicenow,
     approvals,
     pins,
@@ -60,14 +64,18 @@ api_router.include_router(observability.router, prefix="/observability", tags=["
 # Admin operations (grant roles, etc.)
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 
-# External integrations (mocked behavior, similar to Node services)
+# External integrations
 api_router.include_router(azure_devops.router, prefix="/azure-devops", tags=["azure-devops"])
-api_router.include_router(sonarqube.router, prefix="/sonarqube", tags=["sonarqube"])
-api_router.include_router(artifactory.router, prefix="/artifactory", tags=["artifactory"])
 api_router.include_router(servicenow.router, prefix="/support", tags=["support"])
 
 # Approvals
 api_router.include_router(approvals.router, prefix="/approvals", tags=["approvals"])
+
+# Self-service catalog (the forms, their live option lists, and submissions).
+api_router.include_router(catalog.router, prefix="/catalog", tags=["catalog"])
+
+# "Needs me today" — everything across every system that is waiting on the caller.
+api_router.include_router(inbox.router, prefix="/inbox", tags=["inbox"])
 
 # User-scoped item tracking (pins + seen-markers) shared by dashboard widgets.
 # Routes: GET/POST/DELETE /api/pins and POST /api/items/mark-seen.
@@ -79,6 +87,11 @@ api_router.include_router(notifications.router, prefix="/notifications", tags=["
 # Admin-only: portal audit log read API + Safe Mode toggle.
 api_router.include_router(audit_logs.router, prefix="/audit-logs", tags=["audit-logs"])
 api_router.include_router(safe_mode.router, prefix="/safe-mode", tags=["safe-mode"])
+
+# Admin-only: read-only status of the nightly dump and the weekly restore test.
+# Read from the backup_runs table the CronJobs write into; this process never
+# takes a backup itself and offers no way to trigger a restore.
+api_router.include_router(backups.router, prefix="/backups", tags=["backups"])
 
 # Per-user preferences (/api/me/*): theme, display density, avatar, display name.
 api_router.include_router(user_prefs.router, prefix="/me", tags=["user-prefs"])
@@ -103,5 +116,15 @@ api_router.include_router(integrations.router, prefix="/integrations", tags=["in
 
 # Globally visible Quick Links for the dashboard. Admin CRUD lives under /api/admin.
 api_router.include_router(quick_links.router, prefix="/quick-links", tags=["quick-links"])
+
+# Admin announcements shown on every dashboard, and the per-user "I have read it".
+api_router.include_router(announcements.router, prefix="/announcements", tags=["announcements"])
+
+# "What's New": the version this deployment is running and the changelog that
+# got it here. Written once at start-up, read by everyone.
+api_router.include_router(release_notes.router, prefix="/release-notes", tags=["release-notes"])
+
+# Portal-wide search: fans out across every integration above, so it is registered last.
+api_router.include_router(search.router, prefix="/search", tags=["search"])
 
 

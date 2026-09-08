@@ -3,16 +3,29 @@
 DevOps Control Center uses a single PostgreSQL 16 database,
 `devops_control_center`, owned by the `devops` role.
 
-There are two creation paths and it's important to understand both:
+There are two creation paths, and only one of them runs in the cluster:
 
-1. **SQL files** in
+1. **Python `ensure_*()` helpers** in `backend/app/db.py` (plus `audit.py` and
+   `safe_mode.py`). They run at startup, in a background thread that retries
+   forever, and they are idempotent (`CREATE TABLE IF NOT EXISTS …`,
+   `ALTER TABLE … ADD COLUMN IF NOT EXISTS …`). **This is the whole schema
+   mechanism in OpenShift.** There is no migration Job: the chart's
+   `migration-job.yaml` was an empty file and has been removed.
+
+2. **SQL files** in
    [`deployment/charts/infrastructure/database/`](../deployment/charts/infrastructure/database/)
-   run as a Helm `migration-job` on fresh installs. They set up enums,
-   roles, the core tables, and views.
-2. **Python `ensure_*()` helpers** in `backend/app/db.py` (plus a few
-   siblings) run at app startup via `@app.on_event("startup")`. They are
-   idempotent (`CREATE TABLE IF NOT EXISTS …`, `ALTER TABLE … IF NOT
-   EXISTS …`) so adding a column never requires a manual migration.
+   are mounted into the Postgres container's `docker-entrypoint-initdb.d`, so they
+   run **only when Postgres initialises an empty data directory** — a brand-new
+   volume, never an upgrade. They set up enums, roles, the core tables and views.
+
+So on any existing deployment, the Python helpers are what you are changing. Two
+consequences worth stating plainly:
+
+* Never put a `DROP` on that path. It runs on **every pod start** — `DROP TABLE
+  widget_usage` before `CREATE TABLE IF NOT EXISTS` once emptied that table on every
+  restart and every release.
+* Keep it additive. There is no down-migration and no migration history; the only
+  way back from a destructive change is a restore.
 
 If you see a column that isn't in the SQL files, it was added via an
 `ensure_*` helper later.
@@ -284,3 +297,39 @@ portal_flags   — standalone, used by safe_mode module.
   `backend/app/audit.py`, `backend/app/safe_mode.py`.
 - To understand which endpoints read/write which tables, see the matching
   [`docs/services/`](./services/) file.
+
+<!-- GENERATED:TABLES — do not edit by hand; run scripts/gen_docs.py -->
+
+27 tables, created idempotently at startup by `ensure_tables()` and friends. There is no migration Job in the cluster — this DDL *is* the schema mechanism, and it must stay additive: a `DROP` on this path runs on every pod start.
+
+| Table | Created in |
+| --- | --- |
+| `activity_log` | `backend/app/db.py` |
+| `announcement_dismissals` | `backend/app/db.py` |
+| `announcements` | `backend/app/db.py` |
+| `artifactory_cleaners` | `backend/app/db.py` |
+| `audit_events` | `backend/app/audit.py` |
+| `azure_projects` | `backend/app/db.py` |
+| `backup_runs` | `backend/app/db.py` |
+| `catalog_submissions` | `backend/app/db.py` |
+| `favorites` | `backend/app/db.py` |
+| `inbox_dismissals` | `backend/app/db.py` |
+| `notifications` | `backend/app/db.py` |
+| `portal_flags` | `backend/app/safe_mode.py` |
+| `quick_links` | `backend/app/db.py` |
+| `self_service_usage` | `backend/app/db.py` |
+| `servicenow_tickets` | `backend/app/db.py` |
+| `sso_config` | `backend/app/db.py` |
+| `suggestion_comments` | `backend/app/db.py` |
+| `suggestion_votes` | `backend/app/db.py` |
+| `suggestions` | `backend/app/db.py` |
+| `user_integrations` | `backend/app/db.py` |
+| `user_item_pins` | `backend/app/db.py` |
+| `user_item_seen` | `backend/app/db.py` |
+| `user_pins` | `backend/app/db.py` |
+| `user_quick_links` | `backend/app/db.py` |
+| `user_tickets` | `backend/app/api/servicenow.py`, `backend/app/db.py` |
+| `user_widgets` | `backend/app/db.py` |
+| `widget_usage` | `backend/app/db.py` |
+
+<!-- /GENERATED:TABLES -->

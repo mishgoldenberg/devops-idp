@@ -219,29 +219,33 @@ document.querySelector('.react-grid-layout')
 
 ## Database Issues
 
-### Migration Failed
+### Schema not created
 
-**Problem**: Database migrations don't run successfully
+**Problem**: tables are missing, or readiness reports `"schema": "pending"`
+
+There are no migrations to run. The backend creates its own schema at startup, in a
+background thread that **retries forever** — so "pending" means the DDL has not
+succeeded *yet*, not that it gave up. The pod stays up and NotReady on purpose.
 
 **Solutions**:
 
-1. Check migration logs:
+1. Read why it is failing. The first five attempts and then every tenth are logged:
 ```bash
-docker-compose exec api-gateway npm run migrate
+oc logs -n $NS deploy/backend | grep -i "startup step\|schema bootstrap"
+docker compose logs backend | grep -i "startup step"     # local
 ```
 
-2. Manually run schema:
+2. It is almost always the database, not the DDL: wrong `DATABASE_URL`, Postgres not
+   accepting connections yet, or the role lacking `CREATE` on the schema.
+
 ```bash
-docker-compose exec postgres psql -U devops_user -d devops_control_center < backend/database/schema.sql
+docker compose exec postgres psql -U devops -d devops_control_center -c '\dt'
 ```
 
-3. Reset database completely:
+3. Reset locally (destroys data — the seed SQL only runs on an empty data directory):
 ```bash
-docker-compose down -v
-docker-compose up -d postgres
-sleep 10
-docker-compose exec api-gateway npm run migrate
-docker-compose exec api-gateway npm run seed
+docker compose down -v
+docker compose up -d
 ```
 
 ### Data Not Persisting
@@ -498,3 +502,61 @@ If you can't resolve an issue:
    - Logs
    - Environment details
 
+---
+
+## Portal-specific symptoms
+
+These are the ones that look like something else. The full procedures are in
+[RUNBOOK.md](RUNBOOK.md).
+
+### Everybody's Azure DevOps widgets are empty at once
+
+Not a token problem, in spite of appearances. Check readiness:
+
+```bash
+curl -s https://<portal-host>/api/health/ready | python -m json.tool
+```
+
+`"credentials": "unreadable"` means `JWT_SECRET` no longer matches the encrypted
+tokens in the database — a rotated Secret, or a database restored beside a different
+environment's secret. Restore the old value and everything decrypts again. RUNBOOK §4.
+
+### One user's Azure DevOps widgets are empty
+
+Their PAT was rejected. They get a notification once a day pointing at Connections;
+the check is cached for ten minutes, so a freshly reconnected token can take that long
+to be believed. RUNBOOK §8.
+
+### The Logs page is full of the same 502 over and over
+
+Since round 59 identical failing reads collapse into one row per five minutes carrying
+`repeated N×`, and every failure row carries the reason. If you are still seeing a wall
+of rows, they are not identical — check whether the user, route or status differs.
+
+### A style change had no effect
+
+`frontend/static/css/output.css` is committed and never rebuilt, so a Tailwind or DaisyUI
+class that is not already compiled into it does nothing at all — silently.
+
+```bash
+python scripts/check_css_classes.py
+```
+
+Use a compiled class, or hand-write the rule in `frontend/static/css/theme.css`, which
+is loaded after `output.css`.
+
+### A widget renders but nothing in it works
+
+A syntax error in an inline `<script>` makes the browser discard the whole block, so
+every handler in it silently never attaches. The classic cause is a backtick inside an
+HTML comment inside a JS template literal.
+
+```bash
+python scripts/check_inline_js.py
+```
+
+### The database volume is filling
+
+The backend warns every six hours once the database passes `DB_SIZE_WARN_MB`. Clear old
+rows from the Logs page; the volume itself cannot be enlarged by redeploying, because a
+StatefulSet's `volumeClaimTemplates` is immutable. RUNBOOK §5.

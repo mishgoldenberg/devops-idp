@@ -1,14 +1,125 @@
+<style>
+	/* Hand-written: `hover:bg-base-300` is not compiled into output.css, so as a
+	   utility class it would silently do nothing. The banner sits on base-200, so
+	   its icon buttons hover to base-300 — one step further forward, the same
+	   relationship the sidebar's nav items use. */
+	.banner-icon-btn {
+		color: hsl(var(--bc) / 0.7);
+	}
+
+	.banner-icon-btn:hover,
+	.banner-icon-btn:focus-visible {
+		background-color: hsl(var(--b3));
+		color: hsl(var(--bc));
+	}
+
+	/* Per-theme logo. Light is the default because `light` is also what an unset
+	   or unrecognised data-theme should fall back to — the dark-ink mark is legible
+	   on any pale surface, whereas the white one vanishes on the wrong background.
+	   Failing towards the readable one is the whole point of ordering it this way. */
+	.brand-logo-dark {
+		display: none;
+	}
+
+	[data-theme="night"] .brand-logo-light,
+	[data-theme="dark"] .brand-logo-light {
+		display: none;
+	}
+
+	[data-theme="night"] .brand-logo-dark,
+	[data-theme="dark"] .brand-logo-dark {
+		display: block;
+	}
+
+	/* Unread count on the bell. DaisyUI's `badge` is a PILL: it pads left and right
+	   for text, so a single digit comes out as a stretched red oval hanging off the
+	   icon. A count is not text, it is a dot with a number in it — so this is a fixed
+	   square forced round, sized to the digit rather than padded around it.
+
+	   Hand-written because output.css ships precompiled: `h-[18px]` or `p-0` variants
+	   that are not already in it would do nothing at all. */
+	.notif-count {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		box-sizing: border-box;
+		width: 18px;
+		height: 18px;
+		padding: 0;
+		border-radius: 9999px;
+		background-color: hsl(var(--er));
+		color: hsl(var(--erc, var(--b1)));
+		font-size: 10px;
+		line-height: 1;
+		font-weight: 700;
+		/* A ring in the banner's own colour separates the circle from the bell glyph
+		   underneath without drawing a second outline around it. */
+		box-shadow: 0 0 0 2px hsl(var(--b2));
+	}
+</style>
+
+{#
+	RECESSED TINT. The banner used to be a fixed SVG image with white text baked in
+	on top of it. That could never follow a palette or a theme: it stayed the same
+	blue in dark mode, and once the portal moved to Catppuccin it belonged to a
+	different product entirely.
+
+	It is now base-200 — one step behind the cards, which sit on base-100 — with a
+	hairline underneath. Nothing here is a fixed colour, so the strip re-tints
+	itself with the theme and needs no second design for dark mode.
+#}
 <header
-	class="relative px-8 py-6 border-b border-base-300 bg-[url(../images/banner.svg)] flex items-center gap-3 bg-cover"
+	class="relative px-8 py-6 border-b border-base-300 bg-base-200 flex items-center gap-3"
 >
-	<img
-		src="../static/images/devopshub-logo.png"
-		alt="IDP logo"
-		class="w-12 h-12 object-contain"
-	/>
-	<div class="min-w-0 shrink-0">
-		<h1 class="font-bold text-2xl text-white leading-tight">DevOps Hub</h1>
-	</div>
+	{#
+		The sidebar toggle is NOT here any more. It lives on the sidebar itself, in the
+		footer next to Profile and Settings — which it can now do, because collapsing
+		leaves an icon rail rather than nothing, so the button never disappears along
+		with the thing it controls.
+	#}
+	<!--
+		The logo and the product name are the one thing every user already expects to be a
+		way home, on every site they have ever used. They were inert. Wrapped in a single
+		link so the whole lockup is the target, not just the 12px of text.
+	-->
+	<a
+		href="/ui/"
+		class="flex items-center gap-3 no-underline shrink-0 rounded-lg transition-opacity"
+		onmouseover="this.style.opacity='0.8'"
+		onmouseout="this.style.opacity=''"
+		aria-label="DevOps Hub — go to the dashboard"
+	>
+		<!--
+			Two files, one per theme. The logo the banner has always used is white line
+			art on transparency — it was drawn for the old dark blue strip, and against
+			the recessed light banner it is very nearly invisible. The dark-ink mark is
+			the one the sign-in page uses; both are properly transparent, so neither
+			carries a box of its own colour into the strip.
+
+			Which one shows is decided in CSS from `data-theme`, not in JS: the theme is
+			already on <html> before this markup is parsed, so the correct logo is the
+			one that paints first. Choosing in JS would show the wrong one for a frame
+			on every page load.
+		-->
+		<!--
+			Both decorative: the link itself carries `aria-label`, so the lockup is named
+			once. Giving the visible one real alt text would mean the name disappears in
+			whichever theme hides it, since a `display: none` image is not announced.
+		-->
+		<img
+			src="../static/images/devopshub-logo-mark.png"
+			alt=""
+			class="w-12 h-12 object-contain brand-logo-light"
+		/>
+		<img
+			src="../static/images/devopshub-logo.png"
+			alt=""
+			class="w-12 h-12 object-contain brand-logo-dark"
+		/>
+		<div class="min-w-0 shrink-0">
+			<h1 class="font-bold text-2xl text-base-content leading-tight">DevOps Hub</h1>
+		</div>
+	</a>
 
 	<!--
 		Global search. Queries three domains (Azure DevOps projects,
@@ -25,7 +136,7 @@
 			class="relative w-full max-w-md"
 			data-global-search
 		>
-			<label class="input input-sm input-bordered w-full flex items-center gap-2 bg-base-100/90 text-base-content">
+			<label class="input input-sm input-bordered w-full flex items-center gap-2 bg-base-100 text-base-content">
 				<svg
 					class="w-4 h-4 opacity-60"
 					viewBox="0 0 24 24"
@@ -42,12 +153,37 @@
 				<input
 					type="search"
 					class="grow bg-transparent outline-none"
-					placeholder="Search projects, tickets, requests…"
+					placeholder="Search everything…"
 					aria-label="Global search"
 					data-global-search-input
 					autocomplete="off"
 				/>
-				<kbd class="kbd kbd-xs hidden sm:inline-flex">/</kbd>
+				<!--
+					The "/" was decoration. The shortcut behind it worked, but the key itself
+					was inert — so the one thing in the search bar that LOOKS pressable did
+					nothing when pressed, which is worse than not drawing it at all. It is now
+					a button, and it does what the key it depicts does: focus the search.
+				-->
+				<button
+					type="button"
+					class="kbd kbd-xs hidden sm:inline-flex"
+					data-global-search-hint
+					title="Press / to search (or Ctrl+K)"
+					aria-label="Focus the search box"
+				>/</button>
+				{#
+					The "?" chip. The shortcut existed and nothing anywhere said so, which
+					makes it a shortcut only its author uses. Sitting beside the "/" chip
+					puts the way to discover EVERY shortcut next to the one shortcut people
+					find on their own.
+				#}
+				<button
+					type="button"
+					class="kbd kbd-xs hidden sm:inline-flex"
+					data-shortcuts-hint
+					title="Keyboard shortcuts"
+					aria-label="Show keyboard shortcuts"
+				>?</button>
 			</label>
 			<div
 				class="hidden absolute left-0 right-0 mt-2 z-50 card card-compact bg-base-100 text-base-content shadow-xl border border-base-300 max-h-96 overflow-y-auto"
@@ -58,17 +194,90 @@
 	</div>
 
 	<!--
-		Quick Actions. A compact dropdown that shortcuts to the two
-		creation flows. Each link carries `?new=1` which the destination
-		page detects on load and uses to auto-open the matching modal,
-		so the user never has to click the New X button on the page
-		itself — a true one-click "create" path from anywhere.
+		Theme toggle. It used to live in the sidebar footer, which no longer has room for
+		it — the sidebar collapses to a 4.25rem icon rail, and Profile / Settings / the
+		collapse button already fill it. The banner is the right home anyway: the theme is
+		a global preference, and the banner is the one strip that is on screen in every
+		state of every page. Behaviour is in portal-chrome.html.
+	-->
+	<button
+		type="button"
+		data-theme-toggle
+		class="btn btn-ghost btn-circle banner-icon-btn"
+		title="Toggle light / dark"
+		aria-label="Toggle light or dark theme"
+	>
+		<!-- Sun — shown in dark mode, to invite switching to light. -->
+		<svg
+			data-theme-icon="sun"
+			viewBox="0 0 24 24"
+			class="w-5 h-5 hidden"
+			fill="none"
+			stroke="currentColor"
+			stroke-width="2"
+			stroke-linecap="round"
+			stroke-linejoin="round"
+			aria-hidden="true"
+		>
+			<circle cx="12" cy="12" r="4" />
+			<path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+		</svg>
+		<!-- Moon — shown in light mode, to invite switching to dark. -->
+		<svg
+			data-theme-icon="moon"
+			viewBox="0 0 24 24"
+			class="w-5 h-5 hidden"
+			fill="none"
+			stroke="currentColor"
+			stroke-width="2"
+			stroke-linecap="round"
+			stroke-linejoin="round"
+			aria-hidden="true"
+		>
+			<path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" />
+		</svg>
+		<!--
+			Monitor — the third state: follow whatever the operating system is set to.
+			Unlike the other two this icon does not describe a colour, it describes
+			"whatever this machine says", which is why the button now shows the CURRENT
+			preference rather than the next one in the cycle: with three states, an icon
+			meaning "what you'd get if you clicked" has no way to show the middle one.
+		-->
+		<svg
+			data-theme-icon="system"
+			viewBox="0 0 24 24"
+			class="w-5 h-5 hidden"
+			fill="none"
+			stroke="currentColor"
+			stroke-width="2"
+			stroke-linecap="round"
+			stroke-linejoin="round"
+			aria-hidden="true"
+		>
+			<rect x="2" y="3" width="20" height="14" rx="2" />
+			<path d="M8 21h8M12 17v4" />
+		</svg>
+	</button>
+
+	<!--
+		Quick Actions. Everything the portal lets you ask for, in one menu.
+
+		The list comes from catalog_forms.quick_actions() — the same catalogue the
+		Requests page renders — and NOT from a list written out here. It used to be
+		written out here, which is why it still offered exactly the two things it
+		offered on the day it was built while three self-service forms shipped past it
+		unnoticed. A menu maintained separately from the thing it describes is a menu
+		that is wrong and cannot tell you so.
+
+		Each link carries `?new=…`, which the destination page reads on load and uses
+		to open the right form. When you are already on that page the handler at the
+		bottom of this file opens it in place instead of reloading.
 	-->
 	<div class="dropdown dropdown-end" data-quick-actions>
 		<button
 			type="button"
 			tabindex="0"
-			class="btn btn-ghost btn-circle text-white hover:bg-white/10"
+			class="btn btn-ghost btn-circle banner-icon-btn"
 			aria-label="Quick actions"
 			title="Quick actions"
 		>
@@ -86,29 +295,32 @@
 				<line x1="5" y1="12" x2="19" y2="12"></line>
 			</svg>
 		</button>
+		<!--
+			w-64 and nowrap, not w-56: "Request Azure DevOps Project" wrapped onto a
+			second line in a 14rem menu, which made a two-item dropdown look like a
+			paragraph. The menu is sized to its longest label rather than the labels
+			being shortened to fit an arbitrary width.
+		-->
 		<ul
 			tabindex="0"
-			class="dropdown-content z-50 mt-3 menu menu-sm p-2 w-56 card-compact bg-base-100 text-base-content shadow-xl border border-base-300 rounded-box"
+			class="dropdown-content z-50 mt-3 menu menu-sm p-2 w-64 card-compact bg-base-100 text-base-content shadow-xl border border-base-300 rounded-box"
 		>
-			<li class="menu-title">
-				<span>Create</span>
-			</li>
-			<li>
-				<a
-					href="/ui/automations?new=1"
-					data-quick-open="ado-create"
-				>
-					Request Azure DevOps Project
-				</a>
-			</li>
-			<li>
-				<a
-					href="/ui/support?new=1"
-					data-quick-open="support-new"
-				>
-					Open support ticket
-				</a>
-			</li>
+			<li class="menu-title"><span>Create</span></li>
+			{% for action in portal_quick_actions | default([], true) %}
+				{% if action.group %}
+					<li class="menu-title"><span>{{ action.group }}</span></li>
+				{% endif %}
+				<li>
+					<a
+						href="{{ action.href }}"
+						data-quick-open="{{ action.opens }}"
+						data-quick-key="{{ action.key }}"
+						class="whitespace-nowrap"
+					>
+						{{ action.label }}
+					</a>
+				</li>
+			{% endfor %}
 		</ul>
 	</div>
 
@@ -124,7 +336,7 @@
 		<button
 			type="button"
 			tabindex="0"
-			class="btn btn-ghost btn-circle text-white hover:bg-white/10"
+			class="btn btn-ghost btn-circle banner-icon-btn"
 			aria-label="Notifications"
 			title="Notifications"
 		>
@@ -143,7 +355,7 @@
 					<path d="M13.73 21a2 2 0 01-3.46 0"></path>
 				</svg>
 				<span
-					class="indicator-item badge badge-error badge-xs hidden"
+					class="indicator-item notif-count hidden"
 					data-notif-count
 					>0</span
 				>
@@ -226,7 +438,10 @@
 					const cj = await countRes.json();
 					const n = Number(cj?.data?.count || 0);
 					if (n > 0) {
-						badge.textContent = n > 99 ? "99+" : String(n);
+						// Capped at "9+" so the badge is always one or two glyphs and stays
+						// a circle. Past nine unread the exact number tells you nothing the
+						// list below doesn't tell you better.
+						badge.textContent = n > 9 ? "9+" : String(n);
 						badge.classList.remove("hidden");
 					} else {
 						badge.classList.add("hidden");
@@ -291,61 +506,210 @@
 		});
 
 		refresh();
-		setInterval(refresh, 45_000);
+		// A background tab does not need its notification count kept warm — it costs
+		// a request every 45 seconds, per open tab, for a badge nobody is looking at.
+		// Coming back to the tab refreshes it at once, so it is never stale when read.
+		setInterval(() => {
+			if (document.visibilityState === "visible") refresh();
+		}, 45_000);
+		document.addEventListener("visibilitychange", () => {
+			if (document.visibilityState === "visible") refresh();
+		});
 	})();
 
-	// ── Unified toast system (top-right) ────────────────────────────────────
+	// ── Unified toast system (bottom-right) ─────────────────────────────────
 	// Single toast stack mounted once per page via the banner include. The
 	// error boundary below uses it internally; feature code can also call
 	// `window.portalToast({ kind, message })` with kind ∈ {success, info,
-	// warn, error}. Kept top-right but offset below the banner so toasts
-	// never cover the notifications bell or quick-actions button.
+	// warn, error}. Anchored bottom-right: that corner is empty on every page,
+	// so toasts never cover the banner, the notifications bell or the
+	// quick-actions button, and the eye isn't pulled away from the action the
+	// user just took. Newest toast sits closest to the corner.
 	(function () {
 		if (window.__PORTAL_ERR_BOUNDARY__) return;
 		window.__PORTAL_ERR_BOUNDARY__ = true;
+
+		// Styles injected once. Hand-written (output.css is precompiled and never
+		// rebuilt, so arbitrary utility classes wouldn't exist). Uses DaisyUI theme
+		// variables that are present in both light and dark themes, so the pile looks
+		// right either way and follows a theme switch for free.
+		if (!document.getElementById("portal-toast-css")) {
+			const style = document.createElement("style");
+			style.id = "portal-toast-css";
+			style.textContent = [
+				"#portal-toast-root{position:fixed;right:1.25rem;bottom:1.25rem;width:21rem;",
+				"max-width:calc(100vw - 2rem);height:0;z-index:9999;pointer-events:none;}",
+				".portal-toast{position:absolute;right:0;bottom:0;width:100%;box-sizing:border-box;",
+				"pointer-events:auto;cursor:pointer;display:flex;align-items:flex-start;gap:.6rem;",
+				"padding:.7rem .85rem;border-radius:.75rem;color:hsl(var(--bc));font-size:.8rem;line-height:1.45;",
+				// OPAQUE, NOT BLURRED. This used to be a translucent panel over a 10px
+				// backdrop-filter. A backdrop blur is one of the most expensive things a
+				// browser can be asked for: it has to read back everything behind the
+				// element and blur it every frame the element moves — and with no GPU
+				// that work lands on the CPU. On a machine falling back to software
+				// rendering it makes every toast, and the whole page under it, stutter.
+				// A solid surface is indistinguishable in a screenshot and free.
+				"background:hsl(var(--b1));",
+				"border:1px solid hsl(var(--bc)/.12);border-inline-start:3px solid hsl(var(--in));",
+				"box-shadow:0 12px 32px -10px hsl(var(--n)/.5),0 3px 10px -3px hsl(var(--n)/.32);",
+				"transition:transform .3s cubic-bezier(.22,1,.36,1),bottom .3s cubic-bezier(.22,1,.36,1),opacity .25s ease;}",
+				".portal-toast[data-kind=success]{border-inline-start-color:hsl(var(--su));}",
+				".portal-toast[data-kind=error]{border-inline-start-color:hsl(var(--er));}",
+				".portal-toast[data-kind=warn]{border-inline-start-color:hsl(var(--wa));}",
+				".portal-toast[data-kind=info]{border-inline-start-color:hsl(var(--in));}",
+				".portal-toast-ico{flex:0 0 auto;width:1.1rem;height:1.1rem;margin-top:.05rem;color:hsl(var(--in));}",
+				".portal-toast[data-kind=success] .portal-toast-ico{color:hsl(var(--su));}",
+				".portal-toast[data-kind=error] .portal-toast-ico{color:hsl(var(--er));}",
+				".portal-toast[data-kind=warn] .portal-toast-ico{color:hsl(var(--wa));}",
+				".portal-toast-msg{flex:1 1 auto;min-width:0;overflow-wrap:anywhere;}",
+				".portal-toast-action{flex:0 0 auto;margin-inline-start:.35rem;}",
+				".portal-toast.is-leaving{opacity:0!important;transform:translateX(1.5rem) scale(.96)!important;}",
+				"@media (prefers-reduced-motion:reduce){.portal-toast{transition:opacity .2s ease;}}",
+			].join("");
+			document.head.appendChild(style);
+		}
 
 		const toastRoot = (() => {
 			const existing = document.getElementById("portal-toast-root");
 			if (existing) return existing;
 			const el = document.createElement("div");
 			el.id = "portal-toast-root";
-			el.style.position = "fixed";
-			// Cleared below the banner so the notifications bell stays clickable.
-			el.style.top = "6rem";
-			el.style.right = "1.5rem";
-			el.style.zIndex = "9999";
-			el.style.display = "flex";
-			el.style.flexDirection = "column";
-			el.style.gap = "0.5rem";
-			el.style.pointerEvents = "none";
 			document.body.appendChild(el);
 			return el;
 		})();
 
-		const KIND_CLASS = {
-			success: "alert alert-success shadow-lg text-sm max-w-sm transition-all",
-			info: "alert alert-info shadow-lg text-sm max-w-sm transition-all",
-			warn: "alert alert-warning shadow-lg text-sm max-w-sm transition-all",
-			error: "alert alert-error shadow-lg text-sm max-w-sm transition-all",
+		const ICONS = {
+			success: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" width="100%" height="100%"><path d="M20 6 9 17l-5-5"/></svg>',
+			error: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" width="100%" height="100%"><circle cx="12" cy="12" r="10"/><path d="M12 8v5M12 16h.01"/></svg>',
+			warn: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" width="100%" height="100%"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>',
+			info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" width="100%" height="100%"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>',
 		};
+
+		// Newest first. Collapsed, the toasts sit in a tidy pile (only the newest fully
+		// shown, the rest peeking behind); hovering the pile fans them out so all are
+		// readable — and pauses their auto-dismiss so they don't vanish mid-read. A
+		// compact pile also stops a burst of toasts becoming a wall that covers whatever
+		// is in the corner (e.g. the support Send button).
+		const toasts = [];
+		let hovering = false;
+		const GAP = 9, PEEK = 12, MAX_VISIBLE = 3, MAX_STACK = 6;
+
+		function layout() {
+			let acc = 0;
+			toasts.forEach((entry, i) => {
+				const el = entry.el;
+				el.style.zIndex = String(1000 - i);
+				if (hovering) {
+					el.style.bottom = acc + "px";
+					el.style.transform = "none";
+					el.style.opacity = "1";
+					el.style.visibility = "visible";
+					acc += (el.offsetHeight || entry.height || 56) + GAP;
+				} else {
+					el.style.bottom = (i * PEEK) + "px";
+					el.style.transform = "scale(" + (1 - i * 0.045) + ")";
+					el.style.opacity = i >= MAX_VISIBLE ? "0" : String(1 - i * 0.12);
+					el.style.visibility = i > MAX_VISIBLE ? "hidden" : "visible";
+				}
+			});
+		}
+
+		function startTimer(entry) {
+			entry.startedAt = Date.now();
+			entry.timer = setTimeout(() => dismiss(entry), Math.max(400, entry.remaining));
+		}
+		function clearTimer(entry) {
+			if (entry.timer) { clearTimeout(entry.timer); entry.timer = null; }
+		}
+		function dismiss(entry) {
+			if (entry.leaving) return;
+			entry.leaving = true;
+			clearTimer(entry);
+			entry.el.classList.add("is-leaving");
+			setTimeout(() => {
+				const i = toasts.indexOf(entry);
+				if (i >= 0) toasts.splice(i, 1);
+				entry.el.remove();
+				layout();
+			}, 300);
+		}
+
+		toastRoot.addEventListener("pointerenter", () => {
+			hovering = true;
+			toasts.forEach((e) => {
+				if (e.timer) { e.remaining -= (Date.now() - e.startedAt); clearTimer(e); }
+			});
+			layout();
+		});
+		toastRoot.addEventListener("pointerleave", () => {
+			hovering = false;
+			toasts.forEach((e) => { if (!e.leaving) startTimer(e); });
+			layout();
+		});
 
 		function showToast(opts) {
 			const o = typeof opts === "string" ? { message: opts } : (opts || {});
-			const kind = KIND_CLASS[o.kind] ? o.kind : "error";
-			const t = document.createElement("div");
-			t.className = KIND_CLASS[kind];
-			// Individual toasts re-enable pointer events so the user can still
-			// dismiss them; the stack container itself is click-through so it
-			// never blocks underlying UI while the toast is animating out.
-			t.style.pointerEvents = "auto";
-			t.style.cursor = "pointer";
-			t.setAttribute("role", kind === "error" ? "alert" : "status");
-			t.textContent = o.message || "Something went wrong. Please try again.";
-			t.addEventListener("click", () => t.remove());
-			toastRoot.appendChild(t);
-			const ttl = Math.max(1500, Number(o.ttl) || 5000);
-			setTimeout(() => { t.style.opacity = "0"; }, ttl);
-			setTimeout(() => { t.remove(); }, ttl + 600);
+			const kind = ICONS[o.kind] ? o.kind : "error";
+			const el = document.createElement("div");
+			el.className = "portal-toast";
+			el.dataset.kind = kind;
+			el.setAttribute("role", kind === "error" || kind === "warn" ? "alert" : "status");
+			el.innerHTML =
+				'<span class="portal-toast-ico">' + ICONS[kind] + '</span>' +
+				'<span class="portal-toast-msg"></span>' +
+				// UNDO. An action with a way back does not need a confirmation dialog in
+				// front of it — which is the trade: one click to do the thing, one click
+				// to take it back, instead of two clicks every single time to guard
+				// against the rare mistake. Only rendered when the caller passes one.
+				(o.action ? '<button type="button" class="btn btn-ghost btn-xs portal-toast-action"></button>' : "");
+			el.querySelector(".portal-toast-msg").textContent =
+				o.message || "Something went wrong. Please try again.";
+
+			const entry = { el, kind, remaining: Math.max(1800, Number(o.ttl) || 4500), timer: null, startedAt: 0, height: 0, leaving: false };
+
+			if (o.action) {
+				const btn = el.querySelector(".portal-toast-action");
+				btn.textContent = o.action.label || "Undo";
+				btn.addEventListener("click", (event) => {
+					// Stop the click reaching the toast body, whose handler dismisses —
+					// otherwise the undo fires and the toast vanishes before its result
+					// can replace it.
+					event.stopPropagation();
+					dismiss(entry);
+					try { o.action.run(); } catch (err) { showToast({ kind: "error", message: String(err && err.message || err) }); }
+				});
+				// An undo the user never sees is not an undo. Give it longer on screen
+				// than an ordinary confirmation gets.
+				entry.remaining = Math.max(entry.remaining, Number(o.ttl) || 8000);
+			}
+
+			el.addEventListener("click", () => dismiss(entry));
+
+			toastRoot.appendChild(el);
+			entry.height = el.offsetHeight;
+			toasts.unshift(entry);
+
+			// Cap the pile — beyond a handful, the oldest have already been seen. This MUST
+			// remove synchronously: dismiss() only splices the entry ~300ms later, so
+			// looping on it while length stays over the cap (a leaving entry short-circuits
+			// dismiss) spins forever and freezes the tab. Spamming a toast source — e.g. the
+			// favorites button — is exactly what used to trigger that. Pop and remove now.
+			while (toasts.length > MAX_STACK) {
+				const old = toasts.pop();
+				if (old) {
+					clearTimer(old);
+					old.el.remove();
+				}
+			}
+
+			// Enter from the right, then settle into the pile.
+			el.style.opacity = "0";
+			el.style.transform = "translateX(1.5rem)";
+			requestAnimationFrame(() => {
+				layout();
+				if (!hovering) startTimer(entry);
+			});
+			return entry;
 		}
 
 		// Public API — used by feature code (forms, admin actions, etc.).
@@ -371,6 +735,16 @@
 
 		document.body.addEventListener("htmx:responseError", (evt) => {
 			const status = evt?.detail?.xhr?.status;
+			const verb = String(evt?.detail?.requestConfig?.verb || "get").toLowerCase();
+
+			// A failed background READ is not an event to interrupt the user with. Every
+			// widget polls on a timer and on load; each one already shows its own inline
+			// "Service unavailable" when its fetch fails. A global toast on top of that is
+			// the "random Service temporarily unavailable" popup that appears out of
+			// nowhere — it's a widget poll losing a race, not something the person did.
+			// Only a failed ACTION (a mutating request the user triggered) earns a toast.
+			if (verb === "get") return;
+
 			if (status === 401 || status === 403) {
 				throttledToast("You do not have access to that action.", "warn");
 				return;
@@ -419,84 +793,52 @@
 		function open() { panel.classList.remove("hidden"); }
 		function close() { panel.classList.add("hidden"); }
 
-		async function fetchJson(url) {
-			try {
-				const res = await fetch(url, { credentials: "same-origin" });
-				if (!res.ok) return [];
-				const j = await res.json();
-				const d = j?.data;
-				return Array.isArray(d) ? d : (Array.isArray(d?.items) ? d.items : []);
-			} catch (_err) {
-				return [];
-			}
+		// ── Global search ────────────────────────────────────────────────────────
+		// One call to /api/search, which fans out across every system server-side.
+		// The dropdown is a PREVIEW: a few hits per system, plus a row that carries the
+		// query over to the full search page. Anything the user's token can't reach comes
+		// back flagged unavailable rather than failing the whole search.
+		const PREVIEW_PER_GROUP = 3;
+
+		// ── Command palette ──────────────────────────────────────────────────────
+		// The fan-out search already tells you WHERE things are; actions tell you what
+		// you can DO. Matching them locally costs nothing and they appear instantly,
+		// ahead of the network results — so "new request" is two keystrokes, not a
+		// hunt through the sidebar.
+		const ACTIONS = [
+			{ label: "New request", href: "/ui/automations", keys: "new request automation create terraform self service" },
+			{ label: "Open a support ticket", href: "/ui/support?new=1", keys: "new ticket support servicenow incident raise open" },
+			{ label: "My requests", href: "/ui/my-requests", keys: "my requests status self service" },
+			{ label: "Approvals", href: "/ui/approvals", keys: "approvals approve pending review" },
+			{ label: "Connections", href: "/ui/connections", keys: "connections tokens connect integrations pat expired" },
+			{ label: "Search everything", href: "/ui/search", keys: "search find everything" },
+			{ label: "Azure DevOps", href: "/ui/azure-devops", keys: "azure devops ado work items pipelines repos" },
+			{ label: "Artifactory", href: "/ui/artifactory", keys: "artifactory repositories storage artifacts" },
+			{ label: "SonarQube", href: "/ui/sonarqube", keys: "sonarqube sonar quality code coverage" },
+			{ label: "Confluence", href: "/ui/confluence", keys: "confluence pages wiki docs" },
+			{ label: "Profile", href: "/ui/profile", keys: "profile me account avatar" },
+			{ label: "Settings", href: "/ui/settings", keys: "settings preferences theme sign out" },
+		];
+
+		function matchActions(needle) {
+			const q = String(needle || "").toLowerCase();
+			if (!q) return [];
+			return ACTIONS
+				.filter((a) => a.label.toLowerCase().includes(q) || a.keys.includes(q))
+				.slice(0, 4);
 		}
 
 		async function runSearch(needle) {
-			const [projects, tickets, requests] = await Promise.all([
-				fetchJson("/api/azure-devops/projects"),
-				fetchJson("/api/support/tickets"),
-				fetchJson("/api/approvals/requests?scope=mine"),
-			]);
-			const q = needle.toLowerCase();
-			const matches = (hay) =>
-				String(hay ?? "").toLowerCase().indexOf(q) >= 0;
-
-			const projHits = projects
-				.filter((p) => matches(p.name))
-				.slice(0, 5)
-				.map((p) => ({
-					group: "Azure DevOps",
-					label: p.name,
-					sub: p.id || "",
-					href: "/ui/azure-devops",
-					// Only ADO projects + SN tickets are favoritable today.
-					// Self-service rows omit these keys and thus render
-					// without a star icon.
-					favType: "ado_project",
-					favId: String(p.id || p.name || ""),
-					favName: String(p.name || p.id || ""),
-				}));
-			const tickHits = tickets
-				.filter((t) => matches(t.short_description) || matches(t.number))
-				.slice(0, 5)
-				.map((t) => ({
-					group: "ServiceNow",
-					label: t.short_description || t.number,
-					sub: t.number || "",
-					href: t.sys_id ? "/ui/support?ticket=" + encodeURIComponent(t.sys_id) : "/ui/support",
-					favType: "ticket",
-					favId: String(t.sys_id || ""),
-					favName: String(t.short_description || t.number || ""),
-				}));
-			const reqHits = requests
-				.filter((r) => matches(r.request_title) || matches(r.request_type))
-				.slice(0, 5)
-				.map((r) => ({
-					group: "Self-service",
-					label: r.request_title || r.request_type,
-					sub: String(r.status || "").replace("_", " "),
-					href: "/ui/my-requests",
-				}));
-
-			return [...projHits, ...tickHits, ...reqHits];
-		}
-
-		// Tiny in-memory cache of the user's favorited (type, id) pairs so
-		// the star on each search row can render pre-filled without the
-		// user opening the dashboard first. Refreshed lazily on each
-		// search open and after any toggle.
-		const favIndex = new Set();
-		const favKey = (type, id) => String(type) + "::" + String(id);
-		async function refreshFavIndex() {
 			try {
-				const res = await fetch("/api/favorites", { credentials: "same-origin" });
-				if (!res.ok) return;
-				const body = await res.json();
-				favIndex.clear();
-				(Array.isArray(body && body.data) ? body.data : []).forEach((f) => {
-					favIndex.add(favKey(f.item_type, f.item_id));
-				});
-			} catch (_e) { /* silent */ }
+				const res = await fetch(
+					`/api/search?q=${encodeURIComponent(needle)}&limit=${PREVIEW_PER_GROUP}`,
+					{ credentials: "same-origin" },
+				);
+				if (!res.ok) return { groups: [], total: 0 };
+				return (await res.json()).data || { groups: [], total: 0 };
+			} catch (_err) {
+				return { groups: [], total: 0 };
+			}
 		}
 
 		function renderEmpty(needle) {
@@ -515,96 +857,66 @@
 				</div>`;
 		}
 
-		function renderHits(hits, needle) {
-			const groups = new Map();
-			hits.forEach((h) => {
-				if (!groups.has(h.group)) groups.set(h.group, []);
-				groups.get(h.group).push(h);
-			});
-			const html = [];
-			groups.forEach((items, group) => {
-				html.push(`
-					<div class="py-1">
-						<div class="px-3 pt-2 pb-1 text-[10px] uppercase tracking-widest text-base-content/50">${escapeHtml(group)}</div>
-						<ul class="divide-y divide-base-200">
-							${items.map((h) => {
-								const hasFav = !!(h.favType && h.favId);
-								const pinned = hasFav && favIndex.has(favKey(h.favType, h.favId));
-								const favBtn = hasFav
-									? `<button type="button"
-										class="shrink-0 ml-2 ${pinned ? "text-warning" : "text-base-content/40"} hover:text-warning"
-										data-gs-fav
-										data-fav-type="${escapeHtml(h.favType)}"
-										data-fav-id="${escapeHtml(h.favId)}"
-										data-fav-name="${escapeHtml(h.favName || h.label)}"
-										aria-pressed="${pinned ? "true" : "false"}"
-										aria-label="${pinned ? "Remove from favorites" : "Add to favorites"}"
-										title="${pinned ? "Remove from favorites" : "Add to favorites"}">
-										<svg viewBox="0 0 24 24" class="w-4 h-4" fill="${pinned ? "currentColor" : "none"}" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-											<polygon points="12 2 15 8.5 22 9.3 17 14 18.2 21 12 17.8 5.8 21 7 14 2 9.3 9 8.5 12 2"></polygon>
-										</svg>
-									</button>`
-									: "";
-								return `
-								<li class="flex items-center">
-									<a href="${escapeHtml(h.href)}"
-									   class="flex-1 min-w-0 block px-3 py-2 hover:bg-base-200 transition-colors">
-										<div class="text-sm truncate">${highlight(h.label, needle)}</div>
-										${h.sub ? `<div class="text-[11px] text-base-content/50 truncate">${escapeHtml(h.sub)}</div>` : ""}
-									</a>
-									${favBtn ? `<span class="pr-2">${favBtn}</span>` : ""}
-								</li>`;
-							}).join("")}
-						</ul>
-					</div>`);
-			});
-			panel.innerHTML = html.join("");
-			panel.querySelectorAll("[data-gs-fav]").forEach((btn) => {
-				btn.addEventListener("click", async (e) => {
-					e.preventDefault();
-					e.stopPropagation();
-					const type = btn.dataset.favType;
-					const id = btn.dataset.favId;
-					const name = btn.dataset.favName;
-					const pressed = btn.getAttribute("aria-pressed") === "true";
-					try {
-						const res = await fetch("/api/favorites", {
-							method: pressed ? "DELETE" : "POST",
-							credentials: "same-origin",
-							headers: { "Content-Type": "application/json" },
-							body: JSON.stringify(
-								pressed
-									? { item_type: type, item_id: id }
-									: { item_type: type, item_id: id, item_name: name },
-							),
-						});
-						if (!res.ok) throw new Error("http " + res.status);
-						if (pressed) {
-							favIndex.delete(favKey(type, id));
-						} else {
-							favIndex.add(favKey(type, id));
-						}
-						const nowPinned = !pressed;
-						btn.setAttribute("aria-pressed", nowPinned ? "true" : "false");
-						btn.setAttribute("aria-label", nowPinned ? "Remove from favorites" : "Add to favorites");
-						btn.setAttribute("title", nowPinned ? "Remove from favorites" : "Add to favorites");
-						btn.classList.toggle("text-warning", nowPinned);
-						btn.classList.toggle("text-base-content/40", !nowPinned);
-						const svg = btn.querySelector("svg");
-						if (svg) svg.setAttribute("fill", nowPinned ? "currentColor" : "none");
-						window.portalToast?.({
-							kind: nowPinned ? "success" : "info",
-							message: nowPinned ? "Added to favorites." : "Removed from favorites.",
-						});
-						// Notify the dashboard Favorites section, if mounted.
-						if (window.portalFavorites) {
-							window.portalFavorites.load().catch(() => {});
-						}
-					} catch (_err) {
-						window.portalToast?.({ kind: "error", message: "Could not update favorite." });
-					}
-				});
-			});
+		function renderResults(data, needle) {
+			const groups = (data.groups || []).filter((g) => (g.items || []).length);
+			const actions = matchActions(needle);
+			if (!groups.length && !actions.length) {
+				renderEmpty(needle);
+				return;
+			}
+
+			const actionHtml = actions.length ? `
+				<div class="py-1">
+					<div class="px-3 pt-2 pb-1 text-[10px] uppercase tracking-widest text-base-content/50">Actions</div>
+					<ul class="divide-y divide-base-200">
+						${actions.map((a) => `
+							<li>
+								<a href="${escapeHtml(a.href)}"
+								   class="flex items-center gap-2 px-3 py-2 no-underline hover:bg-base-200 transition-colors">
+									<svg viewBox="0 0 24 24" class="w-4 h-4 shrink-0 text-primary" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+										<polyline points="9 18 15 12 9 6"></polyline>
+									</svg>
+									<span class="text-sm truncate">${highlight(a.label, needle)}</span>
+								</a>
+							</li>`).join("")}
+					</ul>
+				</div>` : "";
+
+			const html = actionHtml + groups.map((group) => `
+				<div class="py-1">
+					<div class="flex items-center justify-between gap-2 px-3 pt-2 pb-1">
+						<span class="text-[10px] uppercase tracking-widest text-base-content/50">${escapeHtml(group.label)}</span>
+						${group.total > (group.items || []).length
+							? `<span class="text-[10px] text-base-content/40">${(group.items || []).length} of ${group.total}</span>`
+							: ""}
+					</div>
+					<ul class="divide-y divide-base-200">
+						${(group.items || []).map((hit) => `
+							<li>
+								<a href="${escapeHtml(hit.href)}"
+								   ${/^https?:/i.test(String(hit.href || "")) ? 'target="_blank" rel="noopener noreferrer"' : ""}
+								   class="block px-3 py-2 no-underline hover:bg-base-200 transition-colors">
+									<div class="text-sm truncate">${highlight(hit.title, needle)}</div>
+									<div class="text-[11px] text-base-content/50 truncate">
+										${escapeHtml(hit.subtitle || "")}${hit.meta ? " · " + escapeHtml(hit.meta) : ""}
+									</div>
+								</a>
+							</li>`).join("")}
+					</ul>
+				</div>`).join("");
+
+			// The "More" row is the whole point of the preview: the dropdown deliberately
+			// shows only a few per system, so there has to be one obvious way to see the rest,
+			// and it must carry the query with it so nobody retypes it.
+			const total = Number(data.total || 0);
+			panel.innerHTML = html + `
+				<a href="/ui/search?q=${encodeURIComponent(needle)}"
+				   class="flex items-center justify-between gap-2 border-t border-base-300 px-3 py-2.5 no-underline hover:bg-base-200 transition-colors">
+					<span class="text-sm font-medium text-primary">More…</span>
+					<span class="text-[11px] text-base-content/50">
+						${total} result${total === 1 ? "" : "s"} across all systems
+					</span>
+				</a>`;
 		}
 
 		let debounceTimer = null;
@@ -617,13 +929,9 @@
 			clearTimeout(debounceTimer);
 			const token = ++currentToken;
 			debounceTimer = setTimeout(async () => {
-				// Refresh the favorite index in parallel with the search;
-				// cheap endpoint, small response, and it keeps the stars
-				// on each row in sync with actions taken elsewhere.
-				const [hits] = await Promise.all([runSearch(needle), refreshFavIndex()]);
+				const data = await runSearch(needle);
 				if (token !== currentToken) return; // newer keystroke won
-				if (!hits.length) renderEmpty(needle);
-				else renderHits(hits, needle);
+				renderResults(data, needle);
 			}, 180);
 		});
 
@@ -632,6 +940,13 @@
 		});
 		input.addEventListener("keydown", (e) => {
 			if (e.key === "Escape") { input.blur(); close(); }
+			if (e.key === "Enter") {
+				const needle = input.value.trim();
+				if (needle) {
+					e.preventDefault();
+					window.location.href = "/ui/search?q=" + encodeURIComponent(needle);
+				}
+			}
 		});
 		document.addEventListener("click", (e) => {
 			if (!root.contains(e.target)) close();
@@ -640,12 +955,44 @@
 		// "/" as a global focus shortcut, standard across GitHub / Linear /
 		// most developer portals. Ignored while the user is typing in
 		// another input so it doesn't hijack form fields.
+		// Ctrl+K / Cmd+K — the shortcut people already have in their fingers from every
+		// other developer tool. Works even while focus is in another input, which is the
+		// whole point of a palette (unlike "/", which must not hijack typing).
+		// Ctrl+K is handled by the command palette (see command-palette.html), which
+		// can do everything this used to and also navigate and run actions. Left here
+		// as a fallback only for the case where the palette failed to load: without it
+		// the shortcut people already have in their fingers would do nothing at all.
 		document.addEventListener("keydown", (e) => {
-			if (e.key !== "/") return;
+			if (!((e.ctrlKey || e.metaKey) && window.portalKey(e, "k", "KeyK"))) return;
+			if (window.portalPalette) return;
+			e.preventDefault();
+			input.focus();
+			input.select();
+			if (input.value.trim()) open();
+		});
+
+		document.addEventListener("keydown", (e) => {
+			// The key that carries "/" -- on a Hebrew layout it produces a full
+			// stop, so matching the character alone lost the shortcut entirely.
+			if (!window.portalKey(e, "/", "Slash") || e.shiftKey) return;
 			const target = e.target;
 			const tag = target?.tagName || "";
 			if (tag === "INPUT" || tag === "TEXTAREA" || target?.isContentEditable) return;
 			e.preventDefault();
+			input.focus();
+			input.select();
+		});
+
+		// The "?" chip opens the shortcuts overlay by replaying the key it depicts,
+		// so there is one implementation of that list rather than two that drift.
+		root.querySelector("[data-shortcuts-hint]")?.addEventListener("click", (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			document.dispatchEvent(new KeyboardEvent("keydown", { key: "?", bubbles: true }));
+		});
+
+		// The "/" chip in the search bar. Clicking it does what pressing the key does.
+		root.querySelector("[data-global-search-hint]")?.addEventListener("click", () => {
 			input.focus();
 			input.select();
 		});
@@ -660,20 +1007,50 @@
 			const link = e.target.closest("[data-quick-open]");
 			if (!link) return;
 			const kind = link.dataset.quickOpen;
+			const key = link.dataset.quickKey;
 			const path = window.location.pathname;
-			if (kind === "ado-create" && path.startsWith("/ui/automations")) {
+
+			// Already here: open it in place. Anywhere else: follow the href and let
+			// the destination page open it from ?new=.
+			if (kind === "ado" && path.startsWith("/ui/automations")) {
 				const modal = document.getElementById("ado-create-modal");
-				if (modal?.showModal) {
-					e.preventDefault();
-					modal.showModal();
-				}
-			} else if (kind === "support-new" && path.startsWith("/ui/support")) {
+				if (modal && modal.showModal) { e.preventDefault(); modal.showModal(); }
+			} else if (kind === "form" && path.startsWith("/ui/automations")) {
+				if (window.portalCatalogForm) { e.preventDefault(); window.portalCatalogForm.open(key); }
+			} else if (kind === "support" && path.startsWith("/ui/support")) {
 				const btn = document.getElementById("support-new-ticket-btn");
-				if (btn) {
-					e.preventDefault();
-					btn.click();
-				}
+				if (btn) { e.preventDefault(); btn.click(); }
+			} else if (kind === "suggestion" && path.startsWith("/ui/suggestions")) {
+				const btn = document.getElementById("sugg-new-btn");
+				if (btn) { e.preventDefault(); btn.click(); }
 			}
 		});
 	})();
 </script>
+
+<!--
+	The token-help modal. Included here because every page includes the banner, which makes
+	the (?) buttons next to the token prompts work everywhere without each page opting in.
+-->
+{% include 'partials/components/pat-help.html' with context %}
+
+<!--
+	The shared chrome: app shell, scrollbars, compact density, the sidebar's hide/resize
+	behaviour and the auto-refresh scheduler. Same reasoning as above — it is included
+	from the banner so that every page gets it without opting in, and there is exactly
+	one copy of each rule.
+-->
+{% include 'partials/components/portal-chrome.html' with context %}
+
+{#
+	The first-run guided tour. Included from the banner for the same reason as the
+	chrome above: every page has the banner, so `window.portalTour.start()` is always
+	available to replay it, while the tour itself only auto-runs once, on the dashboard.
+#}
+{% include 'partials/components/tour.html' with context %}
+
+{#
+	Command palette (Ctrl / ⌘ + K). Included from the banner so the shortcut works on
+	every page, and so it can read the rendered sidebar for the pages this user has.
+#}
+{% include 'partials/components/command-palette.html' with context %}

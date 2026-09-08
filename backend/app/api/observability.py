@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, status
 from fastapi.encoders import jsonable_encoder
@@ -17,15 +17,61 @@ _log = logging.getLogger(__name__)
 # request_types fall back to a Title-cased version of the key.
 _SELF_SERVICE_LABELS: Dict[str, str] = {
     "ADO_PROJECT_CREATE": "Azure DevOps — Create project",
-    "SONAR_PR_SCANNING_ENABLE": "SonarQube — Enable PR scanning",
-    "AI_MODEL_ACCESS": "AI model access",
+    # Cleaners are three request types on one thing, and the catalogue names only
+    # the one that creates them. Naming the other two here keeps a change and a
+    # removal from reading as raw enum values.
+    "ARTIFACTORY_CLEANER_UPDATE": "Artifactory cleaner — change",
+    "ARTIFACTORY_CLEANER_DELETE": "Artifactory cleaner — removal",
 }
+
+
+def _catalogue_requests() -> List[Dict[str, str]]:
+    """Every request the portal offers, named as the form names it.
+
+    READ FROM THE CATALOGUE, NOT COUNTED FROM THE TABLE. This page used to list
+    whatever `approval_requests` happened to be grouped by, which meant a request
+    type nobody had submitted yet was simply absent -- indistinguishable from one
+    that does not exist. Pipeline Characterization was invisible for a further
+    reason: it is ordered from ServiceNow rather than approved here, so it is not
+    in `approval_requests` at all and never would have appeared however many
+    people submitted one.
+
+    So the rows come from catalog_forms, which is where a request is defined, and
+    the counts are joined onto them. A form added tomorrow shows up here on the
+    same deploy, at zero.
+    """
+    out: List[Dict[str, str]] = [
+        {"key": "ADO_PROJECT_CREATE", "name": _SELF_SERVICE_LABELS["ADO_PROJECT_CREATE"],
+         "source": "approval"},
+    ]
+    try:
+        import catalog_forms
+        for spec in catalog_forms.all_forms():
+            # The support ticket is a ticket, not a request: it is raised straight
+            # away, it has no approval, and it is counted on the ServiceNow panel.
+            if spec.get("key") == "support_ticket":
+                continue
+            if spec.get("request_type"):
+                out.append({"key": str(spec["request_type"]), "name": str(spec.get("title") or ""),
+                            "source": "approval"})
+            elif spec.get("snow_item"):
+                out.append({"key": str(spec["key"]), "name": str(spec.get("title") or ""),
+                            "source": "servicenow"})
+    except Exception as exc:  # pragma: no cover - the page degrades, never 500s
+        _log.warning("observability: could not read the form catalogue: %s", exc)
+    for key, name in _SELF_SERVICE_LABELS.items():
+        if not any(row["key"] == key for row in out):
+            out.append({"key": key, "name": name, "source": "approval"})
+    return out
 
 
 def _self_service_label(request_type: str) -> str:
     rt = str(request_type or "").strip()
     if not rt:
         return "Unknown"
+    for row in _catalogue_requests():
+        if row["key"] == rt:
+            return row["name"]
     if rt in _SELF_SERVICE_LABELS:
         return _SELF_SERVICE_LABELS[rt]
     return rt.replace("_", " ").title()
@@ -74,6 +120,43 @@ def get_observability_user(
             detail="You do not have access to observability data.",
         )
     return current_user
+
+
+# The observability TRACKING tables — the dashboard's own copies of activity. Widget
+# usage is deliberately NOT here: "clear" wipes the integration activity, not the record
+# of which widgets people use. These are also the ONLY things cleared — operational data
+# (the real approval_requests, the actual tickets in ServiceNow) is never touched; these
+# tables are just the portal's observability mirror.
+_CLEARABLE_OBS_TABLES = ("servicenow_tickets", "azure_projects", "self_service_usage")
+
+
+@router.delete("/data")
+def clear_observability_data(
+    current_user: AuthUser = Depends(get_observability_user),
+) -> Dict[str, Any]:
+    """Admin: wipe the observability tracking tables, keeping widget-usage stats."""
+    cleared: Dict[str, bool] = {}
+    for table in _CLEARABLE_OBS_TABLES:
+        try:
+            db.execute(f"DELETE FROM {table}")  # fixed identifiers, not user input
+            cleared[table] = True
+        except Exception as exc:
+            _log.warning("observability clear: %s failed: %s", table, exc)
+            cleared[table] = False
+
+    try:
+        import audit
+
+        audit.log(
+            "observability.cleared",
+            level=audit.Level.WARNING,
+            user_email=str(current_user.get("email") or current_user.get("username") or ""),
+            metadata={"what": "Cleared observability data", "tables": list(cleared.keys())},
+        )
+    except Exception as exc:
+        _log.debug("audit log for observability clear failed: %s", exc)
+
+    return _obs_ok(cleared=cleared)
 
 
 # Stable set of widget keys the UI can emit — validated on the POST endpoint.
@@ -342,27 +425,153 @@ def list_self_service_usage(current_user: AuthUser = Depends(get_observability_u
         """
     )
 
-    out = []
+    # Requests ordered from ServiceNow never touch approval_requests -- there is
+    # nothing to approve, the catalogue item is ordered and the answer comes back
+    # as a number. They are counted from their own table, and a submission whose
+    # order failed (snow_error) is counted as failed rather than quietly dropped.
+    snow_rows = _safe_query_all(
+        """
+        SELECT kind,
+               COUNT(*)::bigint                                                   AS total,
+               COUNT(*) FILTER (WHERE snow_number IS NOT NULL AND snow_number <> '')::bigint
+                                                                                  AS completed,
+               COUNT(*) FILTER (WHERE snow_number IS NULL OR snow_number = '')::bigint
+                                                                                  AS failed,
+               MAX(created_at)                                                    AS last_created_at
+          FROM catalog_submissions
+         GROUP BY kind
+        """
+    )
+
+    by_key: Dict[str, Dict[str, Any]] = {}
     for r in rows:
         rt = r.get("request_type") or ""
-        out.append(
-            {
-                "service_key": rt,
-                "name": _self_service_label(rt),
-                # `count` preserves the pre-refactor response shape so any older
-                # dashboard or external consumer keeps rendering.
-                "count": int(r.get("total") or 0),
-                "total": int(r.get("total") or 0),
-                "pending": int(r.get("pending") or 0),
-                "approved": int(r.get("approved") or 0),
-                "in_progress": int(r.get("in_progress") or 0),
-                "completed": int(r.get("completed") or 0),
-                "failed": int(r.get("failed") or 0),
-                "rejected": int(r.get("rejected") or 0),
-                "last_executed_at": r.get("last_executed_at") or r.get("last_created_at"),
-            }
-        )
+        by_key[rt] = {
+            "total": int(r.get("total") or 0),
+            "pending": int(r.get("pending") or 0),
+            "approved": int(r.get("approved") or 0),
+            "in_progress": int(r.get("in_progress") or 0),
+            "completed": int(r.get("completed") or 0),
+            "failed": int(r.get("failed") or 0),
+            "rejected": int(r.get("rejected") or 0),
+            "last_executed_at": r.get("last_executed_at") or r.get("last_created_at"),
+        }
+    for r in snow_rows:
+        by_key[str(r.get("kind") or "")] = {
+            "total": int(r.get("total") or 0),
+            "pending": 0,
+            # An ordered item is approved by being ordered: there is no gate.
+            "approved": int(r.get("completed") or 0),
+            "in_progress": 0,
+            "completed": int(r.get("completed") or 0),
+            "failed": int(r.get("failed") or 0),
+            "rejected": 0,
+            "last_executed_at": r.get("last_created_at"),
+        }
+
+    blank = {"total": 0, "pending": 0, "approved": 0, "in_progress": 0,
+             "completed": 0, "failed": 0, "rejected": 0, "last_executed_at": None}
+
+    out = []
+    for entry in _catalogue_requests():
+        counts = by_key.pop(entry["key"], None) or dict(blank)
+        out.append({
+            "service_key": entry["key"],
+            "name": entry["name"],
+            "source": entry["source"],
+            # `count` preserves the pre-refactor response shape so any older
+            # dashboard or external consumer keeps rendering.
+            "count": counts["total"],
+            **counts,
+        })
+    # Anything in the tables the catalogue does not name -- a request type that was
+    # retired, or rows from an older release. Kept rather than hidden: they are
+    # real requests somebody made, and dropping them makes the totals disagree.
+    for key, counts in by_key.items():
+        out.append({"service_key": key, "name": _self_service_label(key),
+                    "source": "retired", "count": counts["total"], **counts})
+
+    out.sort(key=lambda row: (-row["total"], row["name"]))
     return _obs_ok(data=jsonable_encoder(out))
+
+
+@router.get("/requests")
+def list_requests(current_user: AuthUser = Depends(get_observability_user)) -> Dict[str, Any]:
+    """Every request anybody has made, one row each.
+
+    The counts table above answers "how much of each"; this answers "which ones",
+    the way the Azure DevOps projects table does for the one request that had a
+    list of its own. Both kinds of request are in it -- the ones approved here and
+    the ones ordered from ServiceNow -- because a requester does not think of
+    those as two systems, and an admin asking "what has been asked for this week"
+    should not have to look in two places to find out.
+    """
+    approvals = _safe_query_all(
+        """
+        SELECT ar.id                                  AS row_id,
+               ar.request_type                        AS kind,
+               ar.request_title                       AS title,
+               ar.status                              AS status,
+               COALESCE(u.email, u.username)          AS requester,
+               ar.created_at                          AS created_at,
+               ar.executed_at                         AS finished_at
+          FROM approval_requests ar
+          LEFT JOIN users u ON ar.requester_id = u.id
+         ORDER BY ar.created_at DESC
+         LIMIT 500
+        """
+    )
+    ordered = _safe_query_all(
+        """
+        SELECT cs.id              AS row_id,
+               cs.kind            AS kind,
+               cs.title           AS title,
+               cs.requester_email AS requester,
+               cs.snow_number     AS reference,
+               cs.snow_error      AS error,
+               cs.created_at      AS created_at
+          FROM catalog_submissions cs
+         ORDER BY cs.created_at DESC
+         LIMIT 500
+        """
+    )
+
+    out: List[Dict[str, Any]] = []
+    # Ids are namespaced. Both tables are SERIAL, so their first rows are both 1 --
+    # merged without a prefix, one would overwrite the other in anything keyed by id.
+    for r in approvals:
+        out.append({
+            "id": f"approval:{r.get('row_id')}",
+            "kind": r.get("kind") or "",
+            "name": _self_service_label(r.get("kind") or ""),
+            "title": r.get("title") or "",
+            "requester": r.get("requester") or "",
+            "status": str(r.get("status") or ""),
+            "reference": "",
+            "created_at": r.get("created_at"),
+            "finished_at": r.get("finished_at"),
+            "route": "approval",
+        })
+    for r in ordered:
+        number = str(r.get("reference") or "")
+        out.append({
+            "id": f"catalog:{r.get('row_id')}",
+            "kind": r.get("kind") or "",
+            "name": _self_service_label(r.get("kind") or ""),
+            "title": r.get("title") or "",
+            "requester": r.get("requester") or "",
+            # An ordered item has no approval to be pending: it either reached
+            # ServiceNow and has a number, or it did not and the reason is stored.
+            "status": "ORDERED" if number else "FAILED",
+            "reference": number,
+            "error": str(r.get("error") or "")[:200],
+            "created_at": r.get("created_at"),
+            "finished_at": r.get("created_at"),
+            "route": "servicenow",
+        })
+
+    out.sort(key=lambda row: str(row.get("created_at") or ""), reverse=True)
+    return _obs_ok(data=jsonable_encoder(out[:500]))
 
 
 @router.get("/azure-projects")

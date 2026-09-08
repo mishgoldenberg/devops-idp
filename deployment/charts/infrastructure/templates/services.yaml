@@ -1,25 +1,25 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: postgres-service
+  name: postgres-service{{ .Values.global.nameSuffix }}
 spec:
   type: ClusterIP
   selector:
-    app: postgres
+    app: postgres{{ .Values.global.nameSuffix }}
   ports:
     - port: {{ .Values.postgres.port }}
       targetPort: 5432
       protocol: TCP
-      name: postgres
+      name: postgres{{ .Values.global.nameSuffix }}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: redis-service
+  name: redis-service{{ .Values.global.nameSuffix }}
 spec:
   type: ClusterIP
   selector:
-    app: redis
+    app: redis{{ .Values.global.nameSuffix }}
   ports:
     - port: {{ .Values.redis.port }}
       targetPort: 6379

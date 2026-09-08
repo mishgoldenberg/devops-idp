@@ -1,0 +1,1516 @@
+{#
+	The self-service form.
+
+	One renderer for every request the portal offers. It is handed a spec from
+	/api/catalog/forms/<key> — sections, fields, types, options — and builds the form
+	from it, so adding a request is a dozen lines in catalog_forms.py rather than
+	another hand-built wizard.
+
+	WHY IT IS NOT A WIZARD
+
+	The ticket flow is four steps behind a Next button, and so is the ServiceNow form
+	it replaces. Steps are the wrong shape for these requests. You cannot see how much
+	is left to do, you cannot go back to check something without losing your place,
+	a single mistake in step 2 is only discovered at step 4, and the summary at the end
+	is a second rendering of everything you just typed. All of that is scaffolding
+	around one small form.
+
+	This is one page: grouped sections you can see the whole of, a rail on the left
+	that says which groups are done, and a footer that is always visible and says
+	exactly what happens when you press the button. Validation is on the field you
+	just left, not at the end.
+
+	Nothing here is a Tailwind class that would need compiling — output.css ships
+	precompiled — so the layout is hand-written CSS scoped to .cf- names.
+#}
+<style>
+	.cf-box {
+		width: min(64rem, calc(100vw - 2rem));
+		max-width: none;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		max-height: min(90vh, 56rem);
+		overflow: hidden;
+	}
+
+	.cf-head {
+		padding: 1.15rem 1.4rem 1rem;
+		border-bottom: 1px solid hsl(var(--b3));
+		display: flex;
+		align-items: flex-start;
+		gap: 1rem;
+	}
+
+	.cf-title { font-size: 1.15rem; font-weight: 700; line-height: 1.2; }
+	.cf-sub { font-size: 0.8125rem; color: hsl(var(--bc) / 0.65); margin-top: 0.3rem; max-width: 46rem; }
+
+	/* The body is the only thing that scrolls, so the footer's promise and the
+	   progress rail stay on screen for a form as long as the characterization. */
+	.cf-body {
+		display: grid;
+		grid-template-columns: 13rem 1fr;
+		gap: 0;
+		flex: 1 1 auto;
+		min-height: 0;
+	}
+
+	.cf-rail {
+		border-right: 1px solid hsl(var(--b3));
+		padding: 1.1rem 0.75rem;
+		overflow-y: auto;
+		background-color: hsl(var(--b2) / 0.4);
+	}
+
+	.cf-rail-item {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		width: 100%;
+		text-align: left;
+		padding: 0.45rem 0.55rem;
+		border-radius: 0.5rem;
+		font-size: 0.8125rem;
+		color: hsl(var(--bc) / 0.7);
+		background: none;
+		border: 0;
+		cursor: pointer;
+	}
+
+	.cf-rail-item:hover { background-color: hsl(var(--b3) / 0.6); }
+	.cf-rail-item.is-current { background-color: hsl(var(--p) / 0.12); color: hsl(var(--bc)); font-weight: 600; }
+
+	/* A ring that fills in when a section is complete. Not a tick that appears from
+	   nowhere: the ring is visible from the start, so an empty one reads as "not yet"
+	   rather than as an absence of anything. */
+	.cf-dot {
+		width: 0.9rem;
+		height: 0.9rem;
+		flex: 0 0 auto;
+		border-radius: 9999px;
+		border: 2px solid hsl(var(--bc) / 0.25);
+	}
+	.cf-rail-item.is-done .cf-dot { border-color: hsl(var(--su)); background-color: hsl(var(--su)); }
+	.cf-rail-item.is-error .cf-dot { border-color: hsl(var(--er)); background-color: hsl(var(--er) / 0.25); }
+
+	.cf-scroll { overflow-y: auto; padding: 1.2rem 1.4rem 1.6rem; }
+
+	.cf-section { margin-bottom: 1.6rem; scroll-margin-top: 0.5rem; }
+	.cf-section-title { font-size: 0.95rem; font-weight: 700; }
+	.cf-section-desc { font-size: 0.78rem; color: hsl(var(--bc) / 0.6); margin-top: 0.15rem; }
+	.cf-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.9rem; margin-top: 0.85rem; }
+	.cf-field.is-wide { grid-column: 1 / -1; }
+
+	.cf-label { display: block; font-size: 0.8125rem; font-weight: 600; margin-bottom: 0.3rem; }
+	.cf-req { color: hsl(var(--er)); margin-left: 0.15rem; }
+	.cf-help { font-size: 0.72rem; color: hsl(var(--bc) / 0.55); margin-top: 0.3rem; }
+	.cf-err { font-size: 0.72rem; color: hsl(var(--er)); margin-top: 0.3rem; display: none; }
+	.cf-field.is-invalid .cf-err { display: block; }
+	.cf-field.is-invalid .cf-input { border-color: hsl(var(--er)); }
+
+	.cf-input {
+		width: 100%;
+		border: 1px solid hsl(var(--b3));
+		border-radius: 0.5rem;
+		background-color: hsl(var(--b1));
+		color: hsl(var(--bc));
+		padding: 0.5rem 0.65rem;
+		font-size: 0.85rem;
+		line-height: 1.4;
+	}
+	.cf-input:focus { outline: 2px solid hsl(var(--p) / 0.45); outline-offset: -1px; }
+	textarea.cf-input { resize: vertical; min-height: 3.2rem; }
+
+	/* Editable combobox with list autocomplete.
+
+	   The box IS the list. Typing filters it live and the matches appear underneath,
+	   which is the only shape that works for a picker holding hundreds of Artifactory
+	   repositories: a filter box sitting ABOVE a native <select> makes you type in one
+	   control and choose in another, and the thing you are choosing from is a popup
+	   the browser draws wherever it likes.
+
+	   The popup is absolutely positioned against .cf-combo, which is the nearest
+	   positioned ancestor, so it tracks the field when the form body scrolls. */
+	.cf-combo { position: relative; }
+
+	.cf-combo-list {
+		position: absolute;
+		z-index: 40;
+		inset-inline: 0;
+		top: calc(100% + 0.2rem);
+		margin: 0;
+		padding: 0.2rem;
+		list-style: none;
+		max-height: 14rem;
+		overflow-y: auto;
+		border-radius: 0.5rem;
+		border: 1px solid hsl(var(--bc) / 0.2);
+		background-color: hsl(var(--b1));
+		box-shadow: 0 8px 24px hsl(var(--bc) / 0.18);
+		display: none;
+	}
+
+	.cf-combo.is-open .cf-combo-list { display: block; }
+
+	.cf-combo-option {
+		padding: 0.35rem 0.5rem;
+		border-radius: 0.35rem;
+		font-size: 0.82rem;
+		line-height: 1.35;
+		cursor: pointer;
+	}
+
+	/* Hover and keyboard share one look on purpose: with two, moving the mouse while
+	   arrowing down lights two rows and neither one is obviously the one Enter takes. */
+	.cf-combo-option:hover,
+	.cf-combo-option.is-active {
+		background-color: hsl(var(--p) / 0.14);
+		color: hsl(var(--bc));
+	}
+
+	.cf-combo-option[aria-selected="true"] { font-weight: 700; }
+	.cf-combo-option em { font-style: normal; text-decoration: underline; }
+
+	.cf-combo-empty {
+		padding: 0.4rem 0.5rem;
+		font-size: 0.78rem;
+		color: hsl(var(--bc) / 0.55);
+	}
+
+	/* Which step, in words, beside the title. A progress bar says how far along you
+	   are; this says what you are being asked, which is the question somebody
+	   halfway through a ticket actually has. */
+	.cf-step {
+		margin-top: 0.35rem;
+		font-size: 0.72rem;
+		font-weight: 600;
+		letter-spacing: 0.03em;
+		color: hsl(var(--p));
+	}
+
+	.cf-suffix { position: relative; }
+	.cf-suffix .cf-input { padding-right: 3.6rem; }
+	.cf-suffix span {
+		position: absolute;
+		right: 0.7rem;
+		top: 50%;
+		transform: translateY(-50%);
+		font-size: 0.75rem;
+		color: hsl(var(--bc) / 0.5);
+		pointer-events: none;
+	}
+
+	/* A switch, not a Yes/No dropdown. The ServiceNow form asks these as selects and
+	   they read as questions with a wrong answer; a switch reads as a setting. */
+	.cf-toggle { display: flex; align-items: center; gap: 0.6rem; cursor: pointer; }
+	.cf-track {
+		width: 2.4rem; height: 1.35rem; border-radius: 9999px;
+		background-color: hsl(var(--bc) / 0.22);
+		position: relative; flex: 0 0 auto; transition: background-color 150ms ease;
+	}
+	.cf-track::after {
+		content: ""; position: absolute; top: 0.175rem; left: 0.2rem;
+		width: 1rem; height: 1rem; border-radius: 9999px;
+		background-color: hsl(var(--b1)); transition: transform 150ms ease;
+	}
+	.cf-toggle input { position: absolute; opacity: 0; pointer-events: none; }
+	.cf-toggle input:checked + .cf-track { background-color: hsl(var(--p)); }
+	.cf-toggle input:checked + .cf-track::after { transform: translateX(1.05rem); }
+	.cf-toggle-text { font-size: 0.85rem; font-weight: 600; }
+
+	.cf-file {
+		border: 1px dashed hsl(var(--b3));
+		border-radius: 0.5rem;
+		padding: 0.7rem 0.8rem;
+		display: flex;
+		align-items: center;
+		gap: 0.7rem;
+		font-size: 0.8rem;
+		color: hsl(var(--bc) / 0.7);
+	}
+	.cf-thumb { width: 2.6rem; height: 2.6rem; object-fit: cover; border-radius: 0.35rem; display: none; }
+
+	/* What the request will actually do, computed from what has been filled in. It
+	   sits with the field it describes rather than in a summary step, because a
+	   consequence you read after typing is a consequence you can still act on. */
+	.cf-context {
+		grid-column: 1 / -1;
+		border: 1px solid hsl(var(--b3));
+		border-radius: 0.6rem;
+		background-color: hsl(var(--b2) / 0.55);
+		padding: 0.7rem 0.85rem;
+		font-size: 0.78rem;
+		display: none;
+	}
+	.cf-context.is-on { display: block; }
+	.cf-context-row { display: flex; justify-content: space-between; gap: 1rem; padding: 0.15rem 0; }
+	.cf-context-row span:last-child { font-weight: 600; }
+	.cf-context-note { margin-top: 0.4rem; color: hsl(var(--bc) / 0.6); }
+
+	.cf-foot {
+		border-top: 1px solid hsl(var(--b3));
+		padding: 0.85rem 1.4rem;
+		display: flex;
+		align-items: center;
+		gap: 0.9rem;
+		background-color: hsl(var(--b1));
+	}
+	.cf-promise { font-size: 0.78rem; color: hsl(var(--bc) / 0.65); flex: 1 1 auto; }
+	.cf-foot-err { font-size: 0.78rem; color: hsl(var(--er)); flex: 1 1 auto; display: none; }
+	.cf-foot-err.is-on { display: block; }
+
+	.cf-result { padding: 2rem 1.6rem; text-align: center; }
+	.cf-result-num {
+		font-size: 1.35rem; font-weight: 700; margin-top: 0.4rem;
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	}
+	.cf-result-note { font-size: 0.83rem; color: hsl(var(--bc) / 0.7); margin-top: 0.5rem; }
+
+	@media (max-width: 52rem) {
+		.cf-body { grid-template-columns: 1fr; }
+		.cf-rail { display: none; }
+		.cf-grid { grid-template-columns: 1fr; }
+	}
+</style>
+
+{# The signed-in name, for the "Full name" prefill. Rendered by the server because the form itself is built in the browser and has nothing else to read it from. #}
+<span data-portal-user-name="{{ user.display_name or user.username or '' }}" style="display:none"></span>
+
+<dialog id="catalog-form-modal" class="modal">
+	<div class="modal-box cf-box">
+		<div class="cf-head">
+			<div style="flex: 1 1 auto">
+				<div class="cf-title" data-cf-title>Request</div>
+				<div class="cf-sub" data-cf-sub></div>
+				<div class="cf-step" data-cf-step style="display:none"></div>
+			</div>
+			<button type="button" class="btn btn-ghost btn-sm" data-cf-close aria-label="Close">&#10005;</button>
+		</div>
+
+		<div class="cf-body" data-cf-body>
+			<div class="cf-rail" data-cf-rail></div>
+			<div class="cf-scroll" data-cf-scroll>
+				<form data-cf-form novalidate></form>
+			</div>
+		</div>
+
+		<div class="cf-foot" data-cf-foot>
+			<div class="cf-promise" data-cf-promise></div>
+			<div class="cf-foot-err" data-cf-foot-err role="alert"></div>
+			<button type="button" class="btn btn-ghost btn-sm" data-cf-close>Cancel</button>
+			<button type="button" class="btn btn-sm" data-cf-back style="display:none">Back</button>
+			<button type="button" class="btn btn-primary btn-sm" data-cf-next style="display:none">Next</button>
+			<button type="button" class="btn btn-primary btn-sm" data-cf-submit>Submit</button>
+		</div>
+	</div>
+</dialog>
+
+<script>
+	// ── Self-service form renderer ──────────────────────────────────────────
+	(function () {
+		if (window.portalCatalogForm) return;
+
+		const modal = document.getElementById("catalog-form-modal");
+		if (!modal) return;
+
+		const titleEl = modal.querySelector("[data-cf-title]");
+		const subEl = modal.querySelector("[data-cf-sub]");
+		const railEl = modal.querySelector("[data-cf-rail]");
+		const formEl = modal.querySelector("[data-cf-form]");
+		const bodyEl = modal.querySelector("[data-cf-body]");
+		const footEl = modal.querySelector("[data-cf-foot]");
+		const promiseEl = modal.querySelector("[data-cf-promise]");
+		const footErrEl = modal.querySelector("[data-cf-foot-err]");
+		const submitBtn = modal.querySelector("[data-cf-submit]");
+		const backBtn = modal.querySelector("[data-cf-back]");
+		const nextBtn = modal.querySelector("[data-cf-next]");
+		const stepEl = modal.querySelector("[data-cf-step]");
+		const scrollEl = modal.querySelector("[data-cf-scroll]");
+		// Which step a wizard is on. 0 for a single-page form, where nothing reads it.
+		let step = 0;
+
+		// Everything the person filling this in has already told us once. Kept under
+		// ONE key for every form, so the details section is typed once and then never
+		// again — including by the ticket flow when it moves onto this renderer.
+		// Versioned, and the version moves whenever the remembered fields change shape.
+		// Branch used to be free text and is now the wizard's fixed list of six; a
+		// remembered "פיתוח" that matches none of them would leave the dropdown sitting
+		// on "Choose one" while a value nobody could see was still in the answers.
+		// Division was remembered too and no longer exists at all.
+		const REMEMBER_KEY = "portal-catalog-requester-v2";
+
+		let spec = null;
+		let answers = {};
+		let files = {};       // field key -> {filename, content_type, data_base64}
+		let optionCache = {}; // source -> {data, unavailable, note}
+		let dependentTimer = null;
+		let busy = false;
+		let submitUrl = "";   // set when editing something that already exists
+		let onDone = null;    // set by a caller that has to act on what came back
+
+		function esc(value) {
+			return String(value === null || value === undefined ? "" : value)
+				.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+				.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+		}
+
+		function remembered() {
+			try { return JSON.parse(localStorage.getItem(REMEMBER_KEY) || "{}") || {}; }
+			catch (_) { return {}; }
+		}
+
+		function remember(section) {
+			if (!section || !section.remember) return;
+			const keep = {};
+			(section.fields || []).forEach((f) => { keep[f.key] = answers[f.key]; });
+			try { localStorage.setItem(REMEMBER_KEY, JSON.stringify(keep)); } catch (_) {}
+		}
+
+		function isTruthy(value) {
+			if (typeof value === "boolean") return value;
+			return ["1", "true", "yes", "on"].indexOf(String(value).toLowerCase()) > -1;
+		}
+
+		// The same rule the server applies. A hidden section is not validated and not
+		// sent — a required field nobody can see is a form that cannot be submitted
+		// and does not say why.
+		// A field can be conditional too, not just a section: a ticket about SonarQube
+		// is not asked which Azure DevOps collection it concerns. Hidden means not
+		// rendered, not validated and not sent -- the same three things the server means.
+		function fieldVisible(field) {
+			return ruleHolds(field.visible_when);
+		}
+
+		function ruleHolds(rule) {
+			if (!rule) return true;
+			const value = answers[rule.field];
+			const wanted = rule.equals === undefined ? true : rule.equals;
+			if (typeof wanted === "boolean") return isTruthy(value) === wanted;
+			return String(value || "").trim().toLowerCase() === String(wanted).trim().toLowerCase();
+		}
+
+		function sectionVisible(section) {
+			return ruleHolds(section.visible_when);
+		}
+
+		function fieldError(field) {
+			if (!field.required || field.type === "toggle") return "";
+			if (!fieldVisible(field)) return "";
+			const value = answers[field.key];
+			if (value === null || value === undefined || !String(value).trim()) {
+				return field.label + " is required.";
+			}
+			return "";
+		}
+
+		function validateField(key) {
+			// One field, on the way out of it. The whole-form validate() runs at submit
+			// and scrolls to the first problem; this is the half the header promises --
+			// "validation is on the field you just left" -- and until the combobox
+			// needed it, nothing implemented it.
+			//
+			// It only ever ADDS the error once a field has been left, never on a field
+			// nobody has touched: marking an empty form red is telling somebody off for
+			// not having started.
+			const wrap = formEl.querySelector('[data-cf-field="' + key + '"]');
+			const field = allFields().filter((f) => f.key === key)[0];
+			if (!wrap || !field) return;
+			const err = fieldError(field);
+			wrap.classList.toggle("is-invalid", !!err);
+			const errEl = wrap.querySelector("[data-cf-err]");
+			if (errEl) errEl.textContent = err;
+		}
+
+		function sectionState(section) {
+			let done = 0, total = 0;
+			(section.fields || []).forEach((field) => {
+				if (!field.required || field.type === "toggle") return;
+				total += 1;
+				if (!fieldError(field)) done += 1;
+			});
+			return { done: done, total: total, complete: total === 0 || done === total };
+		}
+
+		// ── Rendering ────────────────────────────────────────────────────────
+
+		function fieldControl(field) {
+			const id = "cf-f-" + field.key;
+			const value = answers[field.key];
+			// dir="auto" so a Hebrew answer types and renders right-to-left while an
+			// English or numeric one stays left-to-right. The browser decides per field
+			// from the first strong character, which is the only rule that works when
+			// the same form takes a Hebrew name and a Latin repository key.
+			const common = 'id="' + id + '" dir="auto" class="cf-input" data-cf-key="' + esc(field.key) + '"';
+
+			if (field.type === "toggle") {
+				return '<label class="cf-toggle">' +
+					'<input type="checkbox" data-cf-key="' + esc(field.key) + '"' +
+					(isTruthy(value) ? " checked" : "") + " />" +
+					'<span class="cf-track"></span>' +
+					'<span class="cf-toggle-text">' + esc(field.label) + "</span>" +
+					"</label>";
+			}
+
+			if (field.type === "textarea") {
+				return "<textarea " + common + ' rows="' + (field.rows || 3) + '"' +
+					' placeholder="' + esc(field.placeholder || "") + '">' + esc(value || "") + "</textarea>";
+			}
+
+			if (field.type === "select") {
+				const source = field.options_source;
+				const all = source ? ((optionCache[source] || {}).data || []) : (field.options || []);
+				const state = optionCache[source] || {};
+
+				// A searchable field is a COMBOBOX, not a filter box above a select.
+				//
+				// The two are not the same control. With a filter and a select you type
+				// in one place and choose in another, the list you are filtering is a
+				// popup the browser draws on its own terms, and an empty result has to
+				// be explained by a disabled option inside the thing it emptied. The
+				// combobox is one input: what you type filters what hangs underneath it,
+				// and the first match is always one Enter away.
+				//
+				// Only for fields marked searchable -- a six-item list of branches is
+				// better as a plain select, where the whole list is one click away and
+				// there is nothing to learn.
+				if (field.searchable) {
+					const label = comboLabel(field, all, value);
+					const note = state.unavailable || state.note || "";
+					// .cf-combo wraps the INPUT AND THE LIST, and nothing else.
+					//
+					// The list is positioned at `top: 100%` of this box, so anything
+					// else inside it pushes the list down by that much. With the help
+					// text in here the list opened a line and a half below the field;
+					// worse, .cf-field is a grid item and stretches to its row, so in a
+					// row beside a taller field the box grew and the list appeared near
+					// the bottom of the form with nothing visibly connecting it to the
+					// box it belonged to. The help text is now a sibling.
+					return '<div class="cf-combo" data-cf-combo="' + esc(field.key) + '">' +
+						'<input type="text" dir="auto" class="cf-input" id="' + id + '"' +
+						' role="combobox" aria-expanded="false" aria-autocomplete="list"' +
+						' aria-controls="' + id + '-list" autocomplete="off"' +
+						' data-cf-combo-input="' + esc(field.key) + '"' +
+						' placeholder="' + esc(comboPlaceholder(field, all, state)) + '"' +
+						' value="' + esc(label) + '" />' +
+						'<ul class="cf-combo-list" role="listbox" id="' + id + '-list"' +
+						' data-cf-combo-list="' + esc(field.key) + '"></ul>' +
+						"</div>" +
+						(note ? '<div class="cf-help">' + esc(note) + "</div>" : "") +
+						(field.allow_custom && !note
+							? '<div class="cf-help">Not in the list? Type it and carry on' +
+							  (field.custom_placeholder
+								? " — for example " + esc(field.custom_placeholder)
+								: "") +
+							  ".</div>"
+							: "");
+				}
+				// Everything from here down is a plain select: a fixed, short list where
+				// the whole thing is one click away. A searchable field returned above.
+				let html = "";
+
+				// A dropdown with nothing in it is not a control, it is a dead end wearing
+				// the costume of one. When a server-loaded list is empty, the typing box IS
+				// the field, with the reason above it.
+				if (source && !all.length) {
+					if (field.allow_custom) {
+						html += '<input type="text" dir="auto" class="cf-input"' +
+							' data-cf-custom="' + esc(field.key) + '" data-cf-key="' + esc(field.key) + '"' +
+							' id="' + id + '"' +
+							' placeholder="' + esc(field.custom_placeholder || field.custom_label || "Type it") + '"' +
+							' value="' + esc(value || "") + '" />';
+					} else {
+						html += "<select " + common + "><option value=\"\">Loading…</option></select>";
+					}
+					if (state.unavailable || state.note) {
+						html += '<div class="cf-help">' + esc(state.unavailable || state.note) + "</div>";
+					}
+					return html;
+				}
+
+				html += "<select " + common + ">";
+				// "Choose one" unconditionally: past the guard above, there is always
+				// at least one thing to choose.
+				html += '<option value="">Choose one</option>';
+				all.forEach((opt) => {
+					const selected = String(value || "") === String(opt.value) ? " selected" : "";
+					html += '<option value="' + esc(opt.value) + '"' + selected + ">" + esc(opt.label) + "</option>";
+				});
+				if (field.allow_custom) {
+					html += '<option value="__custom__">' +
+						esc(field.custom_label || "Something else") + "</option>";
+				}
+				html += "</select>";
+				if (field.allow_custom) {
+					const known = all.some((o) => String(o.value) === String(value || ""));
+					const showCustom = Boolean(value) && !known;
+					html += '<input type="text" dir="auto" class="cf-input" style="margin-top:0.4rem;' +
+						(showCustom ? "" : "display:none") + '" data-cf-custom="' + esc(field.key) + '"' +
+						' placeholder="' + esc(field.custom_placeholder || "") + '"' +
+						' value="' + esc(showCustom ? value : "") + '" />';
+				}
+				if (source && (state.unavailable || state.note)) {
+					// Why the list is short, or empty. A picker scoped to your own
+					// projects and a picker that failed to load look identical, and
+					// only one of them means "ask someone for access".
+					html += '<div class="cf-help">' + esc(state.unavailable || state.note) + "</div>";
+				}
+				return html;
+			}
+
+			if (field.type === "file") {
+				const chosen = files[field.key];
+				return '<div class="cf-file">' +
+					'<img class="cf-thumb" data-cf-thumb="' + esc(field.key) + '"' +
+					(chosen && chosen.data_base64 ? ' src="data:' + esc(chosen.content_type) + ";base64," + chosen.data_base64 + '" style="display:block"' : "") +
+					' alt="" />' +
+					'<input type="file" data-cf-file="' + esc(field.key) + '"' +
+					(field.image_only ? ' accept="image/png,image/jpeg"' : "") +
+					(field.multiple ? " multiple" : "") +
+					' style="font-size:0.78rem" />' +
+					"</div>";
+			}
+
+			const type = field.type === "number" ? "number" : "text";
+			let attrs = "";
+			if (field.min !== undefined) attrs += ' min="' + esc(field.min) + '"';
+			if (field.max !== undefined) attrs += ' max="' + esc(field.max) + '"';
+			// Both copied from the Support wizard's first step, which is the form this
+			// section is a copy of: the name is the signed-in account and is not
+			// retyped, and the phone number takes digits. The server enforces the
+			// second one too — a pattern attribute on its own is advice.
+			if (field.readonly) attrs += " readonly";
+			if (field.digits) attrs += ' inputmode="numeric" pattern="[0-9]+"';
+			const input = "<input " + common + ' type="' + type + '"' + attrs +
+				' placeholder="' + esc(field.placeholder || "") + '"' +
+				' value="' + esc(value === undefined || value === null ? "" : value) + '" />';
+			if (field.suffix) {
+				return '<div class="cf-suffix">' + input + "<span>" + esc(field.suffix) + "</span></div>";
+			}
+			return input;
+		}
+
+		function fieldHtml(field) {
+			const wide = field.type === "textarea" || field.type === "file" || field.type === "toggle";
+			let html = '<div class="cf-field' + (wide ? " is-wide" : "") + '" data-cf-field="' + esc(field.key) + '">';
+			if (field.type !== "toggle") {
+				html += '<label class="cf-label" for="cf-f-' + esc(field.key) + '">' + esc(field.label) +
+					(field.required ? '<span class="cf-req">*</span>' : "") + "</label>";
+			}
+			html += fieldControl(field);
+			// The standing help describes the list this field normally offers. When
+			// the list could not be loaded the control has already said so, and
+			// following "there are no projects" with "these are the projects you are
+			// a member of" reads as a contradiction.
+			const src = field.options_source;
+			const spoken = src && ((optionCache[src] || {}).unavailable || (optionCache[src] || {}).note);
+			if (field.help && !spoken) html += '<div class="cf-help">' + esc(field.help) + "</div>";
+			html += '<div class="cf-err" data-cf-err></div>';
+			html += "</div>";
+			return html;
+		}
+
+		function render() {
+			let html = "";
+			(spec.sections || []).forEach((section, index) => {
+				if (!sectionVisible(section)) return;
+				html += '<section class="cf-section" id="cf-s-' + esc(section.key) + '" data-cf-section="' + index + '">';
+				if (section.title) {
+					html += '<div class="cf-section-title">' + esc(section.title) + "</div>";
+					if (section.description) html += '<div class="cf-section-desc">' + esc(section.description) + "</div>";
+				}
+				html += '<div class="cf-grid">';
+				(section.fields || []).forEach((field) => {
+					if (fieldVisible(field)) html += fieldHtml(field);
+				});
+				if (section.key === "quota") html += '<div class="cf-context" data-cf-context></div>';
+				html += "</div></section>";
+			});
+			formEl.innerHTML = html;
+			paintSteps();
+			paintRail();
+			paintContext();
+		}
+
+		// ── Wizard mode ──────────────────────────────────────────────────────
+		//
+		// The same sections, shown one at a time. Not a second renderer: a spec with
+		// `wizard: true` is rendered exactly as any other, and this hides all but the
+		// current step. That is the whole difference, which is why the ticket flow can
+		// be a wizard and the quota form a single page without two implementations of
+		// selects, validation, dependent lists or Hebrew labels.
+		//
+		// Steps exist here because a ticket is asked of somebody who does not know what
+		// the portal wants and is answering questions about a problem they are having.
+		// A quota request is asked of somebody who knows exactly what they want. The
+		// shape should follow that, and now it can.
+
+		function visibleSections() {
+			return (spec.sections || []).filter(sectionVisible);
+		}
+
+		function isWizard() {
+			return Boolean(spec.wizard) && visibleSections().length > 1;
+		}
+
+		function paintSteps() {
+			const sections = Array.prototype.slice.call(formEl.querySelectorAll("[data-cf-section]"));
+			if (!isWizard()) {
+				sections.forEach((el) => { el.style.display = ""; });
+				return;
+			}
+            // A section can become visible or hide itself as answers change, so the
+            // step index is clamped rather than trusted.
+			if (step >= sections.length) step = sections.length - 1;
+			if (step < 0) step = 0;
+			sections.forEach((el, i) => { el.style.display = i === step ? "" : "none"; });
+			paintFoot();
+		}
+
+		function paintFoot() {
+			if (!footEl) return;
+			const wizard = isWizard();
+			const sections = visibleSections();
+			const last = step >= sections.length - 1;
+			if (backBtn) backBtn.style.display = wizard && step > 0 ? "" : "none";
+			if (nextBtn) nextBtn.style.display = wizard && !last ? "" : "none";
+			if (submitBtn) submitBtn.style.display = !wizard || last ? "" : "none";
+			if (stepEl) {
+				stepEl.style.display = wizard ? "" : "none";
+				const here = sections[step];
+				stepEl.textContent = wizard && here
+					? "Step " + (step + 1) + " of " + sections.length + " — " + (here.title || "")
+					: "";
+			}
+		}
+
+		function goToStep(index) {
+			step = index;
+			paintSteps();
+			paintRail();
+			if (scrollEl) scrollEl.scrollTop = 0;
+		}
+
+		function stepFields() {
+			const sections = visibleSections();
+			return (sections[step] || {}).fields || [];
+		}
+
+		function paintRail() {
+			let html = "";
+			const wizard = isWizard();
+			visibleSections().forEach((section, index) => {
+				if (!section.title) return;
+				const state = sectionState(section);
+				// In a wizard the rail is the step list, so it also says WHICH step you
+				// are on. Without that the only marker of position is a label in the
+				// header, and the rail beside it reads as navigation that does nothing.
+				const current = wizard && index === step ? " is-current" : "";
+				html += '<button type="button" class="cf-rail-item' + (state.complete ? " is-done" : "") +
+					current + '" data-cf-goto="' + esc(section.key) + '">' +
+					'<span class="cf-dot"></span><span>' + esc(section.title) + "</span></button>";
+			});
+			railEl.innerHTML = html;
+		}
+
+		// The quota panel: what the project has now, and what this request makes it.
+		// Computed from the option the picker already carries, so it costs no request
+		// and cannot disagree with the list it came from.
+		function paintContext() {
+			const box = formEl.querySelector("[data-cf-context]");
+			if (!box) return;
+			const options = (optionCache["artifactory_projects"] || {}).data || [];
+			const chosen = options.filter((o) => String(o.value) === String(answers.project_key || ""))[0];
+			if (!chosen || !chosen.meta) { box.classList.remove("is-on"); return; }
+
+			const meta = chosen.meta;
+			const added = parseSize(answers.increase_by || "");
+			let rows = "";
+			rows += row("Used now", meta.used);
+			rows += row("Quota now", meta.quota);
+			if (meta.free !== null && meta.free !== undefined) rows += row("Free now", meta.free);
+			if (added > 0 && !meta.unlimited) {
+				const after = (meta.quota_bytes || 0) + added;
+				rows += row("Quota after this request", human(after));
+				rows += row("Free after this request", human(Math.max(0, after - (meta.used_bytes || 0))));
+			}
+			let note = "";
+			if (meta.unlimited) {
+				note = '<div class="cf-context-note">This project has no quota — it is unlimited, so there is nothing to enlarge.</div>';
+			} else if (added <= 0) {
+				note = '<div class="cf-context-note">Type an amount to add to see what it becomes.</div>';
+			} else {
+				note = '<div class="cf-context-note">Read again from Artifactory when an admin approves it, so the increase applies to whatever the quota is then.</div>';
+			}
+			box.innerHTML = rows + note;
+			box.classList.add("is-on");
+		}
+
+		function row(label, value) {
+			return '<div class="cf-context-row"><span>' + esc(label) + "</span><span>" + esc(value) + "</span></div>";
+		}
+
+		function parseSize(text) {
+			const match = String(text || "").trim().toUpperCase().replace(/,/g, "")
+				.match(/^([0-9]+(?:\.[0-9]+)?)\s*(B|KB|MB|GB|TB)?$/);
+			if (!match) return 0;
+			const units = { B: 1, KB: 1024, MB: 1048576, GB: 1073741824, TB: 1099511627776 };
+			return Math.round(parseFloat(match[1]) * units[match[2] || "GB"]);
+		}
+
+		function human(bytes) {
+			const units = ["B", "KB", "MB", "GB", "TB"];
+			let size = Number(bytes) || 0, i = 0;
+			while (size >= 1024 && i < units.length - 1) { size /= 1024; i += 1; }
+			return (i < 2 ? size.toFixed(0) : size.toFixed(1)) + " " + units[i];
+		}
+
+		// ── Input ────────────────────────────────────────────────────────────
+
+		function setValue(key, value) {
+			answers[key] = value;
+			const field = allFields().filter((f) => f.key === key)[0];
+			const wrap = formEl.querySelector('[data-cf-field="' + key + '"]');
+			if (wrap) {
+				const err = fieldError(field || { key: key, label: key });
+				wrap.classList.toggle("is-invalid", false);
+				const errEl = wrap.querySelector("[data-cf-err]");
+				if (errEl) errEl.textContent = err;
+			}
+			footErrEl.classList.remove("is-on");
+			// The rail is repainted on every change, not only when a field loses
+			// focus: a progress indicator that updates one field late is telling you
+			// about the field before the one you are looking at.
+			paintRail();
+		}
+
+		function allFields() {
+			const out = [];
+			(spec.sections || []).forEach((s) => (s.fields || []).forEach((f) => out.push(f)));
+			return out;
+		}
+
+		// ── The combobox ─────────────────────────────────────────────────────
+		//
+		// One input. What you type filters the list hanging under it, the first match
+		// is always highlighted, and Enter takes it. The stored ANSWER is the option's
+		// value; what the box shows is its label, so a repository whose key and title
+		// differ reads as the title and submits as the key.
+		//
+		// comboOpen holds the key of the list that is open, and comboActive its
+		// highlighted row. Both live outside render() because the list is repainted in
+		// place on every keystroke -- rebuilding the whole form would take focus away
+		// from the box being typed into, which is the one thing this control cannot do.
+
+		let comboOpen = "";
+		let comboActive = 0;
+
+		function comboField(key) {
+			return allFields().filter((f) => f.key === key)[0] || {};
+		}
+
+		function comboAll(field) {
+			return field.options_source
+				? ((optionCache[field.options_source] || {}).data || [])
+				: (field.options || []);
+		}
+
+		function comboLabel(field, all, value) {
+			if (!value) return "";
+			const hit = all.filter((o) => String(o.value) === String(value))[0];
+			// Not in the list means it was typed. Showing the raw value is right: it is
+			// what will be submitted, and pretending otherwise hides a typo.
+			return hit ? String(hit.label) : String(value);
+		}
+
+		function comboPlaceholder(field, all, state) {
+			if (state && (state.unavailable || state.note) && !all.length) return "Type it";
+			if (!all.length) return "Loading…";
+			return "Type to search " + all.length;
+		}
+
+		function comboMatches(field, needle) {
+			const all = comboAll(field);
+			const wanted = String(needle || "").trim().toLowerCase();
+			if (!wanted) return all;
+			return all.filter(
+				(o) => (String(o.label) + " " + String(o.value)).toLowerCase().indexOf(wanted) > -1
+			);
+		}
+
+		// The tallest the list can get, from the max-height on .cf-combo-list plus its
+		// border and padding.
+		const COMBO_MAX_PX = 232;
+
+		function placeCombo(wrap) {
+			// The list always opens DOWNWARD, right under the field. When there is not
+			// enough room for it inside the scrolling body, the body is scrolled until
+			// there is -- the field moves, the list does not.
+			//
+			// It used to flip upward instead, and that was wrong twice over. An upward
+			// list is anchored by its BOTTOM, so it slid down the screen as typing
+			// narrowed it from twelve rows to three; and the decision to flip was taken
+			// from the list's current height, so it changed direction mid-word. Either
+			// way the rows moved while the pointer was over them.
+			const scroller = formEl.closest(".cf-scroll");
+			if (!scroller) return;
+			const field = wrap.getBoundingClientRect();
+			const bounds = scroller.getBoundingClientRect();
+			const short = COMBO_MAX_PX - (bounds.bottom - field.bottom);
+			if (short > 0) {
+				// Never past the field itself: scrolling it out of the top to make room
+				// underneath would be a list with nothing above it.
+				const room = Math.max(0, field.top - bounds.top - 8);
+				scroller.scrollTop += Math.min(short, room);
+			}
+		}
+		function paintCombo(key, needle) {
+			const wrap = formEl.querySelector('[data-cf-combo="' + key + '"]');
+			const list = formEl.querySelector('[data-cf-combo-list="' + key + '"]');
+			const input = formEl.querySelector('[data-cf-combo-input="' + key + '"]');
+			if (!wrap || !list || !input) return;
+			const field = comboField(key);
+			const matches = comboMatches(field, needle);
+			const chosen = String(answers[key] || "");
+
+			if (comboActive >= matches.length) comboActive = matches.length ? matches.length - 1 : 0;
+			list.innerHTML = matches.length
+				? matches.map((opt, i) =>
+					'<li class="cf-combo-option' + (i === comboActive ? " is-active" : "") + '"' +
+					' role="option" id="' + key + "-opt-" + i + '"' +
+					' aria-selected="' + (String(opt.value) === chosen ? "true" : "false") + '"' +
+					' data-cf-combo-value="' + esc(opt.value) + '">' + esc(opt.label) + "</li>"
+				).join("")
+				: '<li class="cf-combo-empty">' +
+				  (field.allow_custom
+					? "Nothing matches. Press Enter to use what you typed."
+					: "Nothing matches that.") +
+				  "</li>";
+
+			const open = comboOpen === key;
+			wrap.classList.toggle("is-open", open);
+			input.setAttribute("aria-expanded", open ? "true" : "false");
+			if (open && matches.length) {
+				input.setAttribute("aria-activedescendant", key + "-opt-" + comboActive);
+				const active = list.querySelector(".is-active");
+				// Scroll the LIST, not the page: the popup is what overflows.
+				if (active && active.scrollIntoView) active.scrollIntoView({ block: "nearest" });
+			} else {
+				input.removeAttribute("aria-activedescendant");
+			}
+		}
+
+		function openCombo(key, needle) {
+			const reopening = comboOpen !== key;
+			comboOpen = key;
+			comboActive = 0;
+			paintCombo(key, needle);
+			// Only when it OPENS. Typing repaints the rows; it must not move the box
+			// they are in.
+			if (reopening) {
+				const wrap = formEl.querySelector('[data-cf-combo="' + key + '"]');
+				const list = formEl.querySelector('[data-cf-combo-list="' + key + '"]');
+				if (wrap) placeCombo(wrap);
+			}
+		}
+
+		function closeCombo() {
+			const key = comboOpen;
+			comboOpen = "";
+			if (key) paintCombo(key, "");
+		}
+
+		function chooseCombo(key, value, label) {
+			const input = formEl.querySelector('[data-cf-combo-input="' + key + '"]');
+			setValue(key, value);
+			if (input) input.value = label;
+			closeCombo();
+			if (key === "project_key" || key === "increase_by") paintContext();
+			// Anything listing options FOR this field is now looking at the wrong list.
+			reloadDependents(key);
+			paintRail();
+			validateField(key);
+		}
+
+		formEl.addEventListener("input", (event) => {
+			const target = event.target;
+			const comboKey = target.getAttribute("data-cf-combo-input");
+			if (comboKey) {
+				const field = comboField(comboKey);
+				const typed = target.value;
+				// A field that accepts anything stores what you typed as you type it,
+				// so leaving without picking a row still submits an answer. One that
+				// does not is cleared until a row IS picked -- otherwise a half-typed
+				// repository name would be submitted as though it were a real one.
+				if (field.allow_custom) {
+					answers[comboKey] = typed;
+				} else if (answers[comboKey]) {
+					answers[comboKey] = "";
+				}
+				openCombo(comboKey, typed);
+				paintRail();
+				return;
+			}
+			const custom = target.getAttribute("data-cf-custom");
+			if (custom) {
+				setValue(custom, target.value);
+				paintContext();
+				// Debounced: this fires on every keystroke, and each reload is a call
+				// to Artifactory.
+				clearTimeout(dependentTimer);
+				dependentTimer = setTimeout(() => reloadDependents(custom), 400);
+				return;
+			}
+			const key = target.getAttribute("data-cf-key");
+			if (!key) return;
+			if (target.type === "checkbox") {
+				answers[key] = target.checked;
+				// A toggle can reveal or hide a whole section, so the form is rebuilt
+				// rather than patched — and the values already typed are kept, so
+				// turning a section off and on again does not empty it.
+				render();
+				return;
+			}
+			setValue(key, target.value);
+			if (key === "project_key" || key === "increase_by") paintContext();
+		});
+
+		// Keyboard. Without this the control is a text box with decoration: the list
+		// can be seen and not reached, which is worse than no list at all.
+		formEl.addEventListener("keydown", (event) => {
+			const key = event.target.getAttribute("data-cf-combo-input");
+			if (!key) return;
+			const field = comboField(key);
+			const matches = comboMatches(field, event.target.value);
+
+			if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+				event.preventDefault();
+				if (comboOpen !== key) {
+					openCombo(key, event.target.value);
+					return;
+				}
+				const step = event.key === "ArrowDown" ? 1 : -1;
+				// Wraps, because a list you cannot get back to the top of is a list you
+				// scroll through twice.
+				comboActive = matches.length
+					? (comboActive + step + matches.length) % matches.length
+					: 0;
+				paintCombo(key, event.target.value);
+				return;
+			}
+			if (event.key === "Home" || event.key === "End") {
+				if (comboOpen !== key || !matches.length) return;
+				event.preventDefault();
+				comboActive = event.key === "Home" ? 0 : matches.length - 1;
+				paintCombo(key, event.target.value);
+				return;
+			}
+			if (event.key === "Enter") {
+				// Never let this submit the form. Enter inside a combobox means "take
+				// the highlighted row", and a form that submits instead is a form that
+				// sends a half-filled request because somebody confirmed a repository.
+				event.preventDefault();
+				const hit = matches[comboActive];
+				if (comboOpen === key && hit) {
+					chooseCombo(key, hit.value, hit.label);
+				} else if (field.allow_custom) {
+					chooseCombo(key, event.target.value, event.target.value);
+				}
+				return;
+			}
+			if (event.key === "Escape") {
+				if (comboOpen !== key) return;
+				event.preventDefault();
+				// Stops here: the dialog also listens for Escape, and one press should
+				// close the list, not the whole form somebody has been filling in.
+				event.stopPropagation();
+				event.target.value = comboLabel(field, comboAll(field), answers[key]);
+				closeCombo();
+			}
+		});
+
+		// Pointer. mousedown rather than click: the input's blur fires first and would
+		// close the list out from under the finger.
+		formEl.addEventListener("mousedown", (event) => {
+			const option = event.target.closest("[data-cf-combo-value]");
+			if (option) {
+				const wrap = option.closest("[data-cf-combo]");
+				event.preventDefault();
+				chooseCombo(wrap.getAttribute("data-cf-combo"),
+							option.getAttribute("data-cf-combo-value"),
+							option.textContent);
+				return;
+			}
+			// Clicking the box opens it showing everything, which is how somebody who
+			// does not know what to type finds out what there is.
+			const key = event.target.getAttribute("data-cf-combo-input");
+			if (key && comboOpen !== key) openCombo(key, "");
+		});
+
+		formEl.addEventListener("focusout", (event) => {
+			const key = event.target.getAttribute("data-cf-combo-input");
+			if (!key || comboOpen !== key) return;
+			// Deferred one tick: focusout fires before the click that caused it lands
+			// on an option.
+			setTimeout(() => {
+				if (comboOpen !== key) return;
+				const field = comboField(key);
+				const input = formEl.querySelector('[data-cf-combo-input="' + key + '"]');
+				// Leaving a strict picker with text that matches nothing restores the
+				// last real answer. Half a repository name is not an answer, and
+				// leaving it on screen makes an empty field look filled in.
+				if (input && !field.allow_custom) {
+					input.value = comboLabel(field, comboAll(field), answers[key]);
+				}
+				closeCombo();
+				validateField(key);
+			}, 120);
+		});
+
+		// Scrolling the form moves the field, so the room below it changes. The popup
+		// follows the field on its own (it is positioned against it) but the decision
+		// to open upward has to be taken again.
+
+		if (backBtn) backBtn.addEventListener("click", () => goToStep(step - 1));
+		if (nextBtn) {
+			nextBtn.addEventListener("click", () => {
+				let bad = null;
+				stepFields().forEach((field) => {
+					validateField(field.key);
+					if (!bad && fieldError(field)) bad = field;
+				});
+				if (bad) {
+					showError("Some answers on this step are missing.");
+					const wrap = formEl.querySelector('[data-cf-field="' + bad.key + '"]');
+					if (wrap) {
+						wrap.scrollIntoView({ block: "center" });
+						const control = wrap.querySelector(".cf-input, select");
+						if (control) control.focus({ preventScroll: true });
+					}
+					return;
+				}
+				showError("");
+				goToStep(step + 1);
+			});
+		}
+
+		formEl.addEventListener("change", (event) => {
+			const key = event.target.getAttribute("data-cf-key");
+			if (key && event.target.tagName === "SELECT") {
+				const field = allFields().filter((f) => f.key === key)[0] || {};
+				const customInput = formEl.querySelector('[data-cf-custom="' + key + '"]');
+				if (event.target.value === "__custom__" && customInput) {
+					customInput.style.display = "";
+					answers[key] = customInput.value || "";
+					customInput.focus();
+				} else {
+					if (customInput) customInput.style.display = "none";
+					setValue(key, event.target.value);
+				}
+				if (key === "project_key") paintContext();
+				// A select can reveal or hide fields below it, so the form is rebuilt
+				// -- answers already given are kept, so hiding a block and bringing it
+				// back does not empty it.
+				if (allFields().some((f) => (f.visible_when || {}).field === key)) render();
+				// Anything that lists options FOR this field is now looking at the
+				// wrong list.
+				reloadDependents(key);
+				paintRail();
+			}
+			const fileKey = event.target.getAttribute("data-cf-file");
+			if (fileKey) readFile(fileKey, event.target);
+		});
+
+		formEl.addEventListener("focusout", () => { paintRail(); });
+
+		function readFile(key, input) {
+			const picked = Array.prototype.slice.call(input.files || []);
+			const file = picked[0];
+			if (!file) { delete files[key]; setValue(key, ""); paintRail(); return; }
+			const field = allFields().filter((f) => f.key === key)[0] || {};
+			const tooBig = picked.filter((f) => f.size > 5 * 1024 * 1024)[0];
+			if (tooBig) {
+				showError(tooBig.name + " is larger than 5 MB.");
+				input.value = "";
+				return;
+			}
+			if (field.multiple) {
+				// Several attachments on one ticket, kept as they are. No base64: this
+				// field only ever goes out through the multipart path.
+				files[key] = {
+					filename: picked.map((f) => f.name).join(", "),
+					list: picked.map((f) => ({ filename: f.name, file: f })),
+				};
+				setValue(key, picked.map((f) => f.name).join(", "));
+				paintRail();
+				return;
+			}
+			const reader = new FileReader();
+			reader.onload = () => {
+				const result = String(reader.result || "");
+				const base64 = result.indexOf(",") > -1 ? result.split(",")[1] : result;
+				files[key] = {
+					filename: file.name,
+					content_type: file.type || "application/octet-stream",
+					data_base64: base64,
+					// The File itself, kept for the multipart path. Base64 in JSON is
+					// what the catalog endpoints take; the ticket endpoint takes real
+					// uploads, and re-decoding base64 to rebuild a File it already had
+					// would be work done twice to arrive back where we started.
+					file: file,
+					list: [{ filename: file.name, file: file }],
+				};
+				setValue(key, file.name);
+				const thumb = formEl.querySelector('[data-cf-thumb="' + key + '"]');
+				if (thumb && /^image\//.test(file.type)) {
+					thumb.src = result;
+					thumb.style.display = "block";
+				}
+				paintRail();
+			};
+			reader.readAsDataURL(file);
+		}
+
+		railEl.addEventListener("click", (event) => {
+			const button = event.target.closest("[data-cf-goto]");
+			if (!button) return;
+			const key = button.getAttribute("data-cf-goto");
+			// In a wizard the rail JUMPS rather than scrolls, and it may only go
+			// BACKWARDS. Going back to check something is exactly what steps make
+			// awkward, so the rail is the way round that; jumping forwards past
+			// unanswered questions is the thing Next already refuses, and the rail
+			// must not be a way to do what the button in front of you will not.
+			if (isWizard()) {
+				const index = visibleSections().map((s) => s.key).indexOf(key);
+				if (index > -1 && index <= step) goToStep(index);
+				return;
+			}
+			const section = document.getElementById("cf-s-" + key);
+			if (section) section.scrollIntoView({ block: "start", behavior: "smooth" });
+		});
+
+		// ── Submit ───────────────────────────────────────────────────────────
+
+		function showError(message) {
+			footErrEl.textContent = message;
+			footErrEl.classList.add("is-on");
+		}
+
+		function validate() {
+			let firstBad = null;
+			(spec.sections || []).forEach((section) => {
+				if (!sectionVisible(section)) return;
+				(section.fields || []).forEach((field) => {
+					const wrap = formEl.querySelector('[data-cf-field="' + field.key + '"]');
+					if (!wrap) return;
+					const err = fieldError(field);
+					wrap.classList.toggle("is-invalid", !!err);
+					const errEl = wrap.querySelector("[data-cf-err]");
+					if (errEl) errEl.textContent = err;
+					if (err && !firstBad) firstBad = wrap;
+				});
+			});
+			paintRail();
+			if (firstBad) {
+				firstBad.scrollIntoView({ block: "center", behavior: "smooth" });
+				const control = firstBad.querySelector(".cf-input");
+				if (control) control.focus({ preventScroll: true });
+				showError("Some required answers are missing.");
+				return false;
+			}
+			return true;
+		}
+
+		function asFormData() {
+			// EVERY field, including the hidden ones, and empty as "".
+			//
+			// This is deliberately what `new FormData(theForm)` produced for the
+			// hand-built wizard this replaced, and matching it exactly is the point.
+			// Skipping unanswered fields looks tidier and is not the same request: an
+			// optional variable arriving as "" is a value, and the same variable not
+			// arriving at all is unset -- at which point the ServiceNow endpoint's
+			// auto-fill step supplies the item's OWN default for it. For a reference
+			// variable that default is the account submitting the producer, which is
+			// the service account, and the ticket comes back belonging to it.
+			//
+			// So the shape of the body is part of the endpoint's contract, not a
+			// detail of how this renderer happens to build it. Do not "clean this up".
+			const body = new FormData();
+			allFields().forEach((field) => {
+				// A file field is appended below, as a file. Sending its name here as
+				// a string would put text into a parameter the endpoint has typed as
+				// an upload -- and an empty one, for a ticket with no attachment,
+				// would do it on every single ticket.
+				if (field.type === "file") return;
+				const value = answers[field.key];
+				body.append(
+					field.key,
+					value === null || value === undefined ? ""
+						: typeof value === "boolean" ? (value ? "true" : "false")
+						: String(value)
+				);
+			});
+			Object.keys(files).forEach((key) => {
+				const picked = files[key];
+				(picked && picked.list ? picked.list : picked ? [picked] : []).forEach((one) => {
+					if (one && one.file) body.append(key, one.file, one.filename);
+				});
+			});
+			return body;
+		}
+
+		async function submit() {
+			if (busy) return;
+			if (!validate()) return;
+			busy = true;
+			submitBtn.disabled = true;
+			submitBtn.textContent = "Sending...";
+			try {
+				const payload = {
+					answers: answers,
+					attachments: Object.keys(files).map((key) => ({
+						field: key,
+						filename: files[key].filename,
+						content_type: files[key].content_type,
+						data_base64: files[key].data_base64,
+					})),
+				};
+				// Two shapes, because one endpoint predates this renderer.
+				//
+				// Everything in the catalog takes {answers, attachments} as JSON. The
+				// Support ticket goes to the endpoint that already creates ServiceNow
+				// incidents through the record producer, which takes named multipart
+				// fields and real files. Rewriting THAT to match this would mean
+				// re-testing incident creation against a live instance to gain a
+				// consistency nobody sees, so the renderer speaks both and the field
+				// keys in the spec are the endpoint's own names.
+				const res = spec.submit_as === "form"
+					? await fetch(submitUrl || "", {
+						method: "POST", credentials: "same-origin", body: asFormData(),
+					})
+					: await fetch(submitUrl || ("/api/catalog/submit/" + encodeURIComponent(spec.key)), {
+						method: "POST",
+						credentials: "same-origin",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify(payload),
+					});
+				const json = await res.json().catch(() => ({}));
+				if (!res.ok) throw new Error(json.detail || "The request could not be sent.");
+				(spec.sections || []).forEach(remember);
+				showResult(json);
+				// After the result is on screen, never instead of it: a caller that
+				// throws must not lose the requester the number they were given.
+				if (onDone) {
+					try { onDone(json); } catch (err) {
+						console.warn("catalog form onDone failed", err);
+					}
+				}
+			} catch (err) {
+				showError(err && err.message ? err.message : "The request could not be sent.");
+			} finally {
+				busy = false;
+				submitBtn.disabled = false;
+				submitBtn.textContent = spec.submit_label || "Submit";
+			}
+		}
+
+		function showResult(json) {
+			const data = json.data || {};
+
+			// WHERE TO FOLLOW IT UP COMES FROM THE SPEC, NOT FROM HERE.
+			//
+			// This screen used to end every request with "You can follow it under My
+			// Requests", because every request it had ever rendered was approved
+			// there. A ticket is not: it is raised immediately, and it is listed
+			// under My Tickets on the Support page. So the form says where its own
+			// result lives, and this renderer reads it.
+			const done = spec.done || {};
+			const follow = ' You can follow it under <a class="link" href="' +
+				esc(done.href || "/ui/my-requests") + '">' +
+				esc(done.label || "My Requests") + "</a>.";
+
+			let html = '<div class="cf-result">';
+			if (done.kind === "ticket") {
+				// This form IS the thing, not a request for it: the endpoint already
+				// created the ticket and the number came back with the response.
+				// Announcing "Sent for approval" here -- which is what the branch
+				// below does -- told people to wait for something that had already
+				// happened, and pointed them at the wrong page to see it.
+				if (data.number) {
+					html += "<div>" + esc(done.lead || "Opened as") + "</div>";
+					html += '<div class="cf-result-num">' + esc(data.number) + "</div>";
+				} else {
+					html += "<div>" + esc(done.lead_pending || "Opened.") + "</div>";
+					html += '<div class="cf-result-note">It does not have a number yet.</div>';
+				}
+				// The name on the ticket, read back off the created record. It is here
+				// because "who is this from" is the field that goes wrong silently:
+				// the person who would notice is the one reading this screen.
+				if (data.caller) {
+					html += '<div class="cf-result-note">Opened for ' + esc(data.caller) + ".</div>";
+				}
+				html += '<div class="cf-result-note">' + esc(spec.submit_note || "") + follow + "</div>";
+			} else if (json.kind === "servicenow") {
+				if (data.number) {
+					html += "<div>Submitted to the DevOps Support queue as</div>";
+					html += '<div class="cf-result-num">' + esc(data.number) + "</div>";
+					html += '<div class="cf-result-note">Your answers are kept in the portal too, so they stay readable.</div>';
+				} else {
+					// Stored but not delivered. Said plainly, because the difference
+					// decides whether anyone is going to look at it.
+					html += "<div>Saved in the portal.</div>";
+					html += '<div class="cf-result-note">It did not reach ServiceNow' +
+						(data.snow_error ? " (" + esc(data.snow_error) + ")" : "") +
+						". Tell the DevOps team, or submit it again later — nothing you typed is lost.</div>";
+				}
+			} else {
+				html += "<div>Sent for approval.</div>";
+				const snow = json.servicenow || {};
+				if (snow.number) {
+					html += '<div class="cf-result-num">' + esc(snow.number) + "</div>";
+					html += '<div class="cf-result-note">Also opened in the DevOps Support queue.</div>';
+				} else if (snow.error) {
+					// Said out loud. The portal will still carry the request out, but the
+					// team has no ticket for it, and only the person reading this can
+					// mention that to them.
+					html += '<div class="cf-result-note">It did not open a ServiceNow item (' +
+						esc(snow.error) + "), so the DevOps team has no ticket for it.</div>";
+				}
+				html += '<div class="cf-result-note">' + esc(spec.submit_note || "") + follow + "</div>";
+			}
+			html += '<div style="margin-top:1.2rem"><button type="button" class="btn btn-primary btn-sm" data-cf-close>Done</button></div>';
+			html += "</div>";
+			bodyEl.style.display = "none";
+			footEl.style.display = "none";
+			modal.querySelector(".cf-box").insertAdjacentHTML("beforeend", html);
+		}
+
+		submitBtn.addEventListener("click", submit);
+		modal.addEventListener("click", (event) => {
+			if (event.target.closest("[data-cf-close]")) close();
+		});
+
+		function close() {
+			modal.close();
+			const result = modal.querySelector(".cf-result");
+			if (result) result.remove();
+			bodyEl.style.display = "";
+			footEl.style.display = "";
+		}
+
+		// ── Opening ──────────────────────────────────────────────────────────
+
+		async function fetchOptions(source, query) {
+			const url = "/api/catalog/options/" + encodeURIComponent(source) + (query || "");
+			try {
+				const res = await fetch(url, { credentials: "same-origin" });
+				const json = await res.json().catch(() => ({}));
+				return { data: json.data || [], unavailable: json.unavailable || "", note: json.note || "" };
+			} catch (_) {
+				return { data: [], unavailable: "That list could not be loaded." };
+			}
+		}
+
+		async function loadOptions() {
+			const sources = [];
+			const fields = allFields();
+			fields.forEach((field) => {
+				// A dependent list waits for its parent — but only when that parent has
+				// to be answered. The cleaner's Project is OPTIONAL: it narrows the
+				// repository list and nobody is obliged to use it. Skipping the load
+				// there meant that leaving Project alone left Repository with no list at
+				// all, so the one field this form exists to get right could only be
+				// typed from memory. The list is searchable; a long one is not a problem.
+				if (field.depends_on) {
+					const parent = fields.filter((f) => f.key === field.depends_on)[0];
+					if (!parent || parent.required) return;
+				}
+				if (field.options_source && sources.indexOf(field.options_source) === -1) {
+					sources.push(field.options_source);
+				}
+			});
+			await Promise.all(sources.map(async (source) => {
+				if (optionCache[source]) return;
+				optionCache[source] = await fetchOptions(source);
+			}));
+		}
+
+		// When a parent field changes, whatever depends on it is read again for the
+		// value it now holds. Filtering the already-loaded list in the browser would
+		// be wrong: the server knows which repositories belong to a project, and it
+		// also knows when NONE do, which is a sentence rather than an empty list.
+		async function reloadDependents(parentKey) {
+			const dependents = allFields().filter((f) => f.depends_on === parentKey && f.options_source);
+			if (!dependents.length) return;
+			await Promise.all(dependents.map(async (field) => {
+				const parent = String(answers[parentKey] || "").trim();
+				optionCache[field.options_source] = await fetchOptions(
+					field.options_source,
+					parent ? "?project=" + encodeURIComponent(parent) : ""
+				);
+				// The chosen value may not be in the new list. Kept rather than
+				// cleared: it is a legitimate answer that simply does not belong to
+				// this project, and silently emptying a field somebody filled in is
+				// the more annoying of the two behaviours.
+			}));
+			render();
+		}
+
+		// options: {values, submitUrl, title, submitLabel}. Editing an existing thing is
+		// the same form with the same validation -- a second "edit" form would be a
+		// second set of rules to keep in step with this one.
+		async function open(key, options) {
+			options = options || {};
+			submitUrl = options.submitUrl || "";
+			// What the caller wants done with the answer. Support opens the ticket it
+			// just created; the catalog forms have nothing to do afterwards.
+			onDone = typeof options.onDone === "function" ? options.onDone : null;
+			const res = await fetch("/api/catalog/forms/" + encodeURIComponent(key), { credentials: "same-origin" });
+			const json = await res.json().catch(() => ({}));
+			if (!res.ok || !json.data) {
+				window.portalToast?.({ kind: "error", message: "That form could not be opened." });
+				return;
+			}
+			spec = json.data;
+			answers = {};
+			files = {};
+			// A wizard always opens at its first step, however the last one ended.
+			step = 0;
+
+			const saved = remembered();
+			(spec.sections || []).forEach((section) => {
+				(section.fields || []).forEach((field) => {
+					if (field.default !== undefined) answers[field.key] = field.default;
+					if (section.remember && saved[field.key] !== undefined && saved[field.key] !== "") {
+						answers[field.key] = saved[field.key];
+					}
+					if (field.prefill === "display_name" && !answers[field.key]) {
+						const el = document.querySelector("[data-portal-user-name]");
+						if (el) answers[field.key] = el.getAttribute("data-portal-user-name") || "";
+					}
+				});
+			});
+
+			// Values handed in win over remembered ones and over defaults: this is an
+			// edit of something that exists, and what it holds now is the truth.
+			Object.keys(options.values || {}).forEach((k) => {
+				if (options.values[k] !== null && options.values[k] !== undefined) answers[k] = options.values[k];
+			});
+
+			titleEl.textContent = options.title || spec.title || "Request";
+			subEl.textContent = spec.description || spec.summary || "";
+			promiseEl.textContent = spec.submit_note || "";
+			submitBtn.textContent = options.submitLabel || spec.submit_label || "Submit";
+			footErrEl.classList.remove("is-on");
+
+			render();
+			modal.showModal();
+			// Options arrive after the form is on screen rather than before it: a form
+			// that waits for Artifactory to answer is a button that does nothing for
+			// two seconds, and every field except the picker can be filled in already.
+			await loadOptions();
+			render();
+		}
+
+		window.portalCatalogForm = { open: open };
+	})();
+</script>

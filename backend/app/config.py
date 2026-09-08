@@ -62,7 +62,7 @@ class Settings:
         # Keep same semantics as Node auth-service default
         self.jwt_expiry = os.getenv("JWT_EXPIRY", "8h")
 
-        # TLS verification for outbound integration calls. Closed networks
+        # TLS verification for outbound integration calls. Installations
         # often run internal CAs / self-signed certs; set to "false" there.
         self.integration_tls_verify = os.getenv(
             "INTEGRATION_TLS_VERIFY", "true"

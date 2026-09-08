@@ -1,0 +1,457 @@
+<style>
+	/*
+		The "?" next to a token prompt. It was a bare circular button with a `title`, and
+		a `title` is the browser's tooltip: it takes a second to appear, it is styled like
+		Windows 95, and on a touch device it never appears at all. Somebody staring at a
+		box asking for a "token" they have never heard of should not have to guess that the
+		small circle is where the help is.
+
+		So the circle now announces itself: hover (or focus) it and a bubble comes up ABOVE
+		it saying what it will give you. Clicking still opens the full step-by-step modal.
+	*/
+	.conn-help {
+		position: relative;
+		display: inline-flex;
+		align-items: center;
+	}
+
+	.conn-help-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		height: 1.25rem;
+		width: 1.25rem;
+		border-radius: 9999px;
+		border: 1px solid hsl(var(--p) / 0.5);
+		background: hsl(var(--p) / 0.12);
+		color: hsl(var(--p));
+		font-size: 0.7rem;
+		font-weight: 700;
+		line-height: 1;
+		cursor: pointer;
+		transition: background 120ms ease, transform 120ms ease;
+	}
+
+	.conn-help-btn:hover,
+	.conn-help-btn:focus-visible {
+		background: hsl(var(--p));
+		color: hsl(var(--pc));
+		transform: scale(1.1);
+	}
+
+	.conn-help-bubble {
+		position: absolute;
+		bottom: calc(100% + 8px);
+		left: 50%;
+		transform: translateX(-50%) translateY(4px);
+		z-index: 30;
+		width: 15rem;
+		padding: 0.5rem 0.65rem;
+		border-radius: 0.5rem;
+		border: 1px solid hsl(var(--bc) / 0.15);
+		background: hsl(var(--n));
+		color: hsl(var(--nc));
+		font-size: 0.7rem;
+		line-height: 1.5;
+		font-weight: 500;
+		text-align: left;
+		box-shadow: 0 6px 18px hsl(var(--n) / 0.35);
+		opacity: 0;
+		visibility: hidden;
+		transition: opacity 120ms ease, transform 120ms ease, visibility 120ms;
+	}
+
+	/* The little arrow, so the bubble points at the circle it belongs to. */
+	.conn-help-bubble::after {
+		content: "";
+		position: absolute;
+		top: 100%;
+		left: 50%;
+		margin-left: -5px;
+		border: 5px solid transparent;
+		border-top-color: hsl(var(--n));
+	}
+
+	.conn-help:hover .conn-help-bubble,
+	.conn-help-btn:focus-visible + .conn-help-bubble {
+		opacity: 1;
+		visibility: visible;
+		transform: translateX(-50%) translateY(0);
+	}
+</style>
+
+<div class="page-shell" data-connections-page>
+	<header class="page-header">
+		<div>
+			<h1 class="page-title">Connections</h1>
+			<p class="page-subtitle">
+				Each system uses your own token. This page shows the state of every system
+				you can connect to — and lets you fix the ones that need it, here.
+			</p>
+		</div>
+		<button type="button" class="btn btn-sm rounded-full px-4" data-conn-refresh>
+			Re-check
+		</button>
+	</header>
+
+	<div class="page-content">
+		<div class="grid gap-6 md:grid-cols-2 items-start" data-conn-list></div>
+	</div>
+</div>
+
+<script>
+	(function () {
+		const root = document.querySelector("[data-connections-page]");
+		if (!root) return;
+		const list = root.querySelector("[data-conn-list]");
+		const refreshBtn = root.querySelector("[data-conn-refresh]");
+
+		// EVERY system the portal can connect to, always rendered — including the healthy
+		// ones. The page used to render only what the API returned, so when the health call
+		// failed its three systems silently VANISHED and the page looked like Azure DevOps
+		// was the only integration that existed. A connection you cannot see is a connection
+		// you cannot fix. The list is now fixed, and the API only fills in state.
+		//
+		// Azure DevOps stores its PAT separately from the token-based integrations, so it has
+		// its own status endpoint. It is presented identically — the user should not have to
+		// care that the backend keeps them in different places.
+		const SYSTEMS = [
+			{
+				system: "azure",
+				label: "Azure DevOps",
+				hint: "Personal Access Token with read access to Work Items, Code and Build.",
+			},
+			{
+				system: "sonarqube",
+				label: "SonarQube",
+				hint: "User token, generated from your SonarQube account settings.",
+			},
+			{
+				system: "artifactory",
+				label: "Artifactory",
+				hint: "Identity token or API key. The Storage widget also needs admin rights.",
+			},
+			{
+				system: "confluence",
+				label: "Confluence",
+				hint: "Personal Access Token from your Confluence profile.",
+			},
+		];
+
+		{#
+			Systems whose widgets have all been hidden are dropped from this page.
+
+			Connections exists so people can connect the systems the portal USES. Once an
+			admin hides every widget belonging to one, the portal shows none of its data
+			anywhere — so asking for a token to it is asking for setup work with no
+			visible result, for a tool the portal has stopped surfacing.
+
+			Server-rendered from the same widget catalogue as the dashboard: there is no
+			second list of systems to keep in step, and a system reappears here the
+			moment one of its widgets is switched back on.
+		#}
+		const CONNECTABLE = {{ connectable_systems | default([]) | tojson }};
+		const VISIBLE_SYSTEMS = SYSTEMS.filter(
+			(s) => !CONNECTABLE.length || CONNECTABLE.indexOf(s.system) !== -1
+		);
+
+		function esc(value) {
+			return String(value == null ? "" : value)
+				.replace(/&/g, "&amp;")
+				.replace(/</g, "&lt;")
+				.replace(/>/g, "&gt;")
+				.replace(/"/g, "&quot;");
+		}
+
+		// Five states, and they are genuinely different: still checking, not configured by an
+		// admin, not connected by you, connected-but-broken (an expired token), and working.
+		// Collapsing them into "not working" is what made this hard to fix in the first place.
+		// "Working" gets a green badge of its own — silence is not reassurance.
+		function state(item) {
+			if (item.checking) {
+				return { label: "Checking…", text: "text-base-content/50", dot: "bg-base-300" };
+			}
+			if (item.error) {
+				return { label: "Check failed", text: "text-error", dot: "bg-error" };
+			}
+			if (!item.configured) {
+				return { label: "Not available", text: "text-base-content/50", dot: "bg-base-300" };
+			}
+			if (item.healthy) {
+				return { label: "Connected", text: "text-success", dot: "bg-success" };
+			}
+			if (item.connected) {
+				return { label: "Needs attention", text: "text-error", dot: "bg-error" };
+			}
+			return { label: "Not connected", text: "text-warning", dot: "bg-warning" };
+		}
+
+		function card(item) {
+			const st = state(item);
+			const action = item.healthy
+				? "Replace token"
+				: item.connected
+					? "Reconnect"
+					: "Connect";
+			// Not available = the admin has not configured the server URL, so there is no
+			// point offering a token box. Everything else can be acted on, including a
+			// failed check (the token may still be fine; the box lets you retry regardless).
+			const canConnect = item.configured && !item.checking;
+
+			// Spacing: the card reads top-to-bottom as three separate things — what this
+			// system IS (name + state), what is WRONG with it (the detail line), and what
+			// you can DO about it (the buttons). They were all a single step apart, which
+			// ran them together into one dense block. The gaps now grow with that structure:
+			// tight inside a thought, wide between them.
+			return `
+				<section class="section-card p-6" data-conn-card data-system="${esc(item.system)}">
+					<div class="flex items-center gap-3">
+						<span class="h-2.5 w-2.5 rounded-full ${st.dot} shrink-0"></span>
+						<h3 class="text-sm font-bold text-base-content flex-1">${esc(item.label)}</h3>
+						<span class="text-xs font-semibold ${st.text}">${esc(st.label)}</span>
+					</div>
+					<p class="mt-3 text-xs text-base-content/60" style="line-height: 1.6">${esc(item.detail || "")}</p>
+
+					${canConnect ? `
+						<div class="mt-5 hidden" data-conn-form>
+							<div class="flex items-center gap-1.5">
+								<p class="text-xs text-base-content/50 flex-1">${esc(item.hint)}</p>
+								<span class="conn-help">
+									<button
+										type="button"
+										class="conn-help-btn"
+										data-pat-help="${esc(item.system)}"
+										aria-label="How do I create this token?"
+									>?</button>
+									<span class="conn-help-bubble" role="tooltip">
+										Don't have a token yet? Click for step-by-step
+										instructions for ${esc(item.name)}.
+									</span>
+								</span>
+							</div>
+							<input
+								type="password"
+								class="input input-bordered input-sm mt-3 w-full"
+								placeholder="Paste your token"
+								data-conn-token
+							/>
+							<div class="mt-4 flex gap-2">
+								<button type="button" class="btn btn-primary btn-sm rounded-full px-5" data-conn-save>Save</button>
+								<button type="button" class="btn btn-ghost btn-sm rounded-full px-5" data-conn-cancel>Cancel</button>
+							</div>
+						</div>
+						<div class="mt-5 flex flex-wrap items-center gap-2">
+							<button type="button" class="btn btn-outline btn-primary btn-sm rounded-full px-5" data-conn-open>
+								${action}
+							</button>
+							${item.error ? `
+								<button type="button" class="btn btn-outline btn-primary btn-sm rounded-full px-5" data-conn-recheck>
+									Re-check
+								</button>
+							` : ""}
+							${item.connected ? `
+								<button type="button" class="btn btn-outline btn-error btn-sm rounded-full px-5" data-conn-disconnect>
+									Disconnect
+								</button>
+							` : ""}
+							<span class="conn-help">
+								<button
+									type="button"
+									class="conn-help-btn"
+									data-pat-help="${esc(item.system)}"
+									aria-label="How do I create this token?"
+								>?</button>
+								<span class="conn-help-bubble" role="tooltip">
+									Don't have a token yet? Click for step-by-step
+									instructions for ${esc(item.name)}.
+								</span>
+							</span>
+						</div>
+					` : ""}
+				</section>
+			`;
+		}
+
+		function render(items) {
+			list.innerHTML = items.map(card).join("");
+		}
+
+		function saveUrlFor(system) {
+			return system === "azure"
+				? "/api/azure-devops/pat"
+				: `/api/integrations/${encodeURIComponent(system)}/token`;
+		}
+
+		function bodyFor(system, token) {
+			return system === "azure"
+				? JSON.stringify({ pat: token })
+				: JSON.stringify({ token });
+		}
+
+		async function load() {
+			// Render the full list up front in a "checking" state, so the page is never a
+			// spinner with nothing in it and never LOSES a system while a call is in flight.
+			const items = VISIBLE_SYSTEMS.map((s) => ({
+				...s,
+				checking: true,
+				detail: "Checking this connection…",
+			}));
+			render(items);
+
+			function apply(system, patch) {
+				const item = items.find((i) => i.system === system);
+				if (!item) return;
+				Object.assign(item, { checking: false, error: false }, patch);
+			}
+
+			// Independently: if the Azure call fails, the other three still report, and vice
+			// versa. Previously a single failing call took its systems off the page entirely.
+			const [ado, health] = await Promise.allSettled([
+				fetch("/api/azure-devops/pat", { credentials: "same-origin" }),
+				fetch("/api/integrations/health", { credentials: "same-origin" }),
+			]);
+
+			if (ado.status === "fulfilled" && ado.value.ok) {
+				const data = (await ado.value.json()).data || {};
+				apply("azure", {
+					configured: true,
+					connected: !!data.configured,
+					healthy: !!data.healthy,
+					detail:
+						data.detail ||
+						(data.healthy
+							? "Connected."
+							: data.configured
+								? "Token expired or revoked — reconnect."
+								: "Not connected — add your token to use this system."),
+				});
+			} else {
+				const why =
+					ado.status === "fulfilled"
+						? `the server returned HTTP ${ado.value.status}`
+						: "the request did not complete";
+				apply("azure", {
+					error: true,
+					configured: true,
+					detail: `Could not check this connection — ${why}. Your token may still be fine; press Re-check.`,
+				});
+			}
+
+			if (health.status === "fulfilled" && health.value.ok) {
+				const rows = (await health.value.json()).data || [];
+				rows.forEach((r) => apply(r.system, r));
+			} else {
+				// The exact case that made three systems disappear. Now it is stated on each
+				// card, with the HTTP status, instead of being swallowed.
+				const why =
+					health.status === "fulfilled"
+						? `the server returned HTTP ${health.value.status}`
+						: "the request did not complete";
+				["sonarqube", "artifactory", "confluence"].forEach((s) =>
+					apply(s, {
+						error: true,
+						configured: true,
+						detail: `Could not check this connection — ${why}. Your token may still be fine; press Re-check.`,
+					}),
+				);
+			}
+
+			render(items);
+		}
+
+		list.addEventListener("click", async (event) => {
+			// The (?) buttons are handled globally by pat-help.html; ignore them here so
+			// opening the help does not also toggle the token form.
+			if (event.target.closest("[data-pat-help]")) return;
+
+			const card = event.target.closest("[data-conn-card]");
+			if (!card) return;
+			const form = card.querySelector("[data-conn-form]");
+
+			if (event.target.closest("[data-conn-open]")) {
+				form?.classList.remove("hidden");
+				card.querySelector("[data-conn-token]")?.focus();
+				return;
+			}
+			if (event.target.closest("[data-conn-cancel]")) {
+				form?.classList.add("hidden");
+				return;
+			}
+
+			// A failing card carries its own Re-check, right where the failure is stated.
+			// The page-level one is in the header, which is nowhere near the card telling
+			// you to press it.
+			if (event.target.closest("[data-conn-recheck]")) {
+				load();
+				return;
+			}
+
+			// Disconnect deletes the stored token, which is the SAME token the widgets read
+			// — so this page and the widgets can never disagree about whether you are
+			// connected. Destructive and easy to hit by accident, so it asks first.
+			const disconnectBtn = event.target.closest("[data-conn-disconnect]");
+			if (disconnectBtn) {
+				const system = card.dataset.system;
+				const label = card.querySelector("h3")?.textContent?.trim() || system;
+				if (
+					!window.confirm(
+						`Disconnect ${label}?\n\nYour token is deleted from the portal. The ${label} widgets will stop showing your data until you connect again with a new token.`,
+					)
+				) {
+					return;
+				}
+				disconnectBtn.disabled = true;
+				try {
+					const res = await fetch(saveUrlFor(system), {
+						method: "DELETE",
+						credentials: "same-origin",
+					});
+					if (!res.ok) throw new Error(`Could not disconnect (HTTP ${res.status}).`);
+					window.portalToast?.({ kind: "success", message: `${label} disconnected.` });
+					load();
+				} catch (err) {
+					window.portalToast?.({ kind: "error", message: String(err.message || err) });
+					disconnectBtn.disabled = false;
+				}
+				return;
+			}
+
+			const saveBtn = event.target.closest("[data-conn-save]");
+			if (!saveBtn) return;
+
+			const system = card.dataset.system;
+			const input = card.querySelector("[data-conn-token]");
+			const token = (input?.value || "").trim();
+			if (!token) return;
+
+			saveBtn.disabled = true;
+			try {
+				const res = await fetch(saveUrlFor(system), {
+					method: "POST",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: bodyFor(system, token),
+				});
+				if (!res.ok) {
+					// The save endpoints VALIDATE the token before storing it, so a failure
+					// here is the real reason — show it rather than a generic error.
+					let detail = "Token rejected.";
+					try {
+						detail = (await res.json()).detail || detail;
+					} catch (_) {}
+					throw new Error(detail);
+				}
+				if (input) input.value = "";
+				window.portalToast?.({ kind: "success", message: "Connected." });
+				load();
+			} catch (err) {
+				window.portalToast?.({ kind: "error", message: String(err.message || err) });
+			} finally {
+				saveBtn.disabled = false;
+			}
+		});
+
+		refreshBtn?.addEventListener("click", load);
+		load();
+	})();
+</script>

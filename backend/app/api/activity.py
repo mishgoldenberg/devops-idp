@@ -14,7 +14,7 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from activity import recent_for_user
+from activity import clear_for_user, recent_for_user
 from security import AuthUser, get_current_user
 
 log = logging.getLogger(__name__)
@@ -44,3 +44,29 @@ def list_activity(
     email = _caller_email(current_user)
     rows = recent_for_user(email, limit=limit)
     return {"success": True, "data": rows}
+
+
+@router.delete("")
+def clear_activity(
+    current_user: AuthUser = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    Clear the caller's own activity feed.
+
+    Deliberately available to every signed-in user, not just admins: the feed is
+    private to the person it describes, so clearing it affects nobody else. The
+    caller's email comes from the auth token and is never accepted from the
+    request — that is what stops this becoming a way to wipe someone else's feed.
+    """
+    email = _caller_email(current_user)
+    try:
+        removed = clear_for_user(email)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log.warning("activity clear failed for %s: %s", email, exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not clear your activity — please try again",
+        )
+    return {"success": True, "data": {"removed": removed}}

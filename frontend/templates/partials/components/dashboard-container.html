@@ -4,20 +4,42 @@
 	<main class="drawer-content page-shell h-full">
 		<header class="page-header">
 			<div>
-				<h1 class="page-title">
-					Welcome back, {{ user.display_name }}!
+				{#
+					One greeting, seen several times a day, stops being a greeting and
+					becomes furniture. A rotating line is read.
+
+					Rendered server-side into a data attribute rather than picked in JS at
+					paint time, so the heading never flickers from one wording to another
+					on load. The name is escaped by Jinja as usual; the greeting text is a
+					literal from the list below, never user input.
+				#}
+				<h1 class="page-title" data-greeting>
+					{{ greeting | default('Welcome back, ', true) }}{{ user.display_name }}{{ greeting_suffix | default('!', true) }}
 				</h1>
 				<p class="page-subtitle">
 					Summary of your connected systems status and tasks.
 				</p>
 			</div>
-			<div class="flex gap-2">
-				<button id="refresh-btn" class="btn btn-outline btn-sm">
+			<div class="flex gap-2 items-center">
+				<!--
+					Says when the data is from. The dashboard no longer flashes at you
+					every 60 seconds, so it has to be able to answer the question that
+					flashing was implicitly answering: is this current?
+				-->
+				<span
+					id="refresh-status"
+					class="text-xs text-base-content/50"
+					aria-live="polite"
+				></span>
+				<button id="refresh-btn" class="btn btn-outline btn-primary btn-sm">
 					&#8635; Refresh
 				</button>
+				<!-- `drawer-button` removed: it is not in the compiled stylesheet, so it
+				     was doing nothing, and this label is not inside a DaisyUI drawer
+				     anyway — the `for` attribute is what opens the panel. -->
 				<label
 					for="dashboard-customize-drawer"
-					class="btn btn-primary btn-sm drawer-button"
+					class="btn btn-primary btn-sm"
 				>
 					<img
 						src="../static/images/customize.svg"
@@ -29,6 +51,25 @@
 		</header>
 
 		<div class="page-content flex flex-col gap-8">
+		<!--
+			Announcements from whoever runs the portal. Above "Needs you" on purpose:
+			this is the only channel the platform team has to reach everybody, and it
+			collapses to nothing at all on the ordinary day when there is no news.
+		-->
+		{% include "partials/components/announcements-billboard.html" %}
+
+		<!--
+			"Needs me today" — the first thing on the page.
+
+			The widget grid below shows STATE: your work items, your pull requests, your
+			tickets. That is useful but it is not an answer — you still have to read six
+			cards to work out which of forty things is actually blocked on you. This asks
+			the other question, once, across every system, and puts the answer where you
+			look first. It hides itself entirely when there is nothing waiting, so a quiet
+			day costs no screen space.
+		-->
+		{% include "partials/components/inbox-section.html" %}
+
 		<!-- Quick Links sits above the widget grid at its natural width -->
 		<div
 			id="quick-links-component"
@@ -54,17 +95,41 @@
 		     accounts don't see an empty shell. Backed by /api/favorites. -->
 		{% include "partials/components/favorites-section.html" %}
 
-		<!-- Dashboard widget grid -->
+		<!--
+			Dashboard widget grid.
+
+			`grid-auto-flow: dense` is set inline because Tailwind's `grid-flow-dense`
+			is not in the compiled stylesheet. It earns its place: the Azure DevOps
+			widget spans two columns, and a two-column item that does not fit in what
+			is left of a row does not wrap into it — it skips to the next row and
+			leaves the gap behind. That gap is the empty slot in row one. Dense fills
+			it with the next widget that does fit.
+		-->
+		<!--
+			`gap-8` is gone from the class list on purpose: the gap and the row height are
+			now variables (--widget-gap / --widget-row-h, declared in portal-chrome) so
+			compact density can change them, and the resize script measures them rather
+			than assuming 320px and 32px. Inline style because it must beat the utility
+			classes without inventing a new compiled one.
+		-->
 		<div
-			class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8 items-start"
+			class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 items-start"
+			style="
+				grid-auto-flow: dense;
+				grid-auto-rows: var(--widget-row-h);
+				gap: var(--widget-gap);
+			"
+			data-widget-grid
 		>
-			<!-- Azure DevOps Tasks -->
+			<!-- Azure DevOps Tasks. Double-width: it carries three filter selects and
+			     a sprint's worth of rows, which don't fit a single column. -->
 			<div
 				id="ado-tasks-component"
 				data-widget-key="ado_my_work_items"
-				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
+				class="h-80 md:col-span-2 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
 				hx-get="/ui/components/azure-devops-tasks"
-				hx-trigger="load, every 60s, click from:#refresh-btn"
+				hx-trigger="intersect once, refresh, click from:#refresh-btn"
+				data-autorefresh
 				hx-target="find .widget-content"
 				hx-swap="innerHTML"
 				{% if enabled_widgets is defined and 'ado_my_work_items' not in enabled_widgets %}style="display:none"{% endif %}
@@ -83,7 +148,8 @@
 				data-widget-key="snow_my_tickets"
 				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
 				hx-get="/ui/components/servicenow-tickets"
-				hx-trigger="load, every 60s, click from:#refresh-btn"
+				hx-trigger="intersect once, refresh, click from:#refresh-btn"
+				data-autorefresh
 				hx-target="find .widget-content"
 				hx-swap="innerHTML"
 				{% if enabled_widgets is defined and 'snow_my_tickets' not in enabled_widgets %}style="display:none"{% endif %}
@@ -102,7 +168,8 @@
 				data-widget-key="ado_my_pull_requests"
 				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
 				hx-get="/ui/components/pull-requests"
-				hx-trigger="load, every 60s, click from:#refresh-btn"
+				hx-trigger="intersect once, refresh, click from:#refresh-btn"
+				data-autorefresh
 				hx-target="find .widget-content"
 				hx-swap="innerHTML"
 				{% if enabled_widgets is defined and 'ado_my_pull_requests' not in enabled_widgets %}style="display:none"{% endif %}
@@ -121,7 +188,8 @@
 				data-widget-key="ado_prs_for_review"
 				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
 				hx-get="/ui/components/pull-requests-review"
-				hx-trigger="load, every 60s, click from:#refresh-btn"
+				hx-trigger="intersect once, refresh, click from:#refresh-btn"
+				data-autorefresh
 				hx-target="find .widget-content"
 				hx-swap="innerHTML"
 				{% if enabled_widgets is defined and 'ado_prs_for_review' not in enabled_widgets %}style="display:none"{% endif %}
@@ -140,7 +208,8 @@
 				data-widget-key="ado_pipeline_status"
 				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
 				hx-get="/ui/components/pipelines"
-				hx-trigger="load, every 60s, click from:#refresh-btn"
+				hx-trigger="intersect once, refresh, click from:#refresh-btn"
+				data-autorefresh
 				hx-target="find .widget-content"
 				hx-swap="innerHTML"
 				{% if enabled_widgets is defined and 'ado_pipeline_status' not in enabled_widgets %}style="display:none"{% endif %}
@@ -159,7 +228,8 @@
 				data-widget-key="sonar_projects"
 				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
 				hx-get="/ui/components/sonarqube-projects"
-				hx-trigger="load, every 60s, click from:#refresh-btn"
+				hx-trigger="intersect once, refresh, click from:#refresh-btn"
+				data-autorefresh
 				hx-target="find .widget-content"
 				hx-swap="innerHTML"
 				{% if enabled_widgets is defined and 'sonar_projects' not in enabled_widgets %}style="display:none"{% endif %}
@@ -178,7 +248,8 @@
 				data-widget-key="artifactory_repos"
 				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
 				hx-get="/ui/components/artifactory-repos"
-				hx-trigger="load, every 60s, click from:#refresh-btn"
+				hx-trigger="intersect once, refresh, click from:#refresh-btn"
+				data-autorefresh
 				hx-target="find .widget-content"
 				hx-swap="innerHTML"
 				{% if enabled_widgets is defined and 'artifactory_repos' not in enabled_widgets %}style="display:none"{% endif %}
@@ -198,7 +269,8 @@
 				data-widget-key="artifactory_storage"
 				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
 				hx-get="/ui/components/artifactory-storage"
-				hx-trigger="load, every 60s, click from:#refresh-btn"
+				hx-trigger="intersect once, refresh, click from:#refresh-btn"
+				data-autorefresh
 				hx-target="find .widget-content"
 				hx-swap="innerHTML"
 				{% if enabled_widgets is defined and 'artifactory_storage' not in enabled_widgets %}style="display:none"{% endif %}
@@ -218,7 +290,8 @@
 				data-widget-key="confluence_pages"
 				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
 				hx-get="/ui/components/confluence-pages"
-				hx-trigger="load, every 60s, click from:#refresh-btn"
+				hx-trigger="intersect once, refresh, click from:#refresh-btn"
+				data-autorefresh
 				hx-target="find .widget-content"
 				hx-swap="innerHTML"
 				{% if enabled_widgets is defined and 'confluence_pages' not in enabled_widgets %}style="display:none"{% endif %}
@@ -237,7 +310,8 @@
 				data-widget-key="recent_activity"
 				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
 				hx-get="/ui/components/recent-activity"
-				hx-trigger="load, click from:#refresh-btn"
+				hx-trigger="intersect once, refresh, click from:#refresh-btn"
+				data-autorefresh
 				hx-target="find .widget-content"
 				hx-swap="innerHTML"
 				{% if enabled_widgets is defined and 'recent_activity' not in enabled_widgets %}style="display:none"{% endif %}
@@ -249,6 +323,11 @@
 					{% include "partials/components/widget-skeleton.html" %}
 				</div>
 			</div>
+		</div>
+		{# closes .page-content — it was never closed, and the browser was silently
+		   patching it up at </main>. Left as-is it means the scrolling container and
+		   the widget grid are the same element, which is exactly the sort of thing
+		   that makes a layout bug impossible to reason about. #}
 		</div>
 	</main>
 
@@ -294,52 +373,19 @@
 				<fieldset class="fieldset bg-base-200 border border-base-300 rounded-box p-4">
 					<legend class="fieldset-legend text-base-content/80">Available Components</legend>
 
+					{#
+						Rendered from the server's widget catalogue rather than written out by
+						hand. The drawer must never offer a widget the server would refuse to
+						render — a checkbox that ticks and then does nothing is worse than no
+						checkbox — and the catalogue already excludes anything an admin has
+						hidden, plus admin-only widgets for everyone else.
+					#}
+					{% for w in widget_catalogue | default([]) %}
 					<label class="label cursor-pointer justify-start gap-3 py-2">
-						<input type="checkbox" checked class="checkbox checkbox-primary dashboard-widget-toggle" data-widget-key="quick_links" />
-						<span class="font-medium text-base-content">Quick Links</span>
+						<input type="checkbox" checked class="checkbox checkbox-primary dashboard-widget-toggle" data-widget-key="{{ w.key }}" />
+						<span class="font-medium text-base-content">{{ w.label }}</span>
 					</label>
-					<label class="label cursor-pointer justify-start gap-3 py-2">
-						<input type="checkbox" checked class="checkbox checkbox-primary dashboard-widget-toggle" data-widget-key="ado_my_work_items" />
-						<span class="font-medium text-base-content">Azure DevOps Tasks</span>
-					</label>
-					<label class="label cursor-pointer justify-start gap-3 py-2">
-						<input type="checkbox" checked class="checkbox checkbox-primary dashboard-widget-toggle" data-widget-key="snow_my_tickets" />
-						<span class="font-medium text-base-content">ServiceNow Tickets</span>
-					</label>
-					<label class="label cursor-pointer justify-start gap-3 py-2">
-						<input type="checkbox" checked class="checkbox checkbox-primary dashboard-widget-toggle" data-widget-key="ado_my_pull_requests" />
-						<span class="font-medium text-base-content">Pull Requests (Opened by me)</span>
-					</label>
-					<label class="label cursor-pointer justify-start gap-3 py-2">
-						<input type="checkbox" checked class="checkbox checkbox-primary dashboard-widget-toggle" data-widget-key="ado_prs_for_review" />
-						<span class="font-medium text-base-content">Pull Requests (Need my review)</span>
-					</label>
-					<label class="label cursor-pointer justify-start gap-3 py-2">
-						<input type="checkbox" checked class="checkbox checkbox-primary dashboard-widget-toggle" data-widget-key="ado_pipeline_status" />
-						<span class="font-medium text-base-content">Pipelines</span>
-					</label>
-					<label class="label cursor-pointer justify-start gap-3 py-2">
-						<input type="checkbox" checked class="checkbox checkbox-primary dashboard-widget-toggle" data-widget-key="sonar_projects" />
-						<span class="font-medium text-base-content">SonarQube Projects</span>
-					</label>
-					<label class="label cursor-pointer justify-start gap-3 py-2">
-						<input type="checkbox" checked class="checkbox checkbox-primary dashboard-widget-toggle" data-widget-key="artifactory_repos" />
-						<span class="font-medium text-base-content">Artifactory Repos</span>
-					</label>
-					{% if request.state.portal_is_admin %}
-					<label class="label cursor-pointer justify-start gap-3 py-2">
-						<input type="checkbox" checked class="checkbox checkbox-primary dashboard-widget-toggle" data-widget-key="artifactory_storage" />
-						<span class="font-medium text-base-content">Artifactory Storage</span>
-					</label>
-					{% endif %}
-					<label class="label cursor-pointer justify-start gap-3 py-2">
-						<input type="checkbox" checked class="checkbox checkbox-primary dashboard-widget-toggle" data-widget-key="confluence_pages" />
-						<span class="font-medium text-base-content">Confluence Pages</span>
-					</label>
-					<label class="label cursor-pointer justify-start gap-3 py-2">
-						<input type="checkbox" checked class="checkbox checkbox-primary dashboard-widget-toggle" data-widget-key="recent_activity" />
-						<span class="font-medium text-base-content">Recent Activity</span>
-					</label>
+					{% endfor %}
 				</fieldset>
 			</div>
 
@@ -352,22 +398,18 @@
 </div>
 <script>
 	(function () {
-		const widgetKeys = {
-			quick_links: "quick-links-component",
-			ado_my_work_items: "ado-tasks-component",
-			snow_my_tickets: "servicenow-tickets-component",
-			ado_my_pull_requests: "pull-requests-component",
-			ado_prs_for_review: "pull-requests-review-component",
-			ado_pipeline_status: "pipelines-component",
-			sonar_projects: "sonarqube-projects-component",
-			artifactory_repos: "artifactory-repos-component",
-			artifactory_storage: "artifactory-storage-component",
-			confluence_pages: "confluence-pages-component",
-			recent_activity: "recent-activity-component",
-		};
+		// Server-rendered from the same catalogue as the checkboxes above, so the map,
+		// the drawer and the dashboard cannot drift apart. This used to be a fourth
+		// hand-written copy of the widget list.
+		const widgetKeys = {{ widget_component_map | default({}) | tojson }};
 
 		// Server-rendered initial state — no fetch needed, no flash on F5.
-		const serverEnabled = {{ enabled_widgets | tojson | default('[]') }};
+		// `default` before `tojson`, not after: filters run left to right, so the old
+		// order asked tojson to serialise an undefined value and only then offered it
+		// a fallback it could never reach. The one route that renders this always
+		// passes the list, so it never fired — but it would have been a 500, not the
+		// empty array it looks like it promises.
+		const serverEnabled = {{ enabled_widgets | default([]) | tojson }};
 		const initialEnabled = serverEnabled.length > 0 ? serverEnabled : Object.keys(widgetKeys);
 
 		const toggles = Array.from(document.querySelectorAll(".dashboard-widget-toggle"));
@@ -482,7 +524,18 @@
 			const section = document.getElementById(rootId);
 			const list = document.getElementById(listId);
 			if (!section || !list) return;
-			if (!Array.isArray(items) || items.length === 0) {
+
+			// "Suggested" and "Recently used" come from usage history, which still
+			// remembers widgets an admin has since hidden. Offering one produced a button
+			// that looked live, then did nothing at all when pressed: it hunts for the
+			// widget's checkbox, and hidden widgets no longer have one. `widgetKeys` is
+			// the server's list of what this user may actually have, so filtering through
+			// it is the same single source of truth the rest of the panel uses.
+			items = (Array.isArray(items) ? items : []).filter((it) =>
+				Object.prototype.hasOwnProperty.call(widgetKeys, String(it.widget_key || ""))
+			);
+
+			if (items.length === 0) {
 				section.classList.add("hidden");
 				return;
 			}
@@ -492,7 +545,7 @@
 					const name = String(it.name || key);
 					return `
 						<button type="button"
-							class="btn btn-xs btn-outline hoverable"
+							class="btn btn-xs btn-outline btn-primary hoverable"
 							data-smart-key="${key}">
 							+ ${name}
 						</button>`;
@@ -538,28 +591,655 @@
 						(j && j.data) || []
 					);
 				}
-				// Reorder the grid so frequently-used widgets float higher. We move
-				// the user's top-3 most-viewed widgets to the front, in order.
-				if (Array.isArray(recentData) && recentData.length > 1) {
-					const grid = document.querySelector(".page-content .grid");
-					if (grid) {
-						const keysToBubble = recentData
-							.slice(0, 3)
-							.map((r) => r.widget_key)
-							.reverse();
-						keysToBubble.forEach((key) => {
-							const id = widgetKeys[key];
-							const el = id ? document.getElementById(id) : null;
-							if (el && el.parentNode === grid) {
-								grid.insertBefore(el, grid.firstChild);
-							}
-						});
-					}
-				}
+
+				// The grid used to be REORDERED here: the three most-viewed widgets were
+				// moved to the front on every page load. That is why the dashboard dealt
+				// itself a new hand on each F5 — "most viewed" is a ranking that shifts
+				// as you use the portal, so the layout was never twice the same, and it
+				// also pushed the double-width Azure DevOps widget into a position where
+				// it could not fit, leaving the hole in row one.
+				//
+				// A dashboard is a place, and you learn where things are in it. Muscle
+				// memory is worth more than a ranking nobody asked for, so the order is
+				// now fixed. The "Suggested" and "Recently used" sections above still
+				// surface the same insight — as something you can ACT on, in the drawer,
+				// rather than as furniture that moves while you are reaching for it.
 			} catch (_) {
 				/* silent-fail: sections just stay hidden */
 			}
 		}
 		loadSmartDashboard();
+
+		// ── "Updated 2 min ago" ─────────────────────────────────────────────
+		// The scheduler in portal-chrome.html records when each widget last came
+		// back; the freshest one stands for the dashboard. Ticking once a second
+		// costs nothing and means the label is never wrong.
+		const statusEl = document.getElementById("refresh-status");
+
+		// Writing to textContent invalidates style for the element even when the
+		// string is identical, so the label is only ever written when it has actually
+		// changed — which, for "Updated N min ago", is once a minute rather than
+		// sixty times. And a tab nobody is looking at does not need a clock at all.
+		let lastLabel = null;
+		function setLabel(text) {
+			if (text === lastLabel) return;
+			lastLabel = text;
+			statusEl.textContent = text;
+		}
+
+		function paintStatus() {
+			if (!statusEl || !window.portalRefresh) return;
+			if (document.visibilityState !== "visible") return;
+			if (window.portalRefresh.seconds() <= 0) {
+				setLabel("Auto-refresh off");
+				return;
+			}
+			const shells = document.querySelectorAll("[data-autorefresh]");
+			let newest = 0;
+			shells.forEach((el) => {
+				newest = Math.max(newest, window.portalRefresh.lastAt(el));
+			});
+			if (!newest) {
+				setLabel("");
+				return;
+			}
+			const secs = Math.round((Date.now() - newest) / 1000);
+			if (secs < 45) setLabel("Updated just now");
+			else if (secs < 5400) setLabel(`Updated ${Math.round(secs / 60)} min ago`);
+			else setLabel(`Updated ${Math.round(secs / 3600)} h ago`);
+		}
+		setInterval(paintStatus, 1000);
+		window.addEventListener("portal:refreshed", paintStatus);
+		// Coming back to the tab repaints immediately rather than up to a second late.
+		document.addEventListener("visibilitychange", paintStatus);
+		paintStatus();
+	})();
+</script>
+
+<style>
+	/* Hand-written, not Tailwind: output.css ships precompiled, so a class invented
+	   here would silently do nothing. */
+
+	/* The resize handle is furniture, not content — it stays out of the way until you
+	   go looking for it, and never covers a widget's own controls when idle. */
+	.widget-resize-btn {
+		position: absolute;
+		top: 0.5rem;
+		right: 0.5rem;
+		z-index: 20;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.5rem;
+		height: 1.5rem;
+		border-radius: 0.5rem;
+		border: 1px solid hsl(var(--bc) / 0.2);
+		background-color: hsl(var(--b1));
+		color: hsl(var(--bc) / 0.5);
+		opacity: 0;
+		transition: opacity 120ms ease, color 120ms ease;
+		cursor: pointer;
+	}
+
+	.widget-shell:hover > .widget-resize-btn,
+	.widget-resize-btn:focus-visible,
+	.widget-resize-btn[data-open] {
+		opacity: 1;
+	}
+
+	.widget-resize-btn:hover {
+		color: hsl(var(--p));
+	}
+
+	/* Drag handle — same furniture treatment as the resize button, sitting just
+	   to its left. Grab affordance on the handle only: the widget body is full of
+	   links and selects, and making the whole card draggable would break them. */
+	.widget-drag-btn {
+		position: absolute;
+		top: 0.5rem;
+		right: 2.25rem;
+		z-index: 20;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.5rem;
+		height: 1.5rem;
+		border-radius: 0.5rem;
+		border: 1px solid hsl(var(--bc) / 0.2);
+		background-color: hsl(var(--b1));
+		color: hsl(var(--bc) / 0.5);
+		opacity: 0;
+		transition: opacity 120ms ease, color 120ms ease;
+		cursor: grab;
+	}
+
+	.widget-shell:hover > .widget-drag-btn,
+	.widget-drag-btn:focus-visible {
+		opacity: 1;
+	}
+
+	.widget-drag-btn:hover {
+		color: hsl(var(--p));
+	}
+
+	.widget-drag-btn:active {
+		cursor: grabbing;
+	}
+
+	/* The card being carried. Dimmed rather than hidden so you can still see what
+	   you picked up while choosing where to put it. */
+	.widget-shell[data-dragging] {
+		opacity: 0.35;
+	}
+
+	/* ─────────────────────────────────────────────────────────────────────
+	   Off-screen widgets cost nothing.
+
+	   The dashboard is eleven cards in a three-column grid of 320px rows — about
+	   four rows, of which roughly two are on screen. Without this the browser lays
+	   out and paints all eleven on every frame that changes the grid's width, and
+	   the sidebar's open/close animation changes the grid's width sixty times a
+	   second. That is the single most expensive thing the page does, and most of
+	   the work is spent on cards nobody can see.
+
+	   `content-visibility: auto` lets the browser skip layout and paint for a card
+	   that is outside the viewport; `contain-intrinsic-size` gives it a placeholder
+	   box of the right height so the page is still the correct length and the
+	   scrollbar does not jump as cards come into view. The height matches
+	   `grid-auto-rows`. Resized widgets carry their own explicit height, which wins.
+
+	   Old browsers that do not know these properties ignore them and get today's
+	   behaviour — nothing breaks, it is only faster where it is understood. */
+	.widget-shell {
+		content-visibility: auto;
+		/* Matches --widget-row-h (set in portal-chrome, along with the height itself),
+		   so the placeholder box is the size the card will actually be in either
+		   density and the scrollbar does not jump as cards scroll into view. */
+		contain-intrinsic-size: auto var(--widget-row-h);
+	}
+
+	/* Two cases where skipping must be switched off, because both need every card
+	   to have a real, measured position: dragging (the reflow animation measures
+	   each card before and after the move) and printing. */
+	body[data-widget-dragging] .widget-shell {
+		content-visibility: visible;
+	}
+
+	@media print {
+		.widget-shell {
+			content-visibility: visible;
+		}
+	}
+
+	/* No drop marker any more: the grid itself previews the result. The widgets
+	   move out of the way live as you drag, so the layout under your cursor is
+	   already the layout you will get — there is nothing left for a marker to
+	   promise. The gap the card came from reads as the landing slot. */
+
+	/* Parented to <body> so no card can clip it. */
+	.widget-size-menu {
+		position: fixed;
+		z-index: 70;
+		padding: 0.5rem;
+		border-radius: 0.75rem;
+		border: 1px solid hsl(var(--bc) / 0.2);
+		background-color: hsl(var(--b1));
+		box-shadow: 0 10px 24px hsl(var(--bc) / 0.18);
+	}
+
+	.widget-size-grid {
+		display: grid;
+		grid-template-columns: repeat(3, 1.5rem);
+		gap: 0.25rem;
+	}
+
+	.widget-size-cell {
+		width: 1.5rem;
+		height: 1.5rem;
+		border-radius: 0.25rem;
+		border: 1px solid hsl(var(--bc) / 0.25);
+		background-color: hsl(var(--b2));
+		cursor: pointer;
+		padding: 0;
+	}
+
+	.widget-size-cell[data-on] {
+		background-color: hsl(var(--p));
+		border-color: hsl(var(--p));
+	}
+</style>
+
+<script>
+	/* ── Resizable widgets ───────────────────────────────────────────────────────
+	   Each widget can be made 1–3 columns wide and 1–3 rows tall. Two deliberate
+	   constraints:
+
+	   1. GROWTH IS DOWN AND RIGHT ONLY. CSS Grid's `span` only ever extends from an
+	      item's start line, so growing up or left is not expressible as a span — it
+	      would mean giving every widget explicit row/column coordinates and writing a
+	      collision/compaction engine (which we cannot npm-install here anyway). It is
+	      also the better behaviour: a widget that grows upward shoves everything above
+	      it down the page, moving the content you were reading.
+
+	   2. SIZE IS A SPAN, NOT A POSITION. We never place a widget; we only say how big
+	      it is and let the existing `grid-auto-flow: dense` packer decide where it
+	      lands. That is what keeps this a hundred lines instead of a library.
+
+	   Applied as INLINE styles so they beat the `h-80` / `md:col-span-2` utility
+	   classes without needing new compiled classes. Saved per browser in localStorage,
+	   like the quick-link order and the widget filters. */
+	(function () {
+		const grid = document.querySelector("[data-widget-grid]");
+		if (!grid) return;
+
+		const KEY = "portal-widget-sizes";
+		const MAX = 3;
+
+		// MEASURED, not assumed. These were constants (320 and 32) that matched the
+		// markup in comfortable density and nothing at all in compact, so a resized
+		// widget computed a height for a row size the grid was no longer using and sat
+		// in its track wrong. Reading the computed style means one change to the CSS
+		// variables moves the cards, the tracks and this arithmetic together.
+		function metrics() {
+			const cs = getComputedStyle(grid);
+			const rowH = parseFloat(cs.gridAutoRows);
+			const gap = parseFloat(cs.rowGap);
+			return {
+				rowH: Number.isFinite(rowH) && rowH > 0 ? rowH : 320,
+				gap: Number.isFinite(gap) ? gap : 32,
+			};
+		}
+
+		function readSizes() {
+			try {
+				const raw = JSON.parse(localStorage.getItem(KEY) || "{}");
+				return raw && typeof raw === "object" ? raw : {};
+			} catch (_) {
+				return {};
+			}
+		}
+
+		function writeSizes(sizes) {
+			try { localStorage.setItem(KEY, JSON.stringify(sizes)); } catch (_) {}
+		}
+
+		let sizes = readSizes();
+
+		function clamp(n) {
+			n = parseInt(n, 10);
+			if (!Number.isFinite(n)) return 1;
+			return Math.min(MAX, Math.max(1, n));
+		}
+
+		function apply(shell) {
+			const key = shell.getAttribute("data-widget-key");
+			const size = sizes[key];
+			if (!size) {
+				// Never sized by hand: leave the markup's own classes alone so the
+				// default dashboard looks exactly as it always has.
+				shell.style.gridColumn = "";
+				shell.style.gridRow = "";
+				shell.style.height = "";
+				return;
+			}
+			const c = clamp(size.c);
+			const r = clamp(size.r);
+			// A span wider than the grid is clamped by the grid itself, so a 3-wide
+			// widget degrades to full width on a 2- or 1-column breakpoint for free.
+			shell.style.gridColumn = "span " + c + " / span " + c;
+			// grid-ROW span is what stops a tall widget leaving a hole. Making the box
+			// taller only stretched its own row; the grid still believed the widget
+			// occupied ONE row, so its neighbours stayed short and the space beside and
+			// below them could never be filled. Claiming the rows lets `grid-auto-flow:
+			// dense` back-fill them with the next widget that fits.
+			shell.style.gridRow = "span " + r + " / span " + r;
+			// Exactly the height of r tracks plus the gaps between them, so the box
+			// lines up with the rows it just claimed.
+			const { rowH, gap } = metrics();
+			shell.style.height = rowH * r + gap * (r - 1) + "px";
+		}
+
+		function applyAll() {
+			grid.querySelectorAll(".widget-shell[data-widget-key]").forEach(apply);
+		}
+
+		// Density is a live switch (Settings, and the header toggle), and it changes the
+		// row height under every resized widget. Without this, flipping to compact left
+		// every hand-sized widget at its comfortable height — the one case the CSS alone
+		// cannot fix, because those heights are inline pixels.
+		new MutationObserver(applyAll).observe(document.documentElement, {
+			attributes: true,
+			attributeFilter: ["data-density"],
+		});
+
+		/* ── Size menu ───────────────────────────────────────────────────────── */
+		let menu = null;
+		let menuOwner = null;
+
+		function closeMenu() {
+			if (menu) menu.remove();
+			menu = null;
+			if (menuOwner) menuOwner.removeAttribute("data-open");
+			menuOwner = null;
+		}
+
+		function openMenu(btn, shell) {
+			closeMenu();
+			const key = shell.getAttribute("data-widget-key");
+			const cur = sizes[key] || { c: 1, r: 1 };
+
+			menu = document.createElement("div");
+			menu.className = "widget-size-menu";
+			const cells = [];
+			for (let r = 1; r <= MAX; r++) {
+				for (let c = 1; c <= MAX; c++) {
+					const on = c <= clamp(cur.c) && r <= clamp(cur.r) ? " data-on" : "";
+					cells.push(
+						'<button type="button" class="widget-size-cell"' + on +
+						' data-c="' + c + '" data-r="' + r + '"' +
+						' aria-label="' + c + " columns by " + r + ' rows"></button>'
+					);
+				}
+			}
+			menu.innerHTML =
+				'<div class="widget-size-grid">' + cells.join("") + "</div>" +
+				'<button type="button" class="btn btn-ghost btn-xs w-full mt-2" data-size-reset>Reset size</button>' +
+				// Order is one shared list, not a per-widget property, so its reset
+				// says "layout" and is spelled differently from the size reset above.
+				'<button type="button" class="btn btn-ghost btn-xs w-full" data-layout-reset>Reset layout</button>';
+			document.body.appendChild(menu);
+
+			const r = btn.getBoundingClientRect();
+			const mr = menu.getBoundingClientRect();
+			let left = Math.min(r.right - mr.width, window.innerWidth - mr.width - 8);
+			let top = r.bottom + 6;
+			if (left < 8) left = 8;
+			if (top + mr.height > window.innerHeight - 8) top = Math.max(8, r.top - mr.height - 6);
+			menu.style.left = left + "px";
+			menu.style.top = top + "px";
+
+			// Hovering the matrix previews the size it would set, so you pick a shape
+			// rather than decoding two numbers.
+			menu.addEventListener("mouseover", (event) => {
+				const cell = event.target.closest(".widget-size-cell");
+				if (!cell) return;
+				const hc = +cell.dataset.c;
+				const hr = +cell.dataset.r;
+				menu.querySelectorAll(".widget-size-cell").forEach((el) => {
+					const on = +el.dataset.c <= hc && +el.dataset.r <= hr;
+					el.toggleAttribute("data-on", on);
+				});
+			});
+
+			menu.addEventListener("click", (event) => {
+				if (event.target.closest("[data-layout-reset]")) {
+					// Back to the order the template ships, for every widget at once.
+					try { localStorage.removeItem(ORDER_KEY); } catch (_) {}
+					DEFAULT_ORDER.forEach((k) => {
+						const el = grid.querySelector('.widget-shell[data-widget-key="' + k + '"]');
+						if (el) grid.appendChild(el);
+					});
+					closeMenu();
+					return;
+				}
+				if (event.target.closest("[data-size-reset]")) {
+					delete sizes[key];
+					writeSizes(sizes);
+					apply(shell);
+					closeMenu();
+					return;
+				}
+				const cell = event.target.closest(".widget-size-cell");
+				if (!cell) return;
+				sizes[key] = { c: +cell.dataset.c, r: +cell.dataset.r };
+				writeSizes(sizes);
+				apply(shell);
+				closeMenu();
+			});
+
+			menuOwner = btn;
+			btn.setAttribute("data-open", "");
+		}
+
+		document.addEventListener("click", (event) => {
+			if (menu && !menu.contains(event.target) && !event.target.closest("[data-widget-resize]")) {
+				closeMenu();
+			}
+		});
+		document.addEventListener("keydown", (event) => {
+			if (event.key === "Escape") closeMenu();
+		});
+		window.addEventListener("resize", closeMenu);
+		window.addEventListener("scroll", closeMenu, true);
+
+		/* ── Handles ─────────────────────────────────────────────────────────────
+		   The handle is a sibling of `.widget-content`, not inside it: HTMX swaps the
+		   content on every refresh, so anything placed within it would vanish on the
+		   first auto-refresh. */
+		/* ── Order ───────────────────────────────────────────────────────────────
+		   Order is a list of widget keys, and the widgets are physically reordered
+		   in the DOM to match. Nothing else needs to know: the grid places items in
+		   document order, so moving the element IS moving the widget. */
+		const ORDER_KEY = "portal-widget-order";
+
+		function readOrder() {
+			try {
+				const raw = JSON.parse(localStorage.getItem(ORDER_KEY) || "[]");
+				return Array.isArray(raw) ? raw.map(String) : [];
+			} catch (_) {
+				return [];
+			}
+		}
+
+		function saveOrder() {
+			const keys = [...grid.querySelectorAll(".widget-shell[data-widget-key]")]
+				.map((el) => el.getAttribute("data-widget-key"));
+			try { localStorage.setItem(ORDER_KEY, JSON.stringify(keys)); } catch (_) {}
+		}
+
+		function applyOrder() {
+			const saved = readOrder();
+			if (!saved.length) return;
+			const byKey = new Map(
+				[...grid.querySelectorAll(".widget-shell[data-widget-key]")]
+					.map((el) => [el.getAttribute("data-widget-key"), el])
+			);
+			// Anything saved gets placed in saved order; anything the saved list has
+			// never seen (a widget added in a later release) is simply left where the
+			// template put it, at the end. Ordering strictly by the saved list would
+			// silently drop new widgets off the dashboard.
+			saved.forEach((key) => {
+				const el = byKey.get(key);
+				if (el) { grid.appendChild(el); byKey.delete(key); }
+			});
+			byKey.forEach((el) => grid.appendChild(el));
+		}
+
+		let dragged = null;
+
+		function motionReduced() {
+			return document.documentElement.getAttribute("data-motion") === "reduced";
+		}
+
+		/* FLIP. Move the widget for real, then play every OTHER widget from where
+		   it used to be to where it now is — so the grid rearranges itself under
+		   the card you are holding, the way app icons do on a phone, instead of
+		   showing a marker and only reflowing after you let go.
+
+		   Only `transform` is animated. The layout has already happened by the time
+		   the animation starts, so nothing re-flows per frame; on a machine with no
+		   GPU that is the difference between this being usable and being a slideshow.
+		   With Reduce Motion on, the move still happens — it just arrives instantly. */
+		function reflow(mutate) {
+			const items = [...grid.querySelectorAll(".widget-shell[data-widget-key]")];
+			if (motionReduced()) { mutate(); return; }
+
+			const before = new Map(items.map((el) => [el, el.getBoundingClientRect()]));
+			mutate();
+
+			items.forEach((el) => {
+				if (el === dragged) return;   // the browser is already dragging this one
+				const a = before.get(el);
+				const b = el.getBoundingClientRect();
+				const dx = a.left - b.left;
+				const dy = a.top - b.top;
+				if (!dx && !dy) return;
+				el.style.transition = "none";
+				el.style.transform = "translate(" + dx + "px," + dy + "px)";
+			});
+
+			// One reflow read, then let them all play together.
+			void grid.offsetWidth;
+			items.forEach((el) => {
+				if (el === dragged || !el.style.transform) return;
+				el.style.transition = "transform 200ms cubic-bezier(.2,0,0,1)";
+				el.style.transform = "";
+			});
+		}
+
+		function clearReflowStyles() {
+			grid.querySelectorAll(".widget-shell[data-widget-key]").forEach((el) => {
+				el.style.transition = "";
+				el.style.transform = "";
+			});
+		}
+
+		grid.addEventListener("dragstart", (event) => {
+			const shell = event.target.closest(".widget-shell[data-widget-key]");
+			if (!shell || !shell.getAttribute("draggable")) return;
+			dragged = shell;
+			shell.setAttribute("data-dragging", "");
+			// Off-screen cards are normally skipped for layout and paint. The reflow
+			// animation measures every card before and after the move, so for the
+			// duration of a drag they all have to be real. Cleared on dragend.
+			document.body.setAttribute("data-widget-dragging", "");
+			closeMenu();
+			event.dataTransfer.effectAllowed = "move";
+			// Firefox refuses to start a drag unless some data is set.
+			try { event.dataTransfer.setData("text/plain", shell.getAttribute("data-widget-key")); } catch (_) {}
+		});
+
+		grid.addEventListener("dragover", (event) => {
+			if (!dragged) return;
+			event.preventDefault();
+			event.dataTransfer.dropEffect = "move";
+			const over = event.target.closest(".widget-shell[data-widget-key]");
+			if (!over || over === dragged) return;
+
+			// Which side of the card the pointer is on decides where it lands.
+			const box = over.getBoundingClientRect();
+			const after = event.clientX > box.left + box.width / 2;
+			const target = after ? over.nextSibling : over;
+
+			// Already in that slot: doing nothing here is what stops the grid
+			// thrashing back and forth while the pointer sits still over one card.
+			if (target === dragged || (target === null && dragged === grid.lastElementChild)) return;
+			if (dragged.nextSibling === target && after === false) return;
+
+			reflow(() => grid.insertBefore(dragged, target));
+		});
+
+		grid.addEventListener("drop", (event) => {
+			if (!dragged) return;
+			event.preventDefault();
+			// The widget is already where it is going to be — every dragover moved it
+			// live. Dropping only makes it permanent.
+			saveOrder();
+		});
+
+		grid.addEventListener("dragend", () => {
+			if (dragged) {
+				dragged.removeAttribute("data-dragging");
+				dragged.removeAttribute("draggable");
+			}
+			dragged = null;
+			document.body.removeAttribute("data-widget-dragging");
+			clearReflowStyles();
+			// A drag abandoned outside the grid still leaves the widget where it was
+			// last previewed, which is what you saw and therefore what you meant.
+			saveOrder();
+		});
+
+		// Keyboard equivalent. The handle is a real button, so arrow keys moving the
+		// widget is the accessible path to the same result — dragging is not
+		// something everyone can do with a mouse.
+		function moveByKeyboard(shell, dir) {
+			const sibling = dir < 0 ? shell.previousElementSibling : shell.nextElementSibling;
+			if (!sibling) return;
+			// Same animated rearrange as dragging, so a keyboard move is legible as a
+			// move rather than the dashboard silently reshuffling.
+			reflow(() => {
+				if (dir < 0) shell.parentNode.insertBefore(shell, sibling);
+				else shell.parentNode.insertBefore(sibling, shell);
+			});
+			saveOrder();
+			shell.querySelector(":scope > [data-widget-drag]")?.focus();
+		}
+
+		function ensureHandles() {
+			grid.querySelectorAll(".widget-shell[data-widget-key]").forEach((shell) => {
+				if (shell.querySelector(":scope > [data-widget-drag]")) return;
+				if (getComputedStyle(shell).position === "static") shell.style.position = "relative";
+
+				const drag = document.createElement("button");
+				drag.type = "button";
+				drag.className = "widget-drag-btn";
+				drag.setAttribute("data-widget-drag", "");
+				drag.title = "Drag to move · arrow keys to move";
+				drag.setAttribute("aria-label", "Move widget");
+				drag.innerHTML =
+					'<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true">' +
+					'<circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/>' +
+					'<circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/>' +
+					'<circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>';
+				// The shell only becomes draggable while the pointer is down on the
+				// handle. Left permanently draggable, the browser would hijack every
+				// text selection and link drag inside the widget.
+				drag.addEventListener("mousedown", () => shell.setAttribute("draggable", "true"));
+				drag.addEventListener("touchstart", () => shell.setAttribute("draggable", "true"), { passive: true });
+				drag.addEventListener("click", (event) => event.stopPropagation());
+				drag.addEventListener("keydown", (event) => {
+					const dir = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
+					if (!dir) return;
+					event.preventDefault();
+					moveByKeyboard(shell, dir);
+				});
+				shell.appendChild(drag);
+			});
+
+			grid.querySelectorAll(".widget-shell[data-widget-key]").forEach((shell) => {
+				if (shell.querySelector(":scope > [data-widget-resize]")) return;
+				const btn = document.createElement("button");
+				btn.type = "button";
+				btn.className = "widget-resize-btn";
+				btn.setAttribute("data-widget-resize", "");
+				btn.title = "Resize widget";
+				btn.setAttribute("aria-label", "Resize widget");
+				btn.innerHTML =
+					'<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" ' +
+					'stroke-width="2.5" stroke-linecap="round" aria-hidden="true">' +
+					'<path d="M21 15v6h-6M3 9V3h6M21 21l-7-7M3 3l7 7" /></svg>';
+				btn.addEventListener("click", (event) => {
+					event.stopPropagation();
+					if (menuOwner === btn) { closeMenu(); return; }
+					openMenu(btn, shell);
+				});
+				shell.appendChild(btn);
+			});
+		}
+
+		// Captured before any saved order is applied, so "Reset layout" restores the
+		// order the template actually ships rather than whatever was last saved.
+		const DEFAULT_ORDER = [...grid.querySelectorAll(".widget-shell[data-widget-key]")]
+			.map((el) => el.getAttribute("data-widget-key"));
+
+		applyOrder();
+		ensureHandles();
+		applyAll();
+
+		// Widgets can be hidden/shown from the customise drawer, and HTMX swaps their
+		// contents — re-assert both after any of that rather than only on first paint.
+		document.body.addEventListener("htmx:afterSwap", () => { ensureHandles(); applyAll(); });
+		window.addEventListener("portal:refreshed", () => { ensureHandles(); applyAll(); });
 	})();
 </script>

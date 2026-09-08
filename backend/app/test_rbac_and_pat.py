@@ -83,7 +83,7 @@ def test_admin_grant_role_denied_for_non_admin():
   resp = client.post(
       "/api/admin/grant-role",
       headers={**headers, "Content-Type": "application/json"},
-      json={"email": "someone@gmail.com", "role": "Admin"},
+      json={"email": "someone@example.com", "role": "Admin"},
   )
   assert resp.status_code == 403
 

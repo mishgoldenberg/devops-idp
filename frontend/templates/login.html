@@ -1,37 +1,105 @@
 <!doctype html>
+<!--
+	The sign-in page runs on "nord" — the app's LIGHT theme — so the inputs, labels
+	and divider inside the card are all dark-on-light and the black logo mark reads
+	without a disc behind it.
+
+	Do not put "light" here: no [data-theme=light] block exists in the compiled
+	output.css, so it would silently fall through to :root, which follows the
+	visitor's OS dark-mode preference. "nord" is defined and always light.
+-->
 <html lang="en" data-theme="nord">
 	<head>
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<title>DevOps Hub Sign In</title>
 		<link rel="stylesheet" href="/static/css/output.css" />
+		<!-- Palette override. MUST stay after output.css: both declare the same
+		     DaisyUI custom properties, so this one wins on source order alone. -->
+		<link rel="stylesheet" href="/static/css/theme.css" />
 		<link
 			rel="shortcut icon"
 			href="/static/images/devopshub-favicon.png"
 			type="image/png"
 		/>
+		<!--
+			nord's own primary is a muted slate-blue, which reads as grey on a white card.
+			These two classes put the brand blue on the sign-in buttons. A <style> block
+			rather than Tailwind classes because output.css is shipped precompiled and
+			nothing rebuilds it — a new utility class here would silently do nothing.
+		-->
+		<style>
+			.btn-brand {
+				background-color: #2563eb;
+				border-color: #2563eb;
+				color: #fff;
+			}
+			.btn-brand:hover {
+				background-color: #1d4ed8;
+				border-color: #1d4ed8;
+			}
+			.btn-brand-outline {
+				background-color: transparent;
+				border-color: #2563eb;
+				color: #1d4ed8;
+			}
+			.btn-brand-outline:hover {
+				background-color: #2563eb;
+				border-color: #2563eb;
+				color: #fff;
+			}
+		</style>
 	</head>
 	<body
 		class="min-h-screen bg-base-200 bg-[url('/static/images/hero-background.jpg')] bg-cover bg-center bg-no-repeat"
 	>
 		<main class="min-h-screen flex items-center justify-center px-4 py-8">
+			<!--
+				Light glass card. The colours are inline styles rather than Tailwind
+				arbitrary-value classes so this needs no CSS rebuild. It is near-white
+				rather than nord's own base-100 (a flat grey) — the logo mark is black
+				line-art, and white is what makes it read without a disc behind it.
+			-->
+			<!--
+				`backdrop-blur-sm` removed. The card is 94% opaque over a photograph, so
+				the blur behind it was barely visible — but a backdrop filter forces the
+				browser to read back and blur everything underneath, which on a machine
+				without GPU acceleration is done in software and makes the sign-in page
+				the slowest thing in the portal. The card looks the same without it.
+			-->
 			<section
-				class="card w-full max-w-md bg-base-100/95 border border-base-300 shadow-2xl backdrop-blur-sm"
+				class="card w-full max-w-md border shadow-2xl"
+				style="
+					background-color: rgba(252, 253, 255, 0.94);
+					border-color: rgba(37, 99, 235, 0.18);
+				"
 			>
 				<div class="card-body p-8 gap-5">
 					<div class="flex flex-col items-center gap-3">
+						<!--
+							Sized in px, not with h-24 / h-28. Tailwind's scale jumps straight
+							from 96px to 112px with nothing in between, which is why nudging the
+							class made the logo leap. 104px is the half-step that class list
+							cannot express.
+						-->
 						<img
-							src="/static/images/devopshub-logo.png"
+							src="/static/images/devopshub-logo-mark.png"
 							alt="DevOps Hub logo"
-							class="h-24 w-24 object-contain"
+							class="object-contain"
+							style="height: 104px; width: 104px"
 						/>
-						<h1 class="text-3xl font-bold text-primary">DevOps Hub</h1>
+						<h1 class="text-3xl font-bold" style="color: #0f172a">DevOps Hub</h1>
 					</div>
 
 					{% if error %}
 					<div role="alert" class="alert alert-error alert-soft text-sm">
 						{% if error == "invalid_credentials" %}
 						<span>Unable to sign in with this username.</span>
+						{% elif error == "locked_out" %}
+						<span
+							>Too many failed attempts. This sign-in is locked for a few
+							minutes — use SSO, or try again later.</span
+						>
 						{% elif error == "missing_username" %}
 						<span>Please enter a username.</span>
 						{% elif error == "auth_unavailable" %}
@@ -47,62 +115,186 @@
 					</div>
 					{% endif %}
 
-					<form action="/ui/auth/login" method="post" class="space-y-4">
-						<label class="form-control w-full">
-							<div class="label pb-1">
-								<span
-									class="label-text text-xs font-bold uppercase tracking-wide"
-									>Username</span
-								>
-							</div>
-							<input
-								type="text"
-								name="username"
-								placeholder="engineering_id"
-								value="{{ username }}"
-								autocomplete="username"
-								required
-								class="input input-bordered w-full"
-							/>
-						</label>
-
-						<label class="form-control w-full">
-							<div class="label pb-1">
-								<span
-									class="label-text text-xs font-bold uppercase tracking-wide"
-									>Password</span
-								>
-							</div>
-							<input
-								type="password"
-								name="password"
-								placeholder="••••••••"
-								autocomplete="current-password"
-								class="input input-bordered w-full"
-							/>
-						</label>
-
-						<button type="submit" class="btn btn-primary w-full mt-2">
-							Sign In
-						</button>
-					</form>
-
-					<div
-						class="divider text-xs uppercase tracking-wide text-base-content/50"
+					<!--
+						SSO IS THE SIGN-IN. Everyone here has a domain account; the username
+						and password box only ever served the two local service accounts, and
+						putting it first taught every user to reach for the wrong thing. It is
+						still here — an admin needs it when the IdP is down — but it is behind
+						"More options", so the instinctive click is the correct one.
+					-->
+					<a
+						href="/ui/auth/login"
+						class="btn btn-brand w-full"
+						style="height: 3rem; min-height: 3rem; font-size: 0.95rem"
 					>
-						or
-					</div>
-
-					<a href="/ui/auth/login" class="btn btn-outline w-full">
 						Sign in with SSO
 					</a>
 
+					<!--
+						Auto-expanded when the last attempt was a local one that failed, so the
+						error above never points at a form the visitor cannot see.
+					-->
+					{% set show_local = error in ("invalid_credentials", "locked_out", "missing_username") %}
+
+					<div class="text-center">
+						<button
+							type="button"
+							class="link text-xs text-base-content/60"
+							data-local-toggle
+							aria-expanded="{{ 'true' if show_local else 'false' }}"
+							aria-controls="local-signin"
+						>
+							{{ "Hide other options" if show_local else "More options" }}
+						</button>
+					</div>
+
+					<div id="local-signin" {% if not show_local %}class="hidden"{% endif %} data-local-panel>
+						<div
+							class="divider text-xs uppercase tracking-wide text-base-content/50"
+						>
+							Sign in with a username
+						</div>
+
+						<form action="/ui/auth/login" method="post" class="space-y-4">
+							<label class="form-control w-full">
+								<div class="label pb-1">
+									<span
+										class="label-text text-xs font-bold uppercase tracking-wide"
+										>Username</span
+									>
+								</div>
+								<input
+									type="text"
+									name="username"
+									placeholder="engineering_id"
+									value="{{ username }}"
+									autocomplete="username"
+									required
+									class="input input-bordered w-full"
+								/>
+							</label>
+
+							<label class="form-control w-full">
+								<div class="label pb-1">
+									<span
+										class="label-text text-xs font-bold uppercase tracking-wide"
+										>Password</span
+									>
+								</div>
+								<input
+									type="password"
+									name="password"
+									placeholder="••••••••"
+									autocomplete="current-password"
+									class="input input-bordered w-full"
+								/>
+							</label>
+
+							<!-- btn-outline on its own takes base-content — i.e. grey. -->
+							<button type="submit" class="btn btn-brand-outline w-full mt-2">
+								Sign In
+							</button>
+						</form>
+					</div>
+
 					<p class="text-center text-xs text-base-content/60 pt-2">
 						Need access?
-						<a href="#" class="link link-primary">Contact Admin</a>
+						<button type="button" class="link link-primary" data-contact-admin>
+							Contact Admin
+						</button>
+					</p>
+
+					{#
+						The people who built it. Inside the card, not after it: <main> lays its
+						children out as a centred ROW, so a sibling of the card lands BESIDE it,
+						vertically centred in the empty space to the right. Deliberately faint,
+						and last — a credit, not a banner.
+					#}
+					{# pt-3 is not in the compiled output.css, so the padding is written by hand. #}
+					<p
+						class="text-center text-xs text-base-content/50"
+						style="padding-top: 0.75rem; border-top: 1px solid rgba(37, 99, 235, 0.1)"
+					>
+						Built by Michael Goldenberg
+						<span class="px-1 text-base-content/30">·</span>
+						Eyal Maor
+						<span class="px-1 text-base-content/30">·</span>
+						Elizabeth Zonshtein
 					</p>
 				</div>
 			</section>
+
+			<!--
+				Contact Admin. It was an href="#" — it looked like a way to get help and did
+				nothing at all, which is the worst thing for a link on a login page to do:
+				the person clicking it is, by definition, already stuck.
+
+				PLACEHOLDERS: replace the three rows below with your real admins. Nothing
+				here is loaded from the server — this page is shown to people who are not
+				signed in, so it must not query anything.
+			-->
+			<dialog class="modal" data-contact-modal>
+				<div class="modal-box max-w-md">
+					<div class="flex items-start gap-3">
+						<h3 class="text-base font-bold flex-1">Contact an administrator</h3>
+						<form method="dialog">
+							<button class="btn btn-ghost btn-xs rounded-full" aria-label="Close">✕</button>
+						</form>
+					</div>
+					<p class="mt-1 text-xs text-base-content/60">
+						Ask one of these people for access to the portal.
+					</p>
+
+					<ul class="mt-4 flex flex-col gap-3">
+						<li class="rounded-lg border border-base-300 p-3">
+							<p class="text-sm font-semibold text-base-content">Admin Name</p>
+							<p class="mt-1 text-xs text-base-content/70">
+								<span class="font-medium text-base-content/80">+000 000 0000</span>{# Plain text, not a tel: link. These are desk numbers on workstations with no dialler — a link that opens nothing is worse than text you can read and copy. The email stays a link because mailto: does work here. #}
+								<span class="px-1 text-base-content/30">·</span>
+								<a class="link link-primary" href="mailto:admin@example.com">admin@example.com</a>
+							</p>
+						</li>
+						<li class="rounded-lg border border-base-300 p-3">
+							<p class="text-sm font-semibold text-base-content">Second Admin Name</p>
+							<p class="mt-1 text-xs text-base-content/70">
+								<span class="font-medium text-base-content/80">+000 000 0000</span>{# Plain text, not a tel: link. These are desk numbers on workstations with no dialler — a link that opens nothing is worse than text you can read and copy. The email stays a link because mailto: does work here. #}
+								<span class="px-1 text-base-content/30">·</span>
+								<a class="link link-primary" href="mailto:admin2@example.com">admin2@example.com</a>
+							</p>
+						</li>
+					</ul>
+
+					<form method="dialog" class="mt-5 flex justify-end">
+						<button class="btn btn-primary btn-sm rounded-full px-5">Close</button>
+					</form>
+				</div>
+				<form method="dialog" class="modal-backdrop">
+					<button aria-label="Close">close</button>
+				</form>
+			</dialog>
+
+			<script>
+				(function () {
+					const modal = document.querySelector("[data-contact-modal]");
+					document
+						.querySelector("[data-contact-admin]")
+						?.addEventListener("click", () => modal?.showModal());
+
+					// "More options" reveals the username/password form. The panel starts
+					// collapsed unless the server already decided to show it (a failed local
+					// attempt), so the toggle only ever has to flip what is there.
+					const toggle = document.querySelector("[data-local-toggle]");
+					const panel = document.querySelector("[data-local-panel]");
+					toggle?.addEventListener("click", () => {
+						const nowHidden = panel.classList.toggle("hidden");
+						toggle.setAttribute("aria-expanded", String(!nowHidden));
+						toggle.textContent = nowHidden
+							? "More options"
+							: "Hide other options";
+						if (!nowHidden) panel.querySelector("input[name=username]")?.focus();
+					});
+				})();
+			</script>
 		</main>
 	</body>
 </html>

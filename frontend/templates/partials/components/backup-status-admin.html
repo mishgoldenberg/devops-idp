@@ -1,0 +1,604 @@
+{#
+	Database backup status. Included by platform-managing-container.html.
+
+	READ-ONLY, on purpose. There is no "back up now" button and no "restore"
+	button: a restore is destructive and irreversible, and the distance between a
+	web page and `docs/RUNBOOK.md` §6 is the only thing standing between a
+	mis-click and an outage. What this card exists to do is answer "are we backed
+	up?" without anybody running `oc get cronjob` — because a nightly job that
+	silently stopped working is the normal way backups fail, and nothing else in
+	the portal would ever mention it.
+
+	Fed by /api/backups, which re-checks admin access itself; this card sitting on
+	an admin page is a convenience, never the permission.
+#}
+<style>
+	/* Hand-written: output.css ships precompiled, so a Tailwind class that is not
+	   already in it silently does nothing. */
+	.bk-verdict {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.75rem;
+		padding: 0.85rem 1rem;
+		border-radius: 0.5rem;
+		border: 1px solid hsl(var(--bc) / 0.12);
+		background: hsl(var(--b2));
+	}
+
+	.bk-verdict[data-level="ok"] {
+		border-color: hsl(var(--su) / 0.35);
+		background: hsl(var(--su) / 0.08);
+	}
+
+	.bk-verdict[data-level="warning"] {
+		border-color: hsl(var(--wa) / 0.4);
+		background: hsl(var(--wa) / 0.1);
+	}
+
+	.bk-verdict[data-level="critical"] {
+		border-color: hsl(var(--er) / 0.4);
+		background: hsl(var(--er) / 0.1);
+	}
+
+	/* An SVG, not a text glyph: flex centres a text node by its LINE box, which
+	   carries the font's ascender and descender, so a character sits visibly low
+	   inside the circle it is meant to be in the middle of. */
+	.bk-verdict-icon {
+		flex: 0 0 auto;
+		width: 1.35rem;
+		height: 1.35rem;
+		margin-top: 0.1rem;
+		color: hsl(var(--bc) / 0.45);
+	}
+
+	.bk-verdict[data-level="ok"] .bk-verdict-icon { color: hsl(var(--su)); }
+	.bk-verdict[data-level="warning"] .bk-verdict-icon { color: hsl(var(--wa)); }
+	.bk-verdict[data-level="critical"] .bk-verdict-icon { color: hsl(var(--er)); }
+
+	.bk-verdict-headline {
+		font-weight: 600;
+		font-size: 0.92rem;
+		line-height: 1.35;
+	}
+
+	.bk-verdict-detail {
+		font-size: 0.78rem;
+		opacity: 0.7;
+		margin-top: 0.2rem;
+		line-height: 1.45;
+		overflow-wrap: anywhere;
+	}
+
+	.bk-facts {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+		gap: 0.75rem;
+	}
+
+	.bk-fact {
+		border: 1px solid hsl(var(--bc) / 0.1);
+		border-radius: 0.45rem;
+		padding: 0.6rem 0.75rem;
+		min-width: 0;
+	}
+
+	.bk-fact-label {
+		font-size: 0.68rem;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		opacity: 0.55;
+	}
+
+	.bk-fact-value {
+		font-size: 0.95rem;
+		font-weight: 600;
+		margin-top: 0.2rem;
+		overflow-wrap: anywhere;
+	}
+
+	.bk-fact-sub {
+		font-size: 0.72rem;
+		opacity: 0.6;
+		margin-top: 0.1rem;
+		overflow-wrap: anywhere;
+	}
+
+	/* The run list scrolls inside the card, so the card is the same height with
+	   three runs or twenty. */
+	.bk-scroll {
+		max-height: 17rem;
+		overflow-y: auto;
+	}
+
+	.bk-row {
+		display: flex;
+		align-items: center;
+		gap: 0.7rem;
+		padding: 0.55rem 0.25rem;
+		border-bottom: 1px solid hsl(var(--bc) / 0.08);
+		font-size: 0.8rem;
+	}
+
+	.bk-row:last-child { border-bottom: 0; }
+
+	.bk-dot {
+		flex: 0 0 auto;
+		width: 0.55rem;
+		height: 0.55rem;
+		border-radius: 999px;
+		background: hsl(var(--bc) / 0.25);
+	}
+
+	.bk-row[data-status="succeeded"] .bk-dot { background: hsl(var(--su)); }
+	.bk-row[data-status="failed"] .bk-dot { background: hsl(var(--er)); }
+	.bk-row[data-status="stuck"] .bk-dot { background: hsl(var(--er)); }
+	.bk-row[data-status="running"] .bk-dot { background: hsl(var(--in)); }
+
+	.bk-row-main { flex: 1 1 auto; min-width: 0; }
+	.bk-row-kind { font-weight: 600; }
+	.bk-row-msg { opacity: 0.6; font-size: 0.73rem; overflow-wrap: anywhere; }
+
+	.bk-point {
+		border: 1px solid hsl(var(--bc) / 0.12);
+		border-radius: 0.45rem;
+		margin-bottom: 0.5rem;
+		overflow: hidden;
+	}
+
+	.bk-point:last-child { margin-bottom: 0; }
+
+	.bk-point-head {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		padding: 0.55rem 0.75rem;
+		flex-wrap: wrap;
+	}
+
+	.bk-point-name {
+		font-family: ui-monospace, Menlo, Consolas, monospace;
+		font-size: 0.78rem;
+		overflow-wrap: anywhere;
+		flex: 1 1 12rem;
+		min-width: 0;
+	}
+
+	.bk-point-meta {
+		font-size: 0.72rem;
+		opacity: 0.6;
+		white-space: nowrap;
+	}
+
+	/* A word plus a dot, not a coloured pill: "gone" is a state, not an error. */
+	.bk-kept {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+		font-size: 0.72rem;
+		white-space: nowrap;
+		opacity: 0.8;
+	}
+
+	.bk-kept::before {
+		content: "";
+		width: 0.5rem;
+		height: 0.5rem;
+		border-radius: 999px;
+		background: hsl(var(--su));
+		flex: none;
+	}
+
+	.bk-kept.is-gone { opacity: 0.5; }
+
+	.bk-kept.is-gone::before {
+		background: transparent;
+		box-shadow: inset 0 0 0 1.5px hsl(var(--bc) / 0.35);
+	}
+
+	.bk-cmds {
+		border-top: 1px solid hsl(var(--bc) / 0.12);
+		padding: 0.7rem 0.75rem;
+		background: hsl(var(--b2));
+	}
+
+	.bk-cmds[hidden] { display: none; }
+
+	.bk-pre {
+		font-family: ui-monospace, Menlo, Consolas, monospace;
+		font-size: 0.72rem;
+		line-height: 1.55;
+		white-space: pre;
+		overflow-x: auto;
+		margin: 0 0 0.5rem 0;
+		padding: 0.6rem;
+		border-radius: 0.35rem;
+		background: hsl(var(--b1));
+		border: 1px solid hsl(var(--bc) / 0.1);
+	}
+
+	.bk-warn {
+		font-size: 0.73rem;
+		line-height: 1.5;
+		margin-bottom: 0.5rem;
+		padding: 0.5rem 0.6rem;
+		border-radius: 0.35rem;
+		background: hsl(var(--wa) / 0.12);
+		border: 1px solid hsl(var(--wa) / 0.35);
+	}
+
+	.bk-row-when {
+		flex: 0 0 auto;
+		font-size: 0.73rem;
+		opacity: 0.55;
+		white-space: nowrap;
+	}
+</style>
+
+<section class="section-card" data-backup-card>
+	<div class="card-body p-5 gap-4">
+		<div class="flex items-start justify-between gap-4">
+			<div>
+				<h2 class="section-title">Database Backups</h2>
+				<p class="text-sm text-base-content/60">
+					Nightly dump to Artifactory, and a weekly job that restores the newest
+					dump into a scratch database to prove it works. Read-only — the restore
+					procedure is in the runbook.
+				</p>
+			</div>
+			<button
+				id="bk-refresh"
+				class="btn btn-sm btn-ghost"
+				type="button"
+				aria-label="Refresh backup status"
+			>
+				Refresh
+			</button>
+		</div>
+
+		<div id="bk-verdict" class="bk-verdict" data-level="unknown">
+			<svg
+				class="bk-verdict-icon"
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="2"
+				aria-hidden="true"
+			>
+				<circle cx="12" cy="12" r="9" />
+			</svg>
+			<div class="min-w-0">
+				<div class="bk-verdict-headline" id="bk-headline">Loading…</div>
+				<div class="bk-verdict-detail" id="bk-detail"></div>
+			</div>
+		</div>
+
+		<div class="bk-facts" id="bk-facts"></div>
+
+		<div>
+			<h3 class="font-semibold text-base-content text-sm">Restore points</h3>
+			<p class="text-xs text-base-content/60 mb-2">
+				There is no restore button, and that is deliberate: this page is served by
+				the database a restore would replace, so the process running the button
+				would have to stop halfway through and could never report the result.
+				Expand a restore point for the exact commands, with the real names for
+				this environment already filled in.
+			</p>
+			<div class="bk-scroll" id="bk-points"></div>
+		</div>
+
+		<div>
+			<h3 class="font-semibold text-base-content text-sm">Recent runs</h3>
+			<div class="bk-scroll" id="bk-runs"></div>
+		</div>
+	</div>
+</section>
+
+<script>
+	(function () {
+		"use strict";
+
+		const root = document.querySelector("[data-backup-card]");
+		if (!root) return;
+
+		const verdictEl = document.getElementById("bk-verdict");
+		const headlineEl = document.getElementById("bk-headline");
+		const detailEl = document.getElementById("bk-detail");
+		const factsEl = document.getElementById("bk-facts");
+		const runsEl = document.getElementById("bk-runs");
+		const pointsEl = document.getElementById("bk-points");
+		const refreshBtn = document.getElementById("bk-refresh");
+
+		// Three shapes rather than colour alone: a tick, an exclamation and a
+		// question read the same to anyone who cannot tell the greens from the reds.
+		const ICONS = {
+			ok: '<circle cx="12" cy="12" r="9"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/>',
+			warning: '<circle cx="12" cy="12" r="9"/><path d="M12 7.5v5"/><path d="M12 16.2v.3"/>',
+			critical: '<circle cx="12" cy="12" r="9"/><path d="M12 7.5v5"/><path d="M12 16.2v.3"/>',
+			unknown: '<circle cx="12" cy="12" r="9"/><path d="M9.6 9.4a2.5 2.5 0 013.9-1.6c1.5 1 .9 2.6-.4 3.4-.8.5-1.1 1-1.1 1.8"/><path d="M12 16.4v.3"/>',
+		};
+
+		function esc(value) {
+			const div = document.createElement("div");
+			div.textContent = value == null ? "" : String(value);
+			return div.innerHTML;
+		}
+
+		function bytes(n) {
+			if (n == null) return "—";
+			const units = ["B", "KB", "MB", "GB", "TB"];
+			let size = Number(n);
+			let i = 0;
+			while (size >= 1024 && i < units.length - 1) {
+				size /= 1024;
+				i += 1;
+			}
+			return (i === 0 ? size : size.toFixed(1)) + " " + units[i];
+		}
+
+		function duration(seconds) {
+			if (seconds == null) return null;
+			if (seconds < 60) return seconds + "s";
+			return Math.floor(seconds / 60) + "m " + (seconds % 60) + "s";
+		}
+
+		function renderVerdict(health) {
+			const level = (health && health.level) || "unknown";
+			verdictEl.setAttribute("data-level", level);
+			const icon = verdictEl.querySelector(".bk-verdict-icon");
+			if (icon) icon.innerHTML = ICONS[level] || ICONS.unknown;
+			headlineEl.textContent = (health && health.headline) || "Unknown";
+			detailEl.textContent = (health && health.detail) || "";
+		}
+
+		function fact(label, value, sub) {
+			return (
+				'<div class="bk-fact"><div class="bk-fact-label">' +
+				esc(label) +
+				'</div><div class="bk-fact-value">' +
+				esc(value) +
+				"</div>" +
+				(sub ? '<div class="bk-fact-sub">' + esc(sub) + "</div>" : "") +
+				"</div>"
+			);
+		}
+
+		function renderFacts(data) {
+			const backup = data.last_backup;
+			const verify = data.last_verify;
+			const parts = [];
+
+			parts.push(
+				fact(
+					"Last backup",
+					backup ? backup.age : "never",
+					backup ? backup.status + (backup.size_bytes ? " · " + bytes(backup.size_bytes) : "") : null
+				)
+			);
+			parts.push(
+				fact(
+					"Last restore test",
+					verify ? verify.age : "never",
+					verify ? verify.status : null
+				)
+			);
+			parts.push(
+				fact(
+					"Dump size",
+					backup ? bytes(backup.size_bytes) : "—",
+					backup && backup.duration_seconds != null
+						? "took " + duration(backup.duration_seconds)
+						: null
+				)
+			);
+			// The fingerprint is the thing that makes a restore safe: it says WHICH
+			// JWT_SECRET the dump belongs to. Shown so an operator restoring into a
+			// rebuilt namespace can compare it before starting the backend, rather
+			// than discovering the mismatch through unreadable stored credentials.
+			parts.push(
+				fact(
+					"Secret fingerprint",
+					backup && backup.jwt_fingerprint ? backup.jwt_fingerprint + "…" : "not recorded",
+					"identifies the JWT_SECRET this dump needs"
+				)
+			);
+			factsEl.innerHTML = parts.join("");
+		}
+
+		// The commands an operator would otherwise assemble by hand, with this
+		// environment's real names in them. Built here rather than server-side only
+		// so the portal's own hostname (which the backend behind a proxy does not
+		// reliably know) comes from the browser that is displaying it.
+		function commandsFor(point, ctx) {
+			// One script, not a list of commands. The written procedure had four
+			// defects and every one was a place where it differed from what the
+			// CronJob does; a script performing the same steps cannot drift from
+			// them the way prose does. It also sidesteps the shell - this block
+			// used backslash continuations, which are not continuations in cmd.
+			const ns = ctx.namespace;
+			const fp = point.jwt_fingerprint || "(not recorded)";
+			const flags = [
+				"--namespace " + ns,
+				"--file " + point.filename,
+				"--deployment " + ctx.deployment,
+				"--statefulset " + ctx.statefulset,
+				"--db-user " + ctx.db_user,
+				"--db-name " + ctx.db_name,
+				"--replicas " + ctx.replicas,
+			].join(" ");
+			return [
+				"# Restore " + point.filename,
+				"#",
+				"# Run from a checkout of the repo, logged in with oc. Works in cmd,",
+				"# PowerShell and bash - single lines, no shell-specific syntax.",
+				"#",
+				"# It reads the backup credentials from the cluster Secret, checks this",
+				"# dump against its manifest checksum AND its fingerprint against the",
+				"# RUNNING JWT_SECRET, and refuses to restore on a mismatch.",
+				"# Expected fingerprint: " + fp,
+				"",
+				"# 1. Rehearse. Verifies and downloads. Changes NOTHING.",
+				"python scripts/restore_backup.py " + flags + " --dry-run",
+				"",
+				"# 2. Do it. Scales the backend to 0, restores with --clean (which DROPS",
+				"#    every object first), scales back, then confirms the backend can",
+				"#    still DECRYPT what came back. Asks you to type RESTORE first.",
+				"python scripts/restore_backup.py " + flags,
+				"",
+				"# --------------------------------------------------------------",
+				"# If the portal is down and you cannot get the repo, the same steps",
+				"# by hand. Each is ONE line; none needs a continuation character.",
+				"",
+				"oc extract secret/all-secrets -n " + ns + " --keys=ARTIFACTORY_BACKUP_USERNAME,ARTIFACTORY_BACKUP_TOKEN --to=-",
+				"curl -f -k -u USER:TOKEN -O " + point.artifact,
+				"#    next line must print " + (point.sha256 || "(none recorded)"),
+				"certutil -hashfile " + point.filename + " SHA256",
+				"oc scale deploy/" + ctx.deployment + " -n " + ns + " --replicas=0",
+				"oc exec -i -n " + ns + " statefulset/" + ctx.statefulset + " -- sh -c \"PGPASSWORD=$POSTGRESQL_PASSWORD pg_restore -U " + ctx.db_user + " -d " + ctx.db_name + " --clean --if-exists --no-owner --no-privileges\" < " + point.filename,
+				"oc scale deploy/" + ctx.deployment + " -n " + ns + " --replicas=" + ctx.replicas,
+				"curl -s " + window.location.origin + "/api/health/ready",
+			].join("\n");
+		}
+
+		function copyText(text, button) {
+			const done = function () {
+				const was = button.textContent;
+				button.textContent = "Copied";
+				setTimeout(function () { button.textContent = was; }, 1500);
+			};
+			if (navigator.clipboard && window.isSecureContext) {
+				navigator.clipboard.writeText(text).then(done, function () {});
+				return;
+			}
+			// Plain HTTP or an older browser: the async clipboard API is unavailable,
+			// and a copy button that silently does nothing is worse than no button.
+			const scratch = document.createElement("textarea");
+			scratch.value = text;
+			scratch.setAttribute("readonly", "");
+			scratch.style.position = "fixed";
+			scratch.style.opacity = "0";
+			document.body.appendChild(scratch);
+			scratch.select();
+			try { document.execCommand("copy"); done(); } catch (err) { /* nothing else to try */ }
+			document.body.removeChild(scratch);
+		}
+
+		function renderPoints(data) {
+			const points = data.restore_points || [];
+			const ctx = data.restore_context || {};
+			if (!points.length) {
+				pointsEl.innerHTML =
+					'<div class="bk-row"><div class="bk-row-main bk-row-msg">' +
+					"No successful backup has been recorded yet, so there is nothing to " +
+					"restore from.</div></div>";
+				return;
+			}
+			pointsEl.innerHTML = points
+				.map(function (point, i) {
+					const kept = point.retained
+						? '<span class="bk-kept">in Artifactory</span>'
+						: '<span class="bk-kept is-gone">pruned</span>';
+					return (
+						'<div class="bk-point"><div class="bk-point-head">' +
+						'<span class="bk-point-name">' + esc(point.filename) + "</span>" +
+						'<span class="bk-point-meta">' + esc(point.age || "") + " · " +
+						esc(bytes(point.size_bytes)) + "</span>" +
+						kept +
+						'<button class="btn btn-xs btn-ghost" type="button" data-toggle="' +
+						i + '">Restore…</button>' +
+						'</div><div class="bk-cmds" id="bk-cmds-' + i + '" hidden></div></div>'
+					);
+				})
+				.join("");
+
+			pointsEl.querySelectorAll("[data-toggle]").forEach(function (btn) {
+				btn.addEventListener("click", function () {
+					const i = btn.getAttribute("data-toggle");
+					const panel = document.getElementById("bk-cmds-" + i);
+					const point = points[Number(i)];
+					if (!panel.hasAttribute("hidden")) {
+						panel.setAttribute("hidden", "");
+						btn.textContent = "Restore…";
+						return;
+					}
+					const text = commandsFor(point, ctx);
+					const warn = point.retained
+						? ""
+						: '<div class="bk-warn"><strong>This dump has been pruned.</strong> ' +
+						  "Retention keeps the newest " +
+						  esc(String((data.thresholds || {}).keep_last || 3)) +
+						  ", so step 2 will 404. It is listed as history, not as a " +
+						  "restore point.</div>";
+					panel.innerHTML =
+						warn +
+						'<div class="bk-warn">Step 1 is not optional. Restoring a dump taken ' +
+						"under a different JWT_SECRET leaves every stored credential and the " +
+						"OIDC client secret unreadable — the data restores, and nothing can " +
+						"decrypt it.</div>" +
+						'<pre class="bk-pre">' + esc(text) + "</pre>" +
+						'<button class="btn btn-xs" type="button" data-copy="' + i + '">Copy</button>';
+					panel.querySelector("[data-copy]").addEventListener("click", function (ev) {
+						copyText(text, ev.currentTarget);
+					});
+					panel.removeAttribute("hidden");
+					btn.textContent = "Hide";
+				});
+			});
+		}
+
+		function renderRuns(runs) {
+			if (!runs || !runs.length) {
+				runsEl.innerHTML =
+					'<div class="bk-row"><div class="bk-row-main bk-row-msg">No runs recorded yet.</div></div>';
+				return;
+			}
+			runsEl.innerHTML = runs
+				.map(function (run) {
+					const label = run.kind === "verify" ? "Restore test" : "Backup";
+					const extra = [];
+					if (run.status) extra.push(run.status);
+					if (run.duration_seconds != null) extra.push(duration(run.duration_seconds));
+					if (run.message) extra.push(run.message);
+					return (
+						'<div class="bk-row" data-status="' +
+						esc(run.status) +
+						'"><span class="bk-dot"></span><div class="bk-row-main"><div class="bk-row-kind">' +
+						esc(label) +
+						'</div><div class="bk-row-msg">' +
+						esc(extra.join(" · ")) +
+						'</div></div><div class="bk-row-when">' +
+						esc(run.age || "") +
+						"</div></div>"
+					);
+				})
+				.join("");
+		}
+
+		async function load() {
+			try {
+				const res = await fetch("/api/backups", { credentials: "same-origin" });
+				if (!res.ok) {
+					renderVerdict({
+						level: "unknown",
+						headline: "Backup status could not be loaded",
+						detail: "The request to /api/backups returned HTTP " + res.status + ".",
+					});
+					return;
+				}
+				const data = await res.json();
+				renderVerdict(data.health);
+				renderFacts(data);
+				renderPoints(data);
+				renderRuns(data.runs);
+			} catch (err) {
+				renderVerdict({
+					level: "unknown",
+					headline: "Backup status could not be loaded",
+					detail: String(err),
+				});
+			}
+		}
+
+		if (refreshBtn) refreshBtn.addEventListener("click", load);
+		load();
+	})();
+</script>

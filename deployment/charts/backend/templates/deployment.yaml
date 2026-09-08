@@ -1,24 +1,50 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ .Chart.Name }}
+  name: {{ .Chart.Name }}{{ .Values.global.nameSuffix }}
   labels:
-    app: {{ .Chart.Name }}
+    app: {{ .Chart.Name }}{{ .Values.global.nameSuffix }}
     tier: backend
 spec:
   replicas: {{ .Values.global.replicaCount }}
+  # Kubernetes keeps one ReplicaSet per revision so a rollout can be undone, and the
+  # default it keeps is TEN. Every pipeline run ships a new image tag, so every run
+  # makes a revision — which is where the wall of "0 of 0 pods" frontend ReplicaSets
+  # comes from. They are history, not leaked pods: they hold no containers and cost
+  # nothing but list clutter. Two is enough to roll back the deploy that just broke.
+  revisionHistoryLimit: {{ .Values.global.revisionHistoryLimit | default 2 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Set per environment (charts/backend/values.yaml, overridden in values-prod.yaml)
+      # because the right answer depends on how much quota is left, not on preference.
+      #
+      # maxSurge: 1 keeps full capacity through a deploy but needs room for one EXTRA
+      # pod. maxUnavailable: 1 with maxSurge: 0 needs no extra room at all — it frees a
+      # slot before it fills one — and with two replicas there is always one serving.
+      #
+      # Getting this wrong does not degrade the rollout, it prevents it: with no quota
+      # for the surge pod the ReplicaSet reports FailedCreate and the OLD version keeps
+      # serving forever behind a deploy that looks like it simply did not happen.
+      #
+      # No `| default` on these two. Helm's `default` fires on any EMPTY value and 0 is
+      # empty, so `maxSurge: 0` would be silently rewritten to 1 — the chart would
+      # ignore the very setting this incident is about. Both keys are defined in
+      # charts/backend/values.yaml, so there is nothing to default.
+      maxUnavailable: {{ .Values.strategy.maxUnavailable }}
+      maxSurge: {{ .Values.strategy.maxSurge }}
   selector:
     matchLabels:
-      app: {{ .Chart.Name }}
+      app: {{ .Chart.Name }}{{ .Values.global.nameSuffix }}
   template:
     metadata:
       labels:
-        app: {{ .Chart.Name }}
+        app: {{ .Chart.Name }}{{ .Values.global.nameSuffix }}
         tier: backend
     spec:
-      serviceAccountName: backend-sa
+      serviceAccountName: backend-sa{{ .Values.global.nameSuffix }}
       containers:
-        - name: {{ .Chart.Name }}
+        - name: {{ .Chart.Name }}{{ .Values.global.nameSuffix }}
           image: {{ .Values.global.customImage.repository }}/{{ .Chart.Name }}:{{ .Values.image.tag }}
           imagePullPolicy: {{ .Values.global.customImage.pullPolicy }}
           ports:
@@ -32,81 +58,215 @@ spec:
             - name: HUB_ADMIN_USERNAME
               valueFrom:
                 secretKeyRef:
-                  name: all-secrets
+                  name: all-secrets{{ .Values.global.nameSuffix }}
                   key: HUB_ADMIN_USERNAME
             - name: HUB_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: all-secrets
+                  name: all-secrets{{ .Values.global.nameSuffix }}
                   key: HUB_ADMIN_PASSWORD
+            - name: HUB_USER_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: all-secrets{{ .Values.global.nameSuffix }}
+                  key: HUB_USER_USERNAME
+            - name: HUB_USER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: all-secrets{{ .Values.global.nameSuffix }}
+                  key: HUB_USER_PASSWORD
             - name: JWT_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: all-secrets
+                  name: all-secrets{{ .Values.global.nameSuffix }}
                   key: JWT_SECRET
             - name: AZURE_DEVOPS_BASE_URL
               valueFrom:
                 secretKeyRef:
-                  name: all-secrets
+                  name: all-secrets{{ .Values.global.nameSuffix }}
                   key: AZURE_DEVOPS_BASE_URL
             - name: AZURE_DEVOPS_ADMIN_PAT
               valueFrom:
                 secretKeyRef:
-                  name: all-secrets
+                  name: all-secrets{{ .Values.global.nameSuffix }}
                   key: AZURE_DEVOPS_ADMIN_PAT
+            # The Artifactory service account. It already exists in this Secret for
+            # the database backup upload; the backend needs it too, because reading a
+            # project's storage quota and raising it are both admin-only and a
+            # per-user token can do neither.
+            - name: ARTIFACTORY_BACKUP_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: all-secrets{{ .Values.global.nameSuffix }}
+                  key: ARTIFACTORY_BACKUP_USERNAME
+            - name: ARTIFACTORY_BACKUP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: all-secrets{{ .Values.global.nameSuffix }}
+                  key: ARTIFACTORY_BACKUP_TOKEN
+            # Preferred over the backup pair when set. Reading a project quota and
+            # writing one are both admin-only, and the backup account only needs
+            # deploy rights on a single repository -- making it an administrator to
+            # read a number is a larger grant than the feature is worth.
+            - name: ARTIFACTORY_ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: all-secrets{{ .Values.global.nameSuffix }}
+                  key: ARTIFACTORY_ADMIN_USERNAME
+            - name: ARTIFACTORY_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: all-secrets{{ .Values.global.nameSuffix }}
+                  key: ARTIFACTORY_ADMIN_TOKEN
+            - name: ARTIFACTORY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: all-secrets{{ .Values.global.nameSuffix }}
+                  key: ARTIFACTORY_ADMIN_PASSWORD
+            - name: ADO_NETBIOS_DOMAIN
+              valueFrom:
+                secretKeyRef:
+                  name: all-secrets{{ .Values.global.nameSuffix }}
+                  key: ADO_NETBIOS_DOMAIN
             - name: SNOW_BASE_URL
               valueFrom:
                 secretKeyRef:
-                  name: all-secrets
+                  name: all-secrets{{ .Values.global.nameSuffix }}
                   key: SNOW_BASE_URL
             - name: SNOW_API_USERNAME
               valueFrom:
                 secretKeyRef:
-                  name: all-secrets
+                  name: all-secrets{{ .Values.global.nameSuffix }}
                   key: SNOW_API_USERNAME
             - name: SNOW_API_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: all-secrets
+                  name: all-secrets{{ .Values.global.nameSuffix }}
                   key: SNOW_API_PASSWORD
             - name: ARTIFACTORY_BASE_URL
               valueFrom:
                 secretKeyRef:
-                  name: all-secrets
+                  name: all-secrets{{ .Values.global.nameSuffix }}
                   key: ARTIFACTORY_BASE_URL
             - name: SONARQUBE_BASE_URL
               valueFrom:
                 secretKeyRef:
-                  name: all-secrets
+                  name: all-secrets{{ .Values.global.nameSuffix }}
                   key: SONARQUBE_BASE_URL
             - name: CONFLUENCE_BASE_URL
               valueFrom:
                 secretKeyRef:
-                  name: all-secrets
+                  name: all-secrets{{ .Values.global.nameSuffix }}
                   key: CONFLUENCE_BASE_URL
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: all-secrets
+                  name: all-secrets{{ .Values.global.nameSuffix }}
                   key: POSTGRES_PASSWORD
             - name: DATABASE_URL
               value: "postgresql://{{ .Values.global.endpoints.postgresUser }}:$(POSTGRES_PASSWORD)@{{ .Values.global.endpoints.postgresHost }}:{{ .Values.global.endpoints.postgresPort }}/{{ .Values.global.endpoints.postgresDB }}"
+            # ── Restore-instruction context ──────────────────────────────
+            # The portal cannot perform a restore — it is served BY the database it
+            # would be restoring, so the process running the button has to stop
+            # existing halfway through and can never report the result. What it CAN
+            # do is hand an operator the exact commands, with the real names already
+            # filled in, so nobody is typing a database name into a --clean restore
+            # from memory.
+            #
+            # All five are names this chart already knows. Reading them here rather
+            # than hardcoding them in the template means the instructions follow the
+            # environment they are rendered in: test says postgres-test, prod says
+            # postgres, and neither is a guess.
+            - name: HUB_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: BACKUP_PG_STATEFULSET
+              value: "postgres{{ .Values.global.nameSuffix }}"
+            - name: BACKUP_BACKEND_DEPLOYMENT
+              value: "{{ .Chart.Name }}{{ .Values.global.nameSuffix }}"
+            - name: BACKUP_BACKEND_REPLICAS
+              value: {{ .Values.global.replicaCount | default 2 | quote }}
+            # Same number the backup job prunes to; see global.backupKeepLast. The
+            # portal uses it to mark which recorded backups are still IN Artifactory
+            # and which have aged out — offering a restore point that was deleted
+            # days ago is worse than not listing it.
+            - name: BACKUP_KEEP_LAST
+              value: {{ required "global.backupKeepLast is not set." .Values.global.backupKeepLast | toString | quote }}
+            # Postgres connections are a CLUSTER-WIDE budget, not a per-pod one: each
+            # replica opens its own pool, so the total is dbPoolMax x replicas. With
+            # autoscaling to 10 backends, a pool of 20 would ask for 200 connections
+            # against a server whose default limit is 100 — and exhausting it takes
+            # the database down for every pod at once rather than slowing one down.
+            # Keep (dbPoolMax x maxReplicas) comfortably under Postgres max_connections.
+            - name: DB_POOL_MIN
+              value: {{ .Values.dbPoolMin | default 2 | quote }}
+            - name: DB_POOL_MAX
+              value: {{ .Values.dbPoolMax | default 8 | quote }}
+            # The image tag this pod is running, reported by /api/health/live. The
+            # pipeline asks the public hostname for it after deploying and fails if it
+            # is not the tag it just built — which is the only check that covers the
+            # whole path (route, service, pod) rather than just "the manifest was
+            # accepted". It is also what an operator reads to answer "is this the new
+            # version?" without a shell on the cluster.
+            - name: APP_BUILD
+              value: {{ .Values.image.tag | default "unknown" | quote }}
           envFrom:
             - configMapRef:
-                name: infra-config
+                name: infra-config{{ .Values.global.nameSuffix }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          # A startup probe, so the other two do not run until the app is up.
+          #
+          # Without it, liveness starts immediately and defaults apply:
+          # initialDelaySeconds 0, period 10, failureThreshold 3 — about 30
+          # seconds, with a 1-second response timeout, to import FastAPI plus
+          # every router and bind the port. On a loaded node that budget is not
+          # always met, and the kubelet restarts a container that was only
+          # still starting. That is a crash loop with no error in it.
+          #
+          # 30 x 5s = 150s to come up; after that liveness takes over.
+          startupProbe:
+            httpGet:
+              path: /api/health/live
+              port: 8000
+            periodSeconds: 5
+            failureThreshold: 30
+            timeoutSeconds: 3
+          # Liveness asks only "is this process wedged" — /api/health/live
+          # touches no dependency, because restarting cannot fix Postgres.
           livenessProbe:
             httpGet:
               path: /api/health/live
               port: 8000
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # Readiness is where dependencies belong: an unreachable DB takes the
+          # pod out of the Service and leaves it running and diagnosable.
           readinessProbe:
             httpGet:
               path: /api/health/ready
               port: 8000
+            # Roomier than liveness on purpose. When a dependency is merely SLOW
+            # rather than down, a tight timeout flaps the pod out of its Service
+            # and makes a bad minute worse.
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 3
           securityContext:
             runAsNonRoot: true
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+          # readOnlyRootFilesystem with no writable /tmp is a trap: the moment
+          # any library reaches for tempfile the container dies on a read-only
+          # filesystem error that reads like a code bug. Keep the root read-only
+          # and give it a scratch mount.
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

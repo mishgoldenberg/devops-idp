@@ -1,7 +1,18 @@
-<div
-	class="section-card h-full flex flex-col"
->
-	<div class="card-body p-5 flex flex-col h-full gap-4">
+{#
+    My Pipeline Runs.
+
+    Rebuilt to work like the work-items widget: the shell is server-rendered (so the
+    PAT-missing flow still works), and the rows are fetched client-side so the user can
+    scope them with the Collection and Project selects without a page round-trip.
+
+    The old version was server-rendered from a `runs` list that was ALWAYS EMPTY: the
+    backend filtered builds by the hub username against Azure DevOps's `requestedFor`
+    (a domain account), two identity namespaces that never match. That is fixed in
+    azure_devops.py; the widget now also shows the real run state rather than only
+    succeeded/failed.
+#}
+<div class="section-card h-full flex flex-col" data-pipelines-root>
+	<div class="card-body p-5 flex flex-col h-full gap-3">
 		<!-- Header -->
 		<div class="flex items-center gap-3">
 			<div
@@ -18,9 +29,20 @@
 			<h3
 				class="text-sm font-bold uppercase tracking-widest text-base-content/70"
 			>
-				Latest My Pipeline Run
+				My Pipeline Runs
 			</h3>
+			<!--
+				Mine / All. The widget filters to runs YOU queued, so on a project where
+				you have queued once it correctly shows a single row — which reads like a
+				fault rather than a filter. The toggle names the filter, shows how many
+				runs each side holds, and lets you see the rest without leaving the page.
+			-->
+			<div class="ml-auto shrink-0 flex items-center gap-1" data-pipe-scope-wrap>
+				<button type="button" class="btn btn-xs btn-ghost px-2" data-pipe-scope="mine">Mine</button>
+				<button type="button" class="btn btn-xs btn-ghost px-2" data-pipe-scope="all">All</button>
+			</div>
 		</div>
+
 		{% if error and needs_pat %}
 		{% include "partials/components/azure-pat-prompt.html" %}
 		{% elif error %}
@@ -28,56 +50,344 @@
 			{{ error }}
 		</div>
 		{% else %}
-		{% if not runs %}
-		<div class="flex flex-1 flex-col items-center justify-center text-center gap-2 py-8 text-base-content/60">
-			<svg class="w-10 h-10 text-base-content/30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-				<polygon points="8 5 19 12 8 19 8 5"></polygon>
-			</svg>
-			<p class="text-sm font-medium">No pipeline runs yet</p>
-			<p class="text-xs text-base-content/50 max-w-xs">
-				Your latest build will appear here once a pipeline runs.
-			</p>
+		<!-- Inline grid: a bare `grid-cols-2` is not in the precompiled output.css. -->
+		<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem;">
+			<label class="form-control">
+				<span class="label-text text-[11px] uppercase tracking-wide text-base-content/50">Collection</span>
+				<select class="select select-bordered select-xs w-full" data-pipe-collection-select aria-label="Collection">
+					<option value="">All collections</option>
+				</select>
+			</label>
+			<label class="form-control">
+				<span class="label-text text-[11px] uppercase tracking-wide text-base-content/50">Project</span>
+				<select class="select select-bordered select-xs w-full" data-pipe-project-select aria-label="Project">
+					<option value="">All projects</option>
+				</select>
+			</label>
 		</div>
-		{% else %}
-		<!-- Pipeline run list -->
-		<ul
-			class="flex flex-col gap-2 flex-1 min-h-0 overflow-y-auto overscroll-contain"
-		>
-			{% for run in runs %}
-			<li
-				class="flex items-center gap-3 rounded-lg bg-base-200/60 border border-base-300 px-3 py-2.5"
+
+		<div class="flex-1 min-h-0 flex flex-col" data-pipe-body>
+			<div
+				class="flex-1 min-h-0 flex items-center justify-center text-xs text-base-content/50"
+				data-pipe-status
 			>
-				<span
-					class="h-2.5 w-2.5 shrink-0 rounded-full {{ 'bg-success' if run.result == 'succeeded' else ('bg-error' if run.result == 'failed' else 'bg-warning animate-pulse') }}"
-				></span>
-				<div class="flex flex-col flex-1 min-w-0">
-					{% set run_url = (run.url or '')|trim %} {% set run_url_valid =
-					run_url.startswith('https://dev.azure.com/') and '/_build/results' in
-					run_url and '${' not in run_url and 'org/project' not in run_url %} {%
-					if run_url_valid %}
-					<a
-						href="{{ run_url }}"
-						target="_blank"
-						rel="noopener noreferrer"
-						class="text-sm font-medium text-base-content hover:text-primary truncate"
-						>{{ run.name }}</a
-					>
-					{% else %}
-					<span class="text-sm font-medium text-base-content truncate"
-						>{{ run.name }}</span
-					>
-					{% endif %}
-					<span class="text-xs text-base-content/50">{{ run.project }}</span>
-				</div>
-				<span
-					class="text-xs font-semibold shrink-0 {{ 'text-success' if run.result == 'succeeded' else ('text-error' if run.result == 'failed' else 'text-warning') }}"
-					>{{ run.result }}</span
-				>
-				<span class="text-xs text-base-content/40 shrink-0">{{ run.age }}</span>
-			</li>
-			{% endfor %}
-		</ul>
-		{% endif %}
+				<span class="loading loading-spinner loading-sm text-base-content/30"></span>
+			</div>
+			<ul
+				class="hidden flex-1 min-h-0 overflow-y-auto overscroll-contain flex flex-col gap-2 pr-1"
+				data-pipe-list
+			></ul>
+		</div>
+		<!--
+			"Why so few?" — every step of the fetch can drop runs silently (a collection
+			the token cannot enumerate, a project whose builds it cannot read, the
+			mine-only filter). This states what was actually reached and what was
+			skipped, so a short list is explainable instead of suspicious.
+		-->
+		<details class="hidden shrink-0" data-pipe-why>
+			<summary class="cursor-pointer text-[11px] text-base-content/40 hover:text-primary">Why so few?</summary>
+			<div class="mt-1 text-[11px] text-base-content/50" style="line-height: 1.5" data-pipe-why-body></div>
+		</details>
 		{% endif %}
 	</div>
 </div>
+
+<script>
+	(function () {
+		const root = document.querySelector("[data-pipelines-root]");
+		if (!root) return;
+		const body = root.querySelector("[data-pipe-body]");
+		if (!body) return; // error branch: nothing interactive to wire up
+
+		const listEl = root.querySelector("[data-pipe-list]");
+		const statusEl = root.querySelector("[data-pipe-status]");
+		const collectionSelect = root.querySelector("[data-pipe-collection-select]");
+		const projectSelect = root.querySelector("[data-pipe-project-select]");
+
+		const collectionKey = "ado-pipelines-collection";
+		const projectKey = "ado-pipelines-project";
+		const scopeKey = "ado-pipelines-scope";
+		const scopeWrap = root.querySelector("[data-pipe-scope-wrap]");
+
+		// Shareable: a link carrying ?pipe_collection=…&pipe_project=…&pipe_scope=…
+		// reproduces exactly this view for whoever opens it. Without parameters it
+		// falls back to what this browser last had.
+		const US = window.portalUrlState;
+		const pick = (q, k) => (US ? US.resolve(q, k) : localStorage.getItem(k) || "");
+
+		let selectedCollection = pick("pipe_collection", collectionKey);
+		let selectedProject = pick("pipe_project", projectKey);
+		let scope = pick("pipe_scope", scopeKey) === "all" ? "all" : "mine";
+
+		const whyEl = root.querySelector("[data-pipe-why]");
+		const whyBodyEl = root.querySelector("[data-pipe-why-body]");
+
+		function paintWhy(d) {
+			if (!whyEl || !whyBodyEl || !d) return;
+			const lines = [];
+			lines.push(
+				"Reached " + d.collections + " collection(s) and " + d.projects +
+				" project(s); found " + d.builds_seen + " run(s), " + d.builds_mine + " queued by you."
+			);
+			if ((d.collections_skipped || []).length) {
+				lines.push(
+					"Collections skipped (token cannot list their projects): " +
+					d.collections_skipped.map((c) => escapeHtml(c.name) + " (HTTP " + c.status + ")").join(", ") + "."
+				);
+			}
+			if ((d.projects_unreadable || []).length) {
+				lines.push(
+					"Projects whose builds could not be read — usually the PAT lacks Build (read) there: " +
+					d.projects_unreadable.map((p) => escapeHtml(p.name) + " (HTTP " + (p.status || "no response") + ")").join(", ") + "."
+				);
+			}
+			if ((d.requesters || []).length) {
+				lines.push(
+					"Runs here were queued by: " + d.requesters.map(escapeHtml).join(", ") +
+					". You are matched as: " + (d.identity || []).map(escapeHtml).join(", ") +
+					". If none of those overlap, no run counts as yours — use All."
+				);
+			}
+			whyBodyEl.innerHTML = lines.join("<br>");
+			whyEl.classList.remove("hidden");
+		}
+
+		function paintScope(counts) {
+			if (!scopeWrap) return;
+			scopeWrap.querySelectorAll("[data-pipe-scope]").forEach((btn) => {
+				const on = btn.getAttribute("data-pipe-scope") === scope;
+				btn.classList.toggle("btn-active", on);
+				btn.classList.toggle("text-primary", on);
+				const which = btn.getAttribute("data-pipe-scope");
+				const n = counts ? counts[which] : undefined;
+				btn.textContent =
+					(which === "mine" ? "Mine" : "All") + (typeof n === "number" ? " " + n : "");
+			});
+		}
+
+		function setStatus(msg) {
+			if (!msg) {
+				statusEl.classList.add("hidden");
+				listEl.classList.remove("hidden");
+				listEl.classList.add("flex");
+				return;
+			}
+			statusEl.classList.remove("hidden");
+			statusEl.textContent = msg;
+			listEl.classList.add("hidden");
+		}
+
+		function escapeHtml(str) {
+			return String(str == null ? "" : str)
+				.replace(/&/g, "&amp;")
+				.replace(/</g, "&lt;")
+				.replace(/>/g, "&gt;")
+				.replace(/"/g, "&quot;")
+				.replace(/'/g, "&#39;");
+		}
+
+		function timeAgo(iso) {
+			if (!iso) return "";
+			const t = Date.parse(iso);
+			if (isNaN(t)) return "";
+			const secs = Math.max(1, Math.floor((Date.now() - t) / 1000));
+			if (secs < 60) return secs + "s ago";
+			if (secs < 3600) return Math.floor(secs / 60) + "m ago";
+			if (secs < 86400) return Math.floor(secs / 3600) + "h ago";
+			return Math.floor(secs / 86400) + "d ago";
+		}
+
+		// The backend collapses ADO's status+result pair into one word; each gets a dot
+		// colour and a label colour. Only classes already in output.css are used.
+		const RUN_STATE = {
+			succeeded: { dot: "bg-success", text: "text-success", label: "Succeeded" },
+			failed: { dot: "bg-error", text: "text-error", label: "Failed" },
+			partial: { dot: "bg-warning", text: "text-warning", label: "Partial" },
+			canceled: { dot: "", style: "background-color: currentColor; opacity: .35", text: "text-base-content/50", label: "Canceled" },
+			running: { dot: "bg-info animate-pulse", text: "text-info", label: "Running" },
+			pending: { dot: "bg-warning animate-pulse", text: "text-warning", label: "Pending" },
+		};
+
+		function runRow(run) {
+			const state = RUN_STATE[run.status] || {
+				dot: "",
+				style: "background-color: currentColor; opacity: .35",
+				text: "text-base-content/60",
+				label: run.status || "Unknown",
+			};
+			const where = [run.project, run.collection].filter(Boolean).join(" · ");
+			const when = timeAgo(run.finished_date || run.started_date || run.created_date);
+			const name = escapeHtml(run.name || "Pipeline");
+			const url = String(run.url || "");
+
+			const title = url
+				? '<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer" class="text-sm font-medium text-base-content hover:text-primary truncate">' + name + "</a>"
+				: '<span class="text-sm font-medium text-base-content truncate">' + name + "</span>";
+
+			return (
+				'<li class="flex items-center gap-3 rounded-lg bg-base-200/60 border border-base-300 px-3 py-2.5">' +
+					'<span class="h-2.5 w-2.5 shrink-0 rounded-full ' + (state.dot || "") + '" style="' + (state.style || "") + '"></span>' +
+					'<div class="flex flex-col flex-1 min-w-0">' +
+						title +
+						'<span class="text-xs text-base-content/50 truncate">' +
+							escapeHtml(where) +
+							(run.run_id ? ' <span class="font-mono text-[11px] text-base-content/40">#' + escapeHtml(run.run_id) + "</span>" : "") +
+						"</span>" +
+					"</div>" +
+					'<span class="text-xs font-semibold shrink-0 ' + state.text + '">' + escapeHtml(state.label) + "</span>" +
+					(when ? '<span class="text-xs text-base-content/40 shrink-0">' + escapeHtml(when) + "</span>" : "") +
+				"</li>"
+			);
+		}
+
+		// Callers pass the storage key; the URL parameter is derived from it so the two
+		// can never be wired up to disagree about which filter is being written.
+		const URL_PARAM = {
+			[collectionKey]: "pipe_collection",
+			[projectKey]: "pipe_project",
+			[scopeKey]: "pipe_scope",
+		};
+
+		function remember(key, value) {
+			if (US && URL_PARAM[key]) {
+				US.set(URL_PARAM[key], value, key);
+				return;
+			}
+			try { localStorage.setItem(key, value); } catch (_) {}
+		}
+
+		async function loadCollections() {
+			if (!collectionSelect) return;
+			try {
+				const res = await fetch("/api/azure-devops/collections", {
+					credentials: "same-origin",
+					headers: { Accept: "application/json" },
+				});
+				if (!res.ok) throw new Error("http " + res.status);
+				const rows = (await res.json()).data || [];
+				collectionSelect.innerHTML =
+					'<option value="">All collections</option>' +
+					rows.map((c) => {
+						const name = String(c.name || "");
+						const sel = name === selectedCollection ? " selected" : "";
+						return '<option value="' + escapeHtml(name) + '"' + sel + ">" + escapeHtml(name) + "</option>";
+					}).join("");
+				collectionSelect.value = selectedCollection;
+			} catch (_) {
+				collectionSelect.innerHTML = '<option value="">All collections</option>';
+			}
+		}
+
+		async function loadProjects() {
+			if (!projectSelect) return;
+			try {
+				const res = await fetch("/api/azure-devops/projects", {
+					credentials: "same-origin",
+					headers: { Accept: "application/json" },
+				});
+				if (!res.ok) throw new Error("http " + res.status);
+				const rows = (await res.json()).data || [];
+				projectSelect.innerHTML =
+					'<option value="">All projects</option>' +
+					rows.map((p) => {
+						const name = String(p.name || "");
+						const sel = name === selectedProject ? " selected" : "";
+						return '<option value="' + escapeHtml(name) + '"' + sel + ">" + escapeHtml(name) + "</option>";
+					}).join("");
+				projectSelect.value = selectedProject;
+			} catch (_) {
+				projectSelect.innerHTML = '<option value="">All projects</option>';
+			}
+		}
+
+		async function load() {
+			setStatus("");
+			statusEl.classList.remove("hidden");
+			statusEl.innerHTML =
+				'<span class="loading loading-spinner loading-sm text-base-content/30"></span>';
+			listEl.classList.add("hidden");
+			try {
+				const params = new URLSearchParams({ scope });
+				if (selectedCollection) params.set("collection", selectedCollection);
+				if (selectedProject) params.set("project", selectedProject);
+				const res = await fetch("/api/azure-devops/pipelines?" + params.toString(), {
+					credentials: "same-origin",
+					headers: { Accept: "application/json" },
+				});
+				if (!res.ok) throw new Error("http " + res.status);
+				const payload = await res.json();
+				const runs = payload.data || [];
+				paintScope(payload.counts);
+				paintWhy(payload.diagnostics);
+				if (!runs.length) {
+					setStatus(
+						scope === "mine"
+							? "No runs queued by you here — try All."
+							: "No pipeline runs in this project."
+					);
+					return;
+				}
+
+				// identity_unresolved: the backend found runs but could not tell which are
+				// yours, because the PAT lacks the profile scope needed to ask Azure DevOps
+				// who the token belongs to. Showing every run and saying so beats showing
+				// an empty box next to a project that plainly has runs.
+				const note = payload.identity_unresolved
+					? `<li class="px-2 pb-2 text-[11px] text-base-content/50">
+							Showing all runs — Azure DevOps did not tell us which are yours.
+						</li>`
+					: "";
+
+				// Only the 10 most recent runs. Beyond that the widget becomes a scroll of
+				// history nobody reads on a dashboard — the "More" box takes you to the full
+				// pipelines page in Azure DevOps for the current scope.
+				const shown = runs.slice(0, 10);
+				let moreHtml = "";
+				const sample = (runs.find((r) => r.url) || {}).url || "";
+				// Only when the list is actually TRUNCATED. It used to appear whenever any
+				// run had a URL, so a widget showing a single run still offered "More" —
+				// which reads as "the rest are hidden" when there is no rest.
+				if (runs.length > shown.length && sample.includes("/_build")) {
+					const href = sample.split("/_build")[0] + "/_build";
+					moreHtml =
+						'<li><a href="' + escapeHtml(href) + '" target="_blank" rel="noopener noreferrer" ' +
+						'class="flex items-center justify-center gap-1 rounded-lg border border-dashed border-base-300 px-3 py-2 text-xs font-medium text-base-content/60 hover:border-primary/50 hover:text-primary transition-colors">' +
+						'More in Azure DevOps</a></li>';
+				}
+				listEl.innerHTML = note + shown.map(runRow).join("") + moreHtml;
+				setStatus(null);
+			} catch (_) {
+				setStatus("Service unavailable");
+			}
+		}
+
+		collectionSelect?.addEventListener("change", () => {
+			selectedCollection = collectionSelect.value || "";
+			remember(collectionKey, selectedCollection);
+			load();
+		});
+
+		projectSelect?.addEventListener("change", () => {
+			selectedProject = projectSelect.value || "";
+			remember(projectKey, selectedProject);
+			load();
+		});
+
+		scopeWrap?.addEventListener("click", (event) => {
+			const btn = event.target.closest("[data-pipe-scope]");
+			if (!btn) return;
+			const next = btn.getAttribute("data-pipe-scope") === "all" ? "all" : "mine";
+			if (next === scope) return;
+			scope = next;
+			remember(scopeKey, scope);
+			paintScope();
+			load();
+		});
+
+		(async function init() {
+			paintScope();
+			await Promise.all([loadCollections(), loadProjects()]);
+			load();
+		})();
+	})();
+</script>

@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: postgres-init-scripts
+  name: postgres-init-scripts{{ .Values.global.nameSuffix }}
 data:
   {{- range $path, $bytes := .Files.Glob "database/*.sql" }}
   {{ base $path }}: |-

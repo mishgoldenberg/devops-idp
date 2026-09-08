@@ -1,24 +1,95 @@
 <div class="page-shell">
 	<header class="page-header">
 		<div>
-			<h1 class="page-title">Automations</h1>
-			<p class="page-subtitle">Request self-service automations. Admin approval is required before execution.</p>
+			<h1 class="page-title">Requests</h1>
+			<p class="page-subtitle">Ask the portal to do something for you. Each one goes to a platform admin for approval.</p>
 		</div>
-		<a href="/ui/my-requests" class="btn btn-outline btn-sm">My Requests</a>
+		<a href="/ui/my-requests" class="btn btn-outline btn-primary btn-sm">My Requests</a>
 	</header>
 
-	<div class="page-content-flush">
-		<div class="portal-content-container">
-		<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+	{#
+		This page used `.portal-content-container`, which is a CENTRED 60rem column meant
+		for forms — so the content sat in the middle of the screen with empty gutters on
+		both sides while the dashboard next door ran edge to edge. Inside it was a
+		two-column grid holding a single card, which made that one card half a column
+		wide and stranded in the middle of the middle.
+
+		It now uses `.page-content`, the same full-width scrolling container the widget
+		pages use, so it starts at the sidebar and fills the screen like everything else.
+		The catalogue is a real catalogue: cards of a comfortable width, packed from the
+		left, wrapping as more are added. One card looks deliberate; six will look the
+		same. `repeat(auto-fill, ...)` is inline because Tailwind's arbitrary grid-template
+		values are not in the compiled stylesheet.
+	#}
+	<div class="page-content">
+		<div
+			class="grid gap-6"
+			style="grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr))"
+		>
 			<button id="ado-self-service-card" class="section-card-interactive text-left">
-				<div class="card-body">
+				<div class="card-body gap-2">
 					<h3 class="card-title">Azure DevOps Project Creation</h3>
-					<p class="text-sm text-base-content/60">Request a new Azure DevOps project. Runs after admin approval.</p>
+					<p class="text-sm text-base-content/60">
+						Request a new Azure DevOps project. Runs after admin approval.
+					</p>
+				</div>
+			</button>
+
+			{#
+				The rest of the catalogue is DATA: every one of these opens the same
+				renderer with a different form key, and the form itself is described in
+				backend/app/catalog_forms.py. Adding a request is a card here and an
+				entry there -- not another modal with its own validation.
+			#}
+			<button class="section-card-interactive text-left" data-catalog-open="artifactory_quota">
+				<div class="card-body gap-2">
+					<h3 class="card-title">Enlarge Artifactory Quota</h3>
+					<p class="text-sm text-base-content/60">
+						Raise the storage quota on a JFrog project. Shows what it uses and
+						what would be left before you send it.
+					</p>
+				</div>
+			</button>
+
+			<button class="section-card-interactive text-left" data-catalog-open="artifactory_cleaner">
+				<div class="card-body gap-2">
+					<h3 class="card-title">Schedule an Artifactory Cleaner</h3>
+					<p class="text-sm text-base-content/60">
+						Delete artifacts older than a set age from one repository, nightly.
+						Opens a pull request for review.
+					</p>
+				</div>
+			</button>
+
+			<button class="section-card-interactive text-left" data-catalog-open="pipeline_characterization">
+				<div class="card-body gap-2">
+					<h3 class="card-title">Pipeline Characterization</h3>
+					<p class="text-sm text-base-content/60">
+						Specify a new CI/CD pipeline for the DevOps team. Opens a requested
+						item in their queue.
+					</p>
 				</div>
 			</button>
 		</div>
-		<div id="ado-create-status" class="text-sm mt-5" role="status" aria-live="polite"></div>
-		</div>
+
+		<div id="ado-create-status" class="text-sm mt-6" role="status" aria-live="polite"></div>
+
+		{#
+			Artifactory access, said out loud to an admin. Every failure in the quota
+			form looks the same from the front — an empty picker — and the fixes are
+			three different people's jobs. Admin-only, read-only, and silent when
+			everything works, so it costs nothing on a normal day.
+		#}
+		<div id="artifactory-access-warning" class="alert alert-warning hidden" style="margin-top:1.5rem" role="status"></div>
+
+		{#
+			The same idea for ServiceNow. A requested item is raised after the work is
+			done and must never fail it, so a request can finish perfectly and leave no
+			ticket at all -- and the only difference between "renamed", "sys_id unset"
+			and "the service account cannot see the catalogue" is a line in a pod log.
+		#}
+		<div id="servicenow-catalog-warning" class="alert alert-warning hidden" style="margin-top:0.75rem" role="status"></div>
+
 	</div>
 </div>
 
@@ -44,22 +115,103 @@
 					class="text-xs text-error mt-1 hidden"
 					data-error-for="project_name"
 				></p>
+				{#
+					Availability, answered while typing rather than after approval.
+
+					Creating in every collection meant a name taken in either one failed the
+					whole request — and only at execution time, after somebody had approved
+					it. The request now names one collection, and this says whether the name
+					is free there before it is ever submitted.
+				#}
+				<p id="ado-create-name-check" class="text-xs mt-1 hidden"></p>
 			</div>
-			<select class="select select-bordered" name="process_type">
+			<div>
+				<label class="label py-1" for="ado-create-collection">
+					<span class="label-text text-xs">Collection</span>
+				</label>
+				<select
+					id="ado-create-collection"
+					class="select select-bordered w-full"
+					name="collection"
+				></select>
+			</div>
+			<div>
+				<label class="label py-1" for="ado-create-process">
+					<span class="label-text text-xs">Process</span>
+				</label>
+			<select id="ado-create-process" class="select select-bordered w-full" name="process_type">
 				<option>Scrum</option>
 				<option>Agile</option>
 				<option>CMMI</option>
 				<option>Basic</option>
 			</select>
+			</div>
 			<div>
+				<label class="label py-1" for="ado-create-description">
+					<span class="label-text text-xs">Description (optional)</span>
+				</label>
+				<textarea
+					id="ado-create-description"
+					class="textarea textarea-bordered w-full"
+					name="description"
+					rows="3"
+					maxlength="4000"
+					placeholder="What is this project for?"
+				></textarea>
+				<p class="text-xs text-base-content/50 mt-1">
+					Becomes the project's description in Azure DevOps. Leave it empty and the
+					project simply has none.
+				</p>
+			</div>
+			<div>
+				<label class="label py-1" for="ado-create-admin">
+					<span class="label-text text-xs">Project administrator</span>
+				</label>
+				{#
+					Three things were wrong with this field, and they had one cause: it was
+					declared `type="email"`.
+
+					1. The browser treated it as a login-style e-mail box and offered every
+					   address it had ever saved — including personal ones typed on a
+					   different network. `autocomplete="off"` plus a name the heuristics do
+					   not recognise as a contact field stops the suggestion list; the value
+					   below is the only thing that should be proposed here.
+					2. Azure DevOps here is backed by Active Directory, where a principal is
+					   often DOMAIN\user rather than an address. `type="email"` REFUSED to
+					   submit that form — the browser's own validation rejected a perfectly
+					   valid administrator before the request was ever made.
+					3. It started blank, so the common case (yourself) had to be typed out.
+
+					`type="text"` is correct: the backend has always accepted any non-empty
+					principal and does the real existence check against Azure DevOps.
+				#}
+				{#
+					Prefill comes from the backend (`ado_admin_default`): DOMAIN\<username>
+					when a NetBIOS domain is configured, otherwise the bare username. That
+					is the identity form this AD-backed Azure DevOps resolves — a lookup by
+					anything else silently finds no one, which is why the chosen admin was
+					never actually granted access. The field stays editable: a full e-mail
+					or another account are also accepted, and the backend resolves whatever
+					is entered.
+				#}
 				<input
+					id="ado-create-admin"
 					class="input input-bordered w-full"
-					type="email"
+					type="text"
 					name="admin_username"
-					placeholder="Admin email"
+					autocomplete="off"
+					autocapitalize="none"
+					spellcheck="false"
+					value="{{ ado_admin_default }}"
+					placeholder="DOMAIN\username, or you@corp.example"
 					required
-					aria-describedby="ado-create-err-admin_username"
+					aria-describedby="ado-create-err-admin_username ado-create-admin-hint"
 				/>
+				<p id="ado-create-admin-hint" class="text-xs text-base-content/50 mt-1">
+					This account becomes the project administrator and can edit the project's
+					process. Defaults to you — replace it for someone else; a domain account
+					or an e-mail both work.
+				</p>
 				<p
 					id="ado-create-err-admin_username"
 					class="text-xs text-error mt-1 hidden"
@@ -108,7 +260,6 @@
 		const projectInput = form.querySelector('[name="project_name"]');
 		const adminInput = form.querySelector('[name="admin_username"]');
 		const PROJECT_RE = /^[A-Za-z0-9][A-Za-z0-9 _\-.]{1,62}$/;
-		const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 		function errorFor(field, msg) {
 			const el = form.querySelector(`[data-error-for="${field}"]`);
@@ -133,11 +284,98 @@
 			return "";
 		}
 		function validateAdmin(value) {
+			// Azure DevOps here is Active-Directory backed, so a principal is
+			// either an e-mail (you@corp.example) or a domain account
+			// (DOMAIN\username). The backend accepts any non-empty principal and
+			// does the real existence check against Azure DevOps, so the only
+			// thing worth catching client-side is empty or space-containing input
+			// — neither an e-mail nor an AD account contains a space. Rejecting
+			// non-e-mail here (as before) blocked every AD user from submitting.
 			const v = String(value || "").trim();
-			if (!v) return "Admin email is required.";
-			if (!EMAIL_RE.test(v)) return "Enter a valid email address.";
+			if (!v) return "Project administrator is required.";
+			if (/\s/.test(v))
+				return "Enter one account with no spaces: an e-mail or DOMAIN\\username.";
 			return "";
 		}
+
+		// ── Is this name free, in this collection? ────────────────────────
+		// Loaded from the server rather than hardcoded, so the option list and the
+		// preselection cannot drift from what the provisioner will accept.
+		const collectionSelect = document.getElementById("ado-create-collection");
+		const nameCheckEl = document.getElementById("ado-create-name-check");
+		let nameCheckTimer = null;
+		let nameCheckToken = 0;
+		let nameTaken = false;
+
+		async function loadCollections() {
+			if (!collectionSelect) return;
+			try {
+				const res = await fetch("/api/azure-devops/provisioning/collections", {
+					credentials: "same-origin",
+				});
+				const json = await res.json().catch(() => ({}));
+				const d = json?.data || {};
+				const names = d.collections || [];
+				collectionSelect.innerHTML = names
+					.map((n) => `<option${n === d.default ? " selected" : ""}>${n}</option>`)
+					.join("");
+			} catch (_) {
+				collectionSelect.innerHTML = "<option></option>";
+			}
+		}
+
+		function setNameCheck(kind, text) {
+			if (!nameCheckEl) return;
+			if (!text) {
+				nameCheckEl.classList.add("hidden");
+				nameCheckEl.textContent = "";
+				return;
+			}
+			nameCheckEl.textContent = text;
+			nameCheckEl.className =
+				"text-xs mt-1 " +
+				(kind === "free" ? "text-success" : kind === "taken" ? "text-error" : "text-base-content/50");
+			nameCheckEl.classList.remove("hidden");
+		}
+
+		async function checkName() {
+			const name = String(projectInput?.value || "").trim();
+			const collection = String(collectionSelect?.value || "").trim();
+			nameTaken = false;
+			if (validateProject(name) || !collection) return setNameCheck("", "");
+			const mine = ++nameCheckToken;
+			setNameCheck("", "Checking…");
+			try {
+				const res = await fetch(
+					"/api/azure-devops/provisioning/name-check?name=" +
+						encodeURIComponent(name) +
+						"&collection=" +
+						encodeURIComponent(collection),
+					{ credentials: "same-origin" }
+				);
+				const json = await res.json().catch(() => ({}));
+				if (mine !== nameCheckToken) return;
+				const d = json?.data || {};
+				nameTaken = d.available === false;
+				if (d.available === true) setNameCheck("free", `"${d.name}" is free in ${collection}.`);
+				else if (d.available === false)
+					setNameCheck("taken", `A project named "${d.name}" already exists in ${collection}.`);
+				// null = the check itself could not run. Say so plainly rather than
+				// implying the name is fine; the create verifies again anyway.
+				else setNameCheck("", d.detail || "Could not check the name right now.");
+			} catch (_) {
+				if (mine === nameCheckToken) setNameCheck("", "Could not check the name right now.");
+			}
+		}
+
+		function scheduleNameCheck() {
+			clearTimeout(nameCheckTimer);
+			nameCheckTimer = setTimeout(checkName, 400);
+		}
+
+		collectionSelect?.addEventListener("change", checkName);
+		projectInput?.addEventListener("input", scheduleNameCheck);
+		loadCollections();
 
 		projectInput?.addEventListener("input", () =>
 			errorFor("project_name", validateProject(projectInput.value))
@@ -158,6 +396,8 @@
 			const projectName = String(data.get("project_name") || "").trim();
 			const processType = String(data.get("process_type") || "Scrum").trim();
 			const adminUser = String(data.get("admin_username") || "").trim();
+			const description = String(data.get("description") || "").trim();
+			const collection = String(data.get("collection") || "").trim();
 
 			const projErr = validateProject(projectName);
 			const adminErr = validateAdmin(adminUser);
@@ -165,6 +405,16 @@
 			errorFor("admin_username", adminErr);
 			if (projErr || adminErr) {
 				(projErr ? projectInput : adminInput)?.focus();
+				return;
+			}
+			// Only a KNOWN collision blocks. If the check could not run we submit anyway:
+			// an early warning that cannot answer must not become a gate.
+			if (nameTaken) {
+				projectInput?.focus();
+				window.portalToast?.({
+					kind: "error",
+					message: `A project named "${projectName}" already exists in ${collection}. Pick another name.`,
+				});
 				return;
 			}
 
@@ -183,6 +433,8 @@
 							project_name: projectName,
 							process_type: processType,
 							admin_username: adminUser,
+							description: description,
+							collection: collection,
 						},
 					}),
 				});
@@ -198,6 +450,8 @@
 				form.reset();
 				errorFor("project_name", "");
 				errorFor("admin_username", "");
+				setNameCheck("", "");
+				loadCollections();
 				statusBox.innerHTML = `Your request has been submitted and is awaiting admin approval. Track it on the <a class="link" href="/ui/my-requests">My Requests</a> page.`;
 				statusBox.className = "text-sm mt-5 text-success";
 				window.portalToast?.({
@@ -213,5 +467,79 @@
 				});
 			}
 		});
+	})();
+</script>
+
+{# The renderer every card above opens, and the form specs come from the backend. #}
+{% include "partials/components/catalog-form.html" %}
+
+<script>
+	// Cards that open a described form. One listener for all of them: the card says
+	// which form it is, and the renderer does the rest.
+	(function () {
+		document.addEventListener("click", (event) => {
+			const card = event.target.closest("[data-catalog-open]");
+			if (!card) return;
+			event.preventDefault();
+			window.portalCatalogForm?.open(card.getAttribute("data-catalog-open"));
+		});
+
+		// Arriving from the + menu in the banner. The link carries ?new=<form key>, or
+		// ?new=ado_project for the one request that is still its own dialog -- so a
+		// "create" started anywhere in the portal finishes here without the person
+		// having to find the card and click it themselves.
+		(function () {
+			const wanted = new URLSearchParams(window.location.search).get("new");
+			if (!wanted) return;
+			// Cleared from the address bar straight away: leaving it there means a
+			// refresh, or a link somebody shares, re-opens a form they already closed.
+			window.history.replaceState({}, "", window.location.pathname);
+			if (wanted === "ado_project" || wanted === "1") {
+				document.getElementById("ado-create-modal")?.showModal();
+				return;
+			}
+			if (document.querySelector('[data-catalog-open="' + wanted + '"]')) {
+				window.portalCatalogForm?.open(wanted);
+			}
+		})();
+	})();
+</script>
+
+<script>
+	// ── Can the ServiceNow items actually be ordered? ───────────────────────
+	(function () {
+		const box = document.getElementById("servicenow-catalog-warning");
+		if (!box) return;
+		fetch("/api/catalog/servicenow-diagnostics", { credentials: "same-origin" })
+			.then((res) => (res.ok ? res.json() : null))
+			.then((json) => {
+				// A 403 is the normal case for a non-admin, not something to report.
+				const data = json && json.data;
+				if (!data || data.ok) return;
+				box.textContent = "ServiceNow: " + data.summary;
+				box.classList.remove("hidden");
+			})
+			.catch(() => {});
+	})();
+</script>
+
+<script>
+	// ── Is Artifactory actually readable? ───────────────────────────────────
+	(function () {
+		const box = document.getElementById("artifactory-access-warning");
+		if (!box) return;
+		fetch("/api/catalog/artifactory-diagnostics", { credentials: "same-origin" })
+			.then((res) => (res.ok ? res.json() : null))
+			.then((json) => {
+				// A 403 here means the viewer is not an admin, which is not a problem
+				// to report to them -- it is the normal case.
+				const data = json && json.data;
+				if (!data) return;
+				const broken = (data.checks || []).filter((c) => !c.ok);
+				if (data.configured && broken.length === 0) return;
+				box.textContent = "Artifactory: " + data.summary;
+				box.classList.remove("hidden");
+			})
+			.catch(() => {});
 	})();
 </script>

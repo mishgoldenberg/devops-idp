@@ -1,0 +1,38 @@
+{{/*
+  Horizontal autoscaling for the nginx frontend.
+
+  The frontend is a pure proxy — cheap per request, but it is the pod every user's
+  connection actually terminates on, so it needs to scale with connection count
+  rather than with work done. Kept smaller than the backend for that reason.
+*/}}
+{{- if .Values.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ .Chart.Name }}{{ .Values.global.nameSuffix }}
+  labels:
+    app: {{ .Chart.Name }}{{ .Values.global.nameSuffix }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ .Chart.Name }}{{ .Values.global.nameSuffix }}
+  minReplicas: {{ .Values.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}
+  behavior:
+    scaleUp:
+      # React quickly: the load pattern here is everyone opening the portal within a
+      # few minutes of each other in the morning.
+      stabilizationWindowSeconds: 30
+    scaleDown:
+      # Retreat slowly. Scaling down eagerly between refresh bursts would thrash,
+      # and every removed pod drops its warm Redis connections and DB pool.
+      stabilizationWindowSeconds: 300
+{{- end }}

@@ -1,0 +1,89 @@
+{{- if and .Values.postgres.backup.enabled .Values.postgres.backup.verify.enabled (eq .Values.global.nameSuffix "") }}
+# Weekly proof that the newest dump actually restores.
+#
+# This exists because "we take backups" and "we can restore" are different
+# claims, and only the first one is easy to believe. docs/RED_TEAM_BRIEF.md
+# listed "no tested restore" as a finding in its own right: the dumps could have
+# been empty, truncated in transit, or taken under a different JWT_SECRET, and
+# nothing in the system would have said so until someone needed them.
+#
+# Same three-phase, two-image split as the backup job. The order matters: every
+# check that can reject a dump — the scratch-database guards, the checksum, the
+# secret fingerprint — happens in phase 1, before phase 2 is allowed to run a
+# CREATE and a DROP against anything.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-restore-verify
+  labels:
+    app.kubernetes.io/component: postgres-restore-verify
+spec:
+  schedule: {{ .Values.postgres.backup.verify.schedule | quote }}
+  timeZone: {{ .Values.postgres.backup.timeZone | default "UTC" | quote }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      # Longer than the backup: this one downloads AND restores, and a restore is
+      # the slower half.
+      activeDeadlineSeconds: 5400
+      ttlSecondsAfterFinished: 1209600
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/component: postgres-restore-verify
+        spec:
+          restartPolicy: Never
+          initContainers:
+            # 1. Guards, find the newest dump, download it, checksum it, and prove
+            #    it matches the JWT_SECRET running now. Nothing has touched a
+            #    database at this point, so a dump that fails any check is never
+            #    restored anywhere.
+            - name: fetch
+              image: {{ include "backup.pythonImage" . | quote }}
+              command: ["python", "/scripts/fetch.py"]
+              env:
+{{ include "backup.env" . | indent 16 }}
+                - name: SCRATCH_DB
+                  value: {{ .Values.postgres.backup.verify.scratchDatabase | default (printf "%s_restore_check" .Values.postgres.postgresDB) | quote }}
+              resources:
+{{ include "backup.resources" . | indent 16 }}
+              securityContext:
+{{ include "backup.securityContext" . | indent 16 }}
+              volumeMounts:
+{{ include "backup.volumeMounts" . | indent 16 }}
+            # 2. The restore itself, in the image that has pg_restore.
+            - name: restore
+              image: {{ include "backup.pgImage" . | quote }}
+              command: ["/bin/sh", "/scripts/restore.sh"]
+              env:
+{{ include "backup.env" . | indent 16 }}
+                - name: SCRATCH_DB
+                  value: {{ .Values.postgres.backup.verify.scratchDatabase | default (printf "%s_restore_check" .Values.postgres.postgresDB) | quote }}
+              resources:
+{{ include "backup.resources" . | indent 16 }}
+              securityContext:
+{{ include "backup.securityContext" . | indent 16 }}
+              volumeMounts:
+{{ include "backup.volumeMounts" . | indent 16 }}
+          containers:
+            # 3. Record the outcome. backup_runs has exactly one writer.
+            - name: record-finish
+              image: {{ include "backup.pythonImage" . | quote }}
+              command: ["python", "/scripts/record_finish.py"]
+              env:
+{{ include "backup.env" . | indent 16 }}
+                - name: SCRATCH_DB
+                  value: {{ .Values.postgres.backup.verify.scratchDatabase | default (printf "%s_restore_check" .Values.postgres.postgresDB) | quote }}
+              resources:
+{{ include "backup.resources" . | indent 16 }}
+              securityContext:
+{{ include "backup.securityContext" . | indent 16 }}
+              volumeMounts:
+{{ include "backup.volumeMounts" . | indent 16 }}
+          volumes:
+{{ include "backup.volumes" . | indent 12 }}
+{{- end }}

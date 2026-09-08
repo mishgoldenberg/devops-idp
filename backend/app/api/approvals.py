@@ -1,8 +1,11 @@
 """
 Self-service approval workflow.
 
-Every self-service action (Azure DevOps project creation, SonarQube PR
-scanning enablement, AI model access, …) is routed through this module.
+Every self-service action is routed through this module. Azure DevOps project
+creation is the only request type wired to a real executor; a request type
+without one is rejected at submission and, defensively, is failed loudly rather
+than reported as done, so an approval can never claim a side effect that never
+happened.
 
 Lifecycle
 ---------
@@ -23,7 +26,6 @@ from __future__ import annotations
 
 import logging
 import threading
-import time
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -33,7 +35,7 @@ import activity
 import audit
 import safe_mode
 from db import execute, execute_returning, query_all, query_one
-from security import AuthUser, get_current_user
+from security import AuthUser, get_current_user, has_effective_admin_access_live
 
 from .notifications import create_notification
 
@@ -61,6 +63,18 @@ TERMINAL_OK_STATUSES = ("COMPLETED", "EXECUTED")
 # pipeline (useful for the Approvals page "In Progress" tab).
 ACTIVE_STATUSES = ("APPROVED", "IN_PROGRESS")
 
+# The only request types the portal can actually carry out. A type must appear
+# here AND have a branch in `_execute_approved_request` to be executable. This
+# is the single gate: `create_request` refuses anything not listed (so it is
+# never queued), and the executor fails loudly for anything not listed (so a
+# legacy row predating this set can never be reported as completed). Adding a
+# new self-service means adding its type here and its executor branch — never
+# one without the other.
+# Imported, not restated. db.py adds exactly these values to the
+# approval_request_type ENUM at startup, and a second copy here is how the
+# application came to accept a type Postgres rejected at the INSERT.
+from request_types import CLEANER_REQUEST_TYPES, SUPPORTED_REQUEST_TYPES  # noqa: E402
+
 
 class CreateApprovalRequest(BaseModel):
     request_type: str
@@ -83,6 +97,15 @@ def create_request(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Missing required fields",
+        )
+
+    # Only queue a request the portal can actually execute. Refusing here (rather
+    # than at approval time) means an admin never approves something that would
+    # then fail, and no unexecutable row ever reaches the approvals queue.
+    if body.request_type not in SUPPORTED_REQUEST_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"'{body.request_type}' is not an available self-service action.",
         )
 
     if not _can_create(current_user, body.request_type):
@@ -196,7 +219,8 @@ def get_requests(
         "       u.email    as requester_email, "
         "       u.full_name as requester_name, "
         "       approver.username as approver_username, "
-        "       approver.email    as approver_email "
+        "       approver.email    as approver_email, "
+        "       approver.full_name as approver_name "
         "  FROM approval_requests ar "
         "  JOIN users u ON ar.requester_id = u.id "
         "  LEFT JOIN users approver ON ar.approver_id = approver.id "
@@ -218,8 +242,69 @@ def get_requests(
 
     query += " ORDER BY ar.created_at DESC LIMIT 100"
 
+    # Being an admin is not the same as REVIEWING. The reviewer's coordinates -- the
+    # pull request, the branch, the commit -- belong to the Approvals screen, which
+    # asks for scope=all. The same person looking at My Requests is looking at their
+    # own requests as a requester, and a link into Azure DevOps there is an answer to
+    # a question nobody on that page asked.
+    reviewer_view = is_admin and effective_scope == "all"
     rows = query_all(query, params)
-    return {"success": True, "data": rows, "timestamp": _now_iso()}
+    return {"success": True, "data": _present(rows, reviewer_view), "timestamp": _now_iso()}
+
+
+# Keys of execution_result that belong to whoever reviews the work, not to whoever
+# asked for it. A branch name, a commit id and an Azure DevOps pull request URL are
+# the reviewer's coordinates; a requester who clicks that link gets a 404 from a
+# server they have no account on, and offering it is worse than not showing one.
+_REVIEWER_ONLY_RESULT_KEYS = frozenset({
+    "pull_request_url", "pull_request_id", "branch", "base_branch", "commit_id",
+    "collection", "repository", "files", "warnings",
+})
+
+
+def _present(rows: Optional[List[Dict[str, Any]]], is_admin: bool) -> List[Dict[str, Any]]:
+    """What each request looks like to the person asking for it.
+
+    Two jobs, both of which have to happen HERE rather than in the page that draws it:
+
+      * the reviewer-only parts of a result are dropped for everyone else -- filtering
+        in the template leaves the data in the response for anyone who opens the
+        network tab;
+      * a cleaner request is given the state of its pull request, because "Completed"
+        on its own is a half-truth. The request completed; whether the cleaner exists
+        depends on a review that may have merged it, may have abandoned it, and had
+        done neither at the moment the request finished.
+    """
+    rows = list(rows or [])
+    if not rows:
+        return rows
+
+    import cleaner_store
+
+    cleaner_ids = [
+        str(row.get("id")) for row in rows
+        if str(row.get("request_type") or "").upper().startswith("ARTIFACTORY_CLEANER")
+    ]
+    records: Dict[str, Dict[str, Any]] = {}
+    if cleaner_ids:
+        try:
+            records = cleaner_store.for_requests(cleaner_ids)
+        except Exception as exc:  # a missing record must not empty the page
+            log.warning("cleaner records unavailable for the request list: %s: %s",
+                        type(exc).__name__, exc)
+
+    for row in rows:
+        record = records.get(str(row.get("id")))
+        if record:
+            row["cleaner"] = cleaner_store.public_view(record, is_admin=is_admin)
+        if is_admin:
+            continue
+        result = row.get("execution_result")
+        if isinstance(result, dict):
+            row["execution_result"] = {
+                k: v for k, v in result.items() if k not in _REVIEWER_ONLY_RESULT_KEYS
+            }
+    return rows
 
 
 @router.get("/requests/{request_id}")
@@ -231,9 +316,102 @@ def get_request(
     if not row:
         raise HTTPException(status_code=404, detail="Request not found")
     # Non-admins can only see their own requests
-    if not _can_approve_any(current_user) and str(row.get("requester_id")) != str(current_user["id"]):
+    is_admin = _can_approve_any(current_user)
+    if not is_admin and str(row.get("requester_id")) != str(current_user["id"]):
         raise HTTPException(status_code=403, detail="Forbidden")
-    return {"success": True, "data": row, "timestamp": _now_iso()}
+    return {"success": True, "data": _present([row], is_admin)[0], "timestamp": _now_iso()}
+
+
+@router.post("/requests/{request_id}/servicenow-retry")
+def retry_servicenow(
+    request_id: str,
+    current_user: AuthUser = Depends(get_current_user),
+):
+    """Order the catalog item for a request whose work already succeeded.
+
+    The item is raised after the work, and is not allowed to fail it -- so a request
+    can be genuinely COMPLETED and leave the team no ticket at all. Until now the only
+    way to get one was to do the work a second time, which for a quota means adding
+    the storage twice and for a cleaner means a second pull request.
+
+    Admin-only, and only for a request that FINISHED and has no number yet: retrying
+    one that already has a ticket would raise a duplicate.
+    """
+    if not _can_approve_any(current_user):
+        raise HTTPException(status_code=403, detail="Only an approver can do this.")
+
+    row = _load_request(request_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Request not found")
+    if str(row.get("status") or "").upper() not in TERMINAL_OK_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail="Only a completed request can have its ServiceNow item raised again.",
+        )
+
+    result = dict(row.get("execution_result") or {})
+    if result.get("servicenow_number"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"This request already has {result['servicenow_number']}.",
+        )
+
+    request_type = str(row.get("request_type") or "").upper()
+    payload = dict(row.get("request_payload") or {})
+    form_key = (
+        "artifactory_quota" if request_type == "ARTIFACTORY_QUOTA_INCREASE"
+        else "artifactory_cleaner" if request_type in CLEANER_REQUEST_TYPES
+        else ""
+    )
+    # Whether a form opens a ticket is decided in ONE place -- the form's own spec --
+    # so this cannot go on offering to raise one for a request type that stopped
+    # raising them. Only the pipeline characterization does now.
+    import catalog_forms
+
+    if not form_key or not (catalog_forms.form(form_key) or {}).get("snow_item"):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"'{request_type}' does not open a ServiceNow item — this request is "
+                "recorded in the portal and nowhere else."
+            ),
+        )
+
+    from .catalog import order_catalog_item
+
+    fields = {
+        **{k: v for k, v in payload.items() if not isinstance(v, (dict, list))},
+        **(payload.get("requester_details") or {}),
+        # What actually happened, which is the whole reason this is raised after the
+        # work rather than before it.
+        **{k: v for k, v in result.items() if isinstance(v, (str, int, float))},
+    }
+    snow = order_catalog_item(
+        form_key, fields, str(row.get("request_title") or "Request"),
+        requester_id=str(row.get("requester_id") or ""),
+        requester_email=_requester_email(row),
+    )
+    result["servicenow_number"] = snow.get("number") or ""
+    result["servicenow_error"] = snow.get("error") or ""
+    execute(
+        "UPDATE approval_requests SET execution_result = %s WHERE id = %s",
+        [result, request_id],
+    )
+    if snow.get("number") and request_type in CLEANER_REQUEST_TYPES and payload.get("slug"):
+        import cleaner_store
+
+        try:
+            cleaner_store.set_snow_number(str(payload["slug"]), snow["number"])
+        except Exception as exc:
+            log.warning("cleaner snow number not stored on retry: %s: %s",
+                        type(exc).__name__, exc)
+
+    log.warning("ServiceNow item re-raised for request %s: %s", request_id,
+                snow.get("number") or snow.get("error"))
+    return {
+        "success": bool(snow.get("number")),
+        "data": {"number": snow.get("number") or "", "error": snow.get("error") or ""},
+    }
 
 
 # ─── Approve ────────────────────────────────────────────────────────────
@@ -522,31 +700,47 @@ def _execute_approved_request(request_row: Dict[str, Any]) -> None:
     payload = request_row.get("request_payload") or {}
 
     try:
-        # Safe Mode: simulate success for all self-services without real
-        # external side effects. Admin toggle/SAFE_MODE env both feed into
-        # safe_mode.is_enabled(); when it's on we never call K8s / ADO / etc.
+        # No executor for this type: fail loudly. Reaching here means a row whose
+        # type is not in SUPPORTED_REQUEST_TYPES was somehow approved (e.g. a
+        # legacy row created before that gate existed). Never mark it COMPLETED —
+        # that would report a side effect that never happened. Checked before
+        # Safe Mode: Safe Mode simulates *available* actions, not absent ones.
+        if request_type not in SUPPORTED_REQUEST_TYPES:
+            _finish_failed(
+                request_id,
+                f"'{request_type}' is not an available self-service action and "
+                "cannot be executed. No changes were made.",
+            )
+            return
+
+        # Safe Mode: simulate success without real external side effects. Admin
+        # toggle/SAFE_MODE env both feed into safe_mode.is_enabled(); when it's
+        # on we never call ADO / external systems.
         if safe_mode.is_enabled():
-            result = {
+            _finish_completed(request_id, {
                 "safe_mode": True,
                 "message": "Safe Mode is enabled — request simulated successfully.",
                 "request_type": request_type,
-            }
-            _finish_completed(request_id, result)
+            })
             return
 
         if request_type == "ADO_PROJECT_CREATE":
             result = _execute_ado_project_create(request_row, payload)
-        elif request_type == "SONAR_PR_SCANNING_ENABLE":
-            result = {
-                "sonar": {
-                    "projectKey": payload.get("projectKey"),
-                    "pr_scanning_enabled": True,
-                }
-            }
-        elif request_type == "AI_MODEL_ACCESS":
-            result = {"message": "AI model access granted"}
+        elif request_type == "ARTIFACTORY_QUOTA_INCREASE":
+            result = _execute_artifactory_quota_increase(request_row, payload)
+        elif request_type == "ARTIFACTORY_CLEANER_CREATE":
+            result = _execute_artifactory_cleaner(request_row, payload, mode="add")
+        elif request_type == "ARTIFACTORY_CLEANER_UPDATE":
+            result = _execute_artifactory_cleaner(request_row, payload, mode="edit")
+        elif request_type == "ARTIFACTORY_CLEANER_DELETE":
+            result = _execute_artifactory_cleaner(request_row, payload, mode="delete")
         else:
-            result = {"message": f"Executed request type {request_type}"}
+            # Defensive: listed as supported but no branch here. Unreachable
+            # unless SUPPORTED_REQUEST_TYPES and this dispatch drift apart — fail
+            # rather than fake success, so the drift surfaces instead of hiding.
+            raise RuntimeError(
+                f"No executor is wired for supported request type '{request_type}'."
+            )
 
         _finish_completed(request_id, result)
     except Exception as exc:
@@ -558,84 +752,326 @@ def _execute_ado_project_create(
     request_row: Dict[str, Any], payload: Dict[str, Any]
 ) -> Dict[str, Any]:
     """
-    Provision an Azure DevOps project via the existing terraform_runner
-    pipeline. Runs inline in the execution thread; we poll to terminal
-    so we can write a proper COMPLETED/FAILED status.
-    """
-    try:
-        # Imported lazily so the module still imports cleanly in dev
-        # environments without the kubernetes/google-cloud-storage extras.
-        from terraform_runner import (
-            sanitize_ado_name,
-            submit_terraform_job,
-            get_job_status,
-        )
-    except Exception as exc:
-        raise RuntimeError(
-            "Provisioning backend unavailable — cannot execute Azure DevOps "
-            f"project creation ({exc})."
-        )
+    Provision an Azure DevOps project directly via the REST API.
 
-    project_name_raw = str(payload.get("project_name") or "").strip()
+    No Terraform and no Kubernetes Job: this runs inline in the execution thread and
+    creates the inherited process + project in each target collection over REST (see
+    ``azure_devops.provision_ado_project``). That removes the OpenShift Job-creation
+    requirement entirely — the reason the Terraform path could not run here — along with
+    the tfstate backend and the Terraform container image.
+    """
+    project_name = str(payload.get("project_name") or "").strip()
     process_type = str(payload.get("process_type") or "Scrum").strip()
     admin_username = str(payload.get("admin_username") or "").strip()
+    description = str(payload.get("description") or "").strip()
+    collection = str(payload.get("collection") or "").strip()
 
-    project_name = sanitize_ado_name(project_name_raw)
     if not project_name:
         raise ValueError("project_name is required")
     if not admin_username:
         raise ValueError("admin_username is required")
 
-    # Re-use the same configuration the interactive self-service endpoint uses
-    # so background execution and direct execution behave identically.
-    from .azure_devops import ADO_BASE, USE_MOCK, ensure_custom_ado_process
-    use_mock = bool(USE_MOCK)
-    org = ADO_BASE.rstrip("/").split("/")[-1] if ADO_BASE else ""
+    from .azure_devops import provision_ado_project
 
-    # Pre-create the inherited process Terraform will reference. Without this
-    # step Terraform fails with 'expand project reference: No process template
-    # found' because the custom process name (<project>-<type>) doesn't yet
-    # exist in Azure DevOps.
-    custom_process = ensure_custom_ado_process(project_name, process_type)
-
-    job_id = submit_terraform_job(
-        project_name=project_name,
-        process_name=custom_process,
-        ado_org=org,
-        admin_username=admin_username,
-        use_mock=use_mock,
-    )
     audit.log(
         audit.Action.TERRAFORM_STARTED,
         user_email=str(request_row.get("requester_email") or ""),
         metadata={
             "request_id": str(request_row.get("id")),
-            "job_id": job_id,
             "project_name": project_name,
             "process_type": process_type,
+            "collection": collection or "(default)",
+            "engine": "rest",
         },
     )
 
-    # Poll until terminal. Bounded to ~20 minutes; terraform jobs beyond
-    # that will be considered failed rather than hanging the thread forever.
-    deadline = time.time() + (20 * 60)
-    last_status: Dict[str, Any] = {"status": "pending"}
-    while time.time() < deadline:
-        last_status = get_job_status(job_id, use_mock=use_mock) or {}
-        if last_status.get("status") in ("succeeded", "failed"):
-            break
-        time.sleep(5)
+    # Creates in ONE collection — the one the requester chose, defaulting to
+    # ADO_DEFAULT_COLLECTION. It used to create in every configured collection, so a
+    # name already taken in either of them failed the whole request.
+    return provision_ado_project(
+        project_name=project_name,
+        process_type=process_type,
+        admin_username=admin_username,
+        description=description,
+        collection=collection or None,
+    )
 
-    if last_status.get("status") == "succeeded":
-        return {
-            "job_id": job_id,
-            "project_name": project_name,
-            "project_url": last_status.get("project_url"),
-            "status": "completed",
-        }
 
-    error = last_status.get("error") or "Provisioning job did not finish in time."
-    raise RuntimeError(error)
+def _execute_artifactory_quota_increase(
+    request_row: Dict[str, Any], payload: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Raise a JFrog project's storage quota by the requested amount.
+
+    The increase is applied to the quota READ AT THIS MOMENT, not to the one that was
+    there when the form was filled in. Between those two points somebody may have
+    cleaned the project up or already raised it, and adding to a stale number either
+    undoes their change or doubles it.
+
+    A project with no quota at all is refused rather than given one: "unlimited" is a
+    deliberate configuration, and turning it into a number is a restriction nobody
+    asked for.
+    """
+    import artifactory_admin
+
+    project_key = str(payload.get("project_key") or "").strip()
+    increase = int(payload.get("increase_by_bytes") or 0)
+    if not project_key:
+        raise ValueError("project_key is required")
+    if increase <= 0:
+        raise ValueError("increase_by_bytes must be greater than zero")
+
+    project = artifactory_admin.project(project_key)
+    if not project:
+        raise ValueError(
+            f"Artifactory has no project '{project_key}' (or the admin account cannot see it)."
+        )
+    if project["unlimited"]:
+        raise ValueError(
+            f"'{project_key}' has no storage quota - it is unlimited, so there is "
+            "nothing to enlarge."
+        )
+
+    current = int(project["quota_bytes"])
+    result = artifactory_admin.set_project_quota(project_key, current + increase)
+    result.update({
+        "used_bytes": project["used_bytes"],
+        "used": artifactory_admin.format_bytes(project["used_bytes"]),
+        "increase_by": artifactory_admin.format_bytes(increase),
+        "free_after": artifactory_admin.format_bytes(
+            max(0, result["quota_after_bytes"] - project["used_bytes"])
+        ),
+    })
+    # The requested item is raised here rather than at submission so it carries what
+    # actually happened -- the quota before and after -- instead of what was asked for.
+    from .catalog import order_catalog_item
+
+    snow = order_catalog_item(
+        "artifactory_quota",
+        {
+            "project_key": project_key,
+            "increase_by": result["increase_by"],
+            "quota_before": result["quota_before"],
+            "quota_after": result["quota_after"],
+            "justification": str(payload.get("justification") or ""),
+            **(payload.get("requester_details") or {}),
+        },
+        f"Artifactory quota: {project_key} +{result['increase_by']}",
+        requester_id=str(request_row.get("requester_id") or ""),
+        requester_email=str(request_row.get("requester_email") or ""),
+    )
+    _record_servicenow(result, snow)
+
+    _after_the_work(
+        result, "audit entry",
+        lambda: audit.log(
+            audit.Action.ARTIFACTORY_QUOTA_CHANGED,
+            user_email=str(request_row.get("requester_email") or ""),
+            metadata={
+                "request_id": str(request_row.get("id")),
+                "artifactory_project": project_key,
+                "quota_before": result["quota_before"],
+                "quota_after": result["quota_after"],
+            },
+        ),
+    )
+    return result
+
+
+def _execute_artifactory_cleaner(
+    request_row: Dict[str, Any], payload: Dict[str, Any], *, mode: str
+) -> Dict[str, Any]:
+    """Commit a cleaner's files to a branch, open a pull request, and record it.
+
+    Never to the default branch: these files are a scheduled delete, and the review
+    is the only thing standing between a mistyped repository name and a job removing
+    the wrong artifacts every night. The request finishes as COMPLETED because what it
+    promised - the pull request - exists; every result says plainly that nothing runs
+    until somebody merges it.
+
+    mode "add" creates the folder; mode "edit" rewrites the ConfigMap and the CronJob
+    of a cleaner that is already there, leaving pipeline.yaml alone because it names
+    only the folder and the template and therefore never changes; mode "delete"
+    removes all three, which is the only way to stop a cleaner -- deleting the portal's
+    record would hide it while the CronJob went on running every night.
+    """
+    import ado_repo
+    import artifactory_cleaner
+    import cleaner_store
+
+    from .catalog import order_catalog_item
+
+    request = artifactory_cleaner.validate(payload)
+    # A removal takes the whole folder, so it needs every path -- including the
+    # pipeline an edit deliberately leaves alone.
+    files = artifactory_cleaner.render_files(request, include_pipeline=(mode != "edit"))
+    summary = artifactory_cleaner.summary(request)
+    request_id = str(request_row.get("id"))
+    requester = str(request_row.get("requester_email") or "")
+    verb = {"add": "Add", "edit": "Update", "delete": "Remove"}[mode]
+    branch = f"cleaner/{'remove-' if mode == 'delete' else ''}{request['slug']}-{request_id[:8]}"
+
+    result = ado_repo.commit_files_on_branch(
+        files,
+        branch=branch,
+        mode=mode,
+        commit_message=f"{verb} Artifactory cleaner: {request['cleaner_name']}",
+        pr_title=f"{verb} Artifactory cleaner: {request['cleaner_name']}",
+        pr_description="\n".join([
+            summary,
+            "",
+            "Requested through DevOps Hub by "
+            f"{requester or 'a portal user'} (request {request_id}).",
+            "",
+            "Merging this removes the folder, so the CronJob stops being applied."
+            if mode == "delete" else
+            "Merging this runs the pipeline in the folder, which applies the ConfigMap "
+            "and the CronJob. Check the spec in configmap.yaml before merging: it is "
+            "what decides which artifacts are deleted.",
+        ]),
+    )
+    result.update({
+        "cleaner_name": request["cleaner_name"],
+        "repository_cleaned": request["repository"],
+        "schedule": request["schedule"],
+        "summary": summary,
+        "next_step": (
+            "Review and merge the pull request. The cleaner keeps running until it is merged."
+            if mode == "delete"
+            else "Review and merge the pull request. Nothing is deleted until it is merged."
+        ),
+    })
+    if result.get("already_absent"):
+        # Nothing was in the repository to remove. The outcome asked for is already
+        # true, so the record goes rather than waiting for a review that will never
+        # happen.
+        _after_the_work(result, "portal record",
+                        lambda: cleaner_store.delete_record_by_slug(request["slug"]))
+        result["next_step"] = (
+            "The cleaner's files were already gone from the repository, so nothing "
+            "needed removing. The portal's record has been dropped."
+        )
+        return result
+
+    # ── Past this line the pull request EXISTS ───────────────────────────────
+    #
+    # Everything below records that fact somewhere: the portal's own table, a
+    # ServiceNow item, the audit log. None of it can undo the pull request, so none of
+    # it may turn a finished job into a failed one -- which is exactly what happened
+    # the first time this ran: the pull request opened, the files were committed, and
+    # the request was reported FAILED because a constant in the audit call did not
+    # exist. Each step reports its own outcome into result["warnings"] instead.
+
+    _after_the_work(
+        result, "portal record",
+        (lambda: cleaner_store.record_removal(request["slug"], request_row, result))
+        if mode == "delete"
+        else (lambda: cleaner_store.record(request, request_row, result, summary=summary, mode=mode)),
+    )
+
+    if mode == "delete":
+        # The pipeline goes now, at APPROVAL, not when the pull request that removes
+        # the files is merged. An approver has decided this cleaner should stop, and
+        # until the merge it would otherwise go on deleting artifacts every night on a
+        # schedule everybody has agreed to end. If the removal is later abandoned,
+        # cleaner_store puts the pipeline back.
+        def _drop() -> None:
+            outcome = cleaner_store.drop_pipeline_for(request["slug"])
+            result["pipeline_removed"] = bool(outcome.get("ok"))
+            if not outcome.get("ok"):
+                result["pipeline_removal_error"] = outcome.get("detail") or "unknown"
+
+        _after_the_work(result, "pipeline removal", _drop)
+
+        # What this approval does NOT do, carried on the result so the approver reads
+        # it at the moment they act rather than discovering it later. Merging the pull
+        # request deletes the files that describe the CronJob and the ConfigMap; the
+        # objects themselves are on a different cluster, behind a firewall this
+        # backend cannot cross, and they keep running until a person deletes them.
+        import artifactory_cleaner
+
+        result["cluster_objects"] = artifactory_cleaner.cluster_objects(request["slug"])
+        result["cluster_command"] = artifactory_cleaner.cluster_command(request["slug"])
+
+    # The requested item carries the pull request URL, which is the whole reason it is
+    # raised HERE and not at submission: at submission there is no pull request to
+    # point at, and updating a RITM afterwards is what trips this instance's business
+    # rules.
+    snow = order_catalog_item(
+        "artifactory_cleaner",
+        {
+            # Scalars only -- a dict or a list has no meaning as a catalog variable.
+            **{k: v for k, v in payload.items() if not isinstance(v, (dict, list))},
+            # ...EXCEPT the requester's details, which are a nested dict and are
+            # exactly what the catalog item asks for as mandatory variables. Filtering
+            # every dict dropped all six of them, so the order arrived with no name,
+            # no phone and no team, and ServiceNow answered "Mandatory variables are
+            # required" -- a 400 with no clue which ones. The quota executor spread
+            # them; this one did not, and nothing made the two agree.
+            **(payload.get("requester_details") or {}),
+            "summary": summary,
+            "pull_request_url": result.get("pull_request_url") or "",
+        },
+        f"Artifactory cleaner: {request['cleaner_name']}",
+        requester_id=str(request_row.get("requester_id") or ""),
+        requester_email=requester,
+    )
+    _record_servicenow(result, snow)
+    if snow.get("number"):
+        _after_the_work(
+            result, "ServiceNow number on the record",
+            lambda: cleaner_store.set_snow_number(request["slug"], snow["number"]),
+        )
+
+    _after_the_work(
+        result, "audit entry",
+        lambda: audit.log(
+            audit.Action.ARTIFACTORY_CLEANER_SUBMITTED,
+            user_email=requester,
+            metadata={
+                "request_id": request_id,
+                "artifactory_cleaner": request["cleaner_name"],
+                "mode": mode,
+                "repository": request["repository"],
+                "pull_request": result.get("pull_request_url") or "",
+            },
+        ),
+    )
+    return result
+
+
+def _record_servicenow(result: Dict[str, Any], snow: Dict[str, Any]) -> None:
+    """Put the ServiceNow outcome on the result -- unless there was never one to have.
+
+    Three states, and only two of them belong on the screen. A request that raised a
+    ticket carries its number; one that tried and failed carries the reason, so an
+    approver can raise it again. A request whose form does not order a catalog item at
+    all carries NEITHER, because it did not fail: an Artifactory quota is set by this
+    backend and a cleaner becomes a pull request, and neither has ever needed a
+    ticket. Writing an empty number for those put a ServiceNow line on requests that
+    had completed perfectly, which reads as something having gone wrong.
+    """
+    if snow.get("skipped"):
+        return
+    result["servicenow_number"] = snow.get("number") or ""
+    if snow.get("error"):
+        result["servicenow_error"] = snow["error"]
+
+
+def _after_the_work(result: Dict[str, Any], label: str, step) -> None:
+    """Run a step that records work already done, and never let it fail that work.
+
+    The distinction this draws is between DOING the thing and WRITING DOWN that the
+    thing was done. A pull request that is open stays open whether or not the audit
+    row lands, so a failure here is a warning carried in the result -- visible, named,
+    and not a lie in either direction -- rather than an exception that would mark the
+    request FAILED and invite somebody to submit it a second time.
+    """
+    try:
+        step()
+    except Exception as exc:
+        detail = f"{type(exc).__name__}: {exc}"
+        log.warning("%s failed after the work was done: %s", label, detail)
+        result.setdefault("warnings", []).append(f"{label}: {detail}")
 
 
 # ─── DB helpers ─────────────────────────────────────────────────────────
@@ -748,6 +1184,13 @@ def _finish_failed(request_id: str, error_message: str) -> None:
             "error": error_message[:500],
         },
     )
+    # A failed cleaner request must not leave a record on the Requests page saying a
+    # pull request is waiting for review. The row is keyed on the request, so this is
+    # the one place that knows both the outcome and which record it belongs to.
+    if str((row or {}).get("request_type") or "").upper().startswith("ARTIFACTORY_CLEANER"):
+        import cleaner_store
+
+        cleaner_store.mark_failed(str(request_id), error_message)
     if email and row:
         create_notification(
             user_email=email,
@@ -839,6 +1282,29 @@ def _validate_request_payload(request_type: str, title: str, payload: Dict[str, 
     ):
         raise HTTPException(status_code=400, detail="Request inputs cannot be empty.")
 
+    if request_type == "ARTIFACTORY_QUOTA_INCREASE":
+        if not str(payload.get("project_key") or "").strip():
+            raise HTTPException(status_code=400, detail="project_key is required.")
+        try:
+            if int(payload.get("increase_by_bytes") or 0) <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=400,
+                detail="The amount to add must be a size greater than zero.",
+            )
+        return
+
+    if request_type in CLEANER_REQUEST_TYPES:
+        # The same validator the executor uses, so a request that cannot be rendered
+        # is refused at submission rather than after somebody has approved it.
+        import artifactory_cleaner
+        try:
+            artifactory_cleaner.validate(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return
+
     if request_type == "ADO_PROJECT_CREATE":
         name = str(payload.get("project_name") or "").strip()
         if not name:
@@ -856,6 +1322,31 @@ def _validate_request_payload(request_type: str, title: str, payload: Dict[str, 
         if not admin:
             raise HTTPException(status_code=400, detail="admin_username is required.")
 
+        # Optional, but bounded: this text is written onto the project in Azure DevOps.
+        description = str(payload.get("description") or "")
+        if len(description) > 4000:
+            raise HTTPException(
+                status_code=400, detail="Description is too long (4000 characters maximum)."
+            )
+
+        # The collection is checked against the configured list HERE as well as in the
+        # provisioner. A value that only the executor rejects fails after an admin has
+        # already approved it, which wastes the approval and reads as a system fault.
+        collection = str(payload.get("collection") or "").strip()
+        if collection:
+            from .azure_devops import _TARGET_COLLECTIONS
+
+            if _TARGET_COLLECTIONS and collection.lower() not in {
+                c.lower() for c in _TARGET_COLLECTIONS
+            }:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"'{collection}' is not a collection available for provisioning "
+                        f"({', '.join(_TARGET_COLLECTIONS)})."
+                    ),
+                )
+
 
 def _can_create(user: AuthUser, request_type: str) -> bool:
     """
@@ -868,8 +1359,16 @@ def _can_create(user: AuthUser, request_type: str) -> bool:
 
 
 def _can_approve_any(user: AuthUser) -> bool:
-    """Admin-ish roles (hierarchy_level <= 5)."""
-    return int(user.get("hierarchy_level", 99)) <= 5
+    """Platform Admins, and nobody else.
+
+    This used to be ``hierarchy_level <= 5``, which let four intermediate roles
+    approve ANY request type — including ones their own permissions row did not
+    list, because that row was never read. Approval is the step that turns a
+    request into a real write against Azure DevOps with the admin PAT, so it now
+    sits behind the same single boundary as every other privileged action, and is
+    re-read from the database rather than trusted from the token.
+    """
+    return has_effective_admin_access_live(user)
 
 
 def _log_audit(user_id: str, action: str, resource_type: str, resource_id: str) -> None:

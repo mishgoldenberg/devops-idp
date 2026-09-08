@@ -1,0 +1,283 @@
+<div class="page-shell" data-search-page>
+	<header class="page-header">
+		<div>
+			<h1 class="page-title">Search</h1>
+			<p class="page-subtitle">
+				Everything in the portal — work items, tickets, repositories, pages,
+				projects and requests — in one place.
+			</p>
+		</div>
+	</header>
+
+	<div class="page-content">
+	<!--
+		The query arrives in the URL (?q=…) from the header dropdown's "More" link, so
+		the page runs it immediately and the box is pre-filled. The URL is kept in sync
+		on every search, which makes a result page linkable and survives a refresh.
+	-->
+	<form class="mb-6 flex gap-2" data-search-form>
+		<label
+			class="input input-bordered flex flex-1 items-center gap-2 bg-base-100"
+		>
+			<svg
+				class="w-4 h-4 opacity-60"
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="2"
+				stroke-linecap="round"
+				aria-hidden="true"
+			>
+				<circle cx="11" cy="11" r="7"></circle>
+				<path d="M21 21l-4.35-4.35"></path>
+			</svg>
+			<!--
+				bg-transparent: without it the inner input keeps the browser's own white
+				background and shows up as a pale block sitting inside the rounded field.
+				The header's search box already does this; this one had been missed.
+			-->
+			<input
+				type="text"
+				class="grow bg-transparent outline-none"
+				name="q"
+				autocomplete="off"
+				placeholder="Search work items, tickets, repos, pages…"
+				value="{{ query }}"
+				data-search-input
+			/>
+		</label>
+		<button type="submit" class="btn btn-primary rounded-full px-6">
+			Search
+		</button>
+	</form>
+
+	<div data-search-summary class="mb-4 text-xs text-base-content/60"></div>
+
+	<!--
+		Columns, not a grid.
+
+		A CSS grid puts cards in ROWS, and a row is as tall as its tallest card — so a group
+		with two hits sitting beside a group with ten left a tall gap of dead space beneath
+		it, and the next row could not move up into it. `items-start` stopped the short card
+		from STRETCHING, but it could not close the hole underneath.
+
+		So the cards are dealt into balanced columns instead (see layout() below) and each
+		column stacks its own cards tight against each other. Nothing has to line up across
+		columns, so there is no gap to leave. Tailwind's `columns-*` would have done this in
+		CSS, but those classes are not in the compiled stylesheet and nothing rebuilds it.
+	-->
+	<div class="flex gap-4 items-start" data-search-results></div>
+	</div>
+</div>
+
+<script>
+	(function () {
+		const root = document.querySelector("[data-search-page]");
+		if (!root) return;
+		const form = root.querySelector("[data-search-form]");
+		const input = root.querySelector("[data-search-input]");
+		const results = root.querySelector("[data-search-results]");
+		const summary = root.querySelector("[data-search-summary]");
+
+		// How many hits each group shows on this page. The dropdown shows 3; here there
+		// is room for more, but not for 25 — a card that runs off the screen is worse
+		// than one that says "10 of 40" and lets you narrow the query.
+		const PER_GROUP = 10;
+
+		// Type-ahead: results appear while you type, no Enter needed. The debounce is
+		// deliberately slower than the header's (which shows 3 per system) because this
+		// page asks each system for more rows, and every keystroke that fires is a fan-out
+		// across all of them.
+		const TYPING_DEBOUNCE_MS = 300;
+
+		function esc(value) {
+			return String(value == null ? "" : value)
+				.replace(/&/g, "&amp;")
+				.replace(/</g, "&lt;")
+				.replace(/>/g, "&gt;")
+				.replace(/"/g, "&quot;");
+		}
+
+		function groupCard(group) {
+			const shown = (group.items || []).length;
+			const total = Number(group.total || 0);
+
+			if (group.unavailable) {
+				return `
+					<section class="section-card p-4">
+						<h3 class="text-sm font-bold uppercase tracking-widest text-base-content/50">
+							${esc(group.label)}
+						</h3>
+						<p class="mt-3 text-xs text-base-content/50">
+							Not connected — add a token for this system to search it.
+						</p>
+					</section>
+				`;
+			}
+
+			const rows = (group.items || [])
+				.map(
+					(item) => `
+						<li>
+							<a
+								href="${esc(item.href)}"
+								${/^https?:/i.test(String(item.href || "")) ? 'target="_blank" rel="noopener noreferrer"' : ""}
+								class="flex flex-col rounded-lg px-2 py-1.5 no-underline hover:bg-base-200 transition-colors"
+							>
+								<span class="text-sm font-medium text-base-content truncate">
+									${esc(item.title)}
+								</span>
+								<span class="flex items-center gap-2 text-xs text-base-content/60">
+									<span class="truncate">${esc(item.subtitle)}</span>
+									${item.meta ? `<span class="shrink-0 text-base-content/50">· ${esc(item.meta)}</span>` : ""}
+								</span>
+							</a>
+						</li>
+					`,
+				)
+				.join("");
+
+			return `
+				<section class="section-card p-4 flex flex-col">
+					<div class="flex items-center justify-between gap-2">
+						<h3 class="text-sm font-bold uppercase tracking-widest text-base-content/70">
+							${esc(group.label)}
+						</h3>
+						<span class="text-xs text-base-content/50 shrink-0">
+							${shown < total ? `${shown} of ${total}` : total}
+						</span>
+					</div>
+					<ul class="mt-1 flex flex-col">${rows}</ul>
+				</section>
+			`;
+		}
+
+		// ── Layout ───────────────────────────────────────────────────────────────────
+		// The groups the last search returned, kept so a resize can re-deal them into a
+		// different number of columns without asking the server again.
+		let currentGroups = [];
+
+		function columnCount() {
+			const w = window.innerWidth;
+			if (w >= 1280) return 3;
+			if (w >= 768) return 2;
+			return 1;
+		}
+
+		// Deal each card into whichever column is currently shortest. Weight is the row
+		// count plus a constant for the card's own header and padding — near enough to real
+		// height, and it keeps the columns even without having to measure the DOM and then
+		// reflow it.
+		function layout() {
+			if (!currentGroups.length) {
+				results.innerHTML = "";
+				return;
+			}
+
+			const count = columnCount();
+			const columns = Array.from({ length: count }, () => ({ weight: 0, html: [] }));
+
+			currentGroups.forEach((group) => {
+				const weight = group.unavailable ? 3 : 3 + (group.items || []).length;
+				const target = columns.reduce((a, b) => (b.weight < a.weight ? b : a));
+				target.weight += weight;
+				target.html.push(groupCard(group));
+			});
+
+			results.innerHTML = columns
+				.filter((col) => col.html.length)
+				.map(
+					(col) =>
+						`<div class="flex flex-1 min-w-0 flex-col gap-4">${col.html.join("")}</div>`,
+				)
+				.join("");
+		}
+
+		let resizeTimer = null;
+		window.addEventListener("resize", () => {
+			clearTimeout(resizeTimer);
+			resizeTimer = setTimeout(layout, 150);
+		});
+
+		// Typing fires overlapping requests, and they do not necessarily come back in the
+		// order they were sent — a slow search for "te" can land after a fast one for
+		// "test" and overwrite the right answer with a stale one. Only the newest request
+		// is allowed to render.
+		let latestToken = 0;
+
+		async function run(query) {
+			const q = String(query || "").trim();
+			if (q.length < 2) {
+				summary.textContent = "Type at least two characters.";
+				currentGroups = [];
+				layout();
+				return;
+			}
+
+			const token = ++latestToken;
+			summary.innerHTML =
+				'<span class="loading loading-spinner loading-xs" style="vertical-align: middle"></span> Searching…';
+
+			try {
+				const res = await fetch(
+					`/api/search?q=${encodeURIComponent(q)}&limit=${PER_GROUP}`,
+					{ credentials: "same-origin" },
+				);
+				if (token !== latestToken) return; // a newer keystroke already won
+				if (!res.ok) throw new Error("Search failed");
+				const data = (await res.json()).data || {};
+				if (token !== latestToken) return;
+				const groups = data.groups || [];
+				const found = groups.filter((g) => !g.unavailable);
+				const total = Number(data.total || 0);
+
+				summary.textContent = total
+					? `${total} result${total === 1 ? "" : "s"} for “${q}” across ${found.length} system${found.length === 1 ? "" : "s"}`
+					: `Nothing found for “${q}”.`;
+				currentGroups = groups;
+				layout();
+			} catch {
+				if (token !== latestToken) return; // a stale failure must not clobber a good result
+				summary.innerHTML =
+					'<span class="text-error">Search failed. Try again.</span>';
+			}
+		}
+
+		function syncUrl(q) {
+			// Keep the URL in step with what is on screen, so the page is linkable and a
+			// refresh re-runs the same search rather than emptying it.
+			const url = new URL(window.location.href);
+			if (q) url.searchParams.set("q", q);
+			else url.searchParams.delete("q");
+			window.history.replaceState({}, "", url);
+		}
+
+		form.addEventListener("submit", (event) => {
+			// Enter still works, it just isn't required any more.
+			event.preventDefault();
+			clearTimeout(typingTimer);
+			const q = input.value.trim();
+			syncUrl(q);
+			run(q);
+		});
+
+		let typingTimer = null;
+		input.addEventListener("input", () => {
+			clearTimeout(typingTimer);
+			const q = input.value.trim();
+			if (!q) {
+				summary.textContent = "";
+				currentGroups = [];
+				layout();
+				syncUrl("");
+				return;
+			}
+			typingTimer = setTimeout(() => {
+				syncUrl(q);
+				run(q);
+			}, TYPING_DEBOUNCE_MS);
+		});
+
+		if (input.value.trim()) run(input.value);
+	})();
+</script>

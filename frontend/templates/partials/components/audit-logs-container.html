@@ -1,13 +1,316 @@
+{#
+	Logs.
+
+	The page used to be a flat table of about ten kinds of event — the ones somebody
+	had remembered to call audit.log() for — with no severity, no search, and no way
+	to tell a routine action from a failure. You could not answer "what broke" with it,
+	which is the only question anyone opens a log to answer.
+
+	It now shows everything the portal does (see backend/app/request_audit.py), and it
+	is built around severity: the levels are chips across the top with live counts, so
+	"ERROR 3" is visible before you go looking for it.
+
+	The colours are raw CSS rather than Tailwind utilities. `bg-error/10` and friends
+	are not in the compiled stylesheet and would silently do nothing; the DaisyUI theme
+	variables (--er, --wa, --in, --su, --bc) are always there and follow the theme.
+#}
+<style>
+	/* ── Level colours ─────────────────────────────────────────────────────
+	   Severity has to be legible at a glance, from across a desk, in a table of
+	   200 rows. The left border does that job — it is what your eye scans down —
+	   and the badge carries the word for when you need to be sure. */
+	.log-row {
+		border-left: 3px solid transparent;
+	}
+
+	.log-row[data-level="INFO"] {
+		border-left-color: hsl(var(--in) / 0.55);
+	}
+
+	.log-row[data-level="WARNING"] {
+		border-left-color: hsl(var(--wa));
+		background: hsl(var(--wa) / 0.07);
+	}
+
+	.log-row[data-level="ERROR"] {
+		border-left-color: hsl(var(--er));
+		background: hsl(var(--er) / 0.09);
+	}
+
+	/* CRITICAL has to look different from ERROR, not just redder — if the two are a
+	   shade apart nobody distinguishes them under pressure. It gets the solid bar. */
+	.log-row[data-level="CRITICAL"] {
+		border-left-color: hsl(var(--er));
+		background: hsl(var(--er) / 0.2);
+		font-weight: 600;
+	}
+
+	.log-row[data-level="DEBUG"] {
+		border-left-color: hsl(var(--bc) / 0.25);
+		opacity: 0.75;
+	}
+
+	.log-level {
+		display: inline-block;
+		min-width: 4.5rem;
+		text-align: center;
+		padding: 0.1rem 0.4rem;
+		border-radius: 0.35rem;
+		font-size: 0.65rem;
+		font-weight: 700;
+		letter-spacing: 0.06em;
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	}
+
+	.log-level[data-level="DEBUG"] {
+		background: hsl(var(--bc) / 0.12);
+		color: hsl(var(--bc) / 0.7);
+	}
+
+	.log-level[data-level="INFO"] {
+		background: hsl(var(--in) / 0.18);
+		color: hsl(var(--in));
+	}
+
+	.log-level[data-level="WARNING"] {
+		background: hsl(var(--wa) / 0.22);
+		color: hsl(var(--wa));
+	}
+
+	.log-level[data-level="ERROR"] {
+		background: hsl(var(--er) / 0.22);
+		color: hsl(var(--er));
+	}
+
+	.log-level[data-level="CRITICAL"] {
+		background: hsl(var(--er));
+		color: hsl(var(--erc));
+	}
+
+	/* ── Level filter chips ────────────────────────────────────────────────── */
+	.log-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		padding: 0.25rem 0.65rem;
+		border-radius: 9999px;
+		border: 1px solid hsl(var(--bc) / 0.2);
+		font-size: 0.75rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition: background 120ms ease, border-color 120ms ease, opacity 120ms ease;
+		opacity: 0.55;
+	}
+
+	.log-chip:hover {
+		opacity: 0.85;
+	}
+
+	/* Selected chips are the ones carrying colour. An unselected filter that still
+	   looks "on" is how you end up staring at a log wondering why it is empty. */
+	.log-chip[data-on="1"] {
+		opacity: 1;
+	}
+
+	.log-chip[data-on="1"][data-level="INFO"] {
+		background: hsl(var(--in) / 0.16);
+		border-color: hsl(var(--in) / 0.5);
+		color: hsl(var(--in));
+	}
+
+	.log-chip[data-on="1"][data-level="WARNING"] {
+		background: hsl(var(--wa) / 0.18);
+		border-color: hsl(var(--wa) / 0.55);
+		color: hsl(var(--wa));
+	}
+
+	.log-chip[data-on="1"][data-level="ERROR"],
+	.log-chip[data-on="1"][data-level="CRITICAL"] {
+		background: hsl(var(--er) / 0.18);
+		border-color: hsl(var(--er) / 0.55);
+		color: hsl(var(--er));
+	}
+
+	.log-chip[data-on="1"][data-level="DEBUG"] {
+		background: hsl(var(--bc) / 0.12);
+		border-color: hsl(var(--bc) / 0.35);
+	}
+
+	.log-chip-count {
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+		font-size: 0.7rem;
+		opacity: 0.85;
+	}
+
+	/* ── Fullscreen ────────────────────────────────────────────────────────
+	   A log is the one screen where the surrounding chrome is pure cost: you are
+	   reading 200 rows of dense text and the sidebar is not helping. This is a CSS
+	   fallback layered under the real Fullscreen API — the API is used when the
+	   browser grants it, and this takes over when it doesn't (or when it is denied
+	   because the click wasn't trusted). */
+	.log-panel.is-fullscreen {
+		position: fixed;
+		inset: 0;
+		z-index: 60;
+		margin: 0;
+		border-radius: 0;
+		background: hsl(var(--b1));
+		display: flex;
+		flex-direction: column;
+	}
+
+	/* The Fullscreen API paints the element on a black backdrop by default, which
+	   looks broken against a light theme; it also does NOT stretch the panel's inner
+	   scroll region, so the table stayed capped at its 60vh max-height and filled only
+	   the top half of the screen. Both fullscreen paths (the real API and the
+	   fixed-position fallback) now make the panel a full-height flex column and let the
+	   scroll region take all the room. */
+	.log-panel:fullscreen {
+		background: hsl(var(--b1));
+		width: 100vw;
+		height: 100vh;
+		padding: 1rem;
+		box-sizing: border-box;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.log-panel:fullscreen > .card-body,
+	.log-panel.is-fullscreen > .card-body {
+		flex: 1 1 auto;
+		min-height: 0;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.log-panel:fullscreen .log-scroll,
+	.log-panel.is-fullscreen .log-scroll {
+		max-height: none;
+		flex: 1 1 auto;
+		min-height: 0;
+	}
+
+	/* ── Details ───────────────────────────────────────────────────────────
+	   The full record used to be crammed into the last column, where it was a
+	   wall of tiny JSON that pushed every other column narrow and was unreadable
+	   anyway. The row now carries a one-line summary and a small square; point at
+	   the square and the whole record opens in a panel that has room for it.
+
+	   `position: fixed` on the panel, positioned from JS: the table scrolls, and a
+	   panel positioned inside a scrolling overflow container gets clipped by it. */
+	.log-detail-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		height: 1.15rem;
+		width: 1.15rem;
+		flex-shrink: 0;
+		border-radius: 0.25rem;
+		border: 1px solid hsl(var(--bc) / 0.3);
+		background: hsl(var(--bc) / 0.08);
+		color: hsl(var(--bc) / 0.7);
+		cursor: pointer;
+		transition: background 100ms ease, border-color 100ms ease;
+	}
+
+	.log-detail-btn:hover,
+	.log-detail-btn:focus-visible {
+		background: hsl(var(--p) / 0.2);
+		border-color: hsl(var(--p));
+		color: hsl(var(--p));
+	}
+
+	#log-detail-panel {
+		position: fixed;
+		z-index: 70;
+		max-width: 34rem;
+		max-height: 22rem;
+		overflow: auto;
+		padding: 0.75rem 0.9rem;
+		border-radius: 0.6rem;
+		border: 1px solid hsl(var(--bc) / 0.2);
+		background: hsl(var(--b1));
+		box-shadow: 0 10px 30px hsl(var(--n) / 0.4);
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+		font-size: 0.7rem;
+		line-height: 1.55;
+		white-space: pre-wrap;
+		word-break: break-word;
+	}
+
+	#log-detail-panel[hidden] {
+		display: none;
+	}
+
+	.log-live-dot {
+		display: inline-block;
+		height: 0.5rem;
+		width: 0.5rem;
+		border-radius: 9999px;
+		background: hsl(var(--su));
+		animation: log-pulse 1.6s ease-in-out infinite;
+	}
+
+	@keyframes log-pulse {
+		0%, 100% { opacity: 1; }
+		50% { opacity: 0.25; }
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.log-live-dot { animation: none; }
+	}
+
+	/* The Logs page wants every column it can get — a table of timestamps, levels,
+	   users and long messages is unreadable squeezed into the shared 60rem reading
+	   column that suits prose pages. This is scoped to the log view on purpose; the
+	   centred column stays the default everywhere else. */
+	.log-wide {
+		width: 100%;
+		max-width: 100%;
+		margin: 0;
+		padding: 1.5rem;
+	}
+
+	html[data-density="compact"] .log-wide {
+		padding: 1rem;
+	}
+</style>
+
 <div class="page-shell">
 	<header class="page-header">
 		<div>
-			<h1 class="page-title">Audit Logs</h1>
+			<h1 class="page-title">Logs</h1>
 			<p class="page-subtitle">
-				Portal activity: self-service requests, approvals, Terraform runs,
-				ServiceNow tickets, and Safe Mode toggles.
+				Everything the portal does: user actions, every state-changing API call,
+				and every warning or error the backend raises.
 			</p>
 		</div>
-		<div class="flex items-center gap-2">
+		<!-- flex-wrap because this row is now five buttons wide: at 1280px the last
+		     one (Refresh) was pushed off the right edge of the page entirely. -->
+		<div class="flex flex-wrap justify-end items-center gap-2">
+			<button id="audit-live" type="button" class="btn btn-sm btn-ghost" aria-pressed="false">
+				<span id="audit-live-dot" class="log-live-dot hidden"></span>
+				Live
+			</button>
+			<button id="audit-export" type="button" class="btn btn-sm btn-ghost">
+				Export CSV
+			</button>
+			<!-- Deletes what the CURRENT FILTER matches, which is the only scope that
+			     makes sense from a page you are looking at. Irreversible, so unlike
+			     every other destructive action in the portal this one gets a
+			     confirmation rather than an undo — there is nothing to undo from. -->
+			<button id="audit-purge" type="button" class="btn btn-sm btn-ghost text-error">
+				<svg viewBox="0 0 24 24" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+					<path d="M3 6h18M8 6V4a1 1 0 011-1h6a1 1 0 011 1v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
+				</svg>
+				Clear logs
+			</button>
+			<button id="audit-fullscreen" type="button" class="btn btn-sm btn-ghost">
+				<svg viewBox="0 0 24 24" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+					<path d="M8 3H5a2 2 0 00-2 2v3M16 3h3a2 2 0 012 2v3M8 21H5a2 2 0 01-2-2v-3M16 21h3a2 2 0 002-2v-3" />
+				</svg>
+				Fullscreen
+			</button>
 			<button id="audit-refresh" type="button" class="btn btn-sm btn-primary">
 				<svg viewBox="0 0 24 24" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 					<polyline points="23 4 23 10 17 10" />
@@ -20,13 +323,58 @@
 	</header>
 
 	<div class="page-content-flush">
-		<div class="portal-content-container space-y-6">
+		<div class="log-wide space-y-6">
 		<section class="section-card">
-			<div class="card-body p-4">
-				<!-- Single horizontal filter row. Wraps cleanly on narrow widths; every
-				     input + button is btn-sm/input-sm sized so heights match. -->
+			<div class="card-body p-4 gap-4">
+				<!-- Severity first. It is the question people actually arrive with. -->
+				<div class="flex flex-wrap items-center gap-2" id="audit-levels" role="group" aria-label="Filter by level">
+					<span class="text-xs font-semibold uppercase tracking-widest text-base-content/50">Level</span>
+					<button type="button" class="log-chip" data-level="CRITICAL" data-on="1">
+						CRITICAL <span class="log-chip-count" data-count="CRITICAL">0</span>
+					</button>
+					<button type="button" class="log-chip" data-level="ERROR" data-on="1">
+						ERROR <span class="log-chip-count" data-count="ERROR">0</span>
+					</button>
+					<button type="button" class="log-chip" data-level="WARNING" data-on="1">
+						WARNING <span class="log-chip-count" data-count="WARNING">0</span>
+					</button>
+					<button type="button" class="log-chip" data-level="INFO" data-on="1">
+						INFO <span class="log-chip-count" data-count="INFO">0</span>
+					</button>
+					<button type="button" class="log-chip" data-level="DEBUG">
+						DEBUG <span class="log-chip-count" data-count="DEBUG">0</span>
+					</button>
+					<button id="audit-problems-only" type="button" class="btn btn-xs btn-ghost ml-auto">
+						Problems only
+					</button>
+				</div>
+
 				<div class="flex flex-wrap items-end gap-3">
 					<label class="form-control min-w-[14rem] flex-1">
+						<span class="label-text text-xs mb-1">Search</span>
+						<input
+							id="audit-filter-q"
+							type="search"
+							class="input input-bordered input-sm w-full"
+							placeholder="Anything — a path, a user, an error message…"
+						/>
+					</label>
+					<label class="form-control w-40">
+						<span class="label-text text-xs mb-1">Source</span>
+						<select id="audit-filter-source" class="select select-bordered select-sm w-full">
+							<option value="">All</option>
+							<option value="app">User actions</option>
+							<option value="http">API calls</option>
+							<option value="system">Backend</option>
+						</select>
+					</label>
+					<label class="form-control min-w-[12rem] flex-1">
+						<span class="label-text text-xs mb-1">Action</span>
+						<select id="audit-filter-action" class="select select-bordered select-sm w-full">
+							<option value="">All actions</option>
+						</select>
+					</label>
+					<label class="form-control min-w-[12rem] flex-1">
 						<span class="label-text text-xs mb-1">User (email)</span>
 						<input
 							id="audit-filter-user"
@@ -34,12 +382,6 @@
 							class="input input-bordered input-sm w-full"
 							placeholder="user@example.com"
 						/>
-					</label>
-					<label class="form-control min-w-[12rem] flex-1">
-						<span class="label-text text-xs mb-1">Action</span>
-						<select id="audit-filter-action" class="select select-bordered select-sm w-full">
-							<option value="">All actions</option>
-						</select>
 					</label>
 					<label class="form-control w-40">
 						<span class="label-text text-xs mb-1">From</span>
@@ -50,39 +392,43 @@
 						<input id="audit-filter-to" type="date" class="input input-bordered input-sm w-full" />
 					</label>
 					<div class="flex items-center gap-2 ml-auto">
-						<button id="audit-clear" type="button" class="btn btn-sm btn-ghost">
-							Clear
-						</button>
-						<button id="audit-apply" type="button" class="btn btn-sm btn-primary">
-							Apply filters
-						</button>
+						<!-- "Reset filters", not "Clear": there is now a Clear that
+						     DELETES, and two buttons called Clear on one page, one of
+						     which is irreversible, is an accident waiting to happen. -->
+						<button id="audit-clear" type="button" class="btn btn-sm btn-ghost">Reset filters</button>
+						<button id="audit-apply" type="button" class="btn btn-sm btn-primary">Apply</button>
 					</div>
 				</div>
-				<div
-					id="audit-status"
-					class="text-xs text-base-content/60 mt-3 min-h-[1rem]"
-				></div>
+				<div id="audit-status" class="text-xs text-base-content/60 min-h-[1rem]"></div>
 			</div>
 		</section>
 
-		<section class="section-card">
+		<section id="audit-panel" class="section-card log-panel">
 			<div class="card-body gap-3">
+				<!-- Only shown while fullscreen: in real fullscreen the page header (and its
+				     toggle button) isn't on screen, so there has to be a way out other than
+				     the Escape key. -->
+				<button id="audit-fs-exit" type="button" class="btn btn-sm btn-primary self-end hidden">
+					<svg viewBox="0 0 24 24" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3H5a2 2 0 00-2 2v4M15 3h4a2 2 0 012 2v4M9 21H5a2 2 0 01-2-2v-4M15 21h4a2 2 0 002-2v-4"/></svg>
+					Exit fullscreen
+				</button>
 				<div id="audit-alert" class="hidden alert text-sm" role="status"></div>
 
-				<div class="overflow-x-auto max-h-[60vh] overflow-y-auto">
-					<table class="table table-zebra table-sm w-full">
+				<div class="log-scroll overflow-x-auto max-h-[60vh] overflow-y-auto">
+					<table class="table table-sm w-full">
 						<thead class="sticky top-0 bg-base-100 z-10">
 							<tr>
+								<th class="w-28">Level</th>
 								<th class="w-48">When</th>
-								<th class="w-64">User</th>
+								<th class="w-56">User</th>
 								<th class="w-64">Action</th>
 								<th>Details</th>
 							</tr>
 						</thead>
 						<tbody id="audit-rows">
-							<tr id="audit-empty">
-								<td colspan="4" class="text-center py-8 text-base-content/50 italic">
-									Loading audit events…
+							<tr>
+								<td colspan="5" class="text-center py-8 text-base-content/50 italic">
+									Loading logs…
 								</td>
 							</tr>
 						</tbody>
@@ -102,25 +448,52 @@
 	</div>
 </div>
 
+<dialog id="audit-purge-modal" class="modal">
+	<div class="modal-box max-w-lg">
+		<h3 class="font-bold text-lg">Clear log entries</h3>
+		<p class="mt-3 text-sm" id="audit-purge-what">…</p>
+		<div class="mt-3 text-xs text-base-content/60" id="audit-purge-filter"></div>
+		<div class="mt-4 alert alert-warning text-sm" role="status">
+			This cannot be undone. The rows are deleted, not archived.
+		</div>
+		<div class="modal-action">
+			<form method="dialog"><button class="btn btn-sm">Cancel</button></form>
+			<button id="audit-purge-go" type="button" class="btn btn-sm btn-error">Delete them</button>
+		</div>
+	</div>
+	<form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
 <script>
 	(function () {
-		const userEl    = document.getElementById("audit-filter-user");
-		const actionEl  = document.getElementById("audit-filter-action");
-		const fromEl    = document.getElementById("audit-filter-from");
-		const toEl      = document.getElementById("audit-filter-to");
-		const applyBtn  = document.getElementById("audit-apply");
-		const clearBtn  = document.getElementById("audit-clear");
+		const qEl        = document.getElementById("audit-filter-q");
+		const sourceEl   = document.getElementById("audit-filter-source");
+		const userEl     = document.getElementById("audit-filter-user");
+		const actionEl   = document.getElementById("audit-filter-action");
+		const fromEl     = document.getElementById("audit-filter-from");
+		const toEl       = document.getElementById("audit-filter-to");
+		const applyBtn   = document.getElementById("audit-apply");
+		const clearBtn   = document.getElementById("audit-clear");
 		const refreshBtn = document.getElementById("audit-refresh");
-		const rowsEl    = document.getElementById("audit-rows");
-		const alertEl   = document.getElementById("audit-alert");
-		const statusEl  = document.getElementById("audit-status");
+		const exportBtn  = document.getElementById("audit-export");
+		const fsBtn      = document.getElementById("audit-fullscreen");
+		const liveBtn    = document.getElementById("audit-live");
+		const liveDot    = document.getElementById("audit-live-dot");
+		const problemsBtn = document.getElementById("audit-problems-only");
+		const levelsEl   = document.getElementById("audit-levels");
+		const panelEl    = document.getElementById("audit-panel");
+		const rowsEl     = document.getElementById("audit-rows");
+		const alertEl    = document.getElementById("audit-alert");
+		const statusEl   = document.getElementById("audit-status");
 		const pageInfoEl = document.getElementById("audit-page-info");
-		const prevBtn   = document.getElementById("audit-prev");
-		const nextBtn   = document.getElementById("audit-next");
+		const prevBtn    = document.getElementById("audit-prev");
+		const nextBtn    = document.getElementById("audit-next");
 
-		const PAGE_SIZE = 50;
+		const PAGE_SIZE = 100;
+		const ALL_LEVELS = ["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"];
 		let offset = 0;
-		let total  = 0;
+		let total = 0;
+		let liveTimer = null;
 
 		function escHtml(s) {
 			return String(s == null ? "" : s)
@@ -128,6 +501,11 @@
 				.replace(/</g, "&lt;")
 				.replace(/>/g, "&gt;")
 				.replace(/"/g, "&quot;");
+		}
+
+		function selectedLevels() {
+			return Array.from(levelsEl.querySelectorAll('.log-chip[data-on="1"]'))
+				.map((chip) => chip.dataset.level);
 		}
 
 		function formatDate(iso) {
@@ -141,8 +519,73 @@
 			}
 		}
 
+		// The action for an HTTP row is a raw "POST /api/…"; the dotted business-event
+		// labels need unpacking. This is only used as a fallback now — the Action column
+		// leads with the human sentence below.
 		function prettyAction(a) {
-			return String(a || "").replace(/_/g, " ").replace(/\./g, " · ");
+			const s = String(a || "");
+			if (/^[A-Z]+\s/.test(s)) return s;
+			return s.replace(/_/g, " ").replace(/\./g, " · ");
+		}
+
+		// What the Action column shows: the plain-English sentence the backend attached
+		// ("Viewed: sonarqube projects", "Opened a support ticket") instead of the raw
+		// method-and-route, which used to char-wrap into an unreadable vertical stack in a
+		// narrow column. The exact route is still one hover (title) and one click (the full
+		// record) away.
+		function actionLabel(r) {
+			const m = r.metadata;
+			if (m && typeof m === "object" && m.what) return String(m.what);
+			return prettyAction(r.action);
+		}
+		function actionTitle(r) {
+			const m = r.metadata;
+			if (m && typeof m === "object" && m.method && m.path) return `${m.method} ${m.path}`;
+			return String(r.action || "");
+		}
+
+		// The one line that says what actually happened. A raw JSON blob per row is
+		// technically complete and practically unreadable, so the fields that carry the
+		// meaning get pulled to the front and the rest stays available on click.
+		function summarize(row) {
+			const m = row.metadata;
+			if (!m || typeof m !== "object") return escHtml(m == null ? "" : String(m));
+			if (m.message) {
+				const exc = m.exception ? ` (${m.exception})` : "";
+				return escHtml(String(m.message) + exc);
+			}
+			// `what` is the sentence the backend attaches to an API call — "Opened a
+			// support ticket" rather than "POST /api/support/tickets". The route is still
+			// there in the Action column, and in the full record behind the square.
+			if (m.what) {
+				// The Action column already carries `what`; Details shows the specifics so
+				// the two columns complement each other instead of repeating.
+				const bits = [];
+				if (m.status != null) bits.push(m.status >= 400 ? `Failed · ${m.status}` : String(m.status));
+				// The reason, when the backend knew one. A failure row without it says
+				// only that something broke — which is the state this page was in.
+				if (m.detail) bits.push(String(m.detail));
+				if (m.repeated) bits.push(`repeated ${m.repeated}×`);
+				if (m.duration_ms != null) bits.push(`${m.duration_ms} ms`);
+				if (m.ip) bits.push(String(m.ip));
+				if (bits.length) return escHtml(bits.join("  ·  "));
+				// An app event has no status or timing — its detail IS its extra fields
+				// ("filter=…, deleted=1284"). Falling through to a bare "OK" threw that
+				// away and made every business event look identical.
+				const rest = Object.keys(m)
+					.filter((k) => !["what", "method", "path", "status", "duration_ms", "ip"].includes(k))
+					.map((k) => `${k}=${typeof m[k] === "object" ? JSON.stringify(m[k]) : m[k]}`);
+				return escHtml(rest.join("  ·  ") || "OK");
+			}
+			if (m.status != null) {
+				const bits = [`${m.status}`, m.duration_ms != null ? `${m.duration_ms}ms` : "", m.ip || ""];
+				return escHtml(bits.filter(Boolean).join(" · "));
+			}
+			try {
+				return escHtml(JSON.stringify(m));
+			} catch {
+				return "";
+			}
 		}
 
 		function showAlert(kind, text) {
@@ -160,38 +603,134 @@
 			if (!items || items.length === 0) {
 				rowsEl.innerHTML = `
 					<tr>
-						<td colspan="4" class="text-center py-8 text-base-content/50 italic">
-							No audit events match your filters.
+						<td colspan="5" class="text-center py-8 text-base-content/50 italic">
+							Nothing matches these filters.
 						</td>
 					</tr>`;
 				return;
 			}
 			rowsEl.innerHTML = items.map((r) => {
-				let meta = r.metadata;
-				let metaStr = "";
-				if (meta && typeof meta === "object") {
-					try { metaStr = JSON.stringify(meta); } catch { metaStr = String(meta); }
-				} else if (meta != null) {
-					metaStr = String(meta);
+				const level = String(r.level || "INFO").toUpperCase();
+				let full = "";
+				try {
+					full = JSON.stringify(r.metadata ?? {}, null, 2);
+				} catch {
+					full = String(r.metadata ?? "");
 				}
 				return `
-					<tr>
+					<tr class="log-row" data-level="${escHtml(level)}">
+						<td><span class="log-level" data-level="${escHtml(level)}">${escHtml(level)}</span></td>
 						<td class="whitespace-nowrap text-sm">${escHtml(formatDate(r.created_at))}</td>
 						<td class="text-sm">${escHtml(r.user_email || "—")}</td>
-						<td class="text-sm"><span class="badge badge-ghost">${escHtml(prettyAction(r.action))}</span></td>
-						<td class="text-xs font-mono text-base-content/70 break-all">${escHtml(metaStr)}</td>
+						<td class="text-sm"><span class="block truncate" style="max-width: 15rem" title="${escHtml(actionTitle(r))}">${escHtml(actionLabel(r))}</span></td>
+						<td class="text-xs text-base-content/70">
+							<span class="flex items-center gap-2">
+								<button
+									type="button"
+									class="log-detail-btn"
+									data-log-detail="${escHtml(full)}"
+									aria-label="Show the full record"
+								>
+									<svg viewBox="0 0 24 24" class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
+										<line x1="4" y1="7" x2="20" y2="7" />
+										<line x1="4" y1="12" x2="20" y2="12" />
+										<line x1="4" y1="17" x2="14" y2="17" />
+									</svg>
+								</button>
+								<span class="truncate">${summarize(r)}</span>
+							</span>
+						</td>
 					</tr>`;
 			}).join("");
 		}
 
-		function buildQuery() {
+		// ── The details panel ───────────────────────────────────────────────
+		// The full record used to be dumped inline in the last column, which made every
+		// row a wall of tiny JSON and squeezed the columns that carried the meaning.
+		// Now: a small square per row. Point at it and the whole record opens in a panel
+		// with room to actually read it.
+		//
+		// ONE panel, reused, appended to <body> and fixed-positioned. The table is a
+		// scrolling container, and a panel rendered inside it would be clipped at its
+		// edges — which is precisely where the interesting rows are.
+		const detailPanel = document.createElement("div");
+		detailPanel.id = "log-detail-panel";
+		detailPanel.hidden = true;
+		document.body.appendChild(detailPanel);
+
+		let detailHideTimer = null;
+
+		function showDetail(btn) {
+			clearTimeout(detailHideTimer);
+			// textContent, not innerHTML: this is arbitrary data from the log, and it is
+			// exactly where an injected string would end up if anyone tried.
+			detailPanel.textContent = btn.getAttribute("data-log-detail") || "";
+			detailPanel.hidden = false;
+
+			// Measure, then place: to the right of the square by default, flipped to the
+			// left if that would run off the screen, and never hanging off the bottom.
+			const rect = btn.getBoundingClientRect();
+			const panel = detailPanel.getBoundingClientRect();
+			let left = rect.right + 10;
+			if (left + panel.width > window.innerWidth - 12) {
+				left = Math.max(12, rect.left - panel.width - 10);
+			}
+			let top = rect.top;
+			if (top + panel.height > window.innerHeight - 12) {
+				top = Math.max(12, window.innerHeight - panel.height - 12);
+			}
+			detailPanel.style.left = left + "px";
+			detailPanel.style.top = top + "px";
+		}
+
+		function hideDetail() {
+			// A moment's grace, so that moving the pointer off the square and onto the
+			// panel — to scroll it, or to select the text — does not dismiss it en route.
+			detailHideTimer = setTimeout(() => { detailPanel.hidden = true; }, 140);
+		}
+
+		rowsEl.addEventListener("mouseover", (event) => {
+			const btn = event.target.closest("[data-log-detail]");
+			if (btn) showDetail(btn);
+		});
+		rowsEl.addEventListener("mouseout", (event) => {
+			if (event.target.closest("[data-log-detail]")) hideDetail();
+		});
+		// Keyboard parity: the square is a button, so it can be tabbed to.
+		rowsEl.addEventListener("focusin", (event) => {
+			const btn = event.target.closest("[data-log-detail]");
+			if (btn) showDetail(btn);
+		});
+		rowsEl.addEventListener("focusout", hideDetail);
+
+		detailPanel.addEventListener("mouseenter", () => clearTimeout(detailHideTimer));
+		detailPanel.addEventListener("mouseleave", hideDetail);
+
+		function paintCounts(counts) {
+			ALL_LEVELS.forEach((lv) => {
+				const el = levelsEl.querySelector(`[data-count="${lv}"]`);
+				if (el) el.textContent = String((counts && counts[lv]) || 0);
+			});
+		}
+
+		function buildQuery(extra) {
 			const params = new URLSearchParams();
+			const levels = selectedLevels();
+			// All five selected is the same as no filter — don't send a query string
+			// that the server has to parse into "everything".
+			if (levels.length && levels.length < ALL_LEVELS.length) {
+				params.set("level", levels.join(","));
+			}
+			if (qEl.value.trim())      params.set("q", qEl.value.trim());
+			if (sourceEl.value)        params.set("source", sourceEl.value);
 			if (userEl.value.trim())   params.set("user_email", userEl.value.trim());
 			if (actionEl.value)        params.set("action", actionEl.value);
 			if (fromEl.value)          params.set("date_from", fromEl.value);
 			if (toEl.value)            params.set("date_to", toEl.value);
-			params.set("limit", String(PAGE_SIZE));
-			params.set("offset", String(offset));
+			if (!extra?.noPaging) {
+				params.set("limit", String(PAGE_SIZE));
+				params.set("offset", String(offset));
+			}
 			return params.toString();
 		}
 
@@ -209,50 +748,167 @@
 			}
 		}
 
-		async function load() {
-			clearAlert();
-			statusEl.textContent = "Loading…";
-			rowsEl.innerHTML = `
-				<tr>
-					<td colspan="4" class="text-center py-8 text-base-content/50 italic">
-						Loading…
-					</td>
-				</tr>`;
+		async function load(opts) {
+			const quiet = opts?.quiet;   // a live-tail poll must not blank the table
+			if (!quiet) {
+				clearAlert();
+				statusEl.textContent = "Loading…";
+			}
 			try {
 				const res = await fetch(`/api/audit-logs?${buildQuery()}`, { credentials: "same-origin" });
 				const json = await res.json();
-				if (!res.ok) {
-					throw new Error(json?.detail || "Failed to load audit logs");
-				}
-				total = Number(json?.total || (json?.items || []).length || 0);
+				if (!res.ok) throw new Error(json?.detail || "Failed to load logs");
+
+				total = Number(json?.total || 0);
 				renderRows(json?.items || []);
+				paintCounts(json?.level_counts);
+
 				const shown = (json?.items || []).length;
 				const start = shown === 0 ? 0 : offset + 1;
-				const end = offset + shown;
 				pageInfoEl.textContent = total > 0
-					? `Showing ${start}–${end} of ${total}`
+					? `Showing ${start}–${offset + shown} of ${total}`
 					: "No results";
 				prevBtn.disabled = offset <= 0;
 				nextBtn.disabled = (offset + PAGE_SIZE) >= total;
 				statusEl.textContent = "";
+				clearAlert();
 			} catch (e) {
 				statusEl.textContent = "";
-				showAlert("err", e?.message || "Could not load audit logs.");
-				rowsEl.innerHTML = `
-					<tr>
-						<td colspan="4" class="text-center py-8 text-error italic">
-							Could not load audit logs.
-						</td>
-					</tr>`;
+				showAlert("err", e?.message || "Could not load logs.");
+				if (!quiet) {
+					rowsEl.innerHTML = `
+						<tr>
+							<td colspan="5" class="text-center py-8 text-error italic">
+								Could not load logs.
+							</td>
+						</tr>`;
+				}
 			}
 		}
 
+		// ── Live tail ───────────────────────────────────────────────────────
+		// Opt-in, and only ever from the first page — tailing page 4 of a paginated
+		// list would fight the person paging through it.
+		function setLive(on) {
+			liveBtn.setAttribute("aria-pressed", on ? "true" : "false");
+			liveDot.classList.toggle("hidden", !on);
+			liveBtn.classList.toggle("btn-ghost", !on);
+			liveBtn.classList.toggle("btn-success", !!on);
+			if (liveTimer) {
+				clearInterval(liveTimer);
+				liveTimer = null;
+			}
+			if (on) {
+				liveTimer = setInterval(() => {
+					if (document.visibilityState !== "visible") return;
+					offset = 0;
+					load({ quiet: true });
+				}, 5000);
+			}
+		}
+
+		liveBtn.addEventListener("click", () => {
+			setLive(liveBtn.getAttribute("aria-pressed") !== "true");
+		});
+
+		// ── Fullscreen ──────────────────────────────────────────────────────
+		// The native API where it is available, a fixed-position fallback where it is
+		// not. Either way the button, and Escape, get you back.
+		function isFullscreen() {
+			return document.fullscreenElement === panelEl || panelEl.classList.contains("is-fullscreen");
+		}
+
+		const fsExitBtn = document.getElementById("audit-fs-exit");
+		function paintFsExit() {
+			fsExitBtn?.classList.toggle("hidden", !isFullscreen());
+		}
+
+		function exitFullscreen() {
+			panelEl.classList.remove("is-fullscreen");
+			if (document.fullscreenElement) {
+				document.exitFullscreen?.().catch(() => {});
+			}
+			paintFsExit();
+		}
+
+		fsBtn.addEventListener("click", async () => {
+			if (isFullscreen()) {
+				exitFullscreen();
+				return;
+			}
+			try {
+				await panelEl.requestFullscreen();
+			} catch (_) {
+				panelEl.classList.add("is-fullscreen");
+			}
+			paintFsExit();
+		});
+
+		fsExitBtn?.addEventListener("click", exitFullscreen);
+
+		// The browser can drop out of fullscreen on its own (Escape, F11, focus loss);
+		// keep the in-panel button in step with the real state.
+		document.addEventListener("fullscreenchange", paintFsExit);
+
+		document.addEventListener("keydown", (event) => {
+			if (event.key === "Escape" && panelEl.classList.contains("is-fullscreen")) {
+				exitFullscreen();
+			}
+		});
+
+		// ── Filters ─────────────────────────────────────────────────────────
+		levelsEl.addEventListener("click", (event) => {
+			const chip = event.target.closest(".log-chip");
+			if (!chip) return;
+			chip.dataset.on = chip.dataset.on === "1" ? "0" : "1";
+			offset = 0;
+			load();
+		});
+
+		problemsBtn.addEventListener("click", () => {
+			levelsEl.querySelectorAll(".log-chip").forEach((chip) => {
+				const problem = ["CRITICAL", "ERROR", "WARNING"].includes(chip.dataset.level);
+				chip.dataset.on = problem ? "1" : "0";
+			});
+			offset = 0;
+			load();
+		});
+
+		// Typing in the search box searches. Debounced, because every keystroke is a
+		// query against a table that now has real volume in it.
+		let searchTimer = null;
+		qEl.addEventListener("input", () => {
+			clearTimeout(searchTimer);
+			searchTimer = setTimeout(() => {
+				offset = 0;
+				load();
+			}, 350);
+		});
+
+		[sourceEl, actionEl].forEach((el) =>
+			el.addEventListener("change", () => {
+				offset = 0;
+				load();
+			})
+		);
+
 		applyBtn.addEventListener("click", () => { offset = 0; load(); });
 		refreshBtn.addEventListener("click", () => load());
+
 		clearBtn.addEventListener("click", () => {
-			userEl.value = ""; actionEl.value = ""; fromEl.value = ""; toEl.value = "";
-			offset = 0; load();
+			qEl.value = "";
+			sourceEl.value = "";
+			userEl.value = "";
+			actionEl.value = "";
+			fromEl.value = "";
+			toEl.value = "";
+			levelsEl.querySelectorAll(".log-chip").forEach((chip) => {
+				chip.dataset.on = chip.dataset.level === "DEBUG" ? "0" : "1";
+			});
+			offset = 0;
+			load();
 		});
+
 		prevBtn.addEventListener("click", () => {
 			offset = Math.max(0, offset - PAGE_SIZE);
 			load();
@@ -260,6 +916,67 @@
 		nextBtn.addEventListener("click", () => {
 			offset = offset + PAGE_SIZE;
 			load();
+		});
+
+		exportBtn.addEventListener("click", () => {
+			window.location.href = `/api/audit-logs/export?${buildQuery({ noPaging: true })}`;
+		});
+
+		// ── Clear ───────────────────────────────────────────────────────────
+		// Deletes exactly what the table is showing, described in words before it
+		// happens. The count comes from the same query that drew the page, so the
+		// number in the dialog is the number of rows that disappear.
+		const purgeBtn   = document.getElementById("audit-purge");
+		const purgeModal = document.getElementById("audit-purge-modal");
+		const purgeGo    = document.getElementById("audit-purge-go");
+		const purgeWhat  = document.getElementById("audit-purge-what");
+		const purgeFilter = document.getElementById("audit-purge-filter");
+
+		function describeFilter() {
+			const bits = [];
+			const levels = selectedLevels();
+			if (levels.length && levels.length < ALL_LEVELS.length) bits.push(`level ${levels.join(", ")}`);
+			if (qEl.value.trim())    bits.push(`matching “${qEl.value.trim()}”`);
+			if (sourceEl.value)      bits.push(`source ${sourceEl.options[sourceEl.selectedIndex].text}`);
+			if (userEl.value.trim()) bits.push(`user ${userEl.value.trim()}`);
+			if (actionEl.value)      bits.push(`action ${actionEl.value}`);
+			if (fromEl.value)        bits.push(`from ${fromEl.value}`);
+			if (toEl.value)          bits.push(`to ${toEl.value}`);
+			return bits;
+		}
+
+		purgeBtn?.addEventListener("click", () => {
+			const bits = describeFilter();
+			const n = total;
+			purgeWhat.textContent = bits.length
+				? `Delete ${n.toLocaleString()} log ${n === 1 ? "entry" : "entries"} matching the current filter?`
+				: `Delete the ENTIRE log — all ${n.toLocaleString()} entries?`;
+			purgeFilter.textContent = bits.length ? bits.join("  ·  ") : "No filter is set.";
+			purgeGo.disabled = n === 0;
+			purgeModal.showModal();
+		});
+
+		purgeGo?.addEventListener("click", async () => {
+			const params = new URLSearchParams(buildQuery({ noPaging: true }));
+			if (describeFilter().length === 0) params.set("confirm_all", "true");
+			purgeGo.disabled = true;
+			try {
+				const res = await fetch(`/api/audit-logs?${params.toString()}`, {
+					method: "DELETE",
+					credentials: "same-origin",
+				});
+				const json = await res.json().catch(() => ({}));
+				if (!res.ok) throw new Error(json?.detail || "The log could not be cleared.");
+				purgeModal.close();
+				offset = 0;
+				await load();
+				showAlert("info", `Cleared ${Number(json.deleted || 0).toLocaleString()} entries.`);
+			} catch (e) {
+				purgeModal.close();
+				showAlert("err", e?.message || "The log could not be cleared.");
+			} finally {
+				purgeGo.disabled = false;
+			}
 		});
 
 		loadActions();

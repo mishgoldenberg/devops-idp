@@ -1,0 +1,711 @@
+{#
+	The suggestions board.
+
+	The old feature was a box on the Settings page: you typed an idea and it disappeared.
+	Nobody could see anybody else's, nobody could agree with one, and nobody ever heard
+	back. This is the fider model — post, vote, and get an answer — because those three
+	things are what make people bother telling you anything at all.
+
+	Every field that holds text a USER wrote carries dir="auto". See the note by the
+	board list.
+#}
+<style>
+	.sugg-vote {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 0.1rem;
+		min-width: 3.5rem;
+		padding: 0.4rem 0.5rem;
+		border-radius: 0.6rem;
+		border: 1px solid hsl(var(--bc) / 0.2);
+		background: hsl(var(--b1));
+		color: hsl(var(--bc) / 0.8);
+		cursor: pointer;
+		transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
+	}
+
+	.sugg-vote:hover {
+		border-color: hsl(var(--p) / 0.6);
+		color: hsl(var(--p));
+	}
+
+	/* Voted is a STATE, and it has to look like one from across the room — otherwise
+	   people click twice to check, and the second click takes the vote away again. */
+	.sugg-vote[data-voted="1"] {
+		border-color: hsl(var(--p));
+		background: hsl(var(--p) / 0.12);
+		color: hsl(var(--p));
+		font-weight: 700;
+	}
+
+	.sugg-vote-count {
+		font-size: 1.05rem;
+		font-weight: 700;
+		line-height: 1.1;
+	}
+
+	.sugg-vote-label {
+		font-size: 0.6rem;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+		opacity: 0.75;
+	}
+
+	.sugg-status {
+		display: inline-block;
+		padding: 0.1rem 0.5rem;
+		border-radius: 9999px;
+		font-size: 0.65rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+	}
+
+	.sugg-status[data-status="new"]         { background: hsl(var(--bc) / 0.12); color: hsl(var(--bc) / 0.75); }
+	.sugg-status[data-status="planned"]     { background: hsl(var(--in) / 0.18); color: hsl(var(--in)); }
+	.sugg-status[data-status="in_progress"] { background: hsl(var(--wa) / 0.2);  color: hsl(var(--wa)); }
+	.sugg-status[data-status="completed"]   { background: hsl(var(--su) / 0.2);  color: hsl(var(--su)); }
+	.sugg-status[data-status="declined"]    { background: hsl(var(--er) / 0.18); color: hsl(var(--er)); }
+
+	/* The admin's answer. Set apart deliberately: it is the portal speaking, not another
+	   user, and the difference should be visible before you read a word of it. */
+	.sugg-response {
+		margin-top: 0.65rem;
+		padding: 0.6rem 0.75rem;
+		border-inline-start: 3px solid hsl(var(--p));
+		border-radius: 0.4rem;
+		background: hsl(var(--p) / 0.07);
+		font-size: 0.8rem;
+		line-height: 1.6;
+	}
+
+	/* Comments — a suggestion is a conversation, not just a vote count. */
+	.sugg-foot { margin-top: 0.75rem; }
+	.sugg-comment-toggle {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+		font-size: 0.72rem;
+		font-weight: 600;
+		color: hsl(var(--bc) / 0.6);
+		cursor: pointer;
+		padding: 0.15rem 0;
+		background: none;
+		border: none;
+	}
+	.sugg-comment-toggle:hover { color: hsl(var(--p)); }
+	.sugg-comments {
+		margin-top: 0.6rem;
+		padding-top: 0.6rem;
+		border-top: 1px solid hsl(var(--bc) / 0.1);
+		display: flex;
+		flex-direction: column;
+		gap: 0.65rem;
+	}
+	.sugg-comment { display: flex; flex-direction: column; gap: 0.15rem; font-size: 0.8rem; line-height: 1.5; }
+	.sugg-comment-head { display: flex; align-items: center; gap: 0.4rem; font-size: 0.68rem; color: hsl(var(--bc) / 0.5); }
+	.sugg-comment-who { font-weight: 700; color: hsl(var(--bc) / 0.7); }
+	.sugg-comment-who[data-admin="1"] { color: hsl(var(--p)); }
+	.sugg-comment-body { white-space: pre-wrap; overflow-wrap: anywhere; }
+	.sugg-comment-del { margin-left: auto; font-size: 0.65rem; color: hsl(var(--er) / 0.85); background: none; border: none; cursor: pointer; }
+	.sugg-comment-del:hover { color: hsl(var(--er)); text-decoration: underline; }
+	.sugg-comment-form { display: flex; gap: 0.4rem; align-items: flex-start; }
+	.sugg-comment-form textarea {
+		flex: 1;
+		min-height: 2.2rem;
+		resize: vertical;
+		border-radius: 0.5rem;
+		border: 1px solid hsl(var(--bc) / 0.2);
+		background: hsl(var(--b1));
+		padding: 0.4rem 0.55rem;
+		font-size: 0.8rem;
+		color: hsl(var(--bc));
+	}
+	.sugg-comment-empty { font-size: 0.75rem; color: hsl(var(--bc) / 0.45); }
+</style>
+
+<div class="page-shell">
+	<header class="page-header">
+		<div>
+			<h1 class="page-title">Suggestions</h1>
+			<p class="page-subtitle">
+				What should the platform do next? Post an idea, and vote for the ones you
+				want — the votes are what tell us the order to build them in.
+			</p>
+		</div>
+		<button id="sugg-new-btn" class="btn btn-primary btn-sm">Post an idea</button>
+	</header>
+
+	<div class="page-content">
+		<div class="flex flex-wrap items-center gap-2 mb-6">
+			<div class="join" role="group" aria-label="Filter by status">
+				<button type="button" class="join-item btn btn-sm" data-sugg-filter="">All</button>
+				<button type="button" class="join-item btn btn-sm" data-sugg-filter="open">Open</button>
+				<button type="button" class="join-item btn btn-sm" data-sugg-filter="planned">Planned</button>
+				<button type="button" class="join-item btn btn-sm" data-sugg-filter="in_progress">In progress</button>
+				<button type="button" class="join-item btn btn-sm" data-sugg-filter="completed">Done</button>
+				<button type="button" class="join-item btn btn-sm" data-sugg-filter="declined">Declined</button>
+			</div>
+			<select id="sugg-sort" class="select select-bordered select-sm ml-auto" aria-label="Sort">
+				<option value="votes">Most voted</option>
+				<option value="newest">Newest</option>
+			</select>
+		</div>
+
+		{#
+			HEBREW / RTL.
+
+			dir="auto" on every element that holds text a USER typed. It is not a global
+			switch and it must not be: the portal's own chrome is English and left-to-right,
+			and flipping the whole app would wreck it. What was actually broken is narrower
+			and worse — a Hebrew sentence rendered inside a left-to-right box has its
+			punctuation thrown to the wrong end and reads backwards.
+
+			dir="auto" makes the BROWSER decide, per string, from the first strong
+			directional character in it. A Hebrew title aligns right and reads right; the
+			English one under it aligns left. Both are correct, in the same list, with no
+			language setting to configure and nothing for anyone to get wrong.
+		#}
+		<div id="sugg-list" class="flex flex-col gap-3"></div>
+		<div id="sugg-empty" class="hidden text-center py-12 text-base-content/50">
+			<p class="text-sm">Nothing here yet.</p>
+			<p class="text-xs mt-1">Be the first — post an idea.</p>
+		</div>
+	</div>
+</div>
+
+<dialog id="sugg-modal" class="modal">
+	<div class="modal-box">
+		<h3 class="font-bold text-lg">Post an idea</h3>
+		<p class="text-sm text-base-content/60 mt-1">
+			Everyone can see this and vote for it. Your name is <strong>not</strong>
+			shown to other users — only platform admins can see who posted.
+		</p>
+		<form id="sugg-form" class="grid grid-cols-1 gap-3 mt-4" novalidate>
+			<label class="form-control w-full">
+				<span class="label-text mb-1">Title</span>
+				<input
+					name="title"
+					class="input input-bordered w-full"
+					maxlength="255"
+					dir="auto"
+					required
+					placeholder="Short summary"
+				/>
+			</label>
+			<label class="form-control w-full">
+				<span class="label-text mb-1">Details <span class="opacity-60">(optional)</span></span>
+				<textarea
+					name="description"
+					class="textarea textarea-bordered w-full"
+					rows="5"
+					maxlength="5000"
+					dir="auto"
+					placeholder="What would this let you do that you cannot do today?"
+				></textarea>
+			</label>
+			<div id="sugg-form-error" class="hidden alert alert-error alert-soft text-xs"></div>
+			<div class="modal-action">
+				<button type="button" id="sugg-cancel" class="btn">Cancel</button>
+				<button type="submit" id="sugg-submit" class="btn btn-primary">Post</button>
+			</div>
+		</form>
+	</div>
+	<form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<dialog id="sugg-admin-modal" class="modal">
+	<div class="modal-box">
+		<h3 class="font-bold text-lg">Respond</h3>
+		<p class="text-sm text-base-content/60 mt-1" id="sugg-admin-title"></p>
+		<form id="sugg-admin-form" class="grid grid-cols-1 gap-3 mt-4" novalidate>
+			<label class="form-control w-full">
+				<span class="label-text mb-1">Status</span>
+				<select name="status" class="select select-bordered w-full">
+					<option value="new">New</option>
+					<option value="planned">Planned</option>
+					<option value="in_progress">In progress</option>
+					<option value="completed">Done</option>
+					<option value="declined">Declined</option>
+				</select>
+			</label>
+			<label class="form-control w-full">
+				<span class="label-text mb-1">Response</span>
+				<textarea
+					name="admin_response"
+					class="textarea textarea-bordered w-full"
+					rows="4"
+					maxlength="5000"
+					dir="auto"
+					placeholder="Say why. A declined idea with a reason is a conversation; a declined idea in silence is why people stop suggesting things."
+				></textarea>
+			</label>
+			<div class="modal-action">
+				<button type="button" id="sugg-admin-cancel" class="btn">Cancel</button>
+				<button type="submit" class="btn btn-primary">Save</button>
+			</div>
+		</form>
+	</div>
+	<form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<script>
+	(function () {
+		const listEl    = document.getElementById("sugg-list");
+		const emptyEl   = document.getElementById("sugg-empty");
+		const sortEl    = document.getElementById("sugg-sort");
+		const newBtn    = document.getElementById("sugg-new-btn");
+
+		// Arriving from the + menu with "Suggest a fix or a feature". Same contract as
+		// the Requests page: ?new=1 opens the composer, and the parameter is cleared so
+		// a refresh does not re-open it.
+		if (new URLSearchParams(window.location.search).get("new")) {
+			window.history.replaceState({}, "", window.location.pathname);
+			setTimeout(() => newBtn?.click(), 0);
+		}
+		const modal     = document.getElementById("sugg-modal");
+		const form      = document.getElementById("sugg-form");
+		const errorEl   = document.getElementById("sugg-form-error");
+		const cancelBtn = document.getElementById("sugg-cancel");
+		const adminModal = document.getElementById("sugg-admin-modal");
+		const adminForm  = document.getElementById("sugg-admin-form");
+		const adminTitle = document.getElementById("sugg-admin-title");
+		const adminCancel = document.getElementById("sugg-admin-cancel");
+		if (!listEl) return;
+
+		const STATUS_LABEL = {
+			new: "New",
+			planned: "Planned",
+			in_progress: "In progress",
+			completed: "Done",
+			declined: "Declined",
+		};
+
+		// "All" on arrival. Opening on "Open" hid every idea the platform team had
+		// already planned, done or declined — which is most of the board, and exactly the
+		// part that answers "has anyone asked for this already?".
+		let filter = "";
+		let isAdmin = false;
+		let editingId = null;
+		let submitting = false;
+
+		function esc(v) {
+			return String(v ?? "")
+				.replace(/&/g, "&amp;")
+				.replace(/</g, "&lt;")
+				.replace(/>/g, "&gt;")
+				.replace(/"/g, "&quot;")
+				.replace(/'/g, "&#39;");
+		}
+
+		function timeAgo(iso) {
+			const t = Date.parse(iso || "");
+			if (isNaN(t)) return "";
+			const secs = Math.max(1, Math.floor((Date.now() - t) / 1000));
+			if (secs < 60) return "just now";
+			const mins = Math.floor(secs / 60);
+			if (mins < 60) return `${mins}m ago`;
+			const hrs = Math.floor(mins / 60);
+			if (hrs < 24) return `${hrs}h ago`;
+			const days = Math.floor(hrs / 24);
+			if (days < 30) return `${days}d ago`;
+			return new Date(t).toLocaleDateString();
+		}
+
+		// Who posted it. Anonymous to your colleagues, visible to admins — and the
+		// server decides that, not this function: for a normal user `s.user_email` is
+		// simply not in the payload, so there is nothing here to leak by accident.
+		function author(s) {
+			if (s.mine) return `<span>You</span>`;
+			if (isAdmin && s.user_email) {
+				return `<span title="Only admins can see who posted this.">${esc(s.user_email)}</span>`;
+			}
+			return `<span class="italic">Anonymous</span>`;
+		}
+
+		function card(s) {
+			const status = String(s.status || "new");
+			const votes = Number(s.votes || 0);
+
+			const response = s.admin_response
+				? `<div class="sugg-response" dir="auto">
+						<div class="text-xs font-bold uppercase tracking-widest text-primary mb-1">
+							Response from the platform team
+						</div>
+						${esc(s.admin_response)}
+					</div>`
+				: "";
+
+			const adminBtns = isAdmin
+				? `<div class="flex items-center gap-1 shrink-0">
+						<button type="button" class="btn btn-ghost btn-xs" data-sugg-respond="${esc(s.id)}">Respond</button>
+						<button type="button" class="btn btn-ghost btn-xs text-error" data-sugg-delete="${esc(s.id)}">Delete</button>
+					</div>`
+				: "";
+
+			return `
+				<div class="section-card">
+					<div class="card-body p-4 flex-row items-start gap-4">
+						<button
+							type="button"
+							class="sugg-vote shrink-0"
+							data-voted="${s.voted ? "1" : "0"}"
+							data-sugg-vote="${esc(s.id)}"
+							aria-pressed="${s.voted ? "true" : "false"}"
+							title="${s.voted ? "Remove your vote" : "Vote for this"}"
+						>
+							<svg viewBox="0 0 24 24" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+								<polyline points="18 15 12 9 6 15" />
+							</svg>
+							<span class="sugg-vote-count">${votes}</span>
+							<span class="sugg-vote-label">${votes === 1 ? "vote" : "votes"}</span>
+						</button>
+
+						<div class="min-w-0 flex-1">
+							<div class="flex items-start gap-2">
+								<h3 class="font-semibold text-base flex-1 min-w-0" dir="auto">${esc(s.title)}</h3>
+								<span class="sugg-status shrink-0" data-status="${esc(status)}">${esc(STATUS_LABEL[status] || status)}</span>
+								${adminBtns}
+							</div>
+
+							${s.description
+								? `<p class="text-sm text-base-content/70 mt-2 whitespace-pre-wrap" dir="auto">${esc(s.description)}</p>`
+								: ""}
+
+							<div class="text-xs text-base-content/40 mt-2">
+								${author(s)} · ${esc(timeAgo(s.created_at))}
+							</div>
+
+							${response}
+
+							<div class="sugg-foot">
+								<button type="button" class="sugg-comment-toggle" data-sugg-comments="${esc(s.id)}" aria-expanded="false">
+									<svg viewBox="0 0 24 24" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+									<span data-sugg-comment-label>${commentLabel(Number(s.comment_count || 0))}</span>
+								</button>
+								<div class="sugg-comments" data-sugg-comment-panel="${esc(s.id)}" hidden></div>
+							</div>
+						</div>
+					</div>
+				</div>`;
+		}
+
+		function commentLabel(n) {
+			return n === 0 ? "Comment" : (n === 1 ? "1 comment" : n + " comments");
+		}
+
+		// Who wrote a comment. Same anonymity rule as the board: an admin comment is the
+		// platform team, your own is "You", another user's is hidden from peers.
+		function commentAuthor(c) {
+			if (c.is_admin) return `<span class="sugg-comment-who" data-admin="1">Platform team</span>`;
+			if (c.mine) return `<span class="sugg-comment-who">You</span>`;
+			if (isAdmin && c.user_email) return `<span class="sugg-comment-who">${esc(c.user_email)}</span>`;
+			return `<span class="sugg-comment-who">Anonymous</span>`;
+		}
+
+		let all = [];
+
+		function render() {
+			if (!all.length) {
+				listEl.innerHTML = "";
+				emptyEl.classList.remove("hidden");
+				return;
+			}
+			emptyEl.classList.add("hidden");
+			listEl.innerHTML = all.map(card).join("");
+		}
+
+		async function load() {
+			const params = new URLSearchParams();
+			if (filter) params.set("status", filter);
+			params.set("sort", sortEl.value || "votes");
+			try {
+				const res = await fetch(`/api/suggestions?${params}`, { credentials: "same-origin" });
+				const json = await res.json();
+				if (!res.ok) throw new Error("failed");
+				all = Array.isArray(json?.data) ? json.data : [];
+				isAdmin = !!json?.is_admin;
+			} catch (_) {
+				all = [];
+			}
+			render();
+		}
+
+		// ── Filters ─────────────────────────────────────────────────────────
+		function paintFilters() {
+			document.querySelectorAll("[data-sugg-filter]").forEach((btn) => {
+				const on = btn.getAttribute("data-sugg-filter") === filter;
+				btn.classList.toggle("btn-primary", on);
+			});
+		}
+		document.querySelectorAll("[data-sugg-filter]").forEach((btn) => {
+			btn.addEventListener("click", () => {
+				filter = btn.getAttribute("data-sugg-filter") || "";
+				paintFilters();
+				load();
+			});
+		});
+		paintFilters();
+		sortEl.addEventListener("change", load);
+
+		// ── Voting ──────────────────────────────────────────────────────────
+		listEl.addEventListener("click", async (event) => {
+			const voteBtn = event.target.closest("[data-sugg-vote]");
+			if (voteBtn) {
+				const id = voteBtn.getAttribute("data-sugg-vote");
+				const voted = voteBtn.dataset.voted === "1";
+
+				// Optimistic: a vote is one click and it must feel like one. If the server
+				// disagrees we put it back, which is far rarer than the round-trip.
+				const countEl = voteBtn.querySelector(".sugg-vote-count");
+				const before = Number(countEl.textContent || 0);
+				voteBtn.dataset.voted = voted ? "0" : "1";
+				countEl.textContent = String(voted ? before - 1 : before + 1);
+
+				try {
+					const res = await fetch(`/api/suggestions/${encodeURIComponent(id)}/vote`, {
+						method: voted ? "DELETE" : "POST",
+						credentials: "same-origin",
+					});
+					const json = await res.json();
+					if (!res.ok) throw new Error("vote failed");
+					countEl.textContent = String(json?.data?.votes ?? before);
+					voteBtn.dataset.voted = json?.data?.voted ? "1" : "0";
+					const row = all.find((s) => String(s.id) === String(id));
+					if (row) {
+						row.votes = json?.data?.votes ?? row.votes;
+						row.voted = !!json?.data?.voted;
+					}
+				} catch (_) {
+					voteBtn.dataset.voted = voted ? "1" : "0";
+					countEl.textContent = String(before);
+					window.portalToast?.({ kind: "error", message: "Could not record that vote." });
+				}
+				return;
+			}
+
+			const commentToggle = event.target.closest("[data-sugg-comments]");
+			if (commentToggle) {
+				const id = commentToggle.getAttribute("data-sugg-comments");
+				const panel = listEl.querySelector(`[data-sugg-comment-panel="${cssEsc(id)}"]`);
+				if (!panel) return;
+				const opening = panel.hasAttribute("hidden");
+				commentToggle.setAttribute("aria-expanded", opening ? "true" : "false");
+				if (opening) {
+					panel.removeAttribute("hidden");
+					loadComments(id, panel);
+				} else {
+					panel.setAttribute("hidden", "");
+				}
+				return;
+			}
+
+			const commentDel = event.target.closest("[data-sugg-comment-del]");
+			if (commentDel) {
+				const cid = commentDel.getAttribute("data-sugg-comment-del");
+				const sid = commentDel.getAttribute("data-sid");
+				if (!window.confirm("Delete this comment?")) return;
+				try {
+					const res = await fetch(`/api/suggestions/${encodeURIComponent(sid)}/comments/${encodeURIComponent(cid)}`, {
+						method: "DELETE",
+						credentials: "same-origin",
+					});
+					if (!res.ok) throw new Error("delete failed");
+					bumpCommentCount(sid, -1);
+					const panel = listEl.querySelector(`[data-sugg-comment-panel="${cssEsc(sid)}"]`);
+					if (panel) loadComments(sid, panel, true);
+				} catch (_) {
+					window.portalToast?.({ kind: "error", message: "Could not delete that comment." });
+				}
+				return;
+			}
+
+			const respondBtn = event.target.closest("[data-sugg-respond]");
+			if (respondBtn) {
+				const id = respondBtn.getAttribute("data-sugg-respond");
+				const row = all.find((s) => String(s.id) === String(id));
+				if (!row) return;
+				editingId = id;
+				adminTitle.textContent = row.title || "";
+				adminForm.elements.status.value = row.status || "new";
+				adminForm.elements.admin_response.value = row.admin_response || "";
+				adminModal.showModal();
+				return;
+			}
+
+			const delBtn = event.target.closest("[data-sugg-delete]");
+			if (delBtn) {
+				const id = delBtn.getAttribute("data-sugg-delete");
+				const row = all.find((s) => String(s.id) === String(id));
+				const label = row?.title ? `"${row.title}"` : "this suggestion";
+				if (!window.confirm(`Delete ${label}? Its votes go with it.`)) return;
+				try {
+					const res = await fetch(`/api/suggestions/${encodeURIComponent(id)}`, {
+						method: "DELETE",
+						credentials: "same-origin",
+					});
+					if (!res.ok) throw new Error("delete failed");
+					window.portalToast?.({ kind: "success", message: "Suggestion deleted." });
+					load();
+				} catch (_) {
+					window.portalToast?.({ kind: "error", message: "Could not delete that." });
+				}
+			}
+		});
+
+		// ── Comments ────────────────────────────────────────────────────────
+		// Comments load only when a card's thread is opened — the board can hold hundreds
+		// of suggestions and fetching every thread up front would be wasteful.
+		function cssEsc(v) {
+			return String(v).replace(/["\\]/g, "\\$&");
+		}
+
+		function bumpCommentCount(id, delta) {
+			const row = all.find((s) => String(s.id) === String(id));
+			if (row) row.comment_count = Math.max(0, Number(row.comment_count || 0) + delta);
+			const label = listEl.querySelector(`[data-sugg-comments="${cssEsc(id)}"] [data-sugg-comment-label]`);
+			if (label && row) label.textContent = commentLabel(Number(row.comment_count || 0));
+		}
+
+		function commentRow(c, sid) {
+			const del = (c.mine || isAdmin)
+				? `<button type="button" class="sugg-comment-del" data-sugg-comment-del="${esc(c.id)}" data-sid="${esc(sid)}">Delete</button>`
+				: "";
+			return `
+				<div class="sugg-comment">
+					<div class="sugg-comment-head">
+						${commentAuthor(c)}
+						<span>· ${esc(timeAgo(c.created_at))}</span>
+						${del}
+					</div>
+					<div class="sugg-comment-body" dir="auto">${esc(c.body)}</div>
+				</div>`;
+		}
+
+		async function loadComments(id, panel, force) {
+			if (panel.dataset.loaded === "1" && !force) return;
+			if (!force) panel.innerHTML = `<div class="sugg-comment-empty">Loading…</div>`;
+			let comments = [];
+			try {
+				const res = await fetch(`/api/suggestions/${encodeURIComponent(id)}/comments`, { credentials: "same-origin" });
+				const json = await res.json();
+				if (!res.ok) throw new Error("failed");
+				comments = Array.isArray(json?.data) ? json.data : [];
+			} catch (_) {
+				panel.innerHTML = `<div class="sugg-comment-empty">Couldn't load comments.</div>`;
+				return;
+			}
+			panel.dataset.loaded = "1";
+			const list = comments.length
+				? comments.map((c) => commentRow(c, id)).join("")
+				: `<div class="sugg-comment-empty">No comments yet. Start the conversation.</div>`;
+			panel.innerHTML = `
+				<div class="sugg-comment-list flex flex-col gap-3">${list}</div>
+				<form class="sugg-comment-form" data-sugg-comment-form="${esc(id)}">
+					<textarea name="body" rows="1" maxlength="4000" dir="auto" placeholder="Add a comment…" required></textarea>
+					<button type="submit" class="btn btn-primary btn-xs">Comment</button>
+				</form>`;
+		}
+
+		listEl.addEventListener("submit", async (event) => {
+			const form = event.target.closest("[data-sugg-comment-form]");
+			if (!form) return;
+			event.preventDefault();
+			const id = form.getAttribute("data-sugg-comment-form");
+			const ta = form.querySelector("textarea[name=body]");
+			const body = (ta.value || "").trim();
+			if (!body) return;
+			const btn = form.querySelector("button[type=submit]");
+			if (btn) btn.disabled = true;
+			try {
+				const res = await fetch(`/api/suggestions/${encodeURIComponent(id)}/comments`, {
+					method: "POST",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ body }),
+				});
+				if (!res.ok) throw new Error("failed");
+				ta.value = "";
+				bumpCommentCount(id, 1);
+				const panel = listEl.querySelector(`[data-sugg-comment-panel="${cssEsc(id)}"]`);
+				if (panel) await loadComments(id, panel, true);
+			} catch (_) {
+				window.portalToast?.({ kind: "error", message: "Could not post that comment." });
+			} finally {
+				if (btn) btn.disabled = false;
+			}
+		});
+
+		// ── Posting ─────────────────────────────────────────────────────────
+		newBtn?.addEventListener("click", () => {
+			form.reset();
+			errorEl.classList.add("hidden");
+			modal.showModal();
+			form.elements.title.focus();
+		});
+		cancelBtn?.addEventListener("click", () => modal.close());
+
+		form.addEventListener("submit", async (event) => {
+			event.preventDefault();
+			if (submitting) return;
+			const title = (form.elements.title.value || "").trim();
+			const description = (form.elements.description.value || "").trim();
+			if (!title) {
+				errorEl.textContent = "A title is required.";
+				errorEl.classList.remove("hidden");
+				return;
+			}
+			submitting = true;
+			try {
+				const res = await fetch("/api/suggestions", {
+					method: "POST",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ title, description }),
+				});
+				const json = await res.json().catch(() => ({}));
+				if (!res.ok) throw new Error(json?.detail || "Could not post that.");
+				modal.close();
+				window.portalToast?.({ kind: "success", message: "Posted. It starts with your vote." });
+				// Show it wherever it landed, rather than leaving them staring at a filter
+				// that might not include it.
+				filter = "";
+				paintFilters();
+				load();
+			} catch (err) {
+				errorEl.textContent = err?.message || "Could not post that.";
+				errorEl.classList.remove("hidden");
+			} finally {
+				submitting = false;
+			}
+		});
+
+		// ── Admin response ──────────────────────────────────────────────────
+		adminCancel?.addEventListener("click", () => adminModal.close());
+		adminForm.addEventListener("submit", async (event) => {
+			event.preventDefault();
+			if (!editingId) return;
+			try {
+				const res = await fetch(`/api/suggestions/${encodeURIComponent(editingId)}`, {
+					method: "PATCH",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						status: adminForm.elements.status.value,
+						admin_response: adminForm.elements.admin_response.value,
+					}),
+				});
+				if (!res.ok) throw new Error("update failed");
+				adminModal.close();
+				window.portalToast?.({ kind: "success", message: "Response saved." });
+				load();
+			} catch (_) {
+				window.portalToast?.({ kind: "error", message: "Could not save that." });
+			}
+		});
+
+		load();
+	})();
+</script>

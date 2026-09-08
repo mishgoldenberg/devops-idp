@@ -103,6 +103,48 @@ def create_notification(
             log.debug("create_notification failed: %s", inner)
 
 
+def notify_once(
+    user_email: str,
+    message: str,
+    group_key: str,
+    notif_type: Optional[str] = None,
+    related_id: Optional[str] = None,
+    link: Optional[str] = None,
+) -> None:
+    """Create a notification only if one with this group_key doesn't already exist.
+
+    create_notification() inserts unconditionally, which is right for one-off events but
+    wrong for anything derived from STATE. A ticket that has an unseen update is a state,
+    re-evaluated on every dashboard load — inserting there would produce a fresh
+    notification every 60 seconds until the user opened the ticket.
+
+    The group_key is the identity of the event ("ticket X was updated at time T"), so the
+    same update can only ever notify once, no matter how often it is observed.
+    """
+    if not (user_email and message and group_key):
+        return
+    try:
+        existing = query_one(
+            "SELECT 1 AS hit FROM notifications WHERE user_email = %s AND group_key = %s LIMIT 1",
+            [user_email.strip().lower(), group_key],
+        )
+        if existing:
+            return
+    except Exception as exc:
+        # If group_key isn't queryable on this install, stay silent rather than spam.
+        log.debug("notify_once dedupe check failed: %s", exc)
+        return
+
+    create_notification(
+        user_email=user_email,
+        message=message,
+        notif_type=notif_type,
+        related_id=related_id,
+        link=link,
+        group_key=group_key,
+    )
+
+
 def _fetch_columns() -> str:
     """Return SELECT column list with safe defaults for optional columns."""
     return (
@@ -176,15 +218,31 @@ def list_notifications(current_user: AuthUser = Depends(get_current_user)) -> Di
 
 @router.get("/unread-count")
 def unread_count(current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]:
+    """Unread count that matches the list the bell actually shows.
+
+    Counts DISTINCT groups, not rows. The list collapses everything sharing a
+    ``group_key`` into one entry (see ``_group_rows``), so a plain COUNT(*) said "12"
+    over a dropdown containing three items — twelve votes on one suggestion are one
+    thing to look at, not twelve. The badge and the panel now count the same way.
+    """
     email = _caller_email(current_user)
+    row = None
     try:
         row = query_one(
-            "SELECT COUNT(*) AS n FROM notifications WHERE user_email = %s AND is_read = FALSE",
+            "SELECT COUNT(DISTINCT COALESCE(group_key, id::text)) AS n "
+            "FROM notifications WHERE user_email = %s AND is_read = FALSE",
             [email],
         )
     except Exception as exc:
-        log.debug("unread_count failed: %s", exc)
-        row = {"n": 0}
+        # Legacy installs without group_key: fall back to the row count.
+        log.debug("unread_count grouped query failed: %s", exc)
+        try:
+            row = query_one(
+                "SELECT COUNT(*) AS n FROM notifications WHERE user_email = %s AND is_read = FALSE",
+                [email],
+            )
+        except Exception as inner:
+            log.debug("unread_count failed: %s", inner)
     return {"success": True, "data": {"count": int((row or {}).get("n") or 0)}}
 
 
@@ -195,13 +253,34 @@ def mark_read(
 ) -> Dict[str, Any]:
     email = _caller_email(current_user)
     try:
+        # Mark the whole GROUP read, not just the row that was clicked. The bell shows
+        # one entry per group_key, so reading "3 people voted on your suggestion" and
+        # leaving two of its rows unread would put the badge straight back up over an
+        # entry the user just dismissed.
         execute(
-            "UPDATE notifications SET is_read = TRUE "
-            "WHERE id = %s AND user_email = %s",
-            [notification_id, email],
+            """
+            UPDATE notifications SET is_read = TRUE
+             WHERE user_email = %s
+               AND (
+                     id = %s
+                  OR (group_key IS NOT NULL AND group_key = (
+                         SELECT group_key FROM notifications
+                          WHERE id = %s AND user_email = %s
+                     ))
+               )
+            """,
+            [email, notification_id, notification_id, email],
         )
     except Exception as exc:
-        log.debug("mark_read failed: %s", exc)
+        log.debug("mark_read grouped update failed: %s", exc)
+        try:
+            execute(
+                "UPDATE notifications SET is_read = TRUE "
+                "WHERE id = %s AND user_email = %s",
+                [notification_id, email],
+            )
+        except Exception as inner:
+            log.debug("mark_read failed: %s", inner)
     return {"success": True}
 
 

@@ -1,20 +1,20 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: postgres
+  name: postgres{{ .Values.global.nameSuffix }}
 spec:
   serviceName: {{ .Values.postgres.serviceName }}
   replicas: 1
   selector:
     matchLabels:
-      app: postgres
+      app: postgres{{ .Values.global.nameSuffix }}
   template:
     metadata:
       labels:
-        app: postgres
+        app: postgres{{ .Values.global.nameSuffix }}
     spec:
       containers:
-        - name: postgres
+        - name: postgres{{ .Values.global.nameSuffix }}
           image: {{ .Values.postgres.image }}
           ports:
             - containerPort: 5432
@@ -34,14 +34,21 @@ spec:
               value: {{ .Values.postgres.postgresDB }}
             - name: POSTGRESQL_PORT_NUMBER
               value: {{ .Values.postgres.port | quote }}
+            # Postgres defaults to 100 connections, and every backend replica holds a
+            # pool of its own. Autoscaling to 10 backends at 8 connections each is 80
+            # before the migration Job, the async DDL Job or a psql session are counted,
+            # so the default leaves almost no margin — and running out is not a slowdown,
+            # it is every pod failing to connect at once.
+            - name: POSTGRESQL_MAX_CONNECTIONS
+              value: {{ .Values.postgres.maxConnections | default 200 | quote }}
           volumeMounts:
             - name: postgres-storage
               mountPath: /bitnami/postgresql
-            - name: postgres-init-scripts
+            - name: postgres-init-scripts{{ .Values.global.nameSuffix }}
               mountPath: /docker-entrypoint-initdb.d
       volumes:
-        - name: postgres-init-scripts
-          configMap: { name: postgres-init-scripts }
+        - name: postgres-init-scripts{{ .Values.global.nameSuffix }}
+          configMap: { name: postgres-init-scripts{{ .Values.global.nameSuffix }} }
   volumeClaimTemplates:
     - metadata:
         name: postgres-storage

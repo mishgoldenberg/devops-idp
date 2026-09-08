@@ -1,0 +1,404 @@
+{#
+	Announcements, admin side. Included by platform-managing-container.html.
+
+	Everything here writes through /api/announcements, which re-checks admin access
+	itself — this card being on an admin page is a UI convenience, never the
+	permission.
+#}
+{# .ann-* (the preview card) comes from static/css/theme.css — same rules the
+   dashboard billboard uses, so what is previewed here is what gets posted. #}
+<style>
+	.anna-row {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.75rem;
+		padding: 0.7rem 0.25rem;
+		border-bottom: 1px solid hsl(var(--bc) / 0.1);
+	}
+
+	.anna-row:last-child { border-bottom: 0; }
+
+	.anna-dot {
+		flex: 0 0 auto;
+		width: 0.6rem;
+		height: 0.6rem;
+		margin-top: 0.45rem;
+		border-radius: 999px;
+		background: hsl(var(--in));
+	}
+
+	.anna-row[data-kind="success"]  .anna-dot { background: hsl(var(--su)); }
+	.anna-row[data-kind="warning"]  .anna-dot { background: hsl(var(--wa)); }
+	.anna-row[data-kind="critical"] .anna-dot { background: hsl(var(--er)); }
+
+	.anna-main { flex: 1 1 auto; min-width: 0; }
+
+	.anna-title { font-weight: 600; font-size: 0.9rem; }
+
+	.anna-sub {
+		font-size: 0.75rem;
+		opacity: 0.6;
+		margin-top: 0.15rem;
+		overflow-wrap: anywhere;
+	}
+
+	/* A live/scheduled/ended/off state, as a word and a dot rather than a coloured
+	   pill: four states cannot be read from colour alone. */
+	.anna-state {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+		font-size: 0.72rem;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		opacity: 0.75;
+		white-space: nowrap;
+	}
+
+	.anna-state::before {
+		content: "";
+		width: 0.5rem;
+		height: 0.5rem;
+		border-radius: 999px;
+		background: hsl(var(--bc) / 0.35);
+	}
+
+	.anna-state[data-state="live"]::before      { background: hsl(var(--su)); }
+	.anna-state[data-state="scheduled"]::before { background: hsl(var(--in)); }
+	.anna-state[data-state="ended"]::before     { background: hsl(var(--bc) / 0.35); }
+	.anna-state[data-state="off"]::before       { background: hsl(var(--bc) / 0.2); }
+
+	.anna-actions { display: flex; align-items: center; gap: 0.35rem; flex: 0 0 auto; }
+</style>
+
+<section class="section-card">
+	<div class="card-body p-5 gap-4">
+		<div class="flex items-start justify-between gap-4">
+			<div>
+				<h2 class="section-title">Announcements</h2>
+				<p class="text-sm text-base-content/60">
+					Shown at the top of everyone's dashboard until they dismiss it. Use it for
+					a new feature, a planned outage, a change people have to know about —
+					anything you would otherwise send in a chat message that half the team
+					misses.
+				</p>
+			</div>
+			<button id="anna-new" type="button" class="btn btn-primary btn-sm shrink-0">
+				New announcement
+			</button>
+		</div>
+
+		<div id="anna-alert" class="hidden alert text-sm" role="status"></div>
+
+		<div id="anna-list" class="flex flex-col">
+			<p class="text-sm text-base-content/50 italic">Loading announcements…</p>
+		</div>
+	</div>
+</section>
+
+<dialog id="anna-modal" class="modal">
+	<div class="modal-box max-w-2xl">
+		<form method="dialog" class="absolute right-2 top-2">
+			<button class="btn btn-sm btn-circle btn-ghost" aria-label="Close">&#10005;</button>
+		</form>
+		<h3 id="anna-modal-title" class="font-bold text-lg">New announcement</h3>
+
+		<div class="mt-4 flex flex-col gap-3">
+			<label class="form-control">
+				<span class="label-text text-xs mb-1">Title</span>
+				<input id="anna-title" type="text" maxlength="200" class="input input-bordered input-sm w-full" placeholder="Artifactory certificate rotation on Sunday" />
+			</label>
+
+			<label class="form-control">
+				<span class="label-text text-xs mb-1">Message (optional)</span>
+				<textarea id="anna-body" rows="4" maxlength="4000" class="textarea textarea-bordered w-full" placeholder="What people need to know, and what — if anything — they have to do."></textarea>
+			</label>
+
+			<div class="flex flex-wrap gap-3">
+				<label class="form-control w-40">
+					<span class="label-text text-xs mb-1">Kind</span>
+					<select id="anna-kind" class="select select-bordered select-sm w-full">
+						<option value="info">Info</option>
+						<option value="success">Good news</option>
+						<option value="warning">Warning</option>
+						<option value="critical">Critical</option>
+					</select>
+				</label>
+				<label class="form-control flex-1 min-w-[12rem]">
+					<span class="label-text text-xs mb-1">Link (optional)</span>
+					<input id="anna-link-url" type="text" class="input input-bordered input-sm w-full" placeholder="https://… or /ui/…" />
+				</label>
+				<label class="form-control" style="width: 11rem">
+					<span class="label-text text-xs mb-1">Link label</span>
+					<input id="anna-link-label" type="text" maxlength="80" class="input input-bordered input-sm w-full" placeholder="Read more" />
+				</label>
+			</div>
+
+			<div class="flex flex-wrap gap-3">
+				<label class="form-control w-56">
+					<span class="label-text text-xs mb-1">Show from (optional)</span>
+					<input id="anna-starts" type="datetime-local" class="input input-bordered input-sm w-full" />
+				</label>
+				<label class="form-control w-56">
+					<span class="label-text text-xs mb-1">Stop showing (optional)</span>
+					<input id="anna-ends" type="datetime-local" class="input input-bordered input-sm w-full" />
+				</label>
+				<label class="form-control justify-end">
+					<span class="label-text text-xs mb-1">Active</span>
+					<input id="anna-active" type="checkbox" class="toggle toggle-success" checked aria-label="Active" />
+				</label>
+			</div>
+
+			<!-- What it will look like, while it is being written. An announcement is
+			     read by everybody and edited by its author exactly once, so the moment
+			     to notice the wording is too long is before it is posted. -->
+			<div>
+				<span class="label-text text-xs">Preview</span>
+				<div id="anna-preview" class="mt-1"></div>
+			</div>
+
+			<div id="anna-modal-alert" class="hidden alert alert-error text-sm" role="status"></div>
+		</div>
+
+		<div class="modal-action">
+			<form method="dialog"><button class="btn btn-sm">Cancel</button></form>
+			<button id="anna-save" type="button" class="btn btn-sm btn-primary">Post it</button>
+		</div>
+	</div>
+	<form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<script>
+	(function () {
+		const listEl    = document.getElementById("anna-list");
+		const alertEl   = document.getElementById("anna-alert");
+		const modal     = document.getElementById("anna-modal");
+		if (!listEl || !modal) return;
+
+		const modalTitle = document.getElementById("anna-modal-title");
+		const modalAlert = document.getElementById("anna-modal-alert");
+		const titleEl   = document.getElementById("anna-title");
+		const bodyEl    = document.getElementById("anna-body");
+		const kindEl    = document.getElementById("anna-kind");
+		const linkUrlEl = document.getElementById("anna-link-url");
+		const linkLblEl = document.getElementById("anna-link-label");
+		const startsEl  = document.getElementById("anna-starts");
+		const endsEl    = document.getElementById("anna-ends");
+		const activeEl  = document.getElementById("anna-active");
+		const previewEl = document.getElementById("anna-preview");
+		const saveBtn   = document.getElementById("anna-save");
+
+		let editingId = null;
+
+		function esc(s) {
+			return String(s == null ? "" : s)
+				.replace(/&/g, "&amp;").replace(/</g, "&lt;")
+				.replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+		}
+
+		function say(kind, text) {
+			alertEl.classList.remove("hidden", "alert-error", "alert-success");
+			alertEl.classList.add(kind === "err" ? "alert-error" : "alert-success");
+			alertEl.textContent = text;
+			setTimeout(() => alertEl.classList.add("hidden"), 4000);
+		}
+
+		// ── Local <-> ISO ─────────────────────────────────────────────────
+		// datetime-local hands back a wall-clock string with no zone. Sending it
+		// straight to Postgres would store 09:00 UTC for an announcement scheduled
+		// at 09:00 local, which on this network is a three-hour error in both
+		// directions. Convert through Date, which interprets the input as local.
+		function toIso(value) {
+			if (!value) return null;
+			const d = new Date(value);
+			return isNaN(d.getTime()) ? null : d.toISOString();
+		}
+
+		function toLocalInput(iso) {
+			if (!iso) return "";
+			const d = new Date(iso);
+			if (isNaN(d.getTime())) return "";
+			const pad = (n) => String(n).padStart(2, "0");
+			return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+			     + `T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+		}
+
+		function stateOf(item) {
+			if (!item.is_active) return "off";
+			const now = Date.now();
+			if (item.starts_at && new Date(item.starts_at).getTime() > now) return "scheduled";
+			if (item.ends_at && new Date(item.ends_at).getTime() < now) return "ended";
+			return "live";
+		}
+
+		function fmt(iso) {
+			if (!iso) return "";
+			const d = new Date(iso);
+			return isNaN(d.getTime()) ? "" : d.toLocaleString();
+		}
+
+		// The same icon set the billboard draws, so the preview is the card and not an
+		// approximation of it.
+		const ICONS = {
+			info:     "M12 16v-4M12 8h.01M22 12a10 10 0 11-20 0 10 10 0 0120 0z",
+			success:  "M22 11.08V12a10 10 0 11-5.93-9.14M22 4L12 14.01l-3-3",
+			warning:  "M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0zM12 9v4M12 17h.01",
+			critical: "M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0zM12 9v4M12 17h.01",
+		};
+
+		function renderPreview() {
+			const kind = kindEl.value;
+			previewEl.innerHTML = `
+				<div class="ann-card" data-kind="${esc(kind)}">
+					<svg viewBox="0 0 24 24" class="ann-icon" fill="none" stroke="currentColor"
+					     stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+						<path d="${esc(ICONS[kind] || ICONS.info)}"></path>
+					</svg>
+					<div class="ann-body">
+						<div class="ann-title">${esc(titleEl.value || "Untitled announcement")}</div>
+						<div class="ann-text">${esc(bodyEl.value || "")}</div>
+						${linkUrlEl.value ? `<span class="ann-link">${esc(linkLblEl.value || "Open")}</span>` : ""}
+					</div>
+				</div>`;
+		}
+
+		function openModal(item) {
+			editingId = item ? item.id : null;
+			modalTitle.textContent = item ? "Edit announcement" : "New announcement";
+			saveBtn.textContent = item ? "Save changes" : "Post it";
+			titleEl.value   = item?.title || "";
+			bodyEl.value    = item?.body || "";
+			kindEl.value    = item?.kind || "info";
+			linkUrlEl.value = item?.link_url || "";
+			linkLblEl.value = item?.link_label || "";
+			startsEl.value  = toLocalInput(item?.starts_at);
+			endsEl.value    = toLocalInput(item?.ends_at);
+			activeEl.checked = item ? !!item.is_active : true;
+			modalAlert.classList.add("hidden");
+			renderPreview();
+			modal.showModal();
+			titleEl.focus();
+		}
+
+		function row(item) {
+			const el = document.createElement("div");
+			el.className = "anna-row";
+			el.dataset.kind = item.kind;
+
+			const state = stateOf(item);
+			const window_ = [
+				item.starts_at ? `from ${fmt(item.starts_at)}` : "",
+				item.ends_at ? `until ${fmt(item.ends_at)}` : "",
+			].filter(Boolean).join("  ·  ");
+
+			el.innerHTML = `
+				<span class="anna-dot"></span>
+				<div class="anna-main">
+					<div class="anna-title">${esc(item.title)}</div>
+					<div class="anna-sub">${esc(item.body || "").slice(0, 140)}</div>
+					<div class="anna-sub">
+						<span class="anna-state" data-state="${state}">${state}</span>
+						${window_ ? "  ·  " + esc(window_) : ""}
+						${item.dismissed_by ? `  ·  read by ${item.dismissed_by}` : ""}
+						${item.created_by ? "  ·  " + esc(item.created_by) : ""}
+					</div>
+				</div>
+				<div class="anna-actions">
+					<button type="button" class="btn btn-xs btn-ghost" data-act="edit">Edit</button>
+					<button type="button" class="btn btn-xs btn-ghost text-error" data-act="delete">Delete</button>
+				</div>`;
+
+			el.querySelector('[data-act="edit"]').addEventListener("click", () => openModal(item));
+			el.querySelector('[data-act="delete"]').addEventListener("click", () => remove(item));
+			return el;
+		}
+
+		async function load() {
+			try {
+				const res = await fetch("/api/announcements", { credentials: "same-origin" });
+				const json = await res.json();
+				if (!res.ok) throw new Error(json?.detail || "Could not load announcements.");
+				const items = json?.data || [];
+				listEl.textContent = "";
+				if (!items.length) {
+					const p = document.createElement("p");
+					p.className = "text-sm text-base-content/50 italic";
+					p.textContent = "Nothing posted. The dashboard shows no announcement bar at all until there is.";
+					listEl.appendChild(p);
+					return;
+				}
+				items.forEach((item) => listEl.appendChild(row(item)));
+			} catch (e) {
+				listEl.textContent = "";
+				say("err", e?.message || "Could not load announcements.");
+			}
+		}
+
+		async function remove(item) {
+			try {
+				const res = await fetch(`/api/announcements/${encodeURIComponent(item.id)}`, {
+					method: "DELETE", credentials: "same-origin",
+				});
+				if (!res.ok && res.status !== 204) {
+					const json = await res.json().catch(() => ({}));
+					throw new Error(json?.detail || "Could not delete it.");
+				}
+				say("ok", `Deleted “${item.title}”.`);
+				load();
+			} catch (e) {
+				say("err", e?.message || "Could not delete it.");
+			}
+		}
+
+		async function save() {
+			const payload = {
+				title: titleEl.value.trim(),
+				body: bodyEl.value.trim(),
+				kind: kindEl.value,
+				link_url: linkUrlEl.value.trim() || null,
+				link_label: linkLblEl.value.trim() || null,
+				starts_at: toIso(startsEl.value),
+				ends_at: toIso(endsEl.value),
+				is_active: !!activeEl.checked,
+			};
+			if (!payload.title) {
+				modalAlert.textContent = "A title is required — it is the line people read.";
+				modalAlert.classList.remove("hidden");
+				return;
+			}
+			saveBtn.disabled = true;
+			try {
+				const res = await fetch(
+					editingId ? `/api/announcements/${encodeURIComponent(editingId)}` : "/api/announcements",
+					{
+						method: editingId ? "PATCH" : "POST",
+						credentials: "same-origin",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify(payload),
+					}
+				);
+				const json = await res.json().catch(() => ({}));
+				if (!res.ok) throw new Error(json?.detail || "Could not save it.");
+				modal.close();
+				say("ok", editingId
+					? "Saved. Everyone who had dismissed it will see the new version."
+					: "Posted. It is on every dashboard now.");
+				load();
+			} catch (e) {
+				modalAlert.textContent = e?.message || "Could not save it.";
+				modalAlert.classList.remove("hidden");
+			} finally {
+				saveBtn.disabled = false;
+			}
+		}
+
+		document.getElementById("anna-new").addEventListener("click", () => openModal(null));
+		saveBtn.addEventListener("click", save);
+		[titleEl, bodyEl, kindEl, linkUrlEl, linkLblEl].forEach((el) =>
+			el.addEventListener("input", renderPreview)
+		);
+		kindEl.addEventListener("change", renderPreview);
+
+		load();
+	})();
+</script>

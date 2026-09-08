@@ -2,22 +2,68 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ .Chart.Name }}-ingress
+  name: {{ .Chart.Name }}{{ .Values.global.nameSuffix }}-ingress
   {{- with .Values.ingress.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
   ingressClassName: {{ .Values.ingress.className | default "openshift-default" }}
+  {{- /*
+       `required`, not a plain value: an Ingress rendered with an EMPTY host
+       does not fail, it matches EVERY hostname. Deploying test with its
+       hostname variable unset therefore hijacked the production URL and
+       served it from the test backend and its empty database - which looks
+       exactly like production having been wiped, while the real data sat
+       untouched on its own volume.
+
+       Failing the render is the only safe behaviour: a deploy that cannot
+       name its own hostname must not produce a catch-all route.
+
+       aliasHosts are additional names for the SAME service - a short name that
+       resolves through the client's DNS search suffix, typically. `compact`
+       drops empty entries: the router matches on the Host header, and an empty
+       one here is the catch-all the comment above is about.
+  */}}
+  {{- $primary := required "ingress.host is empty. An Ingress with no host matches EVERY hostname and will hijack other environments. Set HUB_HOSTNAME (main) or HUB_HOSTNAME_TEST (dev) in the variable group." .Values.ingress.host }}
+  {{- $hosts := prepend (compact (.Values.ingress.aliasHosts | default (list))) $primary }}
   rules:
-    - host: {{ .Values.ingress.host }}
+    {{- range $hosts }}
+    - host: {{ . | quote }}
       http:
         paths:
-          - path: {{ .Values.ingress.path | default "/" }}
+          - path: {{ $.Values.ingress.path | default "/" }}
             pathType: Prefix
             backend:
               service:
-                name: {{ .Chart.Name }}-service
+                name: {{ $.Chart.Name }}{{ $.Values.global.nameSuffix }}-service
                 port:
-                  number: {{ .Values.service.port }}
+                  number: {{ $.Values.service.port }}
+    {{- end }}
+  {{- if .Values.ingress.tls }}
+  {{- /*
+       Without this block `ingress.tls: true` was read by NOTHING, and the Route
+       OpenShift generates fell back to the router's default wildcard certificate.
+       That is invisible while the hostname sits under *.apps.<cluster>, because the
+       wildcard genuinely covers it — and it breaks the moment the hostname is a
+       vanity name outside that wildcard, which is the case this block exists for:
+       every browser gets a certificate for the wrong name.
+
+       `required` on the secret rather than a silent skip, for the same reason the
+       host is required above: TLS that quietly did not happen is the failure you
+       find out about from a user, not from a deploy.
+
+       The secret is NOT created by this chart. It holds a private key, it is issued
+       per-environment by the internal CA, and it outlives any single release:
+         oc create secret tls <name> --cert=fullchain.crt --key=server.key -n <ns>
+       `fullchain.crt` must carry the issuing chain, or clients that do not already
+       trust the intermediate reject it.
+  */}}
+  tls:
+    - hosts:
+        {{- range $hosts }}
+        - {{ . | quote }}
+        {{- end }}
+      secretName: {{ required "ingress.tlsSecretName is empty while ingress.tls is true. The Route would serve the router's default wildcard certificate, which does not match a vanity hostname — every browser would show a certificate error. Create the secret with `oc create secret tls` and set frontend.ingress.tlsSecretName." .Values.ingress.tlsSecretName }}
+  {{- end }}
 {{- end }}

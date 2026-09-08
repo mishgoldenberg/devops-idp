@@ -5,7 +5,14 @@
    because a single "Home" crumb is just noise.
 
    Layout is kept intentionally narrow (py-2, text-xs) so it reads as a
-   navigation aid, not a second header competing with the banner. #}
+   navigation aid, not a second header competing with the banner.
+
+   `changelog` is listed below because the fallback title-cases the route: without
+   an entry the trail would read "Changelog" while the navigation item beside it
+   reads "What's New" — two names for one page, on screen at the same time. The
+   note is up HERE rather than beside that line because `_bc_labels` is a Jinja
+   EXPRESSION, and a Jinja comment inside one is a syntax error that takes down
+   every page rendering the banner. #}
 {% set _bc_labels = {
 	"home": "Home",
 	"azure-devops": "Azure DevOps",
@@ -17,12 +24,14 @@
 	"openshift": "OpenShift",
 	"internal-aws": "Internal AWS",
 	"grafana": "Grafana",
-	"automations": "Automations",
+	"automations": "Requests",
 	"my-requests": "My Requests",
 	"approvals": "Approvals",
 	"observability": "Observability",
 	"platform-managing": "Platform Managing",
-	"audit-logs": "Audit Logs",
+	"audit-logs": "Logs",
+	"suggestions": "Suggestions",
+	"changelog": "What's New",
 	"profile": "Profile",
 	"settings": "Settings"
 } %}

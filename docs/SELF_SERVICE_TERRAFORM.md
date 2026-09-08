@@ -1,6 +1,18 @@
 # Self-Service: Terraform Project Provisioning
 
-This document covers the redesigned Azure DevOps self-service feature. Instead of calling the ADO REST API directly from the backend and blocking until the project is ready, every project is now provisioned by a **Terraform container** running as a Kubernetes Job. The backend submits the job and returns immediately; the frontend polls a status endpoint and shows live progress.
+> **⚠️ SUPERSEDED — this is not how projects are created any more.**
+>
+> Provisioning is REST-only: the backend calls the Azure DevOps REST API directly with
+> the admin PAT (`_create_project_in_collection` in `backend/app/api/azure_devops.py`).
+> There is no Terraform container, no Kubernetes Job, no GCS bucket and no tfstate —
+> none of which exist on a offline anyway.
+>
+> `backend/app/terraform_runner.py` is still in the tree and still imports, but nothing
+> in the live path calls it. Read [self-service-flow.md](self-service-flow.md) for what
+> actually happens today. This document is kept for the history of why the Job approach
+> was tried and what it cost.
+
+This document covers the earlier Kubernetes-Job design. Instead of calling the ADO REST API directly from the backend and blocking until the project is ready, every project was provisioned by a **Terraform container** running as a Kubernetes Job. The backend submitted the job and returned immediately; the frontend polled a status endpoint and showed live progress.
 
 ---
 

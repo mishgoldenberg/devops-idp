@@ -26,8 +26,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # The app uses psycopg2-binary, so no apt packages are required during the
-# closed-network build. Keeping this image free of apt-get avoids needing a
-# Debian mirror inside the closed network.
+# offline build. Keeping this image free of apt-get avoids needing a Debian
+# package mirror inside a network without outbound internet access.
 
 # Install Python dependencies
 # requirements.txt includes: fastapi, uvicorn, psycopg2-binary, redis, PyJWT, pydantic, httpx

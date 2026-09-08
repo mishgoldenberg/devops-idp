@@ -1,5 +1,6 @@
 from typing import Any, Dict, Optional
 
+import re
 import secrets
 import ssl
 from urllib.parse import urlencode
@@ -10,7 +11,12 @@ from fastapi.responses import RedirectResponse
 
 from db import query_one, sync_bootstrap_admin_role_for_email
 from resilient_http import tls_verify
-from security import create_access_token, decode_access_token
+from security import (
+    REGULAR_USER_LEVEL,
+    create_access_token,
+    decode_access_token,
+    is_platform_admin_level,
+)
 from sso_config import (
     decrypt_client_secret,
     fetch_openid_configuration,
@@ -20,7 +26,7 @@ from sso_config import (
 
 def _jwks_ssl_context() -> Optional[ssl.SSLContext]:
     """Unverified TLS context for the JWKS fetch when INTEGRATION_TLS_VERIFY is
-    off (closed network / self-signed IdP). PyJWKClient verifies certs by
+    off (an internal CA or a self-signed IdP). PyJWKClient verifies certs by
     default, so without this the JWKS fetch fails on internal CAs."""
     if tls_verify():
         return None
@@ -37,17 +43,6 @@ def _now_iso() -> str:
     from datetime import datetime, timezone
 
     return datetime.now(timezone.utc).isoformat()
-
-
-def _normalize_permissions(perms: Any) -> list:
-    """JSONB / JWT-safe list for the token payload."""
-    if perms is None:
-        return []
-    if isinstance(perms, list):
-        return perms
-    if isinstance(perms, str):
-        return [perms]
-    return []
 
 
 def _map_role_to_effective(
@@ -67,12 +62,8 @@ def _map_role_to_effective(
     ``hierarchy_level == 1`` always maps to Admin (Platform Admin in seed data)
     so production DB role *names* can differ slightly without breaking RBAC.
     """
-    if hierarchy_level is not None:
-        try:
-            if int(hierarchy_level) == 1:
-                return "Admin"
-        except (TypeError, ValueError):
-            pass
+    if hierarchy_level is not None and is_platform_admin_level(hierarchy_level):
+        return "Admin"
     normalized = (role_name or "").strip().lower()
     if normalized == "platform admin":
         return "Admin"
@@ -98,7 +89,7 @@ def _get_or_create_user_by_email(email: str, full_name: Optional[str]) -> Dict[s
 
     user_row = query_one(
         """
-        SELECT u.*, r.name as role_name, r.hierarchy_level, r.permissions
+        SELECT u.*, r.name as role_name, r.hierarchy_level
         FROM users u
         JOIN roles r ON u.role_id = r.id
         WHERE LOWER(TRIM(u.email)) = %s AND u.is_active = true
@@ -107,12 +98,15 @@ def _get_or_create_user_by_email(email: str, full_name: Optional[str]) -> Dict[s
     )
     if not user_row:
         role_row = query_one(
-            "SELECT id, name, hierarchy_level, permissions FROM roles WHERE hierarchy_level = 7 LIMIT 1"
+            "SELECT id, name, hierarchy_level FROM roles WHERE hierarchy_level = %s LIMIT 1",
+            [REGULAR_USER_LEVEL],
         )
-        # Fallback for environments where hierarchy values differ from seed defaults.
+        # Fallback for environments where hierarchy values differ from seed defaults:
+        # take the least privileged row there is. A first-time SSO sign-in must never
+        # land anywhere but the bottom of the hierarchy.
         if not role_row:
             role_row = query_one(
-                "SELECT id, name, hierarchy_level, permissions FROM roles ORDER BY hierarchy_level DESC LIMIT 1"
+                "SELECT id, name, hierarchy_level FROM roles ORDER BY hierarchy_level DESC LIMIT 1"
             )
         if not role_row:
             raise HTTPException(
@@ -140,7 +134,7 @@ def _get_or_create_user_by_email(email: str, full_name: Optional[str]) -> Dict[s
         # Re-query with role join to guarantee full shape.
         user_row = query_one(
             """
-            SELECT u.*, r.name as role_name, r.hierarchy_level, r.permissions
+            SELECT u.*, r.name as role_name, r.hierarchy_level
             FROM users u
             JOIN roles r ON u.role_id = r.id
             WHERE u.id = %s
@@ -157,7 +151,7 @@ def _get_or_create_user_by_email(email: str, full_name: Optional[str]) -> Dict[s
     sync_bootstrap_admin_role_for_email(email)
     refreshed = query_one(
         """
-        SELECT u.*, r.name as role_name, r.hierarchy_level, r.permissions
+        SELECT u.*, r.name as role_name, r.hierarchy_level
         FROM users u
         JOIN roles r ON u.role_id = r.id
         WHERE u.id = %s AND u.is_active = true
@@ -167,13 +161,41 @@ def _get_or_create_user_by_email(email: str, full_name: Optional[str]) -> Dict[s
     return refreshed or user_row
 
 
+def request_is_https(request: Request) -> bool:
+    """True when the *browser-facing* connection is HTTPS.
+
+    TLS is terminated at the nginx proxy / ingress, so the backend sees plain HTTP
+    on the pod-internal hop and ``request.url.scheme`` is "http". Trusting that alone
+    leaves the auth cookie without ``Secure``, so it can ride an accidental HTTP
+    request in cleartext. The proxy sets ``X-Forwarded-Proto`` to the real scheme;
+    honour it, and fall back to the direct scheme for local (proxy-less) dev.
+    """
+    forwarded = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip().lower()
+    if forwarded:
+        return forwarded == "https"
+    return request.url.scheme == "https"
+
+
+def sso_redirect_uri(request: Request) -> str:
+    """The OIDC callback URL, with the scheme the BROWSER used.
+
+    ``request.url_for`` builds from the ASGI scope, which is only as good as the
+    X-Forwarded-Proto the proxy chain passed in. An IdP compares redirect_uri to its
+    registered value as an exact string, so one wrong scheme is a hard login failure
+    rather than a downgrade. Resolve it from the same helper the cookie uses.
+    """
+    uri = str(request.url_for("sso_callback"))
+    want = "https" if request_is_https(request) else "http"
+    return re.sub(r"^https?://", want + "://", uri, count=1)
+
+
 def _set_auth_cookie(response: RedirectResponse, request: Request, token: str) -> RedirectResponse:
     response.set_cookie(
         key="auth_token",
         value=token,
         httponly=True,
         samesite="lax",
-        secure=request.url.scheme == "https",
+        secure=request_is_https(request),
         path="/",
     )
     return response
@@ -181,7 +203,6 @@ def _set_auth_cookie(response: RedirectResponse, request: Request, token: str) -
 
 def _auth_user_from_db_row(user_row: Dict[str, Any]) -> Dict[str, Any]:
     hl = int(user_row["hierarchy_level"])
-    perms = _normalize_permissions(user_row.get("permissions"))
     role_eff = _map_role_to_effective(str(user_row["role_name"]), None, hl)
     return {
         "id": str(user_row["id"]),
@@ -189,7 +210,6 @@ def _auth_user_from_db_row(user_row: Dict[str, Any]) -> Dict[str, Any]:
         "email": user_row["email"],
         "role": role_eff,
         "hierarchy_level": hl,
-        "permissions": perms,
     }
 
 
@@ -207,7 +227,7 @@ def oidc_login(request: Request):
             detail="Configured SSO provider is unavailable",
         )
     state = secrets.token_urlsafe(32)
-    redirect_uri = str(request.url_for("sso_callback"))
+    redirect_uri = sso_redirect_uri(request)
     params = {
         "client_id": sso["client_id"],
         "redirect_uri": redirect_uri,
@@ -224,7 +244,7 @@ def oidc_login(request: Request):
         state,
         httponly=True,
         samesite="lax",
-        secure=request.url.scheme == "https",
+        secure=request_is_https(request),
         max_age=600,
         path="/",
     )
@@ -245,7 +265,7 @@ async def sso_callback(request: Request, code: Optional[str] = None, state: Opti
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="SSO is not enabled")
 
     discovery = fetch_openid_configuration(str(sso["issuer_uri"]))
-    redirect_uri = str(request.url_for("sso_callback"))
+    redirect_uri = sso_redirect_uri(request)
     try:
         client_secret = decrypt_client_secret(str(sso["client_secret_encrypted"]))
     except ValueError:
@@ -311,16 +331,10 @@ async def sso_callback(request: Request, code: Optional[str] = None, state: Opti
     return _set_auth_cookie(response, request, token)
 
 
-@router.post("/verify")
-def verify_token(token: str):
-    """
-    Verify an application JWT and return its payload.
-    """
-    payload = decode_access_token(token)
-    return {
-        "success": True,
-        "data": payload,
-        "timestamp": _now_iso(),
-    }
+# NOTE: a POST /verify endpoint that decoded an arbitrary token (passed as a query
+# param) and echoed its payload used to live here. It had no caller, and it was both a
+# JWT-decode oracle for anyone who could reach it and a token-in-URL leak (query strings
+# land in nginx access logs and Referer headers). Removed — token validation happens in
+# get_current_user for every real request; there is no need for a standalone endpoint.
 
 

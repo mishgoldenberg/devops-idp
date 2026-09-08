@@ -1,21 +1,35 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ .Chart.Name }}
+  name: {{ .Chart.Name }}{{ .Values.global.nameSuffix }}
   labels:
-    app: {{ .Chart.Name }}
+    app: {{ .Chart.Name }}{{ .Values.global.nameSuffix }}
 spec:
   replicas: {{ .Values.global.replicaCount }}
+  # Kubernetes keeps one ReplicaSet per revision so a rollout can be undone, and the
+  # default it keeps is TEN. Every pipeline run ships a new image tag, so every run
+  # makes a revision — which is where the wall of "0 of 0 pods" frontend ReplicaSets
+  # comes from. They are history, not leaked pods: they hold no containers and cost
+  # nothing but list clutter. Two is enough to roll back the deploy that just broke.
+  revisionHistoryLimit: {{ .Values.global.revisionHistoryLimit | default 2 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Never drop below full capacity during a deploy: bring the new pod up, wait for
+      # it to pass readiness, then retire the old one. With 500 users the alternative
+      # is a visible outage on every release.
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
-      app: {{ .Chart.Name }}
+      app: {{ .Chart.Name }}{{ .Values.global.nameSuffix }}
   template:
     metadata:
       labels:
-        app: {{ .Chart.Name }}
+        app: {{ .Chart.Name }}{{ .Values.global.nameSuffix }}
     spec:
       containers:
-        - name: {{ .Chart.Name }}
+        - name: {{ .Chart.Name }}{{ .Values.global.nameSuffix }}
           image: {{ .Values.global.customImage.repository }}/{{ .Chart.Name }}:{{ .Values.image.tag }}
           imagePullPolicy: {{ .Values.global.customImage.pullPolicy }}
           ports:
@@ -23,6 +37,13 @@ spec:
           envFrom:
             - secretRef:
                 name: {{ .Values.secretName }}
+          # The site config comes from the ConfigMap, not the image, so this pod
+          # always proxies to ITS OWN environment's backend. See nginx-config.yaml.
+          volumeMounts:
+            - name: nginx-site
+              mountPath: /etc/nginx/conf.d/default.conf
+              subPath: default.conf
+              readOnly: true
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           livenessProbe:
@@ -35,3 +56,7 @@ spec:
               path: /healthz
               port: {{ .Values.service.targetPort }}
             initialDelaySeconds: 10
+      volumes:
+        - name: nginx-site
+          configMap:
+            name: {{ .Chart.Name }}{{ .Values.global.nameSuffix }}-nginx

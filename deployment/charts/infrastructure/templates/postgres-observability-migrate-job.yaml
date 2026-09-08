@@ -90,7 +90,7 @@ spec:
       volumes:
         - name: sql
           configMap:
-            name: postgres-init-scripts
+            name: postgres-init-scripts{{ .Values.global.nameSuffix }}
             items:
               - key: "06_observability.sql"
                 path: "06_observability.sql"

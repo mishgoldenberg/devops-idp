@@ -1,0 +1,315 @@
+{#
+	"Needs me today".
+
+	Hidden until it has something to say. An empty state here would be a permanent
+	empty box at the top of the dashboard, which is worse than nothing — the whole
+	value of this strip is that its presence means "there is something".
+#}
+<style>
+	.inbox-row {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		padding: 0.55rem 0.25rem;
+		border-radius: 0.5rem;
+		text-decoration: none;
+		color: inherit;
+	}
+
+	.inbox-row + .inbox-row {
+		border-top: 1px solid hsl(var(--bc) / 0.08);
+	}
+
+	.inbox-row:hover {
+		background-color: hsl(var(--b2));
+	}
+
+	.inbox-why {
+		font-size: 0.6875rem;
+		white-space: nowrap;
+		padding: 0.1rem 0.5rem;
+		border-radius: 9999px;
+		background-color: hsl(var(--p) / 0.12);
+		color: hsl(var(--p));
+		flex: none;
+	}
+
+	.inbox-actions {
+		display: inline-flex;
+		gap: 0.15rem;
+		flex: none;
+	}
+
+	.inbox-act {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.6rem;
+		height: 1.6rem;
+		border-radius: 0.4rem;
+		border: 1px solid transparent;
+		background: transparent;
+		color: hsl(var(--bc) / 0.45);
+		cursor: pointer;
+		line-height: 1;
+	}
+
+	.inbox-act:hover {
+		border-color: hsl(var(--bc) / 0.15);
+		background-color: hsl(var(--b1));
+		color: hsl(var(--bc) / 0.9);
+	}
+
+	.inbox-act-done:hover {
+		color: hsl(var(--su));
+	}
+
+	.inbox-act-hide:hover {
+		color: hsl(var(--er));
+	}
+
+	.inbox-people {
+		font-size: 0.6875rem;
+		color: hsl(var(--bc) / 0.5);
+	}
+
+	.inbox-sys {
+		font-size: 0.625rem;
+		text-transform: uppercase;
+		letter-spacing: 0.07em;
+		color: hsl(var(--bc) / 0.45);
+	}
+</style>
+
+{#
+	Two nested elements on purpose.
+
+	The OUTER one is the widget container: it carries the registry key, and the
+	Customize drawer shows/hides it exactly like any other widget by setting
+	inline display. The INNER one is the strip's own empty-state, which hides the
+	card when nothing is waiting. Putting both behaviours on one element makes them
+	fight — the drawer clears inline display, the class puts it straight back.
+#}
+<div
+	id="needs-you-component"
+	data-widget-key="needs_you"
+	class="w-full max-w-full"
+	{% if enabled_widgets is defined and 'needs_you' not in enabled_widgets %}style="display:none"{% endif %}
+>
+{# Shown from first paint. This section queries four systems, so it is never the
+   first thing to finish; without a placeholder it appeared several seconds late and
+   pushed the whole dashboard down as it arrived. A skeleton holds its own space. #}
+{# The shared partial, not hand-rolled lines: output.css styles .sk-line ONLY as
+   `.widget-skeleton .sk-line`, so skeleton markup written without that ancestor is a
+   set of zero-height transparent divs and renders as an empty card. Using the partial
+   makes that impossible to get wrong. #}
+<div id="inbox-skeleton" class="w-full">
+	<div class="section-card w-full">
+		{% include "partials/components/widget-skeleton.html" %}
+	</div>
+</div>
+
+<div id="inbox-section" class="hidden w-full" data-inbox-root>
+	<div class="section-card w-full">
+		<div class="card-body p-5 gap-2">
+			<div class="flex items-center gap-3">
+				<h3 class="card-title text-base">Needs you</h3>
+				<span id="inbox-count" class="inbox-why"></span>
+				<button
+					id="inbox-refresh"
+					type="button"
+					class="btn btn-ghost btn-xs ml-auto"
+					title="Check again"
+				>
+					Refresh
+				</button>
+			</div>
+			<p id="inbox-degraded" class="hidden text-xs text-warning"></p>
+			<div id="inbox-list" class="flex flex-col"></div>
+		</div>
+	</div>
+</div>
+</div>
+
+<script>
+	(function () {
+		const root = document.querySelector("[data-inbox-root]");
+		if (!root) return;
+		const listEl = document.getElementById("inbox-list");
+		const countEl = document.getElementById("inbox-count");
+		const degradedEl = document.getElementById("inbox-degraded");
+		const skeletonEl = document.getElementById("inbox-skeleton");
+
+		function esc(s) {
+			return String(s ?? "").replace(/[&<>"']/g, (c) => ({
+				"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+			}[c]));
+		}
+
+		function ago(iso) {
+			if (!iso) return "";
+			const then = new Date(iso).getTime();
+			if (!Number.isFinite(then)) return "";
+			const days = Math.floor((Date.now() - then) / 86400000);
+			if (days >= 1) return days + "d";
+			const hours = Math.floor((Date.now() - then) / 3600000);
+			return hours >= 1 ? hours + "h" : "now";
+		}
+
+		function done() {
+			// Whatever the outcome, the placeholder's job is over. Leaving it up on a
+			// failure would be a permanent shimmer at the top of the dashboard.
+			skeletonEl?.remove();
+		}
+
+		async function load(fresh) {
+			try {
+				const res = await (window.portalFetch || fetch)(
+					"/api/inbox" + (fresh === true ? "?fresh=1" : ""),
+					{ credentials: "same-origin" },
+					20000
+				);
+				const json = await res.json().catch(() => ({}));
+				if (!res.ok) throw new Error(json?.detail || "unavailable");
+
+				const items = json.data || [];
+				const down = json.unavailable || [];
+
+				// A source that is down must be named. Otherwise a short list reads as
+				// "nothing needs me" when it actually means "ServiceNow did not answer".
+				if (down.length) {
+					degradedEl.textContent =
+						"Could not check: " + down.join(", ") + ". This list may be incomplete.";
+					degradedEl.classList.remove("hidden");
+				} else {
+					degradedEl.classList.add("hidden");
+				}
+
+				if (!items.length && !down.length) {
+					root.classList.add("hidden");
+					done();
+					return;
+				}
+				root.classList.remove("hidden");
+				done();
+				countEl.textContent = items.length
+					? items.length + (items.length === 1 ? " item" : " items")
+					: "nothing waiting";
+
+				listEl.innerHTML = items
+					.slice(0, 8)
+					.map(
+						(i) => `
+					<div class="inbox-row" data-key="${esc(i.key || "")}" data-stamp="${esc(i.age || "")}" data-title="${esc(i.title)}">
+						<a class="inbox-why" href="${esc(i.url || "#")}"${
+							/^https?:/i.test(i.url || "") ? ' target="_blank" rel="noopener noreferrer"' : ""
+						} style="text-decoration:none">${esc(i.why)}</a>
+						<a class="min-w-0 flex-1" href="${esc(i.url || "#")}"${
+							/^https?:/i.test(i.url || "") ? ' target="_blank" rel="noopener noreferrer"' : ""
+						} style="text-decoration:none;color:inherit">
+							<span class="block text-sm font-medium truncate">${esc(i.title)}</span>
+							<span class="block text-xs truncate" style="color:hsl(var(--bc)/0.55)">${esc(i.subtitle)}</span>
+							${i.people ? `<span class="block inbox-people truncate">${esc(i.people)}</span>` : ""}
+						</a>
+						<span class="inbox-sys shrink-0">${esc(i.system)}</span>
+						<span class="text-xs text-base-content/40 shrink-0" style="min-width:2.2rem;text-align:right">${esc(ago(i.age))}</span>
+						${i.key ? `
+						<span class="inbox-actions">
+							<button type="button" class="inbox-act inbox-act-done" data-act="done"
+								title="I have dealt with this" aria-label="Mark as done">
+								<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>
+							</button>
+							<button type="button" class="inbox-act inbox-act-hide" data-act="hidden"
+								title="Not mine — hide it" aria-label="Hide this">
+								<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+							</button>
+						</span>` : ""}
+					</div>`
+					)
+					.join("");
+
+				if (items.length > 8) {
+					listEl.insertAdjacentHTML(
+						"beforeend",
+						'<p class="text-xs text-base-content/50 pt-2">' +
+							"and " + (items.length - 8) + " more" +
+							"</p>"
+					);
+				}
+			} catch (_) {
+				// Best-effort by design: this strip is an accelerator, not the dashboard.
+				// If it cannot load, it stays hidden rather than showing an error above
+				// widgets that are working fine.
+				root.classList.add("hidden");
+				done();
+			}
+		}
+
+		/* ── Dealt with it ────────────────────────────────────────────────
+		   Nothing is written to Azure DevOps or ServiceNow: this is a personal note.
+		   A work item can sit in Pending Review for four months for reasons the portal
+		   cannot see, and the caller often has no authority to close it — so the button
+		   that clears it from THIS list must not pretend to change the item.
+
+		   Dismissing is undoable from the toast rather than guarded by a confirm
+		   dialog, and the undo is the same call with the flag flipped so the two cannot
+		   drift. The row is removed optimistically; a failed save puts it back. */
+		async function dismiss(row, act) {
+			const key = row.dataset.key;
+			const stamp = row.dataset.stamp || "";
+			const title = row.dataset.title || "this item";
+			if (!key) return;
+			row.style.display = "none";
+			try {
+				const res = await fetch("/api/inbox/dismiss", {
+					method: "POST",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ key: key, stamp: stamp, reason: act }),
+				});
+				if (!res.ok) throw new Error("save failed");
+			} catch (_) {
+				row.style.display = "";
+				window.portalToast?.({ kind: "error", message: "Could not hide that. It is still here." });
+				return;
+			}
+			window.portalToast?.({
+				kind: "success",
+				message: (act === "done" ? "Marked as done: " : "Hidden: ") + title,
+				action: {
+					label: "Undo",
+					onClick: async () => {
+						try {
+							await fetch("/api/inbox/restore", {
+								method: "POST",
+								credentials: "same-origin",
+								headers: { "Content-Type": "application/json" },
+								body: JSON.stringify({ key: key }),
+							});
+						} catch (_) {}
+						load(true);
+					},
+				},
+			});
+			// If that was the last one, the strip should disappear rather than sit
+			// there as an empty card claiming something needs you.
+			if (![...listEl.querySelectorAll(".inbox-row")].some((r) => r.style.display !== "none")) {
+				root.classList.add("hidden");
+			}
+		}
+
+		listEl?.addEventListener("click", (event) => {
+			const btn = event.target.closest("[data-act]");
+			if (!btn) return;
+			event.preventDefault();
+			const row = btn.closest(".inbox-row");
+			if (row) dismiss(row, btn.dataset.act);
+		});
+
+		// Refresh means refresh: bypass the server-side cache rather than re-reading
+		// the same 45-second-old answer the user just decided to doubt.
+		document.getElementById("inbox-refresh")?.addEventListener("click", () => load(true));
+		window.addEventListener("portal:refreshed", () => load(true));
+		load();
+	})();
+</script>

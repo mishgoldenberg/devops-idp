@@ -46,7 +46,7 @@
 							Shown in the sidebar. PNG, JPG, or WEBP — up to 8&nbsp;MB.
 						</p>
 						<div class="flex flex-wrap gap-2">
-							<label class="btn btn-sm btn-outline cursor-pointer">
+							<label class="btn btn-sm btn-outline btn-primary cursor-pointer">
 								<input
 									id="profile-avatar-file"
 									type="file"
@@ -103,9 +103,72 @@
 						</div>
 					</div>
 					<div class="flex justify-end pt-1">
-						<button class="btn btn-primary" type="submit">Save</button>
+						<button class="btn btn-sm btn-primary" type="submit">Save</button>
 					</div>
 				</form>
+			</div>
+		</section>
+
+		{#
+			The page showed who you are and nothing about what that means. Role was a
+			badge with no explanation, and there was no route from "my account" to any
+			of the things an account actually owns.
+		#}
+		<section class="section-card">
+			<div class="card-body p-5">
+				<h2 class="section-title mb-4">Access</h2>
+				{#
+					Label and explanation on the LEFT, value on the right.
+
+					They were all inside the right-aligned value cell, so a full sentence was
+					right-aligned across the width of the card: a ragged left edge, which is
+					the hard edge to read against, and a lake of empty space between the
+					one-word label and the prose. Right alignment suits a short value and
+					nothing else.
+				#}
+				<dl class="text-sm">
+					<div class="flex items-start justify-between gap-6 py-2">
+						<div class="min-w-0">
+							<dt class="font-medium text-base-content">Role</dt>
+							<dd class="text-xs text-base-content/60 mt-0.5">
+								{% if (user.role or 'User') == 'Admin' %}
+									Full access, including Platform Managing and Observability.
+								{% else %}
+									Standard access. Ask a Platform Admin if you need more.
+								{% endif %}
+							</dd>
+						</div>
+						<span class="badge badge-sm shrink-0 {{ 'badge-primary' if (user.role or 'User') == 'Admin' else 'badge-ghost' }}">
+							{{ user.role or 'User' }}
+						</span>
+					</div>
+					<div class="flex items-start justify-between gap-6 py-2" style="border-top: 1px solid hsl(var(--b2))">
+						<div class="min-w-0">
+							<dt class="font-medium text-base-content">Sign-in</dt>
+							<dd class="text-xs text-base-content/60 mt-0.5">
+								Your session lasts up to 8 hours. A role change applies the next
+								time you sign in.
+							</dd>
+						</div>
+						<span class="badge badge-ghost badge-sm shrink-0">Single sign-on</span>
+					</div>
+				</dl>
+			</div>
+		</section>
+
+		<section class="section-card">
+			<div class="card-body p-5">
+				<h2 class="section-title mb-4">Your things</h2>
+				<div class="flex flex-wrap gap-2">
+					<a href="/ui/connections" class="btn btn-outline btn-sm">Connections</a>
+					<a href="/ui/my-requests" class="btn btn-outline btn-sm">My requests</a>
+					<a href="/ui/approvals" class="btn btn-outline btn-sm">Approvals</a>
+					<a href="/ui/settings" class="btn btn-outline btn-sm">Settings</a>
+				</div>
+				<p class="text-sm text-base-content/60 mt-3">
+					Integration tokens live on Connections — they are stored per user, so
+					yours are only ever used for your own requests.
+				</p>
 			</div>
 		</section>
 		</div>

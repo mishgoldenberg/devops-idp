@@ -28,7 +28,8 @@ which returns 503 when either dependency is down.
 {
   "status": "ok",
   "timestamp": "2026-04-19T14:02:10Z",
-  "services": { "database": "up", "redis": "up" },
+  "services": { "database": "up", "redis": "up", "schema": "ready",
+                "credentials": "ok" },
   "ready": true
 }
 ```
@@ -37,3 +38,15 @@ which returns 503 when either dependency is down.
 
 - `db.db_health_check()` — `SELECT 1` against the pool.
 - `redis_client.redis_health_check()` — `PING`.
+
+## `credentials` — informational, never part of the decision
+
+`services.credentials` reports whether this pod's `JWT_SECRET` can still decrypt
+the credentials already in the database (`sso_config.credential_key_check`, run
+once after the schema bootstrap).
+
+`"unreadable"` means every stored Azure DevOps PAT is undecryptable — the symptom
+users see is that all their Azure DevOps widgets are empty at once. It deliberately
+does **not** make the pod NotReady: a rollout cannot fix a wrong secret, and taking
+the portal down would remove the Connections page people need in order to reconnect.
+See [../RUNBOOK.md](../RUNBOOK.md) §4.

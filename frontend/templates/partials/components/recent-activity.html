@@ -25,14 +25,21 @@
 			>
 				Recent Activity
 			</h3>
+			<!--
+				No per-widget refresh button: the dashboard has a single refresh
+				control in its top-right, and every other widget already relies on it.
+
+				Clear IS per-widget, because it is the only control that acts on this
+				feed alone. Two-step rather than a browser confirm(): the deletion
+				cannot be undone, so it needs a deliberate second press, and a modal
+				dialog for a personal list of twenty rows is heavier than the action.
+			-->
 			<button
 				type="button"
-				class="btn btn-ghost btn-xs ml-auto"
-				data-activity-refresh
-				aria-label="Refresh activity"
-				title="Refresh"
+				class="btn btn-ghost btn-xs ml-auto text-base-content/50"
+				data-activity-clear
 			>
-				&#8635;
+				Clear
 			</button>
 		</div>
 		<ul
@@ -52,7 +59,6 @@
 	(function () {
 		const root = document.currentScript.previousElementSibling;
 		const list = root.querySelector("[data-activity-list]");
-		const refresh = root.querySelector("[data-activity-refresh]");
 		if (!list) return;
 
 		const ACTION_META = {
@@ -107,9 +113,59 @@
 				</li>`;
 		}
 
+		// ── Tickets read the same everywhere ─────────────────────────────────────
+		// This feed is an audit log (action, name, when) and knew nothing about a
+		// ticket's state. A ticket row here now carries exactly what it carries in the
+		// My Tickets widget — status, severity as a word, last update, and the unread
+		// dot — by enriching the feed with the ticket list, keyed on sys_id.
+		let ticketsById = {};
+
+		function statusColor(state) {
+			const s = (state || "").toLowerCase();
+			if (s === "in progress") return "text-primary";
+			if (s === "new" || s === "open") return "text-accent";
+			if (s === "on hold") return "text-warning";
+			if (s === "resolved" || s === "closed") return "text-success";
+			if (s === "cancelled" || s === "canceled") return "text-base-content/50";
+			return "text-base-content/60";
+		}
+
+		function severityColor(urgency) {
+			const u = (urgency || "").toLowerCase();
+			if (u.startsWith("urgent")) return "text-error";
+			if (u.startsWith("high")) return "text-warning";
+			if (u.startsWith("low") || u.startsWith("plan")) return "text-base-content/50";
+			return "text-base-content/60";
+		}
+
+		function ticketBody(ticket, fallbackName, when) {
+			const number = (ticket.meta && ticket.meta.id_display) || "";
+			const urgency = ticket.urgency || (ticket.meta && ticket.meta.urgency) || "";
+			const status = ticket.status || "";
+			return (
+				'<div class="flex items-center gap-2">' +
+					'<div class="text-sm font-medium text-base-content truncate flex-1">' +
+						escapeHtml(ticket.title || fallbackName || "") +
+					'</div>' +
+					(ticket.has_update
+						? '<span class="w-2 h-2 rounded-full bg-error shrink-0" title="Updated since you last opened this"></span>'
+						: "") +
+				'</div>' +
+				'<div class="flex items-center gap-2 text-xs mt-0.5">' +
+					(number ? '<span class="font-mono text-[11px] text-base-content/70 shrink-0">' + escapeHtml(number) + '</span>' : "") +
+					'<span class="' + statusColor(status) + ' font-medium truncate">' + escapeHtml(status) + '</span>' +
+					(urgency ? '<span class="' + severityColor(urgency) + ' font-medium truncate">' + escapeHtml(urgency) + '</span>' : "") +
+					'<span class="ml-auto shrink-0 text-base-content/40">' +
+						escapeHtml(relTime(ticket.updated_at || when)) +
+					'</span>' +
+				'</div>'
+			);
+		}
+
 		function render(rows) {
 			if (!rows || !rows.length) { renderEmpty(); return; }
 			list.innerHTML = rows
+				.slice(0, 20)
 				.map((row) => {
 					const meta = ACTION_META[row.action_type] || {
 						label: row.action_type,
@@ -120,15 +176,20 @@
 						'<div class="text-xs text-base-content/50 uppercase tracking-widest">' +
 						escapeHtml(meta.label) +
 						'</div>';
-					const titleLine =
-						'<div class="text-sm font-medium text-base-content truncate">' +
-						escapeHtml(row.item_name || "") +
-						'</div>';
-					const timeLine =
-						'<div class="text-[11px] text-base-content/40 mt-0.5">' +
-						escapeHtml(relTime(row.created_at)) +
-						"</div>";
-					const body = labelLine + titleLine + timeLine;
+
+					const sysId = row?.metadata?.sys_id;
+					const ticket = sysId ? ticketsById[String(sysId)] : null;
+
+					const body = ticket
+						? labelLine + ticketBody(ticket, row.item_name, row.created_at)
+						: labelLine +
+						  '<div class="text-sm font-medium text-base-content truncate">' +
+						  escapeHtml(row.item_name || "") +
+						  '</div>' +
+						  '<div class="text-[11px] text-base-content/40 mt-0.5">' +
+						  escapeHtml(relTime(row.created_at)) +
+						  "</div>";
+
 					const cls = "rounded-lg bg-base-200/60 border border-base-300 px-3 py-2.5 block";
 					if (href) {
 						return (
@@ -146,12 +207,35 @@
 				.join("");
 		}
 
-		async function load() {
+		async function loadTickets() {
 			try {
-				const res = await fetch("/api/activity?limit=15", {
+				const res = await fetch("/api/dashboard/snow-items", {
 					credentials: "same-origin",
 					headers: { Accept: "application/json" },
 				});
+				if (!res.ok) return;
+				const body = await res.json();
+				const rows = Array.isArray(body && body.data) ? body.data : [];
+				ticketsById = {};
+				rows.forEach((t) => {
+					if (t && t.id) ticketsById[String(t.id)] = t;
+				});
+			} catch (_) {
+				/* the feed still renders without ticket detail */
+			}
+		}
+
+		async function load() {
+			try {
+				// Both in parallel: the feed is the source of truth for WHAT happened,
+				// the ticket list for the CURRENT state of anything that is a ticket.
+				const [res] = await Promise.all([
+					fetch("/api/activity?limit=20", {
+						credentials: "same-origin",
+						headers: { Accept: "application/json" },
+					}),
+					loadTickets(),
+				]);
 				if (!res.ok) throw new Error("http " + res.status);
 				const body = await res.json();
 				render(Array.isArray(body && body.data) ? body.data : []);
@@ -161,7 +245,55 @@
 			}
 		}
 
-		refresh?.addEventListener("click", load);
+		// ── Clear ────────────────────────────────────────────────────────────
+		// Two presses. The first arms the button and starts a timer; letting it run
+		// out disarms it, so a stray click on a widget you were only passing over
+		// cannot delete anything, and the armed state does not sit there indefinitely
+		// waiting to be triggered by an unrelated click later.
+		const clearBtn = root.querySelector("[data-activity-clear]");
+		let armed = false;
+		let armTimer = null;
+
+		function disarm() {
+			armed = false;
+			clearTimeout(armTimer);
+			if (!clearBtn) return;
+			clearBtn.textContent = "Clear";
+			clearBtn.classList.remove("text-error");
+			clearBtn.classList.add("text-base-content/50");
+		}
+
+		clearBtn?.addEventListener("click", async () => {
+			if (!armed) {
+				armed = true;
+				clearBtn.textContent = "Clear all?";
+				clearBtn.classList.remove("text-base-content/50");
+				clearBtn.classList.add("text-error");
+				clearTimeout(armTimer);
+				armTimer = setTimeout(disarm, 4000);
+				return;
+			}
+
+			clearTimeout(armTimer);
+			clearBtn.disabled = true;
+			try {
+				const res = await (window.portalFetch || fetch)(
+					"/api/activity",
+					{ method: "DELETE", credentials: "same-origin", headers: { Accept: "application/json" } },
+					20000
+				);
+				if (!res.ok) throw new Error("http " + res.status);
+				// Re-read rather than emptying the list locally: what the server has is
+				// the answer, and a clear that half-failed must not look like it worked.
+				await load();
+			} catch (_err) {
+				window.portalToast?.({ kind: "error", message: "Could not clear your activity." });
+			} finally {
+				clearBtn.disabled = false;
+				disarm();
+			}
+		});
+
 		load();
 	})();
 </script>

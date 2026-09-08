@@ -1,0 +1,299 @@
+{#
+	What's New.
+
+	An editorial page, not a widget: a sticky rail on the left carrying the version and
+	its dates, and the writing on the right. That shape is chosen because of how this
+	page is actually read — people scroll looking for the release they are on, and a
+	version number that scrolls away with its own entry is the one thing they are
+	scanning for.
+
+	Everything here is rendered server-side from backend/app/changelog.py, which is
+	baked into the image. There is no fetch, so there is no empty state, no spinner and
+	no way for the page to arrive blank because an integration was slow.
+
+	The only script is the filter, and it hides with `display` rather than the `hidden`
+	attribute — any class that sets `display` beats the attribute, and this page has
+	several.
+#}
+<style>
+	/* One measurement, read by the grid and by the rail's sticky offset. */
+	.cl-page { --cl-rail: 13rem; }
+
+	.cl-release {
+		display: grid;
+		grid-template-columns: var(--cl-rail) minmax(0, 1fr);
+		gap: 2rem;
+		padding: 2.25rem 0;
+		border-top: 1px solid hsl(var(--bc) / 0.12);
+	}
+
+	.cl-release:first-child { border-top: 0; padding-top: 0.5rem; }
+
+	.cl-rail { position: sticky; top: 0.5rem; align-self: start; }
+
+	.cl-version {
+		font-size: 1.9rem;
+		font-weight: 800;
+		line-height: 1.05;
+		letter-spacing: -0.02em;
+		color: hsl(var(--bc));
+	}
+
+	.cl-date {
+		margin-top: 0.2rem;
+		font-size: 0.75rem;
+		color: hsl(var(--bc) / 0.55);
+	}
+
+	/* "You are looking at this one." The single most-asked question on a changelog. */
+	.cl-current {
+		display: inline-block;
+		margin-top: 0.6rem;
+		padding: 0.12rem 0.5rem;
+		border-radius: 9999px;
+		border: 1px solid hsl(var(--su) / 0.6);
+		background: hsl(var(--su) / 0.14);
+		color: hsl(var(--su));
+		font-size: 0.62rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+	}
+
+	.cl-headline {
+		font-size: 1.02rem;
+		font-weight: 600;
+		line-height: 1.5;
+		color: hsl(var(--bc) / 0.92);
+		margin-bottom: 1.25rem;
+	}
+
+	.cl-group { margin-bottom: 1.1rem; }
+	.cl-group:last-child { margin-bottom: 0; }
+
+	.cl-tag {
+		display: inline-block;
+		margin-bottom: 0.5rem;
+		padding: 0.12rem 0.55rem;
+		border-radius: 9999px;
+		font-size: 0.62rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+	}
+
+	.cl-tag[data-kind="features"]     { background: hsl(var(--p) / 0.16);  color: hsl(var(--p)); }
+	.cl-tag[data-kind="improvements"] { background: hsl(var(--in) / 0.18); color: hsl(var(--in)); }
+	.cl-tag[data-kind="fixes"]        { background: hsl(var(--su) / 0.18); color: hsl(var(--su)); }
+
+	.cl-list { list-style: none; margin: 0; padding: 0; }
+
+	.cl-item {
+		position: relative;
+		padding-inline-start: 1.1rem;
+		margin-bottom: 0.55rem;
+		font-size: 0.86rem;
+		line-height: 1.6;
+		color: hsl(var(--bc) / 0.78);
+	}
+
+	.cl-item:last-child { margin-bottom: 0; }
+
+	.cl-item::before {
+		content: "";
+		position: absolute;
+		inset-inline-start: 0;
+		top: 0.62rem;
+		width: 0.32rem;
+		height: 0.32rem;
+		border-radius: 9999px;
+		background: hsl(var(--bc) / 0.3);
+	}
+
+	.cl-lead { font-weight: 700; color: hsl(var(--bc) / 0.95); }
+
+	.cl-note {
+		margin-top: 0.9rem;
+		padding: 0.55rem 0.75rem;
+		border-inline-start: 3px solid hsl(var(--bc) / 0.25);
+		border-radius: 0.4rem;
+		background: hsl(var(--bc) / 0.05);
+		font-size: 0.76rem;
+		color: hsl(var(--bc) / 0.6);
+	}
+
+	/* The running version, in the header. Reads as a fact about this environment
+	   rather than as a control, so it is deliberately not a button. */
+	.cl-running {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.45rem;
+		padding: 0.3rem 0.7rem;
+		border-radius: 9999px;
+		border: 1px solid hsl(var(--bc) / 0.18);
+		background: hsl(var(--b1));
+		font-size: 0.75rem;
+		color: hsl(var(--bc) / 0.7);
+	}
+
+	.cl-running b { color: hsl(var(--bc)); font-weight: 700; }
+
+	.cl-env {
+		padding: 0.05rem 0.4rem;
+		border-radius: 9999px;
+		background: hsl(var(--bc) / 0.1);
+		font-size: 0.62rem;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+	}
+
+	.cl-empty {
+		padding: 2.5rem 0;
+		text-align: center;
+		font-size: 0.85rem;
+		color: hsl(var(--bc) / 0.5);
+	}
+
+	/* Under a narrow screen the rail stops being a rail: sticky columns and a
+	   two-column grid both stop making sense before they stop rendering. */
+	@media (max-width: 820px) {
+		.cl-release { grid-template-columns: minmax(0, 1fr); gap: 0.9rem; }
+		.cl-rail { position: static; display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; }
+		.cl-version { font-size: 1.4rem; }
+		.cl-date { margin-top: 0; }
+	}
+</style>
+
+<main class="page-shell cl-page">
+	<header class="page-header">
+		<div>
+			<h1 class="page-title">What's New</h1>
+			<p class="page-subtitle">
+				Everything that has changed in the portal, newest first — written for
+				the people using it rather than the people deploying it.
+			</p>
+		</div>
+		<span class="cl-running">
+			You're on
+			<b dir="ltr">{{ running_version }}</b>
+			{% if environment %}<span class="cl-env">{{ environment }}</span>{% endif %}
+		</span>
+	</header>
+
+	<div class="page-content">
+		<div class="flex flex-wrap items-center gap-2 mb-6">
+			<div class="join" role="group" aria-label="Filter by kind of change">
+				<button type="button" class="join-item btn btn-sm btn-primary" data-cl-filter="">All</button>
+				<button type="button" class="join-item btn btn-sm" data-cl-filter="features">New</button>
+				<button type="button" class="join-item btn btn-sm" data-cl-filter="improvements">Improved</button>
+				<button type="button" class="join-item btn btn-sm" data-cl-filter="fixes">Fixed</button>
+			</div>
+		</div>
+
+		{% for release in releases %}
+			<article class="cl-release" data-cl-release>
+				<div class="cl-rail">
+					<div class="cl-version" dir="ltr">{{ release.version }}</div>
+					<div class="cl-date">{{ release.date }}</div>
+					{% if release.version == running_version %}
+						<span class="cl-current">You're on this</span>
+					{% endif %}
+				</div>
+
+				<div>
+					{% if release.headline %}
+						<p class="cl-headline" dir="auto">{{ release.headline }}</p>
+					{% endif %}
+
+					{% for key, label in sections %}
+						{% if release[key] %}
+							<div class="cl-group" data-cl-group="{{ key }}">
+								<span class="cl-tag" data-kind="{{ key }}">{{ label }}</span>
+								<ul class="cl-list">
+									{% for line in release[key] %}
+										{% set parts = line.split(' -- ') %}
+										<li class="cl-item" dir="auto">
+											{% if parts | length > 1 %}
+												<span class="cl-lead">{{ parts[0] }}</span> — {{ parts[1:] | join(' -- ') }}
+											{% else %}
+												{{ line }}
+											{% endif %}
+										</li>
+									{% endfor %}
+								</ul>
+							</div>
+						{% endif %}
+					{% endfor %}
+
+					{% if release.note %}
+						<p class="cl-note" dir="auto">{{ release.note }}</p>
+					{% endif %}
+				</div>
+			</article>
+		{% else %}
+			<p class="cl-empty">Nothing has been written up yet.</p>
+		{% endfor %}
+
+		<p id="cl-none" class="cl-empty" style="display:none">
+			No releases contain that kind of change yet.
+		</p>
+	</div>
+</main>
+
+<script>
+	(function () {
+		"use strict";
+
+		// Marks this version read, so the dot beside What's New in the sidebar goes
+		// away. Stamped with the VERSION rather than a boolean: the next release has
+		// to bring the mark back, and "seen the changelog once, ever" would not.
+		try {
+			window.localStorage.setItem("portal-changelog-seen", "{{ running_version }}");
+		} catch (err) {
+			/* private mode; the mark simply keeps showing */
+		}
+
+		var buttons = Array.prototype.slice.call(document.querySelectorAll("[data-cl-filter]"));
+		var releases = Array.prototype.slice.call(document.querySelectorAll("[data-cl-release]"));
+		var none = document.getElementById("cl-none");
+
+		function paint(active) {
+			buttons.forEach(function (btn) {
+				btn.classList.toggle("btn-primary", btn.getAttribute("data-cl-filter") === active);
+			});
+		}
+
+		function apply(active) {
+			var anyShown = false;
+			releases.forEach(function (release) {
+				var groups = Array.prototype.slice.call(release.querySelectorAll("[data-cl-group]"));
+				var kept = 0;
+				groups.forEach(function (group) {
+					var show = !active || group.getAttribute("data-cl-group") === active;
+					// display, never the hidden attribute: .cl-group sets display and
+					// would win over it.
+					group.style.display = show ? "" : "none";
+					if (show) kept += 1;
+				});
+				// A release with nothing left is not an empty release, it is a release
+				// that does not match — so it goes entirely, headline and all, rather
+				// than sitting there as a version number with nothing under it.
+				var visible = !active || kept > 0;
+				release.style.display = visible ? "" : "none";
+				if (visible) anyShown = true;
+			});
+			if (none) none.style.display = anyShown ? "none" : "";
+		}
+
+		buttons.forEach(function (btn) {
+			btn.addEventListener("click", function () {
+				var active = btn.getAttribute("data-cl-filter") || "";
+				paint(active);
+				apply(active);
+			});
+		});
+
+		paint("");
+		apply("");
+	})();
+</script>

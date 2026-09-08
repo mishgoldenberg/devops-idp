@@ -1,19 +1,19 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: redis
+  name: redis{{ .Values.global.nameSuffix }}
 spec:
   serviceName: {{ .Values.redis.serviceName }}
   selector:
     matchLabels:
-      app: redis
+      app: redis{{ .Values.global.nameSuffix }}
   template:
     metadata:
       labels:
-        app: redis
+        app: redis{{ .Values.global.nameSuffix }}
     spec:
       containers:
-        - name: redis
+        - name: redis{{ .Values.global.nameSuffix }}
           image: {{ .Values.redis.image }}
           resources:
             requests:
@@ -22,7 +22,44 @@ spec:
             limits:
               cpu: "500m"
               memory: "1Gi"
-          command: ["redis-server", "--appendonly", "yes"]
+          # Two changes from the default `redis-server --appendonly yes`, both of which
+          # LOWER what this pod consumes rather than raise it:
+          #
+          #   * maxmemory + allkeys-lru. Without a cap Redis grows until it reaches the
+          #     container's 1Gi limit and is OOM-killed — which is the one failure mode a
+          #     cache must not have. The portal survives an EMPTY Redis (every read falls
+          #     through to upstream, by design in cache.py) but not Redis dying under
+          #     load. With an eviction policy it forgets its oldest keys instead.
+          #
+          #   * appendonly no, save "". Everything in here is a 45-60 second copy of data
+          #     that lives in Azure DevOps, ServiceNow or Postgres. Persisting it buys
+          #     nothing across a restart — the TTLs have expired by then anyway — and
+          #     costs a disk that fills with an append-only file nobody reads.
+          command:
+            - redis-server
+            - --appendonly
+            - "no"
+            - --save
+            - ""
+            - --maxmemory
+            - {{ .Values.redis.maxMemory | default "256mb" | quote }}
+            - --maxmemory-policy
+            - {{ .Values.redis.maxMemoryPolicy | default "allkeys-lru" | quote }}
+            {{- if .Values.redis.requirePass }}
+            # Only when a password is actually configured: the backend already sends
+            # REDIS_PASSWORD when it is set, and turning this on against a cluster whose
+            # secret is still empty would lock the portal out of its own cache.
+            - --requirepass
+            - $(REDIS_PASSWORD)
+            {{- end }}
+          {{- if .Values.redis.requirePass }}
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgres.secretName }}
+                  key: REDIS_PASSWORD
+          {{- end }}
           ports:
             - containerPort: 6379
           volumeMounts:

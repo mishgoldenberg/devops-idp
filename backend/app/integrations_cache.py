@@ -50,3 +50,14 @@ def invalidate_owner(integration: str, owner: str) -> None:
     integration = (integration or "ext").strip().lower()[:32]
     owner = (owner or "anon").strip().lower()[:255]
     invalidate_prefix(f"ext:{integration}:{owner}")
+
+
+def forget_external(integration: str, owner: str, suffix: str) -> None:
+    """Drop ONE cached entry, by the same key cached_external stored it under.
+
+    For the answer a caller has just decided not to keep -- most often a read that
+    failed. A cached failure is worse than no cache at all: it holds the failure for
+    the whole TTL, so the thing a person does about it (press Refresh) is the one
+    thing guaranteed not to help.
+    """
+    invalidate_prefix(_key(integration, owner, suffix))

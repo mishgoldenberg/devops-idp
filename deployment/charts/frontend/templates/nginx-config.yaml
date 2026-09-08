@@ -1,0 +1,94 @@
+{{/*
+  The nginx site config, rendered by Helm instead of baked into the image.
+
+  WHY THIS MOVED OUT OF THE IMAGE
+  The image carried `proxy_pass http://backend-service:8000` as a literal. With one
+  environment that was fine. With test and prod sharing a namespace it is a live
+  hazard: the test frontend would have proxied straight into the PROD backend, so
+  test traffic would read and write production data while appearing, by its
+  hostname, to be test. Nothing about the page would have looked wrong.
+
+  Templating it means the address always matches the environment the pod belongs to,
+  and one image still serves both.
+
+  THIS IS THE COPY THAT RUNS. It is mounted over /etc/nginx/conf.d/default.conf and
+  masks the one baked into the image from frontend/nginx.conf, which survives only
+  for local docker builds. The two drifted once already and the second copy is the
+  one nobody checks, so scripts/check_nginx_sync.py now fails the build when their
+  proxy_set_header / add_header lines disagree. Change both, or change neither.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Chart.Name }}{{ .Values.global.nameSuffix }}-nginx
+  labels:
+    app: {{ .Chart.Name }}{{ .Values.global.nameSuffix }}
+data:
+  default.conf: |
+    # TLS terminates at the OpenShift router, which sets X-Forwarded-Proto: https
+    # and then speaks plaintext to this container. $scheme here is therefore ALWAYS
+    # http, so passing it through as X-Forwarded-Proto overwrites the router's answer
+    # with a lie: the backend runs uvicorn --proxy-headers, believes the request was
+    # http, and stamps http:// on every absolute URL it builds - the trailing-slash
+    # redirect, and the OIDC redirect_uri, which an IdP matches as an exact string.
+    # Preserve the incoming header; fall back to $scheme only for a direct hit that
+    # never passed through a proxy (local dev).
+    map $http_x_forwarded_proto $hub_forwarded_proto {
+        default $http_x_forwarded_proto;
+        ''      $scheme;
+    }
+
+    server {
+        listen {{ .Values.service.targetPort }};
+        server_name _;
+
+        location = /healthz {
+            access_log off;
+            add_header Content-Type text/plain;
+            return 200 "ok\n";
+        }
+
+        location / {
+            proxy_pass http://backend{{ .Values.global.nameSuffix }}-service:8000;
+            proxy_http_version 1.1;
+
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $hub_forwarded_proto;
+
+            # Long enough for the slowest legitimate page (the pull-request widgets
+            # walk every project in every collection) and short enough that a stalled
+            # upstream frees the worker instead of holding it open.
+            proxy_connect_timeout 5s;
+            proxy_send_timeout 60s;
+            proxy_read_timeout 60s;
+
+            # Security headers applied to every proxied response. `always` so they are
+            # still sent on 4xx/5xx (an error page is exactly when clickjacking/sniffing
+            # protection must not silently drop). frame-ancestors 'none' + X-Frame-Options
+            # forbid embedding the portal in an <iframe> (clickjacking); nosniff stops
+            # MIME-sniffing; Referrer-Policy keeps internal URLs out of outbound referrers.
+            # NOTE: no script-src/style-src CSP here — the HTMX/Jinja UI uses inline
+            # styles/handlers, so a strict content CSP needs app changes first (flagged
+            # for manual review). frame-ancestors is safe to enforce now.
+            add_header Content-Security-Policy "frame-ancestors 'none'" always;
+            add_header X-Frame-Options "DENY" always;
+            add_header X-Content-Type-Options "nosniff" always;
+            add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+            # Strict-Transport-Security: the browser upgrades to HTTPS before the request
+            # leaves the machine, so the first request of a session - the one the Route can
+            # only fix by redirecting, i.e. after it has already travelled in clear - never
+            # happens over HTTP at all.
+            #
+            # max-age is DELIBERATELY 300 seconds, not a year. HSTS is sticky and remembered
+            # for its whole max-age, and while it is remembered a certificate error is
+            # NON-BYPASSABLE: no Advanced, no Proceed, and removing the header does not help
+            # because the browser already stored it. Five minutes means a bad certificate
+            # strands users for five minutes rather than a year. Raise to 31536000 once the
+            # certificate has been renewed at least once without incident. BOTH copies of
+            # this file must change together - scripts/check_nginx_sync.py enforces it.
+            add_header Strict-Transport-Security "max-age=300" always;
+        }
+    }

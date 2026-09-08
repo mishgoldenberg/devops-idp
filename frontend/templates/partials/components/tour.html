@@ -1,0 +1,649 @@
+{#
+	Guided tour — the first-run walkthrough.
+
+	Dims the page, cuts a hole around one element at a time, and explains it in a small
+	popover with Back / Next / Skip. Runs itself once, the first time someone opens the
+	dashboard, and can be replayed from the Help menu or the "?" shortcut afterwards.
+
+	WHY IT IS BUILT THIS WAY
+
+	* The dim is ONE element with a very large spread box-shadow, not four panels and not
+	  an SVG mask. `box-shadow: 0 0 0 9999px rgba(0,0,0,.55)` paints everything outside
+	  the highlight and nothing inside it, in a single layer that cannot develop seams
+	  when the page scrolls or the target is near an edge.
+
+	* Every step is optional. A selector that matches nothing is skipped rather than
+	  showing an empty spotlight — the sidebar and dashboard differ between admins and
+	  regular users, and a tour that breaks for half the org is worse than no tour.
+
+	* Nothing here is a Tailwind class that would need compiling: output.css ships
+	  precompiled, so all of this is hand-written CSS in this file.
+#}
+<style>
+	.tour-spot {
+		position: absolute;
+		z-index: 9998;
+		border-radius: 0.75rem;
+		box-shadow: 0 0 0 9999px rgba(15, 23, 42, 0.55);
+		/* The cut-out does not eat clicks meant for the element underneath — the point
+		   of highlighting something is that you can still look at it properly. */
+		pointer-events: none;
+		/* NO transition by default. `place()` runs on every scroll event, and a
+		   transition there makes the box chase the page instead of sitting on the
+		   element: during a smooth scroll the spotlight visibly trails behind what it
+		   is supposed to be highlighting, arriving a fifth of a second late. The
+		   easing is switched on only for the jump BETWEEN steps, which is the one
+		   movement worth animating. */
+		transition: none;
+		will-change: top, left, width, height;
+	}
+
+	.tour-spot.is-eased {
+		transition:
+			top 260ms cubic-bezier(0.4, 0, 0.2, 1),
+			left 260ms cubic-bezier(0.4, 0, 0.2, 1),
+			width 260ms cubic-bezier(0.4, 0, 0.2, 1),
+			height 260ms cubic-bezier(0.4, 0, 0.2, 1);
+	}
+
+	/* A quiet ring so the highlighted thing reads as chosen rather than merely lit. */
+	.tour-spot::after {
+		content: "";
+		position: absolute;
+		inset: -3px;
+		border-radius: 0.85rem;
+		border: 2px solid hsl(var(--p));
+		opacity: 0.9;
+	}
+
+	.tour-pop {
+		position: absolute;
+		z-index: 9999;
+		width: 20rem;
+		max-width: calc(100vw - 2rem);
+		background-color: hsl(var(--b1));
+		color: hsl(var(--bc));
+		border: 1px solid hsl(var(--b3));
+		border-radius: 0.75rem;
+		box-shadow: 0 18px 40px rgba(15, 23, 42, 0.28);
+		padding: 1rem 1.1rem 0.9rem;
+		/* Each step fades and lifts in. Without it the card teleports, which is the
+		   single biggest reason the tour felt abrupt: the spotlight moved smoothly and
+		   the text explaining it did not. */
+		opacity: 0;
+		transform: translateY(6px);
+		transition:
+			opacity 200ms ease,
+			transform 220ms cubic-bezier(0.4, 0, 0.2, 1);
+	}
+
+	.tour-pop.is-in {
+		opacity: 1;
+		transform: none;
+	}
+
+	/* The arrow. A rotated square with two of its borders showing, so it carries the
+	   card's own border and background and reads as part of it.
+
+	   `--tour-arrow-x` is set per step to the TARGET's centre, not the card's: when a
+	   card is clamped against the edge of the screen its middle is nowhere near the
+	   thing it describes, and an arrow that points at empty space is worse than none. */
+	.tour-pop::after {
+		content: "";
+		position: absolute;
+		display: none;
+		width: 12px;
+		height: 12px;
+		left: var(--tour-arrow-x, 50%);
+		margin-left: -6px;
+		background-color: hsl(var(--b1));
+		border: 1px solid hsl(var(--b3));
+		transform: rotate(45deg);
+	}
+
+	.tour-pop[data-arrow="up"]::after {
+		display: block;
+		top: -7px;
+		border-right: 0;
+		border-bottom: 0;
+	}
+
+	.tour-pop[data-arrow="down"]::after {
+		display: block;
+		bottom: -7px;
+		border-left: 0;
+		border-top: 0;
+	}
+
+	.tour-step-of {
+		font-size: 0.6875rem;
+		text-transform: uppercase;
+		letter-spacing: 0.09em;
+		color: hsl(var(--bc) / 0.5);
+	}
+
+	.tour-title {
+		font-size: 1rem;
+		font-weight: 700;
+		margin-top: 0.2rem;
+	}
+
+	.tour-body {
+		font-size: 0.8125rem;
+		line-height: 1.5;
+		color: hsl(var(--bc) / 0.75);
+		margin-top: 0.4rem;
+	}
+
+	.tour-actions {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin-top: 0.9rem;
+	}
+
+	.tour-dots {
+		display: flex;
+		gap: 0.25rem;
+		margin-right: auto;
+	}
+
+	.tour-dot {
+		width: 0.4rem;
+		height: 0.4rem;
+		border-radius: 9999px;
+		background-color: hsl(var(--bc) / 0.2);
+	}
+
+	.tour-dot.is-on {
+		background-color: hsl(var(--p));
+	}
+</style>
+
+<script>
+	// ── Guided tour ────────────────────────────────────────────────────────────
+	(function () {
+		if (window.__portalTour) return;
+
+		/* v2, deliberately. The v1 key was set by the auto-start that never ran and by
+		   anyone who used Replay, so leaving it would keep the tour hidden from exactly
+		   the people who have never seen it. Bumping it gives everyone the tour once —
+		   including accounts that have logged in before — and costs one extra viewing to
+		   the handful who replayed it on purpose. */
+		const SEEN_KEY = "portal-tour-seen-v2";
+
+		// Steps are declarative so adding one is a line, not a code change. `sel` may
+		// match nothing — that step is then skipped, which is what keeps the tour
+		// working for a non-admin who has no Platform Managing link.
+		const STEPS = [
+			{
+				sel: null, // no target: a centred welcome card
+				title: "Welcome to DevOps Hub",
+				body:
+					"A quick tour of the portal — about a minute. You can leave at any " +
+					"point with Skip, and start it again later from the Help menu.",
+			},
+			{
+				sel: "[data-portal-sidebar] .portal-nav-list",
+				title: "Everything is in the sidebar",
+				body:
+					"Your work at the top, then each connected system, then admin tools if you " +
+					"have them. The rail can be resized by dragging its edge, or collapsed to " +
+					"icons from the button at the bottom.",
+			},
+			/* The dashboard is THREE separate regions stacked on top of each other, and
+			   [data-widget-grid] is only the last of them — "Needs you" and Quick Links are
+			   its siblings, not its children. One step pointed at the grid therefore
+			   highlighted the cards and silently left out the two things above them, which
+			   read as the spotlight being mis-measured. It was not: those elements were
+			   never inside the thing being measured. They get a step each, in the order
+			   they appear down the page. Both are optional widgets, so both steps drop out
+			   on their own for anyone who has turned them off. */
+			{
+				sel: "#needs-you-component",
+				title: "What needs you today",
+				body:
+					"Approvals waiting on you, reviews you have been asked for, tickets that came " +
+					"back with a question — gathered from every connected system and answered in " +
+					"one line. On a day when nothing is waiting it takes up no space at all.",
+			},
+			{
+				sel: "#quick-links-component",
+				title: "Quick links",
+				body:
+					"Shortcuts to the places your team lives that the portal does not cover. Add " +
+					"your own with the + at the end: those are private to your account, and " +
+					"nobody else ever sees them.",
+			},
+			{
+				sel: "[data-widget-grid]",
+				title: "Your dashboard",
+				body:
+					"Each card is one system answering one question about you — your work items, " +
+					"your pull requests, your tickets. Hover a card to drag it somewhere else or " +
+					"resize it; the layout is remembered in this browser.",
+			},
+			{
+				sel: '[for="dashboard-customize-drawer"]',
+				title: "Choose your cards",
+				body:
+					"Customize opens the full list of widgets. Turn off what you do not use — " +
+					"the dashboard is per-person, so this changes nothing for anyone else.",
+			},
+			{
+				sel: "[data-quick-actions]",
+				title: "Quick actions",
+				body:
+					"The things people do most often, from anywhere in the portal. Most have a " +
+					"keyboard shortcut — press ? at any time to see the full list.",
+			},
+			{
+				sel: "[data-notif-root]",
+				title: "Notifications",
+				body:
+					"When a request of yours is approved, a suggestion you follow gets an answer, " +
+					"or a ticket you raised is updated, it appears here.",
+			},
+			{
+				sel: '[data-portal-sidebar] a[href="/ui/automations"]',
+				title: "Requests",
+				body:
+					"Requests is where you ask the portal to do something for you — a new Azure " +
+					"DevOps project, an Artifactory quota, a cleaner, a pipeline. They go to an " +
+					"admin for approval and you can follow them under My Requests.",
+			},
+			{
+				sel: '[data-portal-sidebar] a[href="/ui/suggestions"]',
+				title: "Tell us what is missing",
+				body:
+					"Suggestions is a public board: post an idea, vote on other people's, and see " +
+					"what the platform team has planned. Who posted what stays private from other " +
+					"users.",
+			},
+		];
+
+		let index = 0;
+		let autoStartTimer = null;
+		let steps = STEPS;
+		let spot = null;
+		let pop = null;
+		let easeOffTimer = null;
+		let settleFrame = 0;
+		let sizeWatch = null;
+		let revealTimer = null;
+
+		function el(tag, cls) {
+			const node = document.createElement(tag);
+			if (cls) node.className = cls;
+			return node;
+		}
+
+		function teardown() {
+			cancelAnimationFrame(settleFrame);
+			clearTimeout(easeOffTimer);
+			clearTimeout(revealTimer);
+			sizeWatch?.disconnect();
+			sizeWatch = null;
+			spot?.remove();
+			pop?.remove();
+			spot = pop = null;
+			document.removeEventListener("keydown", onKey, true);
+			window.removeEventListener("resize", place);
+			window.removeEventListener("scroll", onScroll, true);
+		}
+
+		function finish() {
+			try { localStorage.setItem(SEEN_KEY, "1"); } catch (_) {}
+			teardown();
+		}
+
+		function onKey(event) {
+			if (event.key === "Escape") { event.preventDefault(); finish(); }
+			else if (event.key === "ArrowRight") { event.preventDefault(); go(1); }
+			else if (event.key === "ArrowLeft") { event.preventDefault(); go(-1); }
+		}
+
+		function target() {
+			const sel = steps[index]?.sel;
+			if (!sel) return null;
+			const node = document.querySelector(sel);
+			// An element that is present but not rendered (a collapsed rail, a hidden
+			// admin section) must count as absent, or the spotlight lands on a 0x0 box.
+			if (!node) return null;
+			const r = node.getBoundingClientRect();
+			return r.width > 0 && r.height > 0 ? node : null;
+		}
+
+		/* The portal does not scroll at the window level. `.page-shell` is
+		   overflow:hidden and `.page-content` is the element with overflow-y:auto — so
+		   window.scrollY is permanently 0, and "scroll the target into view" means
+		   scrolling that ancestor, inside the space IT has rather than the space the
+		   window has. */
+		function scroller(node) {
+			let p = node.parentElement;
+			while (p && p !== document.body && p !== document.documentElement) {
+				const oy = getComputedStyle(p).overflowY;
+				if ((oy === "auto" || oy === "scroll" || oy === "overlay") && p.scrollHeight > p.clientHeight + 1) {
+					return p;
+				}
+				p = p.parentElement;
+			}
+			return null;
+		}
+
+		function scrollToTarget(node) {
+			if (!node) return;
+			const box = scroller(node);
+			const view = box
+				? box.getBoundingClientRect()
+				: { top: 0, bottom: window.innerHeight, height: window.innerHeight };
+			const r = node.getBoundingClientRect();
+			const margin = 20;
+
+			// Already fully visible: do not move the page. scrollIntoView({block:"center"})
+			// scrolls even when the element is sitting in plain sight, and a tour that
+			// shifts the page for no reason the viewer can see reads as a bug in itself.
+			if (r.top >= view.top + margin && r.bottom <= view.bottom - margin) return;
+
+			// A target TALLER than the viewport cannot be centred — centring it puts its
+			// top edge above the top of the scroll container, so the highlight has no
+			// visible beginning and appears to start at whatever happens to be the first
+			// row on screen. The widget grid on a laptop is exactly this case. Align its
+			// top instead, and let the bottom run off; the spotlight then starts where
+			// the element starts, which is the whole point of drawing it.
+			const delta = r.height > view.height - margin * 2
+				? r.top - view.top - margin
+				: r.top - view.top - (view.height - r.height) / 2;
+
+			const to = Math.max(0, Math.round((box ? box.scrollTop : window.scrollY) + delta));
+			if (box) {
+				if (typeof box.scrollTo === "function") box.scrollTo({ top: to, behavior: "smooth" });
+				else box.scrollTop = to;
+			} else {
+				window.scrollTo({ top: to, behavior: "smooth" });
+			}
+		}
+
+		// While the page is moving the spotlight must sit exactly on its target, so the
+		// step-change easing comes off for the duration of the scroll.
+		function onScroll() {
+			spot?.classList.remove("is-eased");
+			clearTimeout(easeOffTimer);
+			place();
+		}
+
+		function place() {
+			if (!spot || !pop) return;
+			const node = target();
+			const pad = 6;
+
+			if (!node) {
+				// Centred card, no cut-out: the welcome step, and any step whose target
+				// is missing but which we still want to show.
+				spot.style.width = "0px";
+				spot.style.height = "0px";
+				spot.style.top = "50%";
+				spot.style.left = "50%";
+				pop.removeAttribute("data-arrow");   // nothing to point at
+				pop.style.top = Math.round(window.scrollY + window.innerHeight / 2 - pop.offsetHeight / 2) + "px";
+				pop.style.left = Math.round(window.scrollX + window.innerWidth / 2 - pop.offsetWidth / 2) + "px";
+				return;
+			}
+
+			const r = node.getBoundingClientRect();
+			spot.style.top = Math.round(window.scrollY + r.top - pad) + "px";
+			spot.style.left = Math.round(window.scrollX + r.left - pad) + "px";
+			spot.style.width = Math.round(r.width + pad * 2) + "px";
+			spot.style.height = Math.round(r.height + pad * 2) + "px";
+
+			// Prefer below, then above, then beside — and always clamped into view, so a
+			// target near an edge never pushes the explanation off-screen.
+			const gap = 14;
+			const pw = pop.offsetWidth;
+			const ph = pop.offsetHeight;
+			let top = r.bottom + gap;
+			let arrow = "up";                 // card below the target: arrow on top
+			if (top + ph > window.innerHeight - 8) {
+				top = r.top - ph - gap;
+				arrow = "down";               // card above it: arrow underneath
+			}
+			if (top < 8) {
+				// The target is taller than the space around it — the widget grid on a
+				// laptop is the case — so there is nowhere outside it to put the card and
+				// it has to overlap. Dock it at the BOTTOM rather than leaving it where
+				// the clamp lands it, which is across the middle of the very thing the
+				// step is asking you to look at. No arrow: the highlight is the whole
+				// region, and an arrow would claim it means one particular edge of it.
+				top = window.innerHeight - ph - 16;
+				arrow = null;
+			}
+			let left = r.left + r.width / 2 - pw / 2;
+			left = Math.min(Math.max(8, left), window.innerWidth - pw - 8);
+
+			pop.style.top = Math.round(window.scrollY + top) + "px";
+			pop.style.left = Math.round(window.scrollX + left) + "px";
+
+			// Point at the middle of the TARGET, expressed relative to the card. When the
+			// card has been clamped against an edge these are not the same place, and it
+			// is exactly then that an arrow earns its keep — the card is off to one side
+			// and nothing else says which element it is about.
+			if (arrow) {
+				pop.setAttribute("data-arrow", arrow);
+				const centre = r.left + r.width / 2 - left;
+				pop.style.setProperty(
+					"--tour-arrow-x",
+					Math.round(Math.min(Math.max(14, centre), pw - 14)) + "px"
+				);
+			} else {
+				pop.removeAttribute("data-arrow");
+			}
+		}
+
+		function render(dir) {
+			const d = dir === -1 ? -1 : 1;
+
+			/* A step's target can vanish BETWEEN the up-front filter and the moment the
+			   step is reached. "Needs you" is the case: it is showing a skeleton when the
+			   tour starts, and collapses to nothing a second later if it turns out nothing
+			   is waiting. Explaining an element that is no longer on the page — as a
+			   centred card with no highlight — is worse than not showing the step, so skip
+			   it, continuing in whichever direction the viewer was already going. */
+			let guard = 0;
+			while (guard++ < steps.length && steps[index] && steps[index].sel && !target()) {
+				const next = index + d;
+				if (next < 0 || next >= steps.length) break;
+				index = next;
+			}
+			if (!steps[index]) return finish();
+
+			const step = steps[index];
+			const dots = steps
+				.map((_, i) => '<span class="tour-dot' + (i === index ? " is-on" : "") + '"></span>')
+				.join("");
+			pop.innerHTML =
+				'<div class="tour-step-of">Step ' + (index + 1) + " of " + steps.length + "</div>" +
+				'<div class="tour-title"></div>' +
+				'<div class="tour-body"></div>' +
+				'<div class="tour-actions">' +
+				'<span class="tour-dots">' + dots + "</span>" +
+				'<button type="button" class="btn btn-ghost btn-xs" data-tour-skip>Skip</button>' +
+				(index > 0 ? '<button type="button" class="btn btn-ghost btn-xs" data-tour-back>Back</button>' : "") +
+				'<button type="button" class="btn btn-primary btn-xs" data-tour-next>' +
+				(index === steps.length - 1 ? "Done" : "Next") +
+				"</button>" +
+				"</div>";
+			// textContent, not innerHTML: step copy is ours today, but a tour is exactly
+			// the sort of thing that later gets fed from config.
+			pop.querySelector(".tour-title").textContent = step.title;
+			pop.querySelector(".tour-body").textContent = step.body;
+
+			const node = target();
+			watchSize(node);
+			scrollToTarget(node);
+
+			// The card animates in from scratch on every step, so the transition has to
+			// be restarted rather than merely left on.
+			pop.classList.remove("is-in");
+
+			// Ease the SPOT for this jump only — see the CSS. Long enough to cover the
+			// transition itself; taken off again by the scroll handler the moment the
+			// page starts moving, because during a scroll the box must track its target
+			// exactly rather than chase it.
+			spot.classList.add("is-eased");
+			clearTimeout(easeOffTimer);
+			easeOffTimer = setTimeout(() => spot?.classList.remove("is-eased"), 320);
+
+			// A smooth scroll takes as long as it takes, and `place()` measures where
+			// things are RIGHT NOW — so one call after paint and one at a guessed delay
+			// left the spotlight next to the target rather than on it whenever the scroll
+			// ran long. Re-place every frame until the target stops moving instead.
+			// One frame, not two nested ones. `place()` sets top/left, and neither is
+			// transitioned — only opacity and transform are — so applying both in the
+			// same frame fades the card in already at its final position. The nested
+			// version was a rAF whose callback could be superseded by the next step's
+			// render, and when it was, the card stayed at opacity 0: invisible, with no
+			// error anywhere to say why.
+			requestAnimationFrame(() => {
+				place();
+				pop?.classList.add("is-in");
+			});
+			// A backstop, because the card starts at opacity 0 and ONLY this class makes
+			// it visible. requestAnimationFrame does not run in a background tab, and it
+			// can be starved in other environments too — so if the fade is the only thing
+			// that reveals the card, the failure mode of a missed frame is a tour that is
+			// running, dimming the page, and completely invisible. Idempotent: whichever
+			// gets there first wins and the other does nothing.
+			clearTimeout(revealTimer);
+			revealTimer = setTimeout(() => {
+				place();
+				pop?.classList.add("is-in");
+			}, 80);
+			settle();
+		}
+
+		// Follow the target until it holds still for a few frames, with a hard ceiling so
+		// this can never become a permanent rAF loop on a page that animates something
+		// forever.
+		// The dashboard grid is the case this exists for: its widgets arrive over htmx,
+		// one at a time, for several seconds after the tour has already measured it. The
+		// spotlight was drawn around whatever the grid happened to be at that instant and
+		// then never corrected, so by the time anyone read the step the box was a row or
+		// two short of the thing it was highlighting.
+		//
+		// A settle loop cannot fix that — it would have to run for as long as the slowest
+		// widget, which is a rAF loop with no end condition. Observing the element costs
+		// nothing until it actually changes.
+		function watchSize(node) {
+			sizeWatch?.disconnect();
+			sizeWatch = null;
+			if (!node || typeof ResizeObserver === "undefined") return;
+			sizeWatch = new ResizeObserver(() => {
+				// The size changed under us, so this is a correction, not a step change —
+				// it must not animate, or the box slides across the screen on its own.
+				spot?.classList.remove("is-eased");
+				place();
+			});
+			sizeWatch.observe(node);
+		}
+
+		function settle() {
+			const started = performance.now();
+			let lastBox = null;
+			let stableFor = 0;
+			cancelAnimationFrame(settleFrame);
+			const step = () => {
+				if (!spot || !pop) return;
+				place();
+				const node = target();
+				const r = node ? node.getBoundingClientRect() : null;
+				// Position AND size: a grid still filling with widgets is not "settled"
+				// just because its top edge has not moved.
+				const box = r ? Math.round(r.top) + "," + Math.round(r.height) + "," + Math.round(r.width) : "";
+				stableFor = box === lastBox ? stableFor + 1 : 0;
+				lastBox = box;
+				if (stableFor >= 3 || performance.now() - started > 900) return;
+				settleFrame = requestAnimationFrame(step);
+			};
+			settleFrame = requestAnimationFrame(step);
+		}
+
+		function go(delta) {
+			const next = index + delta;
+			if (next < 0) return;
+			if (next >= steps.length) return finish();
+			index = next;
+			render(delta);
+		}
+
+		function start() {
+			// The first-run timer below may still be pending when someone replays the
+			// tour from the Help menu — without this it fires mid-tour and silently
+			// throws the person back to step one.
+			if (autoStartTimer) {
+				clearTimeout(autoStartTimer);
+				autoStartTimer = null;
+			}
+			teardown();
+			// Drop steps whose target is not on this page BEFORE numbering them, so
+			// "Step 3 of 6" is honest and there are no dead stops.
+			steps = STEPS.filter((s) => {
+				if (!s.sel) return true;
+				const node = document.querySelector(s.sel);
+				if (!node) return false;
+				const r = node.getBoundingClientRect();
+				return r.width > 0 && r.height > 0;
+			});
+			if (steps.length < 2) return; // nothing worth touring on this page
+			index = 0;
+
+			spot = el("div", "tour-spot");
+			pop = el("div", "tour-pop");
+			pop.setAttribute("role", "dialog");
+			pop.setAttribute("aria-live", "polite");
+			document.body.appendChild(spot);
+			document.body.appendChild(pop);
+
+			pop.addEventListener("click", (event) => {
+				if (event.target.closest("[data-tour-skip]")) finish();
+				else if (event.target.closest("[data-tour-back]")) go(-1);
+				else if (event.target.closest("[data-tour-next]")) go(1);
+			});
+			document.addEventListener("keydown", onKey, true);
+			window.addEventListener("resize", place);
+			window.addEventListener("scroll", onScroll, true);
+			render();
+		}
+
+		// Replayable on demand — from the Help menu, a Settings button, anywhere.
+		window.portalTour = { start: start, reset: function () {
+			try { localStorage.removeItem(SEEN_KEY); } catch (_) {}
+		} };
+		window.__portalTour = true;
+
+		/* First run only, and only on the dashboard: the tour talks about the widget
+		   grid, so starting it on the Logs page would explain things that are not there.
+
+		   THIS MUST WAIT FOR THE DOM. This file is included from banner.html, which the
+		   page renders BEFORE the dashboard — so at the moment this script runs,
+		   [data-widget-grid] does not exist yet, `onDashboard` was always false, and the
+		   tour never auto-started for anybody. The Replay button worked only because it
+		   is clicked long after the page has finished parsing, which is exactly the kind
+		   of bug that looks like "the tour is broken" and is actually "the tour was asked
+		   a question before the answer existed". */
+		function scheduleAutoStart() {
+			let seen = "1";
+			try { seen = localStorage.getItem(SEEN_KEY); } catch (_) {}
+			if (seen) return;
+			if (!document.querySelector("[data-widget-grid]")) return;
+			// Let the widgets place themselves first, or the spotlight measures a grid
+			// that is still three skeletons tall.
+			autoStartTimer = setTimeout(start, 1200);
+		}
+
+		if (document.readyState === "loading") {
+			document.addEventListener("DOMContentLoaded", scheduleAutoStart, { once: true });
+		} else {
+			scheduleAutoStart();
+		}
+	})();
+</script>

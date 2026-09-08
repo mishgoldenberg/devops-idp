@@ -1,0 +1,90 @@
+{#
+	The multi-link children editor — the little "name + link" table a group is made of.
+
+	It exists as its own partial because there are now TWO forms that edit a quick
+	link: Platform Managing, for the shared list an admin curates, and the dashboard
+	widget, for the personal list only you can see. The markup of the two tables is
+	trivial; the BEHAVIOUR is not — a blank trailing row is normal rather than an
+	error, removing the last row has to leave one behind, and read/write have to
+	agree about which of those rows count. Two copies of that is two copies that
+	eventually disagree, and the symptom would be a group that silently saves fewer
+	links than it shows.
+
+	So: one implementation, on `window.portalQuickLinkChildren`, taking the <tbody>
+	it should operate on. Callers keep their own markup and their own ids.
+
+	Any tbody marked `data-kid-body` gets the remove button wired automatically —
+	there is nothing to bind per form.
+#}
+<script>
+	(function () {
+		if (window.portalQuickLinkChildren) return;
+
+		function childRow(name, url) {
+			const tr = document.createElement("tr");
+			tr.innerHTML =
+				'<td><input class="input input-bordered input-sm w-full" data-kid-name placeholder="Grafana" /></td>' +
+				'<td><input class="input input-bordered input-sm w-full" data-kid-url placeholder="https://example.internal" /></td>' +
+				'<td class="text-right">' +
+				'<button type="button" class="btn btn-ghost btn-xs text-error" data-kid-remove aria-label="Remove this link">✕</button>' +
+				"</td>";
+			tr.querySelector("[data-kid-name]").value = name || "";
+			tr.querySelector("[data-kid-url]").value = url || "";
+			return tr;
+		}
+
+		function set(tbody, rows) {
+			if (!tbody) return;
+			tbody.innerHTML = "";
+			// Always at least one row: an empty table looks like a broken control, and
+			// "+ Add link" as the only way to begin is a step nobody should have to take.
+			(rows && rows.length ? rows : [{ name: "", url: "" }]).forEach(function (c) {
+				tbody.appendChild(childRow(c.name, c.url));
+			});
+		}
+
+		function read(tbody) {
+			if (!tbody) return [];
+			return Array.from(tbody.querySelectorAll("tr"))
+				.map(function (tr) {
+					return {
+						name: (tr.querySelector("[data-kid-name]") || {}).value || "",
+						url: (tr.querySelector("[data-kid-url]") || {}).value || "",
+					};
+				})
+				.map(function (c) {
+					return { name: c.name.trim(), url: c.url.trim() };
+				})
+				// A blank trailing row is what an untouched "+ Add link" looks like, not
+				// an error — drop half-filled rows instead of refusing to save.
+				.filter(function (c) {
+					return c.name && c.url;
+				});
+		}
+
+		function addRow(tbody) {
+			if (!tbody) return;
+			tbody.appendChild(childRow("", ""));
+			const last = tbody.lastElementChild;
+			if (last) {
+				const input = last.querySelector("[data-kid-name]");
+				if (input) input.focus();
+			}
+		}
+
+		// Delegated once, for every editor on the page: nothing to wire per form, and
+		// no listener left behind pointing at a tbody that has been re-rendered.
+		document.addEventListener("click", function (event) {
+			const remove = event.target.closest("[data-kid-remove]");
+			if (!remove) return;
+			const tbody = remove.closest("[data-kid-body]");
+			if (!tbody) return;
+			event.preventDefault();
+			const row = remove.closest("tr");
+			if (row) row.remove();
+			if (!tbody.children.length) set(tbody, []);
+		});
+
+		window.portalQuickLinkChildren = { set: set, read: read, addRow: addRow, row: childRow };
+	})();
+</script>

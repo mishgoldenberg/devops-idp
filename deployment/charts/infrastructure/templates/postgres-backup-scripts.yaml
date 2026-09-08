@@ -1,0 +1,629 @@
+{{- if and .Values.postgres.backup.enabled (eq .Values.global.nameSuffix "") }}
+# The backup scripts, as a ConfigMap rather than inline in the CronJobs.
+#
+# WHY TWO LANGUAGES AND TWO IMAGES
+#
+# Neither image in this cluster can do the whole job:
+#
+#   POSTGRES_IMAGE (bitnami/postgresql:14.5.0)  pg_dump, pg_restore, psql, sha256sum
+#                                               NO curl, NO wget  <- cannot upload
+#   backend image  (python:3.11-slim)           python3, psycopg2, urllib
+#                                               NO pg_dump        <- cannot dump
+#
+# and building a combined image would need an OS package mirror an offline install
+# does not have — the backend Dockerfile avoids apt-get for exactly that reason.
+#
+# So each phase runs in the image that has its tools, sharing an emptyDir. Python
+# owns everything that touches Artifactory AND everything that writes backup_runs,
+# so the status table has exactly one writer and the two jobs cannot drift apart on
+# how a run is recorded. The shell parts do nothing but call pg_dump / pg_restore.
+#
+# The HTTP client is urllib from the standard library, not httpx — the same choice
+# scripts/artifactory_image_retention.py makes, and for the same reason: it is
+# already proven against this Artifactory, and a backup must not depend on a
+# package that a future requirements.txt could drop.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-backup-scripts
+  labels:
+    app.kubernetes.io/component: postgres-backup
+data:
+  common.py: |
+    """Shared by every Python phase of both backup jobs.
+
+    Config comes from the environment; see _backup-helpers.tpl, which is the one
+    place both CronJobs get it from.
+    """
+    import base64
+    import hashlib
+    import json
+    import os
+    import ssl
+    import sys
+    import time
+    import urllib.error
+    import urllib.request
+
+    WORK = "/work"
+    STATE = os.path.join(WORK, "state.json")
+
+    # Versioned: if the derivation ever changes, old manifests must not silently
+    # compare equal to new ones.
+    FP_LABEL = "devops-hub-backup-fingerprint-v1:"
+
+
+    def env(name, default=""):
+        return (os.environ.get(name) or "").strip() or default
+
+
+    BASE = env("ART_BASE").rstrip("/")
+    REPO = env("ART_REPO")
+    PATH_ = env("ART_PATH", "postgres")
+    USER = env("ART_USER")
+    TOKEN = env("ART_TOKEN")
+    VERIFY_TLS = env("ART_TLS_VERIFY", "false").lower() in ("1", "true", "yes")
+    ENVIRONMENT = env("BACKUP_ENVIRONMENT", "prod")
+    KEEP_LAST = max(1, int(env("BACKUP_KEEP_LAST", "3")))
+
+
+    def log(msg):
+        print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
+    def warn(msg):
+        print(f"[{time.strftime('%H:%M:%S')}] WARNING: {msg}", file=sys.stderr, flush=True)
+
+
+    # ── state passed between containers ───────────────────────────────────────
+    # The phases are separate containers, so nothing survives between them except
+    # the shared volume. state.json is that hand-off: the run id, the dump name,
+    # and whatever each phase has established so far.
+
+    def load_state():
+        try:
+            with open(STATE, encoding="utf-8") as fh:
+                return json.load(fh)
+        except FileNotFoundError:
+            return {}
+
+
+    def save_state(**kw):
+        state = load_state()
+        state.update(kw)
+        with open(STATE, "w", encoding="utf-8") as fh:
+            json.dump(state, fh)
+        return state
+
+
+    # ── Artifactory ───────────────────────────────────────────────────────────
+
+    def _ssl_context():
+        ctx = ssl.create_default_context()
+        if not VERIFY_TLS:
+            # Artifactory presents an internal-CA certificate here, the same reason
+            # global.integrationTlsVerify is false for the backend.
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+
+
+    def _auth():
+        raw = base64.b64encode(f"{USER}:{TOKEN}".encode()).decode()
+        return "Basic " + raw
+
+
+    def _request(method, url, body=None, headers=None, timeout=1800):
+        req = urllib.request.Request(url, data=body, method=method)
+        req.add_header("Authorization", _auth())
+        for key, value in (headers or {}).items():
+            req.add_header(key, value)
+        return urllib.request.urlopen(req, context=_ssl_context(), timeout=timeout)
+
+
+    def art_url(name):
+        return f"{BASE}/{REPO}/{PATH_}/{name}"
+
+
+    def upload(local_path, name, sha256=None):
+        """PUT a file. X-Checksum-Sha256 makes Artifactory verify it on its side —
+        without it a truncated transfer is stored happily and only fails at restore."""
+        headers = {"Content-Type": "application/octet-stream"}
+        if sha256:
+            headers["X-Checksum-Sha256"] = sha256
+        size = os.path.getsize(local_path)
+        headers["Content-Length"] = str(size)
+        with open(local_path, "rb") as fh:
+            with _request("PUT", art_url(name), body=fh, headers=headers) as resp:
+                return resp.status
+
+
+    def download(name, local_path):
+        with _request("GET", art_url(name)) as resp:
+            with open(local_path, "wb") as fh:
+                while True:
+                    chunk = resp.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    fh.write(chunk)
+
+
+    def list_dumps():
+        """Every dump in the repository, newest first.
+
+        Reads the folder listing rather than computing filenames, so retention is a
+        COUNT ("keep the last N") — the same promise
+        scripts/artifactory_image_retention.py makes about image tags. Sorting the
+        names is safe here in a way it would not be for image tags: the name ends in
+        an ISO date, one per day, so lexicographic order IS chronological order.
+        """
+        url = f"{BASE}/api/storage/{REPO}/{PATH_}"
+        with _request("GET", url, timeout=60) as resp:
+            data = json.loads(resp.read().decode("utf-8") or "{}")
+        names = [
+            str(child.get("uri", "")).lstrip("/")
+            for child in data.get("children", [])
+            if not child.get("folder")
+        ]
+        return sorted((n for n in names if n.endswith(".dump")), reverse=True)
+
+
+    def delete(name):
+        """Returns the HTTP status; 404 is success as far as pruning is concerned."""
+        try:
+            with _request("DELETE", art_url(name), timeout=60) as resp:
+                return resp.status
+        except urllib.error.HTTPError as exc:
+            return exc.code
+
+
+    # ── the secret that the dump belongs to ───────────────────────────────────
+
+    def jwt_fingerprint():
+        """A salted SHA-256 of JWT_SECRET — never the secret itself.
+
+        This is what lets a restore prove the dump and the secret belong together
+        BEFORE the backend starts. Without it the mismatch shows up as users finding
+        their stored PATs unreadable, hours later, with nothing explaining why
+        (docs/RUNBOOK.md §4).
+        """
+        secret = os.environ.get("JWT_SECRET") or ""
+        if not secret:
+            return ""
+        return hashlib.sha256((FP_LABEL + secret).encode("utf-8")).hexdigest()
+
+
+    def sha256_file(path):
+        digest = hashlib.sha256()
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+
+    # ── backup_runs ───────────────────────────────────────────────────────────
+    # One writer, in one language, for both jobs. The shell phases never touch it.
+    #
+    # Best effort, loudly. A backup that succeeded but could not write its status
+    # row is still a backup; failing the job over the bookkeeping would turn a
+    # cosmetic problem into a real one. It never fails SILENTLY though — the warning
+    # carries the driver's own message, and the missing row shows up on the portal's
+    # backup page as a gap, which is the point of the page.
+
+    def connect(retries=20):
+        import psycopg2
+        last = None
+        for attempt in range(retries):
+            try:
+                return psycopg2.connect(connect_timeout=10)
+            except Exception as exc:  # noqa: BLE001
+                last = exc
+                time.sleep(min(15, 2 + attempt))
+        raise last
+
+
+    def run_start(kind):
+        try:
+            with connect() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO backup_runs (kind, environment, status) "
+                    "VALUES (%s, %s, 'running') RETURNING id",
+                    [kind, ENVIRONMENT],
+                )
+                row = cur.fetchone()
+                conn.commit()
+                run_id = row[0] if row else None
+            log(f"recorded run #{run_id} ({kind})")
+            return run_id
+        except Exception as exc:  # noqa: BLE001
+            warn(f"could not record run start: {exc}")
+            warn("the backup itself is unaffected, but this run will not appear on "
+                 "the portal's backup page")
+            return None
+
+
+    def run_finish(run_id, status, message="", artifact=None, size=None,
+                   sha256=None, fingerprint=None):
+        if not run_id:
+            return
+        try:
+            with connect(retries=5) as conn, conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE backup_runs SET status = %s, finished_at = CURRENT_TIMESTAMP, "
+                    "message = NULLIF(%s, ''), artifact = %s, size_bytes = %s, "
+                    "sha256 = %s, jwt_fingerprint = %s WHERE id = %s",
+                    [status, message or "", artifact, size, sha256, fingerprint, run_id],
+                )
+                conn.commit()
+        except Exception as exc:  # noqa: BLE001
+            warn(f"could not record run outcome: {exc}")
+
+
+    def fail(run_id, message):
+        """Record the real reason, say it, and stop."""
+        print(f"ERROR: {message}", file=sys.stderr, flush=True)
+        run_finish(run_id, "failed", message)
+        sys.exit(1)
+
+
+    def phase_result(path):
+        """Read a shell phase's outcome file: first line rc, rest is the message."""
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                text = fh.read()
+        except FileNotFoundError:
+            return 1, f"{path} was never written — the phase before this one did not run"
+        head, _, rest = text.partition("\n")
+        try:
+            return int(head.strip()), rest.strip()
+        except ValueError:
+            return 1, text.strip()
+
+  record_start.py: |
+    """Phase 1 of the backup job: open the run, and decide the dump's name.
+
+    Runs BEFORE pg_dump so a job that dies mid-dump leaves a row that says
+    "running" rather than no row at all — "never started", "still running" and
+    "died mid-run" are three different failures and must not look identical.
+    """
+    import sys
+    sys.path.insert(0, "/scripts")
+    import os
+    import time
+
+    import common
+
+    run_id = common.run_start("backup")
+    name = f"devops-hub-{common.ENVIRONMENT}-{time.strftime('%Y-%m-%d', time.gmtime())}.dump"
+    common.save_state(run_id=run_id, name=name)
+    # Plain text too: the shell phase reads this and has no JSON parser.
+    with open(os.path.join(common.WORK, "NAME"), "w", encoding="utf-8") as fh:
+        fh.write(name)
+    common.log(f"this run will produce {name}")
+
+  dump.sh: |
+    #!/bin/sh
+    # Phase 2 of the backup job. The ONLY thing that needs the Postgres image.
+    #
+    # Always exits 0, on purpose. A non-zero exit here would fail the pod before
+    # the reporting phase ran, and the operator would get "Error" with no reason on
+    # the portal card. The outcome goes in a file; the next container reads it and
+    # fails properly, with the message.
+    NAME=$(cat /work/NAME)
+    echo "dumping ${PGDATABASE} to ${NAME}"
+
+    end=$(( $(date +%s) + 300 ))
+    ok=0
+    while [ "$(date +%s)" -lt "$end" ]; do
+      if psql -c 'SELECT 1' >/dev/null 2>&1; then ok=1; break; fi
+      sleep 3
+    done
+    if [ "$ok" != "1" ]; then
+      printf '1\nPostgreSQL was not reachable at %s:%s after 300s\n' "$PGHOST" "$PGPORT" > /work/dump.rc
+      exit 0
+    fi
+
+    # -Fc (custom format): compressed, and restorable table-by-table with
+    # pg_restore, which plain SQL is not. --no-owner/--no-privileges so the dump
+    # restores into a scratch database owned by whoever is doing the restoring
+    # rather than demanding the production role names exist first.
+    if pg_dump -Fc --no-owner --no-privileges -f "/work/${NAME}" 2>/work/dump.err; then
+      printf '0\n' > /work/dump.rc
+      echo "pg_dump finished"
+    else
+      # pg_dump does not always say anything on the way out. "pg_dump failed:" with
+      # nothing after it is the message an operator would have to go digging behind,
+      # which is the whole thing the status row exists to avoid.
+      REASON=$(tail -c 400 /work/dump.err | tr '\n' ' ')
+      [ -n "$REASON" ] || REASON="it exited non-zero without writing anything to stderr; see this container's log"
+      printf '1\npg_dump failed: %s\n' "$REASON" > /work/dump.rc
+      echo "pg_dump FAILED:"
+      cat /work/dump.err
+    fi
+    exit 0
+
+  ship.py: |
+    """Phase 3 of the backup job: checksum, manifest, upload, prune, record.
+
+    Everything after pg_dump, in the image that has an HTTP client.
+    """
+    import sys
+    sys.path.insert(0, "/scripts")
+    import json
+    import os
+    import time
+
+    import common
+
+    state = common.load_state()
+    run_id = state.get("run_id")
+    name = state.get("name")
+    if not name:
+        common.fail(run_id, "the dump name was never recorded — phase 1 did not run")
+
+    rc, message = common.phase_result(os.path.join(common.WORK, "dump.rc"))
+    if rc != 0:
+        common.fail(run_id, message or "pg_dump failed; see the dump container's log")
+
+    dump = os.path.join(common.WORK, name)
+    if not os.path.exists(dump):
+        common.fail(run_id, f"pg_dump reported success but {name} is not there")
+
+    size = os.path.getsize(dump)
+    # A dump smaller than this is not a database, it is an error message that
+    # exited 0. Catching it here means the alert says "the dump is empty" rather
+    # than the restore test discovering it a week later.
+    if size < 1024:
+        common.fail(run_id, f"the dump is only {size} bytes — that is not a database. "
+                            "Check the dump container's log.")
+
+    sha = common.sha256_file(dump)
+    fingerprint = common.jwt_fingerprint()
+    common.log(f"dump complete: {size} bytes, sha256 {sha}")
+    if not fingerprint:
+        common.warn("JWT_SECRET is not set in this job, so the dump is being stored "
+                    "WITHOUT a fingerprint. A restore will not be able to prove the "
+                    "dump matches the secret it is restored beside.")
+
+    manifest = {
+        "schema": "devops-hub-backup/v1",
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "environment": common.ENVIRONMENT,
+        "database": common.env("PGDATABASE"),
+        "dump": name,
+        "size_bytes": size,
+        "sha256": sha,
+        "jwt_secret_fingerprint": fingerprint,
+        "note": "Restoring this dump requires the JWT_SECRET whose fingerprint is "
+                "above. See docs/RUNBOOK.md section 6.",
+    }
+    manifest_path = dump + ".manifest.json"
+    with open(manifest_path, "w", encoding="utf-8") as fh:
+        json.dump(manifest, fh, indent=2)
+
+    common.log(f"uploading to {common.art_url(name)}")
+    try:
+        common.upload(dump, name, sha256=sha)
+    except Exception as exc:  # noqa: BLE001
+        common.fail(run_id, f"upload to Artifactory failed ({exc}). Check "
+                            f"ARTIFACTORY_BACKUP_TOKEN, that the repo {common.REPO} "
+                            "exists, and that it is a generic repository.")
+    try:
+        common.upload(manifest_path, name + ".manifest.json")
+    except Exception as exc:  # noqa: BLE001
+        common.fail(run_id, f"the dump uploaded but its manifest did not ({exc}) — "
+                            "the dump is unusable for a verified restore.")
+    common.log("upload ok")
+
+    # ── Retention ─────────────────────────────────────────────────────────────
+    # Keep the newest N, delete the rest — the same shape as
+    # scripts/artifactory_image_retention.py, which keeps the newest N image tags.
+    #
+    # Pruning happens HERE, in the job that just created a dump, and not as a
+    # pipeline step like the image cleaner. The image cleaner can live in the
+    # pipeline because the pipeline is what creates images; dumps appear nightly
+    # whether or not anybody deploys, so a pipeline-side cleaner would let a month
+    # without a release become thirty dumps.
+    #
+    # Never fails the run: the dump is already safely uploaded by this point, and a
+    # repository one file over its limit is not a reason to report a backup as
+    # failed. Every skipped delete is logged with its status code.
+    common.log(f"pruning to the newest {common.KEEP_LAST} dump(s)")
+    try:
+        dumps = common.list_dumps()
+    except Exception as exc:  # noqa: BLE001
+        dumps = None
+        common.warn(f"could not list {common.REPO}/{common.PATH_} ({exc}) — nothing "
+                    "was pruned. Check that the backup account has READ on the "
+                    "repository, not only deploy.")
+
+    if dumps is not None:
+        stale = dumps[common.KEEP_LAST:]
+        if not stale:
+            common.log(f"{len(dumps)} dump(s) in the repository, within retention "
+                       f"({common.KEEP_LAST}); nothing to delete")
+        else:
+            common.log(f"{len(dumps)} dump(s); deleting {len(stale)}")
+            for old in stale:
+                # The manifest goes with its dump. Deleting one without the other
+                # leaves either a dump that cannot be verified or a manifest
+                # describing nothing.
+                for target in (old, old + ".manifest.json"):
+                    status = common.delete(target)
+                    if status in (200, 204):
+                        common.log(f"  pruned {target}")
+                    elif status == 404:
+                        pass
+                    elif status == 403:
+                        common.warn(f"  could NOT delete {target} (403) — the backup "
+                                    f"account needs Delete/Overwrite on {common.REPO}")
+                    else:
+                        common.warn(f"  could NOT delete {target} (HTTP {status})")
+
+    common.run_finish(run_id, "succeeded", "", common.art_url(name), size, sha, fingerprint)
+    common.log("backup complete")
+
+  fetch.py: |
+    """Phase 1 of the verify job: find the newest dump, download it, and prove it
+    is both intact and paired with the secret that is running now.
+
+    All of this happens BEFORE anything touches a database, so a dump that fails
+    either check never gets restored anywhere.
+    """
+    import sys
+    sys.path.insert(0, "/scripts")
+    import json
+    import os
+
+    import common
+
+    run_id = common.run_start("verify")
+    common.save_state(run_id=run_id)
+
+    # ── Guard rails ───────────────────────────────────────────────────────────
+    # The restore phase drops a database. These exist so it can only ever drop the
+    # scratch one, whatever the values file says — and they are checked here, before
+    # a single byte is downloaded.
+    scratch = common.env("SCRATCH_DB")
+    live = common.env("PGDATABASE")
+    if not scratch:
+        common.fail(run_id, "SCRATCH_DB is not set")
+    if scratch == live:
+        common.fail(run_id, f"SCRATCH_DB is the live database ({live}). Refusing to continue.")
+    if not scratch.endswith("_restore_check"):
+        common.fail(run_id, f"SCRATCH_DB ({scratch}) does not end in _restore_check. "
+                            "Refusing to drop a database that is not obviously a scratch one.")
+
+    # Straight off the repository listing, so this verifies whatever is actually
+    # there. Probing computed dates instead would report "no dump found" for a
+    # repository full of dumps the moment the naming or the schedule changed — a
+    # verification job that can be wrong about its own input is worse than none.
+    try:
+        dumps = common.list_dumps()
+    except Exception as exc:  # noqa: BLE001
+        common.fail(run_id, f"could not list {common.BASE}/{common.REPO}/{common.PATH_} "
+                            f"({exc}). Check that the backup account has READ on it.")
+    if not dumps:
+        common.fail(run_id, f"no dump found at {common.BASE}/{common.REPO}/{common.PATH_}. "
+                            "Either no backup has run, or the account cannot read the repository.")
+
+    name = dumps[0]
+    common.log(f"verifying {name} (newest of {len(dumps)})")
+    dump = os.path.join(common.WORK, name)
+    try:
+        common.download(name, dump)
+        common.download(name + ".manifest.json", dump + ".manifest.json")
+    except Exception as exc:  # noqa: BLE001
+        common.fail(run_id, f"could not download {name} or its manifest ({exc})")
+
+    with open(dump + ".manifest.json", encoding="utf-8") as fh:
+        manifest = json.load(fh)
+
+    expected = manifest.get("sha256") or ""
+    actual = common.sha256_file(dump)
+    if not expected:
+        common.fail(run_id, f"the manifest for {name} has no sha256")
+    if expected != actual:
+        common.fail(run_id, f"checksum mismatch on {name}: manifest says {expected}, "
+                            f"downloaded file is {actual}. The stored dump is corrupt.")
+    common.log("checksum ok")
+
+    # A dump that restores perfectly but whose PATs cannot be decrypted is a restore
+    # that fails four hours later, in front of users. Check it here.
+    stored_fp = manifest.get("jwt_secret_fingerprint") or ""
+    live_fp = common.jwt_fingerprint()
+    note = ""
+    if not stored_fp or not live_fp:
+        note = "jwt fingerprint not checked (missing on one side)"
+        common.warn(note)
+    elif stored_fp != live_fp:
+        common.fail(run_id, "the dump was taken under a DIFFERENT JWT_SECRET than the "
+                            "one running now. Restoring it would leave every stored "
+                            "credential and every OIDC client secret unreadable. See "
+                            "docs/RUNBOOK.md section 4.")
+    else:
+        common.log("jwt fingerprint matches the running secret")
+
+    common.save_state(name=name, sha256=actual, size=os.path.getsize(dump),
+                      fingerprint=live_fp, note=note)
+    with open(os.path.join(common.WORK, "NAME"), "w", encoding="utf-8") as fh:
+        fh.write(name)
+
+  restore.sh: |
+    #!/bin/sh
+    # Phase 2 of the verify job: actually restore, in the image that has
+    # pg_restore. Always exits 0 — see dump.sh for why.
+    #
+    # The scratch database name was already checked three ways in fetch.py, before
+    # anything was downloaded. This re-checks the two that are cheap, because this
+    # is the script that runs the DROP and it should not depend on a different
+    # container having been careful.
+    NAME=$(cat /work/NAME)
+
+    if [ -z "${SCRATCH_DB}" ] || [ "${SCRATCH_DB}" = "${PGDATABASE}" ]; then
+      printf '1\nSCRATCH_DB is unset or is the live database — refusing to continue\n' > /work/restore.rc
+      exit 0
+    fi
+    case "${SCRATCH_DB}" in
+      *_restore_check) : ;;
+      *) printf '1\nSCRATCH_DB (%s) does not end in _restore_check — refusing\n' "${SCRATCH_DB}" > /work/restore.rc
+         exit 0 ;;
+    esac
+
+    echo "restoring ${NAME} into ${SCRATCH_DB}"
+    dropdb --if-exists --force "$SCRATCH_DB" 2>/dev/null
+    if ! createdb "$SCRATCH_DB" 2>/work/createdb.err; then
+      printf '1\ncould not create %s — the %s role needs CREATEDB for the restore test: %s\n' \
+        "$SCRATCH_DB" "$PGUSER" "$(tail -c 300 /work/createdb.err | tr '\n' ' ')" > /work/restore.rc
+      exit 0
+    fi
+
+    # Not ON_ERROR_STOP: a --no-owner dump routinely emits benign complaints about
+    # extensions and comments. What matters is whether the DATA arrives, which the
+    # queries below check directly rather than trusting the exit code.
+    pg_restore --no-owner --no-privileges -d "$SCRATCH_DB" "/work/${NAME}" 2>/work/restore.log
+    tail -20 /work/restore.log 2>/dev/null
+
+    USERS=$(psql -d "$SCRATCH_DB" -tAX -c "SELECT count(*) FROM users" 2>/dev/null || echo ERR)
+    ROLES=$(psql -d "$SCRATCH_DB" -tAX -c "SELECT count(*) FROM roles" 2>/dev/null || echo ERR)
+    TABLES=$(psql -d "$SCRATCH_DB" -tAX -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'" 2>/dev/null || echo ERR)
+    dropdb --if-exists --force "$SCRATCH_DB" 2>/dev/null
+
+    if [ "$USERS" = "ERR" ] || [ "$ROLES" = "ERR" ] || [ "$TABLES" = "ERR" ]; then
+      printf '1\nthe dump restored but the core tables are not queryable — see the restore log. This dump is NOT usable.\n' > /work/restore.rc
+      exit 0
+    fi
+    if [ "$USERS" -lt 1 ] || [ "$ROLES" -lt 1 ]; then
+      printf '1\nthe dump restored into %s tables but users=%s roles=%s — an empty restore is a failed restore\n' \
+        "$TABLES" "$USERS" "$ROLES" > /work/restore.rc
+      exit 0
+    fi
+
+    printf '0\nrestored %s tables / %s users / %s roles\n' "$TABLES" "$USERS" "$ROLES" > /work/restore.rc
+    echo "restored ${TABLES} tables, ${USERS} users, ${ROLES} roles"
+    exit 0
+
+  record_finish.py: |
+    """Phase 3 of the verify job: turn the restore phase's outcome into the row the
+    portal reads. Nothing else writes backup_runs."""
+    import sys
+    sys.path.insert(0, "/scripts")
+    import os
+
+    import common
+
+    state = common.load_state()
+    run_id = state.get("run_id")
+    name = state.get("name") or "?"
+
+    rc, message = common.phase_result(os.path.join(common.WORK, "restore.rc"))
+    if rc != 0:
+        common.fail(run_id, message or "the restore phase failed without saying why")
+
+    summary = f"{message} from {name}" if message else f"restored {name}"
+    if state.get("note"):
+        summary = f"{summary} ({state['note']})"
+    common.run_finish(run_id, "succeeded", summary, common.art_url(name),
+                      state.get("size"), state.get("sha256"), state.get("fingerprint"))
+    common.log("restore verification complete")
+{{- end }}

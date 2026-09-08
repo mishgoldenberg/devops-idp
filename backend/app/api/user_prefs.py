@@ -34,7 +34,11 @@ router = APIRouter()
 # payload by ~33%, so this maps to ~450KB of image bytes — more than enough
 # for a sidebar avatar and small enough to keep the `users` row readable.
 _AVATAR_MAX_CHARS = 600_000
-_ALLOWED_THEMES = {"light", "night"}
+# "system" is a PREFERENCE, not a theme: it is stored as-is and resolved to light or
+# night in the browser, against the OS setting, on every load. Storing the resolved
+# value instead would freeze whichever mode the user happened to be in when they chose
+# it, which is the one thing "follow the system" must not do.
+_ALLOWED_THEMES = {"light", "night", "system"}
 _ALLOWED_DENSITIES = {"comfortable", "compact"}
 
 

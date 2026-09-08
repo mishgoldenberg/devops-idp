@@ -85,7 +85,7 @@
 		function iconFor(type) {
 			if (type === "ado_project") {
 				return (
-					'<svg viewBox="0 0 24 24" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+					'<svg viewBox="0 0 24 24" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
 					'<path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"></path>' +
 					'<polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>' +
 					'<line x1="12" y1="22.08" x2="12" y2="12"></line>' +
@@ -93,7 +93,7 @@
 				);
 			}
 			return (
-				'<svg viewBox="0 0 24 24" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+				'<svg viewBox="0 0 24 24" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
 				'<path d="M22 11.08V12a10 10 0 11-5.93-9.14"></path>' +
 				'<polyline points="22 4 12 14.01 9 11.01"></polyline>' +
 				"</svg>"
@@ -129,7 +129,7 @@
 						'" data-item-id="' +
 						escapeHtml(f.item_id) +
 						'" aria-label="Remove favorite" title="Remove">' +
-						'<svg viewBox="0 0 24 24" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>' +
+						'<svg viewBox="0 0 24 24" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>' +
 						"</button>" +
 						"</a>" +
 						"</li>"
@@ -199,6 +199,9 @@
 		}
 
 		async function remove(type, id) {
+			// Captured before the request: once the delete succeeds the row is gone from
+			// state, and an undo needs the name, not just the id.
+			const removed = state.get(favKey(type, id));
 			try {
 				const res = await fetch("/api/favorites", {
 					method: "DELETE",
@@ -212,7 +215,17 @@
 				document.dispatchEvent(new CustomEvent("portal:favorites-changed"));
 				window.portalToast?.({
 					kind: "info",
-					message: "Removed from favorites.",
+					message: `Removed ${removed?.item_name || "it"} from favorites.`,
+					// Undo re-adds exactly what was removed, using the row captured
+					// BEFORE the delete — reconstructing it from the id afterwards would
+					// lose the display name.
+					action: removed
+						? {
+								label: "Undo",
+								run: () =>
+									add(removed.item_type, removed.item_id, removed.item_name).catch(() => {}),
+						  }
+						: null,
 				});
 			} catch (_err) {
 				window.portalToast?.({

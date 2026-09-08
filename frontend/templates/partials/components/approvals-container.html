@@ -5,12 +5,24 @@
 			<p class="page-subtitle">Review and act on self-service requests</p>
 		</div>
 		<div class="flex items-center gap-2">
+			{#
+				All first, and styled exactly like the Suggestions filter — same class
+				order, same btn-primary for the selected one. Two filter strips that do
+				the same job should not need to be told apart, and this one had All at
+				the far end wearing a different colour.
+
+				All exists because the other three partition today's statuses between
+				them: a status none of them names — a state added later, or one an
+				executor left a request in — is a request that exists and appears on no
+				tab at all.
+			#}
 			<div class="join" role="tablist" aria-label="Request status filter">
-				<button type="button" class="btn btn-sm join-item btn-active" data-approvals-tab="PENDING">Pending</button>
-				<button type="button" class="btn btn-sm join-item" data-approvals-tab="ACTIVE">In&nbsp;Progress</button>
-				<button type="button" class="btn btn-sm join-item" data-approvals-tab="HISTORY">History</button>
+				<button type="button" class="join-item btn btn-sm" data-approvals-tab="ALL">All</button>
+				<button type="button" class="join-item btn btn-sm" data-approvals-tab="PENDING">Pending</button>
+				<button type="button" class="join-item btn btn-sm" data-approvals-tab="ACTIVE">In&nbsp;Progress</button>
+				<button type="button" class="join-item btn btn-sm" data-approvals-tab="HISTORY">History</button>
 			</div>
-			<button id="approvals-refresh" class="btn btn-outline btn-sm" title="Refresh">
+			<button id="approvals-refresh" class="btn btn-outline btn-primary btn-sm" title="Refresh">
 				<svg viewBox="0 0 24 24" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"></path></svg>
 				Refresh
 			</button>
@@ -32,12 +44,13 @@
 </div>
 
 <dialog id="approvals-detail-modal" class="modal">
-	<div class="modal-box max-w-2xl">
+	<div class="modal-box max-w-2xl" style="display:flex;flex-direction:column;max-height:calc(100vh - 5em);overflow:hidden">
 		<form method="dialog" class="absolute right-2 top-2">
 			<button class="btn btn-sm btn-circle btn-ghost" aria-label="Close">&#10005;</button>
 		</form>
 		<h3 class="font-bold text-lg" data-approvals-detail-title>Request</h3>
-		<div class="mt-4 space-y-4" data-approvals-detail-body></div>
+		<div class="mt-4 space-y-4" data-approvals-detail-body
+			 style="flex:1 1 auto;min-height:0;overflow-y:auto"></div>
 		<div class="modal-action" data-approvals-detail-actions></div>
 	</div>
 	<form method="dialog" class="modal-backdrop"><button>close</button></form>
@@ -68,7 +81,16 @@
 			REJECTED: "badge-ghost",
 		};
 
-		let activeTab = "PENDING";
+		// The tone the backend picked for a cleaner's pull request state. Chosen there
+		// rather than here so this page and My Requests colour the same fact the same
+		// way.
+		const OUTCOME_ALERT = { ok: "alert-success", error: "alert-error", pending: "alert-info" };
+
+		// All, not Pending. An approver opening this screen is asking "what is going
+		// on", and Pending answers a narrower question: a request that was approved
+		// an hour ago and is still executing, or one that failed overnight, is
+		// invisible on the tab this opened on.
+		let activeTab = "ALL";
 		let cache = [];
 
 		function showStatus(msg, isError) {
@@ -114,7 +136,7 @@
 				<li class="section-card hover:shadow-lg transition-shadow cursor-pointer" data-request-id="${r.id}">
 					<div class="card-body p-5 gap-3">
 						<div class="flex items-start justify-between gap-3">
-							<h3 class="card-title text-base leading-snug">${escapeHtml(title)}</h3>
+							<h3 class="card-title text-base leading-snug" dir="auto">${escapeHtml(title)}</h3>
 							<span class="badge ${badge} badge-sm whitespace-nowrap">${status.replace("_", " ")}</span>
 						</div>
 						<div class="text-xs text-base-content/60 flex flex-col gap-1">
@@ -134,6 +156,7 @@
 		}
 
 		function filterForTab(rows) {
+			if (activeTab === "ALL") return rows;
 			if (activeTab === "PENDING") return rows.filter((r) => r.status === "PENDING");
 			if (activeTab === "ACTIVE") return rows.filter((r) => ["APPROVED", "IN_PROGRESS"].includes(r.status));
 			// HISTORY
@@ -160,6 +183,8 @@
 					? "No pending requests."
 					: activeTab === "ACTIVE"
 					? "No requests are currently in progress."
+					: activeTab === "ALL"
+					? "No requests have been submitted yet."
 					: "No historic requests yet.";
 				showStatus(empty, false);
 				return;
@@ -172,19 +197,228 @@
 			});
 		}
 
-		function renderPayloadFields(payload) {
-			if (!payload || typeof payload !== "object") {
-				return `<p class="text-sm text-base-content/60">No inputs.</p>`;
-			}
-			const entries = Object.entries(payload);
-			if (!entries.length) return `<p class="text-sm text-base-content/60">No inputs.</p>`;
+		// Raw payload keys are field names, not English, and two of them are whole
+		// JSON objects. An approver was reading "increase_by_bytes 10737418240" and a
+		// brace-delimited blob of somebody's phone number. Known keys get their label,
+		// machine-only keys are dropped, and the requester's details are flattened
+		// into rows instead of printed as an object.
+		//
+		// dir="auto" on every value: this portal is used in Hebrew, and a right-to-left
+		// answer rendered left-to-right puts the punctuation on the wrong end and
+		// reorders anything mixed with Latin text or digits. The browser picks the
+		// direction from the first strong character, which is exactly the rule wanted
+		// here — per value, not per page.
+		const PAYLOAD_LABELS = {
+			project_key: "Project", increase_by: "Add", justification: "Why",
+			cleaner_name: "Cleaner", repository: "Repository",
+			older_than_days: "Older than", keep_last: "Always keep newest",
+			name_pattern: "Name matches", path_pattern: "Path matches",
+			file_types: "File types", schedule: "Schedule",
+			project_name: "Project name", collection: "Collection",
+			process_type: "Process", description: "Description",
+			project_admin: "Project administrator",
+			full_name: "Full name", phone_number: "Phone", branch: "Branch",
+			section: "Section", team: "Team", role: "Role",
+			summary: "What it does", way_to_enlarge: "Kind of request",
+		};
+		// Machine bookkeeping: the same fact as a row above it, in bytes, or a
+		// snapshot the live panel already shows better.
+		const PAYLOAD_HIDDEN = new Set([
+			"increase_by_bytes", "snapshot_at_request", "cleaner_id", "slug",
+			"requester_details", "attachments",
+		]);
+
+		function payloadRow(key, value) {
+			const label = PAYLOAD_LABELS[key] || key.replace(/_/g, " ");
+			const text = (value === null || value === undefined) ? ""
+				: (typeof value === "object" ? JSON.stringify(value) : String(value));
+			if (!text.trim()) return "";
+			// The value is wrapped in a shrink-to-fit box rather than carrying dir on
+			// the cell itself. A right-to-left value in a full-width cell aligns to the
+			// far right and ends up an inch away from the label that names it; inside a
+			// box the width of its own text, it reads right-to-left AND stays next to
+			// its label.
 			return `
-				<dl class="grid grid-cols-[auto,1fr] gap-x-4 gap-y-1 text-sm">
-					${entries.map(([k, v]) => `
-						<dt class="text-base-content/60">${escapeHtml(k)}</dt>
-						<dd class="break-words">${escapeHtml(typeof v === "object" ? JSON.stringify(v) : v)}</dd>
-					`).join("")}
+				<dt class="text-base-content/60">${escapeHtml(label)}</dt>
+				<dd class="break-words"><span dir="auto" style="display:inline-block;max-width:100%">${escapeHtml(text)}</span></dd>`;
+		}
+
+		function renderPayloadFields(payload) {
+			if (!payload || typeof payload !== "object") return `<p class="text-sm text-base-content/60">No inputs.</p>`;
+			const details = payload.requester_details && typeof payload.requester_details === "object"
+				? payload.requester_details : {};
+			const rows = Object.entries(payload)
+				.filter(([k]) => !PAYLOAD_HIDDEN.has(k))
+				.map(([k, v]) => payloadRow(k, v))
+				.concat(Object.entries(details).map(([k, v]) => payloadRow(k, v)))
+				.filter(Boolean);
+			if (!rows.length) return `<p class="text-sm text-base-content/60">No inputs.</p>`;
+			return `
+				<dl class="grid gap-x-4 gap-y-1 text-sm" style="grid-template-columns: auto 1fr">
+					${rows.join("")}
 				</dl>`;
+		}
+
+		/*
+			What every project's quota adds up to, against the disk it all has to fit on
+			-- and where THIS request would put that total.
+
+			The requester is shown their own project and nothing else. This is the
+			question only an approver has to answer: each quota looks reasonable on its
+			own, and the sum is the thing that overruns. The requested increase is drawn
+			as its own segment rather than folded into the total, so "what we have
+			promised" and "what this would add" stay separable by eye.
+		*/
+		async function loadQuotaEstate(r) {
+			const box = modalBody.querySelector("[data-quota-estate]");
+			if (!box) return;
+			const payload = r.request_payload || {};
+			const params = new URLSearchParams({
+				project: payload.project_key || "",
+				add: payload.increase_by || "",
+			});
+			let data = null;
+			try {
+				const res = await fetch("/api/catalog/quota-preview?" + params, { credentials: "same-origin" });
+				const json = await res.json().catch(() => ({}));
+				if (!res.ok) throw new Error(json.detail || "unavailable");
+				data = json.data;
+			} catch (err) {
+				box.innerHTML = '<h4 class="text-xs font-semibold uppercase tracking-widest text-base-content/50 mb-2">Artifactory storage</h4>' +
+					'<p class="text-sm text-base-content/60">' + escapeHtml(err.message || "Could not read Artifactory.") + "</p>";
+				return;
+			}
+
+			// ── The bar ──────────────────────────────────────────────────────
+			//
+			// ONE axis, one kind of number: what has been PROMISED, against the disk
+			// it has to fit on. Actual usage used to sit on this bar too, and it does
+			// not belong there — per-project usage is LOGICAL size while the disk is
+			// physical, and Artifactory de-duplicates, so the estate read "7.2 TB used"
+			// on a 6 TB disk. Both numbers were right; the axis was wrong. Real disk
+			// occupancy is now its own row underneath, from the filestore.
+			//
+			// Scaled to the larger of the disk and the total promised: scaled to the
+			// disk, 11 TB promised and 6 TB promised draw the identical full bar.
+			const scale = Math.max(data.disk_total_bytes, data.committed_after_bytes) || 1;
+			const pct = (bytes) => Math.max(0, Math.min(100, (Number(bytes) || 0) / scale * 100));
+			const diskPct = pct(data.disk_total_bytes);
+
+			const bar = data.disk_known
+				? '<div style="position:relative;height:0.75rem;border-radius:9999px;background-color:hsl(var(--b3));overflow:hidden;display:flex">' +
+					'<div style="width:' + pct(data.committed_bytes).toFixed(2) + '%;background-color:hsl(var(--p))"></div>' +
+					// A 10 GB request against an 11 TB estate is a hundredth of a percent,
+					// which rounds to nothing. It still gets a sliver: the whole point of
+					// the second colour is to show what THIS approval adds.
+					'<div style="width:' + pct(data.requested_bytes).toFixed(2) + '%;' +
+						(data.requested_bytes > 0 ? "min-width:3px;" : "") +
+						'background-color:hsl(var(--wa))"></div>' +
+					'<div style="position:absolute;left:' + diskPct.toFixed(2) + '%;top:0;bottom:0;width:2px;background-color:hsl(var(--bc))"></div>' +
+				  "</div>" +
+				  '<div class="flex flex-wrap gap-4 text-xs mt-2 text-base-content/60">' +
+					swatch("hsl(var(--p))", "Promised now") +
+					(data.requested ? swatch("hsl(var(--wa))", "This request") : "") +
+					swatch("hsl(var(--bc))", "Disk ends here") +
+				  "</div>"
+				: '<p class="text-sm text-base-content/60">Disk capacity is unknown — set ARTIFACTORY_DISK_TOTAL to draw the bar.</p>';
+
+			// ── The numbers, one per line, each saying what kind of number it is ──
+			const rows = [
+				[
+					"On disk now",
+					data.physical_known
+						? escapeHtml(data.physical_used) + " of " + escapeHtml(data.disk_total)
+						: "not reported",
+					"what the files actually occupy, after de-duplication",
+				],
+				[
+					"Promised in quotas",
+					escapeHtml(data.committed),
+					data.counted + " project(s)" +
+						(data.excluded.length ? ", excluding " + escapeHtml(data.excluded.join(", ")) : ""),
+				],
+			];
+			if (data.requested) {
+				rows.push(["This request", "+" + escapeHtml(data.requested), "added to the promise, not to the disk"]);
+				rows.push([
+					"Promised after",
+					escapeHtml(data.committed_after),
+					data.disk_known ? Math.round((data.committed_after_bytes / data.disk_total_bytes) * 100) + "% of the disk" : "",
+				]);
+			}
+			const table = '<dl class="grid gap-x-4 gap-y-1 text-sm mt-3" style="grid-template-columns: auto auto 1fr">' +
+				rows.map(([label, value, note]) =>
+					'<dt class="text-base-content/60">' + label + "</dt>" +
+					'<dd class="font-medium whitespace-nowrap">' + value + "</dd>" +
+					'<dd class="text-base-content/50 text-xs" style="align-self:center">' + note + "</dd>"
+				).join("") + "</dl>";
+
+			// ── One conclusion, in one sentence ──────────────────────────────
+			let verdict = "";
+			if (data.tips_over) {
+				verdict = '<p class="text-sm text-error mt-3">This request is what takes the promises past the disk.</p>';
+			} else if (data.already_over) {
+				verdict = '<p class="text-sm text-warning mt-3">Already over-committed by ' +
+					escapeHtml(data.overage) + " before this request" +
+					(data.physical_known
+						? ", though only " + escapeHtml(data.physical_used) + " is on the disk"
+						: "") + ".</p>";
+			} else if (data.headroom_bytes > 0) {
+				verdict = '<p class="text-sm text-base-content/60 mt-3">Fits — ' + escapeHtml(data.headroom) +
+					" of the disk stays unpromised.</p>";
+			}
+
+			const project = data.project
+				? '<dl class="grid gap-x-4 gap-y-1 text-sm mt-3" style="padding-top:0.75rem;grid-template-columns: auto 1fr;border-top:1px solid hsl(var(--bc) / 0.12)">' +
+					'<dt class="text-base-content/60">Project</dt><dd dir="auto">' + escapeHtml(data.project.key) + "</dd>" +
+					'<dt class="text-base-content/60">Its quota</dt><dd>' +
+						(data.project.unlimited
+							? "Unlimited"
+							: escapeHtml(fmtBytes(data.project.used_bytes)) + " used of " +
+							  escapeHtml(fmtBytes(data.project.quota_bytes)) +
+							  (data.requested_bytes
+								? " → " + escapeHtml(fmtBytes(data.project.quota_bytes + data.requested_bytes)) + " after this"
+								: "")) + "</dd>" +
+				  "</dl>"
+				: "";
+
+			box.innerHTML =
+				'<h4 class="text-xs font-semibold uppercase tracking-widest text-base-content/50 mb-2">Artifactory storage</h4>' +
+				bar + table + verdict + project;
+		}
+
+		// Whether a ServiceNow item was actually raised. It is ordered after the work
+		// is done and is not allowed to fail it, so a request can complete perfectly
+		// and leave the team no ticket at all.
+		function renderServiceNow(result) {
+			if (!result || typeof result !== "object") return "";
+			if (result.servicenow_number) {
+				return `<dt class="text-base-content/60">ServiceNow</dt><dd>${escapeHtml(result.servicenow_number)}</dd>`;
+			}
+			if (result.servicenow_error) {
+				// With a button, because the alternative was doing the work twice: the
+				// quota was already raised and the pull request already open, so the
+				// only way to get the missing ticket was to submit the whole request
+				// again and apply the change a second time.
+				return `<dt class="text-base-content/60">ServiceNow</dt>` +
+					`<dd class="text-warning">No item was raised — ${escapeHtml(result.servicenow_error)}
+						<button type="button" class="btn btn-outline btn-xs" style="margin-top:0.4rem;display:block"
+						        data-snow-retry>Raise it now</button></dd>`;
+			}
+			return "";
+		}
+
+		function swatch(colour, label) {
+			return '<span style="display:inline-flex;align-items:center;gap:0.35rem">' +
+				'<span style="width:0.6rem;height:0.6rem;border-radius:2px;background-color:' + colour + '"></span>' +
+				label + "</span>";
+		}
+
+		function fmtBytes(bytes) {
+			const units = ["B", "KB", "MB", "GB", "TB"];
+			let size = Number(bytes) || 0, i = 0;
+			while (size >= 1024 && i < units.length - 1) { size /= 1024; i += 1; }
+			return (i < 2 ? size.toFixed(0) : size.toFixed(1)) + " " + units[i];
 		}
 
 		async function openDetail(id) {
@@ -199,7 +433,7 @@
 			modalBody.innerHTML = `
 				<section>
 					<h4 class="text-xs font-semibold uppercase tracking-widest text-base-content/50 mb-2">Request Info</h4>
-					<dl class="grid grid-cols-[auto,1fr] gap-x-4 gap-y-1 text-sm">
+					<dl class="grid gap-x-4 gap-y-1 text-sm" style="grid-template-columns: auto 1fr">
 						<dt class="text-base-content/60">Status</dt>
 						<dd><span class="badge ${badge} badge-sm">${statusStr.replace("_", " ")}</span></dd>
 						<dt class="text-base-content/60">Service type</dt>
@@ -218,18 +452,109 @@
 							<dt class="text-base-content/60">Rejection reason</dt>
 							<dd class="text-error">${escapeHtml(r.rejection_reason)}</dd>
 						` : ""}
+						${renderServiceNow(r.execution_result)}
 					</dl>
 				</section>
 				<section>
 					<h4 class="text-xs font-semibold uppercase tracking-widest text-base-content/50 mb-2">Inputs</h4>
 					${renderPayloadFields(r.request_payload)}
 				</section>
+				${r.request_type === "ARTIFACTORY_QUOTA_INCREASE" ? `
+					<section data-quota-estate>
+						<h4 class="text-xs font-semibold uppercase tracking-widest text-base-content/50 mb-2">Artifactory storage</h4>
+						<p class="text-sm text-base-content/60">Reading the estate...</p>
+					</section>` : ""}
+				${(r.cleaner && r.cleaner.outcome && r.cleaner.outcome.label) ? `
+					<section>
+						<h4 class="text-xs font-semibold uppercase tracking-widest text-base-content/50 mb-2">The cleaner</h4>
+						<div role="alert" class="alert ${OUTCOME_ALERT[r.cleaner.outcome.tone] || "alert-info"} alert-soft text-sm">
+							<div>
+								<p class="font-semibold">Pull request: ${escapeHtml(r.cleaner.outcome.label.toLowerCase())}</p>
+								${r.cleaner.outcome.detail ? `<p class="mt-1">${escapeHtml(r.cleaner.outcome.detail)}</p>` : ""}
+								${r.cleaner.pull_request_url ? `<p class="mt-1"><a class="link" href="${escapeHtml(r.cleaner.pull_request_url)}" target="_blank" rel="noopener noreferrer">Open the pull request</a></p>` : ""}
+								${r.cleaner.pipeline_url ? `<p class="mt-1"><a class="link" href="${escapeHtml(r.cleaner.pipeline_url)}" target="_blank" rel="noopener noreferrer">Open the pipeline${r.cleaner.pipeline_name ? ` (${escapeHtml(r.cleaner.pipeline_name)})` : ""}</a></p>` : ""}
+								${r.cleaner.pipeline_error ? `<p class="mt-1 text-warning">${escapeHtml(r.cleaner.pipeline_error)}</p>` : ""}
+							</div>
+						</div>
+					</section>` : ""}
+				{#
+					What approving a removal does NOT do.
+
+					The approver is the person who can act on this, and this is the moment
+					they are acting — so it is said here rather than left for somebody to
+					discover on a card three days later. Merging the pull request takes the
+					cleaner's files out of the repository and the portal deletes its
+					pipeline; the CronJob and the ConfigMap live on a different OpenShift
+					cluster, behind a firewall this backend cannot cross, and they carry on
+					deleting artifacts every night until a person removes them.
+
+					Rendered from the execution result, which carries the two console links
+					and the one-line oc command.
+				#}
+				${(r.execution_result && r.execution_result.cluster_objects && r.execution_result.cluster_objects.length) ? `
+					<section>
+						<h4 class="text-xs font-semibold uppercase tracking-widest text-base-content/50 mb-2">Still on the cluster</h4>
+						<div role="alert" class="alert alert-warning alert-soft text-sm">
+							<div>
+								<p class="font-semibold">The scheduled job has to be deleted by hand.</p>
+								<p class="mt-1">Removing the files does not remove them from OpenShift. Open each one, delete it, then confirm it in My Requests.</p>
+								<p class="mt-2 flex flex-wrap gap-2">
+									${r.execution_result.cluster_objects.map((o) => o.url
+										? `<a class="btn btn-outline btn-xs" href="${escapeHtml(o.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(o.kind)}: ${escapeHtml(o.name)}</a>`
+										: `<span class="btn btn-outline btn-xs no-animation cursor-default">${escapeHtml(o.kind)}: ${escapeHtml(o.name)}</span>`
+									).join("")}
+								</p>
+								${r.execution_result.cluster_command ? `<p class="mt-2"><code class="text-xs" dir="ltr">${escapeHtml(r.execution_result.cluster_command)}</code></p>` : ""}
+							</div>
+						</div>
+					</section>` : ""}
+				{#
+					The pull request THIS request opened, read from its own result rather
+					than from the cleaner's record. For a removal those are the same link
+					until the moment it is merged — at which point the cleaner's record
+					stops being about a cleaner and starts being about what is left of one
+					on the cluster, so the section above changes its wording rather than
+					disappearing.
+				#}
+				${(r.execution_result && r.execution_result.pull_request_url && !(r.cleaner && r.cleaner.pull_request_url === r.execution_result.pull_request_url)) ? `
+					<section>
+						<h4 class="text-xs font-semibold uppercase tracking-widest text-base-content/50 mb-2">This request's pull request</h4>
+						<p class="text-sm"><a class="link" href="${escapeHtml(r.execution_result.pull_request_url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(r.execution_result.pull_request_url)}</a></p>
+					</section>` : ""}
 				${r.execution_result ? `
 					<section>
 						<h4 class="text-xs font-semibold uppercase tracking-widest text-base-content/50 mb-2">Execution result</h4>
 						<pre class="text-xs bg-base-200 rounded p-3 overflow-x-auto">${escapeHtml(JSON.stringify(r.execution_result, null, 2))}</pre>
 					</section>` : ""}
 			`;
+
+			if (r.request_type === "ARTIFACTORY_QUOTA_INCREASE") loadQuotaEstate(r);
+
+			modalBody.querySelector("[data-snow-retry]")?.addEventListener("click", async (event) => {
+				const button = event.currentTarget;
+				button.disabled = true;
+				button.textContent = "Raising…";
+				try {
+					const res = await fetch("/api/approvals/requests/" + r.id + "/servicenow-retry", {
+						method: "POST", credentials: "same-origin",
+					});
+					const json = await res.json().catch(() => ({}));
+					if (!res.ok) throw new Error(json.detail || "That did not work.");
+					if (json.data && json.data.number) {
+						showStatus("Raised " + json.data.number + ".", false);
+						modal.close();
+						load();
+					} else {
+						button.disabled = false;
+						button.textContent = "Raise it now";
+						window.alert((json.data && json.data.error) || "ServiceNow still refused it.");
+					}
+				} catch (err) {
+					button.disabled = false;
+					button.textContent = "Raise it now";
+					window.alert(err.message || "That did not work.");
+				}
+			});
 
 			modalActions.innerHTML = "";
 			if (statusStr === "PENDING") {
@@ -270,14 +595,21 @@
 			}
 		}
 
+		// btn-primary, the same class the Suggestions filter paints its selection
+		// with. Painted from the state rather than toggled at the click, so the tab
+		// that is drawn as selected is always the one filterForTab is using -- the
+		// markup no longer has to be edited in step with the default.
+		function paintTabs() {
+			tabs.forEach((b) => b.classList.toggle("btn-primary", b.dataset.approvalsTab === activeTab));
+		}
 		tabs.forEach((btn) => {
 			btn.addEventListener("click", () => {
-				tabs.forEach((b) => b.classList.remove("btn-active"));
-				btn.classList.add("btn-active");
 				activeTab = btn.dataset.approvalsTab;
+				paintTabs();
 				render();
 			});
 		});
+		paintTabs();
 		refreshBtn?.addEventListener("click", load);
 
 		load();

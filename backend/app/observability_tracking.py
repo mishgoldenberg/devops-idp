@@ -137,3 +137,20 @@ def priority_to_severity_band(priority_code: str) -> str:
     if p == "3":
         return "Medium"
     return "Low"
+
+
+def urgency_to_severity_band(urgency: str) -> str:
+    """Map the support wizard's urgency WORD (low/medium/high/urgent) to a band.
+
+    The wizard sends a word, not a ServiceNow priority code. Feeding that word to
+    ``priority_to_severity_band`` — which only recognises the digits 1–5 — made every
+    ticket fall through to "Low", so the observability dashboard showed everything as
+    Low regardless of what the user picked. This maps the words directly. Numeric codes
+    are accepted too, so either input is safe.
+    """
+    u = str(urgency or "").strip().lower()
+    if u in ("urgent", "critical", "high", "1", "2"):
+        return "High"
+    if u in ("medium", "moderate", "normal", "3"):
+        return "Medium"
+    return "Low"  # low, planning, blank, or anything unrecognised

@@ -5,246 +5,201 @@
 			<p class="page-subtitle">View, open and reply to your ServiceNow tickets</p>
 		</div>
 		<div class="flex items-center gap-2">
-			{% with system_key = 'servicenow' %}
-				{% include "partials/components/open-system-button.html" %}
-			{% endwith %}
+			{#
+				`refresh-btn` is the id every other page uses for this, so the keyboard
+				shortcut in portal-chrome.html finds it here too without being told.
+			#}
+			{#
+				The response times the team works to. This is the one thing a person
+				about to raise a ticket actually wants from a header button: it tells
+				them which severity to pick and what to expect afterwards. (What used
+				to be here was a diagnostic about the ServiceNow form itself, which is
+				nobody's business but ours -- it lives at /api/support/ticket-form.)
+			#}
+			<button id="support-sla-btn" class="btn btn-ghost btn-sm" title="Response times by severity">
+				SLA
+			</button>
+			<button id="refresh-btn" class="btn btn-outline btn-primary btn-sm">
+				&#8635; Refresh
+			</button>
 			<button id="support-new-ticket-btn" class="btn btn-primary btn-sm">Open a Ticket</button>
 		</div>
 	</header>
 
-	<div class="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-5 gap-6 p-6">
-		<div class="lg:col-span-2 section-card min-h-0">
+	{#
+		The two panes used to be a fixed 2:3 grid. A conversation with a screenshot in it
+		needs room the ticket list does not, and vice versa — so the split is now the
+		user's to make. Drag the divider; double-click it to go back to the default.
+		The ratio is remembered per browser (portal-chrome.html owns the behaviour and
+		the persistence). Below `lg` the panes stack and the divider hides itself.
+	#}
+	<div id="support-split" class="portal-split flex-1 min-h-0 p-6">
+		{#
+			`data-split-default` is the number, and it is the only copy of it. The
+			double-click reset in portal-chrome.html used to carry its own literal, so
+			changing the default here reset to the old one -- two numbers for one
+			measurement. The list starts narrow: a ticket row is a line of text, the
+			conversation beside it holds screenshots.
+		#}
+		<div data-split-pane data-split-default="26" class="section-card min-h-0" style="flex: 0 0 26%">
 			<div class="card-body p-0 min-h-0 flex flex-col">
 				<div class="px-4 py-3 border-b border-base-300 section-title">My Tickets</div>
 				<div id="support-ticket-error" class="hidden mx-3 mt-3 alert alert-warning alert-soft text-xs"></div>
 				<ul id="support-ticket-list" class="flex-1 min-h-0 overflow-y-auto divide-y divide-base-300"></ul>
 			</div>
 		</div>
-		<div class="lg:col-span-3 section-card min-h-0">
+
+		<div
+			class="portal-splitter"
+			role="separator"
+			aria-orientation="vertical"
+			aria-label="Resize the ticket list"
+			title="Drag to resize · double-click to reset"
+		></div>
+
+		<div data-split-pane class="section-card min-h-0" style="flex: 1 1 0%">
 			<div class="card-body min-h-0 flex flex-col gap-3">
-				<div id="support-ticket-title" class="section-title text-lg">Select a ticket</div>
+				<div id="support-ticket-title" class="section-title text-lg" dir="auto">Select a ticket</div>
 				<div id="support-conversation" class="flex-1 min-h-0 overflow-y-auto border border-base-300 rounded-lg p-3 space-y-2"></div>
-				<div class="flex gap-2">
-					<textarea id="support-reply" class="textarea textarea-bordered flex-1" rows="2" placeholder="Write a reply..."></textarea>
-					<button id="support-send-reply" class="btn btn-primary self-end">Send</button>
+				<div class="flex flex-col gap-2">
+					<div class="flex gap-2">
+						<textarea id="support-reply" class="textarea textarea-bordered flex-1" rows="2" dir="auto" placeholder="Write a reply..."></textarea>
+						<button id="support-send-reply" class="btn btn-primary self-end">Send</button>
+					</div>
+					<input id="support-reply-files" type="file" class="file-input file-input-bordered file-input-sm w-full" multiple aria-label="Attach files to reply" />
 				</div>
 			</div>
 		</div>
 	</div>
 </div>
 
-<div id="support-new-ticket-overlay" class="hidden fixed inset-0 z-50 items-center justify-center bg-black/50 p-4">
-	<div class="w-full max-w-4xl max-h-[92vh] rounded-xl border border-base-300 bg-base-100 shadow-2xl flex flex-col">
-		<div class="px-5 py-4 border-b border-base-300 flex items-center justify-between gap-3">
-			<div>
-				<h3 class="font-bold text-lg">Open a Ticket</h3>
-				<p id="support-step-label" class="text-xs opacity-70">Step 1 of 4 — Navy User Info</p>
+{#
+	THE SLA, as four cards rather than a spreadsheet.
+
+	The version of this table people know is a bordered grid with the severities
+	across the top and three rows beneath -- readable, but it makes you scan a
+	column to assemble one fact ("Urgent means production is down and somebody
+	answers within the hour"). Each severity is one thing, so each severity is one
+	card, and the three facts sit in reading order inside it: what it is called,
+	how long until somebody answers, and when to choose it.
+
+	Colours come from the theme's own semantic variables, so the strip re-tints
+	itself in either mode and matches the severity chips on the ticket list --
+	which is the whole point of them being coloured at all.
+#}
+<style>
+	.sla-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+		gap: 0.75rem;
+	}
+
+	.sla-card {
+		border: 1px solid hsl(var(--bc) / 0.12);
+		border-radius: 0.75rem;
+		padding: 0.9rem 1rem;
+		background: hsl(var(--b2));
+		/* The severity's colour as a spine down the left edge, rather than a filled
+		   card: four saturated blocks side by side read as an alert, not a table. */
+		border-left: 4px solid hsl(var(--sla-tone));
+	}
+
+	.sla-name {
+		display: flex;
+		align-items: center;
+		gap: 0.45rem;
+		font-weight: 700;
+		font-size: 0.95rem;
+		color: hsl(var(--bc));
+	}
+
+	.sla-dot {
+		width: 0.6rem;
+		height: 0.6rem;
+		border-radius: 9999px;
+		background: hsl(var(--sla-tone));
+		flex: none;
+	}
+
+	.sla-time {
+		margin-top: 0.55rem;
+		font-size: 1.5rem;
+		font-weight: 700;
+		line-height: 1.1;
+		color: hsl(var(--sla-tone));
+	}
+
+	.sla-time-label {
+		font-size: 0.68rem;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: hsl(var(--bc) / 0.5);
+	}
+
+	.sla-when {
+		margin-top: 0.6rem;
+		padding-top: 0.6rem;
+		border-top: 1px solid hsl(var(--bc) / 0.1);
+		font-size: 0.8rem;
+		color: hsl(var(--bc) / 0.75);
+	}
+</style>
+
+<dialog id="support-sla" class="modal">
+	<div class="modal-box" style="max-width: 52rem">
+		<h3 class="font-bold text-lg">Response times</h3>
+		<p class="text-xs text-base-content/60 mt-1">
+			How long until somebody answers, by the severity you pick. Choose the one that
+			describes the effect on your work, not how urgent it feels.
+		</p>
+
+		<div class="sla-grid mt-4">
+			<div class="sla-card" style="--sla-tone: var(--su)">
+				<div class="sla-name"><span class="sla-dot"></span>Low</div>
+				<div class="sla-time">2 days</div>
+				<div class="sla-time-label">to first response</div>
+				<div class="sla-when">Does not interfere with your work.</div>
 			</div>
-			<button id="support-cancel-ticket" class="btn btn-ghost btn-sm">Close</button>
+			<div class="sla-card" style="--sla-tone: var(--in)">
+				<div class="sla-name"><span class="sla-dot"></span>Medium</div>
+				<div class="sla-time">1 day</div>
+				<div class="sla-time-label">to first response</div>
+				<div class="sla-when">Slightly interferes with your work.</div>
+			</div>
+			<div class="sla-card" style="--sla-tone: var(--wa)">
+				<div class="sla-name"><span class="sla-dot"></span>High</div>
+				<div class="sla-time">3.5 hours</div>
+				<div class="sla-time-label">to first response</div>
+				<div class="sla-when">Seriously interferes with your work.</div>
+			</div>
+			<div class="sla-card" style="--sla-tone: var(--er)">
+				<div class="sla-name"><span class="sla-dot"></span>Urgent</div>
+				<div class="sla-time">1 hour</div>
+				<div class="sla-time-label">to first response</div>
+				<div class="sla-when">Production is down.</div>
+			</div>
 		</div>
 
-		<div class="px-5 pt-4 grid grid-cols-4 gap-2" aria-label="Ticket creation progress">
-			<div class="h-1.5 rounded-full bg-base-300 transition-colors" data-support-step-bar="0"></div>
-			<div class="h-1.5 rounded-full bg-base-300 transition-colors" data-support-step-bar="1"></div>
-			<div class="h-1.5 rounded-full bg-base-300 transition-colors" data-support-step-bar="2"></div>
-			<div class="h-1.5 rounded-full bg-base-300 transition-colors" data-support-step-bar="3"></div>
-		</div>
-
-		<div class="p-5 overflow-y-auto">
-			<div id="support-new-ticket-error" class="hidden mb-4 alert alert-error alert-soft text-xs whitespace-pre-wrap"></div>
-			<div id="support-ticket-success" class="hidden text-center py-12 space-y-4">
-				<div class="mx-auto h-14 w-14 rounded-full bg-success/15 text-success flex items-center justify-center">
-					<svg viewBox="0 0 24 24" class="h-8 w-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-						<path d="M20 6 9 17l-5-5"></path>
-					</svg>
-				</div>
-				<div>
-					<h4 class="text-xl font-bold">Ticket created successfully</h4>
-					<p id="support-created-ticket-number" class="mt-1 text-2xl font-semibold text-primary"></p>
-				</div>
-				<a class="btn btn-primary" href="/ui/support">Go to Support</a>
-			</div>
-
-			<form id="support-ticket-flow-form" class="space-y-6">
-				<section data-support-step="0" class="section-card p-5 space-y-5 transition-all duration-200">
-					<div class="section-title">Navy User Info</div>
-					<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-						<label class="form-control w-full">
-							<span class="label-text">Full Name (שם מלא)</span>
-							<input name="full_name" class="input input-bordered w-full" value="{{ user.display_name or user.username or '' }}" required />
-						</label>
-						<label class="form-control w-full">
-							<span class="label-text">Phone Number (טלפון)</span>
-							<input name="phone_number" class="input input-bordered w-full" inputmode="numeric" pattern="[0-9]+" required />
-						</label>
-						<label class="form-control w-full">
-							<span class="label-text">Branch (ענף)</span>
-							<select name="branch" class="select select-bordered w-full" required>
-								<option value="">Select branch</option>
-								<option>משוב</option>
-								<option>פיתוח תוכנה</option>
-								<option>שילובים</option>
-								<option>מערכות מידע</option>
-								<option>דיגיטל</option>
-								<option>סייבר ושתפ</option>
-							</select>
-						</label>
-						<label class="form-control w-full">
-							<span class="label-text">Team (צוות)</span>
-							<input name="team" class="input input-bordered w-full" required />
-						</label>
-						<label class="form-control w-full">
-							<span class="label-text">Section (מדור)</span>
-							<input name="section" class="input input-bordered w-full" required />
-						</label>
-						<label class="form-control w-full">
-							<span class="label-text">Role (תפקיד)</span>
-							<input name="role" class="input input-bordered w-full" required />
-						</label>
-					</div>
-				</section>
-
-				<section data-support-step="1" class="hidden section-card p-5 space-y-5 transition-all duration-200">
-					<div class="section-title">Service Info</div>
-					<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-						<label class="form-control w-full">
-							<span class="label-text">Network (רשת)</span>
-							<select name="network" class="select select-bordered w-full" required>
-								<option value="">Select network</option>
-								<option>סודי ביותר</option>
-								<option>סודי ומדן</option>
-							</select>
-						</label>
-						<label class="form-control w-full">
-							<span class="label-text">DevOps Services (שירותים)</span>
-							<select name="devops_services" class="select select-bordered w-full" required>
-								<option value="">Select service</option>
-								<option>artifactory</option>
-								<option>azure devops</option>
-								<option>devops portal</option>
-								<option>everything</option>
-								<option>service now</option>
-								<option>sonarqube</option>
-								<option>other</option>
-							</select>
-						</label>
-					</div>
-					<div id="support-azure-fields" class="hidden rounded-xl border border-base-300 bg-base-200/50 p-4 space-y-4 transition-all duration-200">
-						<div class="section-title text-sm">Azure DevOps details</div>
-						<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-							<label class="form-control w-full">
-								<span class="label-text">Azure DevOps Support Type (סוג תמיכה Azure DevOps)</span>
-								<select name="azure_devops_support_type" class="select select-bordered w-full">
-									<option value="">Select support type</option>
-									<option>pipelines</option>
-									<option>repository</option>
-									<option>permissions</option>
-									<option>others</option>
-								</select>
-							</label>
-							<label class="form-control w-full">
-								<span class="label-text">Azure DevOps Collection (אוסף Azure DevOps)</span>
-								<select name="azure_devops_collection" class="select select-bordered w-full">
-									<option value="">Select collection</option>
-									<option>devcollection-inheritance</option>
-									<option>devcollection</option>
-									<option>devcollection17</option>
-									<option>tikshuvcollection-inheritance</option>
-									<option>tikshuvcollection</option>
-								</select>
-							</label>
-							<label id="support-azure-project-select-wrap" class="form-control w-full hidden">
-								<span class="label-text">Azure DevOps Project (פרויקט Azure DevOps)</span>
-								<select name="azure_devops_project_select" class="select select-bordered w-full">
-									<option value="">Select project</option>
-								</select>
-							</label>
-							<label id="support-azure-project-input-wrap" class="form-control w-full hidden">
-								<span class="label-text">Azure DevOps Project (פרויקט Azure DevOps)</span>
-								<input name="azure_devops_project_input" class="input input-bordered w-full" placeholder="Enter project name manually" />
-							</label>
-							<label id="support-pipeline-url-wrap" class="form-control w-full hidden md:col-span-2">
-								<span class="label-text">Pipeline URL (קישור Pipeline)</span>
-								<input name="pipeline_url" class="input input-bordered w-full" />
-							</label>
-						</div>
-					</div>
-					<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-						<label class="form-control w-full">
-							<span class="label-text">Reason (סיבת פתיחת הקריאה)</span>
-							<select name="reason" class="select select-bordered w-full" required>
-								<option value="">Select reason</option>
-								<option>customer issue</option>
-								<option>usage/configuration issue</option>
-								<option>data importing</option>
-								<option>performance issue</option>
-								<option>bug</option>
-								<option>feature request</option>
-								<option>question</option>
-								<option>other</option>
-							</select>
-						</label>
-						<label id="support-reason-other-wrap" class="form-control w-full hidden transition-all duration-200">
-							<span class="label-text">Please specify (נא לפרט) <span class="opacity-60">(optional)</span></span>
-							<input name="reason_other" class="input input-bordered w-full" />
-						</label>
-					</div>
-				</section>
-
-				<section data-support-step="2" class="hidden section-card p-5 space-y-5 transition-all duration-200">
-					<div class="section-title">Ticket Info</div>
-					<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-						<label class="form-control w-full">
-							<span class="label-text">Title (כותרת)</span>
-							<input name="title" class="input input-bordered w-full" required />
-						</label>
-						<label class="form-control w-full">
-							<span class="label-text">Urgency (דחיפות)</span>
-							<select name="urgency" class="select select-bordered w-full" required>
-								<option value="">Select urgency</option>
-								<option value="4">low (4)</option>
-								<option value="3">medium (3)</option>
-								<option value="2">high (2)</option>
-								<option value="1">urgent (1)</option>
-							</select>
-						</label>
-						<label class="form-control w-full md:col-span-2">
-							<span class="label-text">Description (תיאור)</span>
-							<textarea name="description" class="textarea textarea-bordered w-full min-h-28" required></textarea>
-						</label>
-						<label class="form-control w-full md:col-span-2">
-							<span class="label-text">Work Impact (השפעה על העבודה)</span>
-							<textarea name="work_impact" class="textarea textarea-bordered w-full min-h-24" required></textarea>
-						</label>
-					</div>
-				</section>
-
-				<section data-support-step="3" class="hidden section-card p-5 space-y-5 transition-all duration-200">
-					<div class="section-title">Attachments + Summary</div>
-					<div id="support-ticket-summary" class="rounded-xl border border-base-300 bg-base-200/50 p-4 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm"></div>
-					<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-						<label class="form-control w-full md:col-span-2">
-							<span class="label-text">Help Text (איך נוכל לעזור?)</span>
-							<textarea name="help_text" class="textarea textarea-bordered w-full min-h-24" required></textarea>
-						</label>
-						<label class="form-control w-full md:col-span-2">
-							<span class="label-text">Attachments (קבצים מצורפים) <span class="opacity-60">(optional)</span></span>
-							<input name="attachments" type="file" class="file-input file-input-bordered w-full" multiple />
-						</label>
-					</div>
-				</section>
-			</form>
-		</div>
-
-		<div id="support-ticket-flow-actions" class="px-5 py-4 border-t border-base-300 flex items-center justify-between gap-2">
-			<button id="support-ticket-back" class="btn">Back</button>
-			<div class="flex items-center gap-2">
-				<button id="support-ticket-next" class="btn btn-primary">Next</button>
-				<button id="support-create-ticket" class="btn btn-primary hidden">Open a Ticket</button>
-			</div>
+		<div class="modal-action">
+			<button type="button" class="btn btn-sm" data-support-sla-close>Close</button>
 		</div>
 	</div>
-</div>
+	<form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+{#
+	The Open a Ticket wizard used to be right here: four hand-built steps with their
+	own progress bar, their own validation, their own summary, their own
+	localStorage, and their own copy of the six requester-detail questions -- the copy
+	that drifted from the one in catalog_forms.py on all four axes and needed a build
+	guard to catch it.
+
+	It is now a spec (`support_ticket` in catalog_forms.py) rendered by the one form
+	renderer in wizard mode. Still four steps, still Back and Next -- a ticket is
+	asked of somebody in the middle of a problem, and four questions at a time is
+	kinder than eighteen at once -- but the steps ARE the sections, the controls are
+	the ones every other request uses, and there is one copy of the questions.
+#}
 
 <script>
 	(function () {
@@ -254,8 +209,6 @@
 		const titleEl = document.getElementById("support-ticket-title");
 		const convEl = document.getElementById("support-conversation");
 		const replyEl = document.getElementById("support-reply");
-		const modal = document.getElementById("support-new-ticket-overlay");
-		const modalErrEl = document.getElementById("support-new-ticket-error");
 
 		// ── helpers ────────────────────────────────────────────────────────
 
@@ -308,17 +261,6 @@
 			errorEl.textContent = "";
 		}
 
-		function showModalError(msg) {
-			if (!modalErrEl) return;
-			modalErrEl.textContent = msg;
-			modalErrEl.classList.remove("hidden");
-		}
-
-		function clearModalError() {
-			if (!modalErrEl) return;
-			modalErrEl.classList.add("hidden");
-			modalErrEl.textContent = "";
-		}
 
 		function fmtDt(iso) {
 			if (!iso) return "";
@@ -346,23 +288,49 @@
 			} catch (_err) { /* silent — empty set is a safe default */ }
 		}
 
-		async function loadTickets() {
+		// `quiet`, again from the timer: the list keeps showing the tickets it has
+		// while the new ones are fetched, instead of blinking to "Loading…" once a
+		// minute at somebody who is not waiting for anything.
+		async function loadTickets(quiet, force) {
 			clearListError();
-			listEl.innerHTML = '<li class="px-4 py-3 text-sm opacity-60">Loading…</li>';
+			if (!quiet) {
+				listEl.innerHTML = '<li class="px-4 py-3 text-sm opacity-60">Loading…</li>';
+			}
 			let res;
 			try {
-				res = await fetch("/api/support/tickets", { credentials: "same-origin" });
+				// Only an explicit Refresh goes past the server's 60s cache. The first
+				// load and the timer do not: the same list is fetched by this page, the
+				// unread badge and the dashboard widget, and a cache every one of them
+				// skips is not a cache.
+				res = await fetch("/api/support/tickets" + (force ? "?refresh=1" : ""),
+					{ credentials: "same-origin" });
 			} catch (netErr) {
+				if (quiet) return;
 				listEl.innerHTML = "";
 				showListError("Could not reach the portal backend. Check your connection and try again.");
 				return;
 			}
 			const json = await parseJsonSafe(res);
 			if (!res.ok) {
+				if (quiet) return;
 				listEl.innerHTML = "";
 				showListError(extractErrorMessage(json, "Failed to load tickets (HTTP " + res.status + ")."));
 				return;
 			}
+			// Severity as a small coloured chip. Urgent/High read as alarming, Medium
+			// neutral, Low calm — built from theme variables so it works in both modes.
+			function sevChip(urgency) {
+				const u = String(urgency || "").trim();
+				if (!u) return "";
+				const low = u.toLowerCase();
+				let col = "var(--bc)";
+				if (low.includes("urgent") || low.includes("critical")) col = "var(--er)";
+				else if (low.includes("high")) col = "var(--wa)";
+				else if (low.includes("medium") || low.includes("moderate")) col = "var(--in)";
+				else if (low.includes("low")) col = "var(--su)";
+				return `<span style="display:inline-block;padding:0.05rem 0.45rem;border-radius:9999px;font-size:0.62rem;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;background:hsl(${col} / 0.16);color:hsl(${col});">${esc(u)}</span>`;
+			}
+
 			const tickets = Array.isArray(json?.data) ? json.data : [];
 			if (tickets.length === 0) {
 				listEl.innerHTML = '<li class="px-4 py-6 text-sm text-center opacity-60">No tickets yet. Click <span class="font-semibold">New Ticket</span> to open one.</li>';
@@ -376,12 +344,19 @@
 				const name = esc(t.short_description || t.number || "Ticket");
 				const pinned = favoritedTickets.has(String(t.sys_id)) ||
 					!!(window.portalFavorites && window.portalFavorites.has("ticket", t.sys_id));
+				// No assignee on this row. It named the service account on every ticket
+				// the portal raised -- an artefact of how the ticket was submitted, not
+				// a fact about the ticket -- and "Unassigned" on the rest, which is not
+				// something the person who opened it can act on either.
 				return `
 				<li class="flex items-stretch">
 					<button class="flex-1 text-left px-4 py-3 hover:bg-base-200 transition-colors" data-id="${id}">
 						<div class="text-xs text-primary font-semibold">${esc(t.number || "")}</div>
-						<div class="text-sm">${esc(t.short_description || "(no description)")}</div>
-						<div class="text-xs opacity-60">${esc(t.state || "")}</div>
+						<div class="text-sm" dir="auto">${esc(t.short_description || "(no description)")}</div>
+						<div class="flex items-center gap-2 flex-wrap mt-1 text-xs opacity-60">
+							<span>${esc(t.state || "")}</span>
+							${sevChip(t.urgency)}
+						</div>
 					</button>
 					<button
 						type="button"
@@ -405,6 +380,12 @@
 			listEl.querySelectorAll("button[data-support-fav]").forEach((btn) => {
 				btn.addEventListener("click", async (e) => {
 					e.stopPropagation();
+					// Ignore clicks while a toggle is already in flight. Without this, mashing
+					// the star fires a request (and a toast) per click before the first
+					// resolves — a flood of duplicate writes and toasts. One at a time.
+					if (btn.dataset.busy === "1") return;
+					btn.dataset.busy = "1";
+					const done = () => { delete btn.dataset.busy; };
 					const id = btn.dataset.id;
 					const pressed = btn.getAttribute("aria-pressed") === "true";
 					if (window.portalFavorites) {
@@ -414,6 +395,7 @@
 							setFavVisual(btn, nowPinned);
 							if (nowPinned) favoritedTickets.add(id); else favoritedTickets.delete(id);
 						} catch (_err) { /* toast already raised */ }
+						finally { done(); }
 						return;
 					}
 					// The favorites section only mounts on the dashboard; on
@@ -442,6 +424,8 @@
 						});
 					} catch (_err) {
 						window.portalToast?.({ kind: "error", message: "Could not update favorite." });
+					} finally {
+						done();
 					}
 				});
 			});
@@ -478,20 +462,34 @@
 
 		// ── detail / conversation ────────────────────────────────────────
 
-		async function openTicket(id) {
+		// `quiet` is a re-read of the ticket already on screen, from the timer.
+		// It leaves the conversation showing while it fetches -- blanking it to
+		// "Loading…" once a minute would make the page flicker at somebody who is
+		// mid-sentence reading it -- and it keeps their scroll position unless they
+		// were already at the bottom, where new messages are.
+		async function openTicket(id, quiet) {
 			selectedId = id;
-			titleEl.textContent = "Loading…";
-			convEl.innerHTML = '<div class="text-sm opacity-60">Loading conversation…</div>';
+			const wasAtBottom = convEl.scrollHeight - convEl.scrollTop - convEl.clientHeight < 40;
+			const keepScroll = quiet ? convEl.scrollTop : 0;
+			if (!quiet) {
+				titleEl.textContent = "Loading…";
+				convEl.innerHTML = '<div class="text-sm opacity-60">Loading conversation…</div>';
+			}
 			let res;
 			try {
 				res = await fetch("/api/support/tickets/" + encodeURIComponent(id), { credentials: "same-origin" });
 			} catch (netErr) {
+				// A quiet poll that cannot reach the backend leaves what is on screen
+				// alone. Replacing a conversation somebody is reading with an error,
+				// because of one missed poll, loses more than it reports.
+				if (quiet) return;
 				titleEl.textContent = "Ticket";
 				convEl.innerHTML = '<div class="text-sm text-error">Could not reach the portal backend.</div>';
 				return;
 			}
 			const json = await parseJsonSafe(res);
 			if (!res.ok) {
+				if (quiet) return;
 				titleEl.textContent = "Ticket";
 				const msg = extractErrorMessage(json, "Failed to load ticket details (HTTP " + res.status + ").");
 				convEl.innerHTML = '<div class="text-sm text-error">' + esc(msg) + '</div>';
@@ -503,14 +501,45 @@
 			if (convo.length === 0) {
 				convEl.innerHTML = '<div class="text-sm opacity-60">No messages yet. Write a reply below to start the conversation.</div>';
 			} else {
-				convEl.innerHTML = convo.map((m) => `
-					<div class="rounded border border-base-300 p-2">
-						<div class="text-xs opacity-60">${esc(m.sys_created_by || "user")} • ${esc(fmtDt(m.sys_created_on))}</div>
-						<div class="text-sm whitespace-pre-wrap">${esc(m.value || "")}</div>
-					</div>
-				`).join("");
+				convEl.innerHTML = convo.map((m) => {
+					const mine = !!m.is_portal_user;
+					const who = esc(m.author || m.sys_created_by || (mine ? "You" : "Support"));
+					const when = esc(fmtDt(m.sys_created_on));
+					const align = mine ? "items-end" : "items-start";
+					const bubble = mine
+						? "bg-primary text-white"
+						: "bg-base-200 text-base-content border border-base-300";
+					return `
+						<div class="flex flex-col ${align}">
+							<div class="text-xs opacity-60 mb-1">${who} • ${when}</div>
+							<div class="rounded-lg px-3 py-2 max-w-xs ${bubble}">
+								<div class="text-sm whitespace-pre-wrap" dir="auto">${esc(m.value || "")}</div>
+							</div>
+						</div>
+					`;
+				}).join("");
 			}
-			convEl.scrollTop = convEl.scrollHeight;
+			// Render each attachment as its own chat bubble (right-aligned, like
+			// the user's own message) rather than a separate "Attachments" strip.
+			const atts = Array.isArray(t.attachments) ? t.attachments : [];
+			if (atts.length) {
+				const attHtml = atts.map(function (a) {
+					const url = esc(a.url || "");
+					const name = esc(a.file_name || "file");
+					// rel="noopener noreferrer": these URLs come from ServiceNow attachment
+					// records, so the destination is not ours to trust. Without it the opened
+					// tab gets a handle on this one via window.opener and can navigate it.
+					const inner = a.is_image
+						? '<a href="' + url + '" target="_blank" rel="noopener noreferrer" class="block"><img src="' + url + '" alt="' + name + '" class="rounded w-full" /></a>'
+						: '<a href="' + url + '" target="_blank" rel="noopener noreferrer" class="text-white text-sm">' + name + '</a>';
+					return '<div class="flex flex-col items-end">' +
+						'<div class="text-xs opacity-60 mb-1">Attachment</div>' +
+						'<div class="rounded-lg px-3 py-2 max-w-xs bg-primary text-white">' + inner + '</div>' +
+						'</div>';
+				}).join("");
+				convEl.insertAdjacentHTML("beforeend", attHtml);
+			}
+			convEl.scrollTop = (quiet && !wasAtBottom) ? keepScroll : convEl.scrollHeight;
 		}
 
 		// ── reply ────────────────────────────────────────────────────────
@@ -518,14 +547,22 @@
 		document.getElementById("support-send-reply")?.addEventListener("click", async () => {
 			if (!selectedId) return;
 			const body = replyEl.value.trim();
-			if (!body) return;
+			const filesEl = document.getElementById("support-reply-files");
+			const files = filesEl && filesEl.files ? filesEl.files : [];
+			if (!body && files.length === 0) return;
 			const sendBtn = document.getElementById("support-send-reply");
 			sendBtn.disabled = true;
 			try {
-				const res = await fetch("/api/support/tickets/" + encodeURIComponent(selectedId) + "/reply", {
+				// Static path + sys_id in the multipart body. The backend journals the
+				// comment via sys_journal_field (the incident business rule blocks a
+				// direct comments PATCH) and uploads any files to the incident.
+				const replyData = new FormData();
+				replyData.append("sys_id", selectedId);
+				replyData.append("message", body);
+				for (let i = 0; i < files.length; i++) replyData.append("attachments", files[i]);
+				const res = await fetch("/api/support/tickets/reply", {
 					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ message: body }),
+					body: replyData,
 					credentials: "same-origin",
 				});
 				const json = await parseJsonSafe(res);
@@ -539,6 +576,7 @@
 					return;
 				}
 				replyEl.value = "";
+				if (filesEl) filesEl.value = "";
 				openTicket(selectedId);
 			} catch (_) {
 				convEl.insertAdjacentHTML(
@@ -550,301 +588,103 @@
 			}
 		});
 
-		// ── new-ticket modal ─────────────────────────────────────────────
-
-		const flowForm = document.getElementById("support-ticket-flow-form");
-		const stepLabel = document.getElementById("support-step-label");
-		const stepBars = Array.from(document.querySelectorAll("[data-support-step-bar]"));
-		const stepEls = Array.from(document.querySelectorAll("[data-support-step]"));
-		const backBtn = document.getElementById("support-ticket-back");
-		const nextBtn = document.getElementById("support-ticket-next");
-		const createBtn = document.getElementById("support-create-ticket");
-		const actionsEl = document.getElementById("support-ticket-flow-actions");
-		const successEl = document.getElementById("support-ticket-success");
-		const successNumberEl = document.getElementById("support-created-ticket-number");
-		const summaryEl = document.getElementById("support-ticket-summary");
-		const draftKey = "support-ticket-flow-draft";
-		const stepTitles = ["Navy User Info", "Service Info", "Ticket Info", "Attachments + Summary"];
-		let currentStep = 0;
-		let azureProjectsLoaded = false;
-		let azureProjectManualFallback = false;
-
-		function openModal() {
-			clearModalError();
-			restoreTicketDraft();
-			updateDynamicFields();
-			showStep(currentStep);
-			successEl?.classList.add("hidden");
-			flowForm?.classList.remove("hidden");
-			actionsEl?.classList.remove("hidden");
-			modal?.classList.remove("hidden");
-			modal?.classList.add("flex");
-		}
-
-		function closeModal() {
-			modal?.classList.add("hidden");
-			modal?.classList.remove("flex");
-			clearModalError();
-		}
-
-		// The wizard keeps values in localStorage so users can move between
-		// steps, close the modal, or use Back without losing typed context.
-		function saveTicketDraft() {
-			if (!flowForm) return;
-			const draft = {};
-			Array.from(flowForm.elements).forEach((el) => {
-				if (!el.name || el.type === "file") return;
-				draft[el.name] = el.value || "";
-			});
-			draft.currentStep = currentStep;
-			try { localStorage.setItem(draftKey, JSON.stringify(draft)); } catch (_) { /* ignore */ }
-		}
-
-		function restoreTicketDraft() {
-			if (!flowForm) return;
-			try {
-				const draft = JSON.parse(localStorage.getItem(draftKey) || "{}");
-				Array.from(flowForm.elements).forEach((el) => {
-					if (!el.name || el.type === "file" || draft[el.name] == null) return;
-					el.value = draft[el.name];
-				});
-				currentStep = Math.max(0, Math.min(3, Number(draft.currentStep || 0)));
-			} catch (_) {
-				currentStep = 0;
-			}
-		}
-
-		function setRequired(name, required) {
-			const el = flowForm?.elements[name];
-			if (el) el.required = !!required;
-		}
-
-		function updateDynamicFields() {
-			if (!flowForm) return;
-			const service = flowForm.elements.devops_services?.value || "";
-			const network = flowForm.elements.network?.value || "";
-			const supportType = flowForm.elements.azure_devops_support_type?.value || "";
-			const reason = flowForm.elements.reason?.value || "";
-			const azureVisible = service === "azure devops";
-			if (!azureVisible || network !== "סודי ביותר") {
-				azureProjectManualFallback = false;
-			}
-			document.getElementById("support-azure-fields")?.classList.toggle("hidden", !azureVisible);
-			document.getElementById("support-pipeline-url-wrap")?.classList.toggle("hidden", !(azureVisible && supportType === "pipelines"));
-			document.getElementById("support-reason-other-wrap")?.classList.toggle("hidden", reason !== "other");
-
-			const useProjectSelect = azureVisible && network === "סודי ביותר" && !azureProjectManualFallback;
-			document.getElementById("support-azure-project-select-wrap")?.classList.toggle("hidden", !useProjectSelect);
-			document.getElementById("support-azure-project-input-wrap")?.classList.toggle("hidden", !azureVisible || useProjectSelect);
-
-			setRequired("azure_devops_support_type", azureVisible);
-			setRequired("azure_devops_collection", azureVisible);
-			setRequired("azure_devops_project_select", useProjectSelect);
-			setRequired("azure_devops_project_input", azureVisible && !useProjectSelect);
-			setRequired("pipeline_url", azureVisible && supportType === "pipelines");
-			if (useProjectSelect) loadAzureProjects();
-			renderSummary();
-			updateNavState();
-			saveTicketDraft();
-		}
-
-		async function loadAzureProjects() {
-			if (azureProjectsLoaded || !flowForm) return;
-			const select = flowForm.elements.azure_devops_project_select;
-			if (!select) return;
-			azureProjectsLoaded = true;
-			select.innerHTML = '<option value="">Loading projects…</option>';
-			try {
-				const res = await fetch("/api/azure-devops/projects", { credentials: "same-origin" });
-				const json = await parseJsonSafe(res);
-				if (!res.ok) throw new Error(extractErrorMessage(json, "Failed to load Azure DevOps projects."));
-				const projects = Array.isArray(json?.data) ? json.data : [];
-				if (!projects.length) throw new Error("No Azure DevOps projects were returned.");
-				select.innerHTML = '<option value="">Select project</option>' + projects
-					.map((p) => `<option value="${esc(p.name || p.id || "")}">${esc(p.name || p.id || "")}</option>`)
-					.join("");
-			} catch (err) {
-				// Never block ticket creation on the project-list API: classified
-				// network users get the dropdown when it works, otherwise the same
-				// manual project-name input used by other networks.
-				azureProjectManualFallback = true;
-				select.innerHTML = '<option value="">Could not load projects</option>';
-				document.getElementById("support-azure-project-select-wrap")?.classList.add("hidden");
-				document.getElementById("support-azure-project-input-wrap")?.classList.remove("hidden");
-				setRequired("azure_devops_project_select", false);
-				setRequired("azure_devops_project_input", true);
-				window.portalToast?.({ kind: "error", message: err?.message || "Could not load Azure DevOps projects." });
-			}
-			updateNavState();
-			renderSummary();
-			saveTicketDraft();
-		}
-
-		function visibleStepControls() {
-			const step = stepEls[currentStep];
-			if (!step) return [];
-			return Array.from(step.querySelectorAll("input, select, textarea")).filter((el) => {
-				if (el.type === "file" || el.disabled) return false;
-				return !el.closest(".hidden");
-			});
-		}
-
-		function isCurrentStepValid() {
-			updateHiddenProjectValue();
-			return visibleStepControls().every((el) => {
-				if (el.name === "phone_number" && el.value && !/^[0-9]+$/.test(el.value)) return false;
-				return !el.required || !!String(el.value || "").trim();
-			});
-		}
-
-		function updateHiddenProjectValue() {
-			if (!flowForm) return "";
-			const service = flowForm.elements.devops_services?.value || "";
-			if (service !== "azure devops") return "";
-			const network = flowForm.elements.network?.value || "";
-			return network === "סודי ביותר" && !azureProjectManualFallback
-				? (flowForm.elements.azure_devops_project_select?.value || "")
-				: (flowForm.elements.azure_devops_project_input?.value || "");
-		}
-
-		function updateNavState() {
-			if (!flowForm) return;
-			const stepValid = isCurrentStepValid();
-			backBtn.disabled = currentStep === 0;
-			nextBtn?.classList.toggle("hidden", currentStep === 3);
-			createBtn?.classList.toggle("hidden", currentStep !== 3);
-			if (nextBtn) nextBtn.disabled = !stepValid;
-			if (createBtn) createBtn.disabled = !stepValid;
-			stepBars.forEach((bar, i) => {
-				const complete = i < currentStep || (i === currentStep && stepValid);
-				bar.classList.toggle("bg-success", complete);
-				bar.classList.toggle("bg-base-300", !complete);
-			});
-		}
-
-		function showStep(index) {
-			currentStep = Math.max(0, Math.min(3, index));
-			stepEls.forEach((el, i) => el.classList.toggle("hidden", i !== currentStep));
-			if (stepLabel) stepLabel.textContent = `Step ${currentStep + 1} of 4 — ${stepTitles[currentStep]}`;
-			renderSummary();
-			updateNavState();
-			saveTicketDraft();
-		}
-
-		function renderSummary() {
-			if (!flowForm || !summaryEl) return;
-			const labels = {
-				full_name: "Full name",
-				phone_number: "Phone number",
-				branch: "Branch",
-				team: "Team",
-				section: "Section",
-				role: "Role",
-				network: "Network",
-				devops_services: "DevOps service",
-				azure_devops_support_type: "Azure support type",
-				azure_devops_collection: "Azure collection",
-				azure_devops_project: "Azure project",
-				pipeline_url: "Pipeline URL",
-				reason: "Reason",
-				reason_other: "Other reason",
-				title: "Title",
-				urgency: "Urgency",
-				description: "Description",
-				work_impact: "Work impact",
-				help_text: "Help text",
-				attachments: "Attachments",
-			};
-			const values = {};
-			Array.from(flowForm.elements).forEach((el) => {
-				if (!el.name || el.type === "file" || el.name.endsWith("_select") || el.name.endsWith("_input")) return;
-				values[el.name] = el.value || "";
-			});
-			values.azure_devops_project = updateHiddenProjectValue();
-			const files = flowForm.elements.attachments?.files || [];
-			values.attachments = files.length ? Array.from(files).map((f) => f.name).join(", ") : "";
-			summaryEl.innerHTML = Object.entries(labels)
-				.filter(([key]) => values[key])
-				.map(([key, label]) => `
-					<div class="rounded-lg bg-base-100 border border-base-300 p-3">
-						<div class="text-xs uppercase tracking-wide opacity-60">${esc(label)}</div>
-						<div class="mt-1 whitespace-pre-wrap break-words">${esc(values[key])}</div>
-					</div>
-				`)
-				.join("") || '<div class="text-sm opacity-60">Complete the previous steps to see the summary.</div>';
-		}
-
-		document.getElementById("support-new-ticket-btn")?.addEventListener("click", openModal);
-		document.getElementById("support-cancel-ticket")?.addEventListener("click", closeModal);
-		backBtn?.addEventListener("click", () => showStep(currentStep - 1));
-		nextBtn?.addEventListener("click", () => {
-			if (!isCurrentStepValid()) return;
-			showStep(currentStep + 1);
-		});
-		flowForm?.addEventListener("input", (event) => {
-			if (event.target?.name === "phone_number") {
-				event.target.value = event.target.value.replace(/\D/g, "");
-			}
-			updateDynamicFields();
-		});
-		flowForm?.addEventListener("change", updateDynamicFields);
-		flowForm?.addEventListener("submit", (event) => event.preventDefault());
-
-		// Auto-open from the banner's Quick Actions → "Open support ticket".
-		// Runs independently from the existing `?ticket=<sys_id>` deep-link
-		// handler further down (those two params are orthogonal).
-		try {
-			const qParams = new URLSearchParams(window.location.search);
-			if (qParams.get("new") === "1") {
-				openModal();
-				qParams.delete("new");
-				const qs = qParams.toString();
-				const clean = window.location.pathname + (qs ? "?" + qs : "");
-				window.history.replaceState({}, "", clean);
-			}
-		} catch (_) { /* silent */ }
-
-		createBtn?.addEventListener("click", async () => {
-			if (!isCurrentStepValid()) {
-				showModalError("Please fill all required fields before creating the ticket.");
-				return;
-			}
-			clearModalError();
-			createBtn.disabled = true;
-			try {
-				const formData = new FormData(flowForm);
-				formData.set("azure_devops_project", updateHiddenProjectValue());
-				const res = await fetch("/api/support/tickets/create-flow", {
-					method: "POST",
-					body: formData,
-					credentials: "same-origin",
-				});
-				const json = await parseJsonSafe(res);
-				if (!res.ok) {
-					const message = extractErrorMessage(json, "Failed to create ticket (HTTP " + res.status + ").");
-					window.portalToast?.({ kind: "error", message: "Failed to create ticket" });
-					showModalError(message);
-					return;
-				}
-				localStorage.removeItem(draftKey);
-				flowForm.reset();
-				flowForm.classList.add("hidden");
-				actionsEl?.classList.add("hidden");
-				successNumberEl.textContent = json?.data?.number || json?.data?.sys_id || "";
-				successEl?.classList.remove("hidden");
-				window.portalToast?.({ kind: "success", message: "Ticket created successfully" });
-				await loadTickets();
-				if (json?.data?.sys_id) openTicket(json.data.sys_id);
-			} catch (_) {
-				window.portalToast?.({ kind: "error", message: "Failed to create ticket" });
-				showModalError("Could not reach the portal backend. Try again in a moment.");
-			} finally {
-				createBtn.disabled = false;
+		// Enter sends the reply; Shift+Enter inserts a newline.
+		replyEl?.addEventListener("keydown", (e) => {
+			if (e.key === "Enter" && !e.shiftKey) {
+				e.preventDefault();
+				document.getElementById("support-send-reply")?.click();
 			}
 		});
 
-		updateDynamicFields();
+		// ── Open a Ticket ────────────────────────────────────────────────
+		//
+		// One call. The wizard, its four steps, its validation, its draft handling and
+		// its conditional Azure DevOps block are described in catalog_forms.py now and
+		// rendered by the component that renders every other request. What is left here
+		// is the two things that are genuinely Support's: where the answers are posted,
+		// and what to do with the ticket number that comes back.
+		function openTicketWizard() {
+			window.portalCatalogForm?.open("support_ticket", {
+				submitUrl: "/api/support/tickets/create-flow",
+				onDone: (json) => {
+					const id = json && json.data ? json.data.sys_id : "";
+					loadTickets().then(() => { if (id) openTicket(id); });
+				},
+			});
+		}
+
+		document.getElementById("support-new-ticket-btn")?.addEventListener("click", openTicketWizard);
+
+		// Arriving from the + menu on some OTHER page. The banner can only press this
+		// page's button when it is already on this page; from anywhere else the link
+		// navigates here carrying ?new=1, and nothing was reading it -- so Open a
+		// Ticket from the + menu landed on Support and stopped, which is not what the
+		// menu said it would do. Requests and Suggestions have read this flag since
+		// they were given one; Support was the page that never got it.
+		(function () {
+			const params = new URLSearchParams(window.location.search);
+			if (params.get("new") !== "1") return;
+			// Cleared straight away, so a refresh does not reopen a wizard that was
+			// deliberately closed.
+			params.delete("new");
+			const qs = params.toString();
+			window.history.replaceState({}, "", window.location.pathname + (qs ? "?" + qs : ""));
+			openTicketWizard();
+		})();
+
+
+		// ── Response times ───────────────────────────────────────────────
+
+		document.getElementById("support-sla-btn")?.addEventListener("click", () => {
+			document.getElementById("support-sla")?.showModal?.();
+		});
+
+		document.getElementById("support-sla")?.addEventListener("click", (event) => {
+			if (event.target.closest("[data-support-sla-close]")) {
+				document.getElementById("support-sla").close();
+			}
+		});
+
+		// ── Keeping the page current ─────────────────────────────────────
+		//
+		// Nothing here is a widget, so the portal's auto-refresh scheduler -- which
+		// works on `.widget-shell` -- never saw this page. A ticket answered in
+		// ServiceNow stayed unanswered on screen until somebody reloaded the browser,
+		// which is a strange thing to have to do to a page whose whole job is showing
+		// you what support said.
+		//
+		// One Refresh reloads BOTH lists on the page: the tickets and the
+		// conversation open beside them. Reloading only the list would leave the half
+		// somebody is actually reading out of date.
+
+		function refreshAll(quiet, force) {
+			const open = selectedId;
+			return loadTickets(quiet, force).then(() => {
+				if (open) return openTicket(open, quiet);
+			});
+		}
+
+		document.getElementById("refresh-btn")?.addEventListener("click", () => refreshAll(false, true));
+
+		// And on a timer, quietly. The rules are the ones the widget scheduler uses,
+		// for the same reasons: a tab nobody is looking at does not need to be
+		// current, and a poll must never throw away something half-typed or scroll
+		// the conversation out from under the person reading it.
+		const REFRESH_MS = 60000;
+		setInterval(() => {
+			if (document.visibilityState !== "visible") return;
+			// Mid-reply, or mid-attachment. Both are unsaved state.
+			if (document.activeElement === replyEl) return;
+			if ((replyEl?.value || "").trim()) return;
+			if (document.getElementById("catalog-form-modal")?.open) return;
+			refreshAll(true, false).catch(() => { /* a failed poll is not worth an error banner */ });
+		}, REFRESH_MS);
 
 		loadTickets();
 	})();
 </script>
+
+{# The form renderer. Open a Ticket is a spec now, so the Support page needs the
+   component that renders one -- the same include the Requests and My Requests
+   pages carry. #}
+{% include "partials/components/catalog-form.html" %}

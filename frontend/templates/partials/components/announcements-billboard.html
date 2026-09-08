@@ -1,0 +1,210 @@
+{#
+	The billboard: what the people who run the portal want to tell the people who
+	use it. Sits above everything else on the dashboard, because an announcement
+	below the fold is a memo in a drawer.
+
+	It renders NOTHING when there is nothing to say — no empty card, no heading, no
+	reserved space. A permanent "Announcements" section that is usually empty
+	teaches everyone to skip the top of the page, which is the one thing this must
+	not do.
+
+	Dismissal is per person and per VERSION: waving one away records the wording it
+	had at the time, so an edited announcement returns for everybody. See
+	backend/app/api/announcements.py.
+#}
+{# The .ann-card rules themselves live in static/css/theme.css: the admin editor
+   renders the same markup as a live preview on another page, and one definition
+   is the only way the preview and the real thing stay identical. #}
+<style>
+	#announcements-billboard {
+		display: none;
+		flex-direction: column;
+		gap: 0.75rem;
+	}
+
+	.ann-more {
+		align-self: flex-start;
+		font-size: 0.78rem;
+		opacity: 0.7;
+		background: none;
+		border: 0;
+		padding: 0;
+		cursor: pointer;
+		text-decoration: underline;
+		text-underline-offset: 2px;
+	}
+</style>
+
+<div id="announcements-billboard" aria-label="Announcements"></div>
+
+<script>
+	(function () {
+		const root = document.getElementById("announcements-billboard");
+		if (!root) return;
+
+		// Two at a time. Three announcements stacked above the dashboard is no longer
+		// a billboard, it is a wall between the user and their work.
+		const VISIBLE = 2;
+		let items = [];
+		let expanded = false;
+
+		const ICONS = {
+			info:     "M12 16v-4M12 8h.01M22 12a10 10 0 11-20 0 10 10 0 0120 0z",
+			success:  "M22 11.08V12a10 10 0 11-5.93-9.14M22 4L12 14.01l-3-3",
+			warning:  "M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0zM12 9v4M12 17h.01",
+			critical: "M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0zM12 9v4M12 17h.01",
+		};
+
+		function when(item) {
+			const bits = [];
+			if (item.created_by) bits.push(item.created_by);
+			const stamp = item.updated_at || item.created_at;
+			if (stamp) {
+				try {
+					const d = new Date(stamp);
+					if (!isNaN(d.getTime())) bits.push(d.toLocaleDateString(undefined, {
+						year: "numeric", month: "short", day: "numeric",
+					}));
+				} catch (_) { /* a bad timestamp is not worth a broken banner */ }
+			}
+			if (item.ends_at) {
+				try {
+					const d = new Date(item.ends_at);
+					if (!isNaN(d.getTime())) bits.push("until " + d.toLocaleDateString(undefined, {
+						month: "short", day: "numeric",
+					}));
+				} catch (_) { /* same */ }
+			}
+			return bits.join("  ·  ");
+		}
+
+		function card(item) {
+			const kind = ["info", "success", "warning", "critical"].includes(item.kind) ? item.kind : "info";
+			const el = document.createElement("div");
+			el.className = "ann-card";
+			el.dataset.kind = kind;
+			el.dataset.id = String(item.id);
+			el.setAttribute("role", kind === "critical" ? "alert" : "status");
+
+			const svgNS = "http://www.w3.org/2000/svg";
+			const svg = document.createElementNS(svgNS, "svg");
+			svg.setAttribute("viewBox", "0 0 24 24");
+			svg.setAttribute("fill", "none");
+			svg.setAttribute("stroke", "currentColor");
+			svg.setAttribute("stroke-width", "2");
+			svg.setAttribute("stroke-linecap", "round");
+			svg.setAttribute("stroke-linejoin", "round");
+			svg.setAttribute("aria-hidden", "true");
+			svg.setAttribute("class", "ann-icon");
+			const path = document.createElementNS(svgNS, "path");
+			path.setAttribute("d", ICONS[kind]);
+			svg.appendChild(path);
+			el.appendChild(svg);
+
+			const body = document.createElement("div");
+			body.className = "ann-body";
+
+			const title = document.createElement("div");
+			title.className = "ann-title";
+			title.textContent = item.title || "";
+			body.appendChild(title);
+
+			if (item.body) {
+				const text = document.createElement("div");
+				text.className = "ann-text";
+				text.textContent = item.body;
+				body.appendChild(text);
+			}
+
+			if (item.link_url) {
+				const link = document.createElement("a");
+				link.className = "ann-link";
+				link.href = item.link_url;
+				link.textContent = item.link_label || "Open";
+				// External by default, and rel is not optional on a target=_blank link.
+				if (/^https?:/i.test(item.link_url)) {
+					link.target = "_blank";
+					link.rel = "noopener noreferrer";
+				}
+				body.appendChild(link);
+			}
+
+			const meta = document.createElement("div");
+			meta.className = "ann-meta";
+			meta.textContent = when(item);
+			if (meta.textContent) body.appendChild(meta);
+
+			el.appendChild(body);
+
+			const close = document.createElement("button");
+			close.type = "button";
+			close.className = "ann-dismiss";
+			close.setAttribute("aria-label", "Dismiss this announcement");
+			close.textContent = "✕";
+			close.addEventListener("click", () => dismiss(item, el));
+			el.appendChild(close);
+
+			return el;
+		}
+
+		async function dismiss(item, el) {
+			// Removed immediately: the user has read it, and waiting for a round trip
+			// to acknowledge a click on a banner reads as a broken button.
+			el.remove();
+			items = items.filter((x) => x.id !== item.id);
+			paint();
+			try {
+				await fetch(`/api/announcements/${encodeURIComponent(item.id)}/dismiss`, {
+					method: "POST",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ stamp: item.stamp || "" }),
+				});
+			} catch (_) {
+				// It comes back on the next load, which is the correct failure: an
+				// announcement shown twice is a nuisance, one silently lost is not.
+			}
+		}
+
+		function paint() {
+			root.textContent = "";
+			if (!items.length) {
+				root.style.display = "none";
+				return;
+			}
+			root.style.display = "flex";
+			const shown = expanded ? items : items.slice(0, VISIBLE);
+			shown.forEach((item) => root.appendChild(card(item)));
+
+			if (items.length > VISIBLE) {
+				const more = document.createElement("button");
+				more.type = "button";
+				more.className = "ann-more";
+				more.textContent = expanded
+					? "Show fewer announcements"
+					: `Show ${items.length - VISIBLE} more announcement${items.length - VISIBLE === 1 ? "" : "s"}`;
+				more.addEventListener("click", () => { expanded = !expanded; paint(); });
+				root.appendChild(more);
+			}
+		}
+
+		async function load() {
+			try {
+				const res = await fetch("/api/announcements/active", { credentials: "same-origin" });
+				if (!res.ok) return;
+				const json = await res.json();
+				items = Array.isArray(json?.data) ? json.data : [];
+				paint();
+			} catch (_) {
+				// Silent. The billboard is the least important thing on this page and
+				// must never announce its own failure to every user in the portal.
+			}
+		}
+
+		load();
+		// The dashboard's Refresh button is the page-wide "get me current data"
+		// affordance; an announcement posted while somebody had the tab open should
+		// arrive with everything else rather than waiting for a reload.
+		document.getElementById("refresh-btn")?.addEventListener("click", load);
+	})();
+</script>

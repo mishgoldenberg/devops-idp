@@ -1,10 +1,21 @@
 -- Portal observability tables (mirrors backend/app/db.ensure_tables for Helm init jobs)
 
--- Drop legacy widget tables from earlier iterations so the new event-based
--- widget_usage schema below can be created cleanly.
+-- Drop legacy widget tables from earlier iterations. These two are genuinely dead
+-- schema and dropping them is the point of this block.
 DROP TABLE IF EXISTS widget_user_views;
 DROP TABLE IF EXISTS home_widget_prefs;
-DROP TABLE IF EXISTS widget_usage;
+
+-- widget_usage is DELIBERATELY NOT DROPPED ANY MORE.
+--
+-- This script is run by a Job on every single deploy, so dropping widget_usage here
+-- emptied it on every release — and the CREATE TABLE IF NOT EXISTS below could never
+-- preserve anything, because the line above had just deleted the table it was
+-- guarding. The effect was that "Suggested for you", "Recently used" and every
+-- Observability count silently reset to zero each time the pipeline ran, which reads
+-- exactly like the database having been wiped.
+--
+-- It is the current schema, not legacy. If it ever genuinely needs replacing, that
+-- is a migration written for that change - not a drop on every deploy forever.
 
 -- Event-based widget usage: one row per widget render.
 CREATE TABLE IF NOT EXISTS widget_usage (

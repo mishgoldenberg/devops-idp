@@ -1,5 +1,14 @@
 # DevBot — AI Chat Agent: Infrastructure Reference
 
+> **📐 PROPOSAL — none of this is built.**
+>
+> There is no `chat-agent` service, no `/chat` page, no chat button and no
+> `LLM_BASE_URL` in the codebase. This document is a design for a feature that has
+> not been started; it is kept because the tool-calling and per-user-token design in
+> it is still the intended approach if it is ever picked up.
+>
+> Do not treat anything below as a description of the running system.
+
 ## 1. Overview
 
 DevBot is an AI chat agent embedded in the Hub. Users interact with it via a floating chat button (available on all pages) and a dedicated `/chat` page. It connects to four internal systems using the user's own stored tokens — so the agent only sees what the user is allowed to see.

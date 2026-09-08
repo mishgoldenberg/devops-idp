@@ -1,7 +1,7 @@
 /** @type {import('tailwindcss').Config} */
 // Tailwind v3 + DaisyUI 3 build. We intentionally stay on these majors:
 // DaisyUI >=4 and Tailwind >=4 emit oklch()/@property/color-mix() CSS that
-// the closed-network browsers (pre-Chromium 111) cannot parse.
+// older browsers (pre-Chromium 111) cannot parse.
 module.exports = {
 	content: ["./templates/**/*.html"],
 	plugins: [require("daisyui")],

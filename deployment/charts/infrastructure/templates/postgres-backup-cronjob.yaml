@@ -1,0 +1,93 @@
+{{- if and .Values.postgres.backup.enabled (eq .Values.global.nameSuffix "") }}
+# Nightly logical backup of the portal database to Artifactory.
+#
+# Production only, by the `eq .Values.global.nameSuffix ""` guard above. Prod and
+# test share one namespace and are told apart only by name, so an unguarded
+# CronJob would render twice, both copies would write dumps named for the same
+# day into the same repository path, and the second would overwrite the first —
+# a backup of test, filed as production, discovered during a restore.
+#
+# Off-cluster on purpose. A dump on a PVC in this namespace survives a dropped
+# table; it does not survive the namespace, and it is the namespace that a
+# disaster-recovery scenario is about.
+#
+# THREE PHASES, TWO IMAGES. Neither image can do the whole job: the Postgres image
+# has no HTTP client, the backend image has no pg_dump. See the header of
+# postgres-backup-scripts.yaml. The middle phase always exits 0 and reports through
+# a file, so a failed dump still reaches the portal card with its reason attached
+# instead of showing up as a bare "Error".
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+  labels:
+    app.kubernetes.io/component: postgres-backup
+spec:
+  schedule: {{ .Values.postgres.backup.schedule | quote }}
+  # The cluster's timezone, not the operator's. Stated explicitly so "01:15" is
+  # not a different hour depending on which node the controller runs on.
+  timeZone: {{ .Values.postgres.backup.timeZone | default "UTC" | quote }}
+  concurrencyPolicy: Forbid
+  # A backup missed because the controller was down should be taken as soon as it
+  # comes back — but only if it is still the same night. 3600 means a run more than
+  # an hour late is skipped rather than colliding with the next one.
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # No retries. A retry writes a SECOND status row for the same night and,
+      # more to the point, the failures this job actually has — a bad credential,
+      # a missing repository, a full disk — do not fix themselves in 30 seconds.
+      # It fails once, loudly, and the portal's backup page says so.
+      backoffLimit: 0
+      activeDeadlineSeconds: 3600
+      ttlSecondsAfterFinished: 604800
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/component: postgres-backup
+        spec:
+          restartPolicy: Never
+          initContainers:
+            # 1. Open the run BEFORE pg_dump starts, so a job that dies mid-dump
+            #    leaves a row saying "running" rather than no row at all.
+            - name: record-start
+              image: {{ include "backup.pythonImage" . | quote }}
+              command: ["python", "/scripts/record_start.py"]
+              env:
+{{ include "backup.env" . | indent 16 }}
+              resources:
+{{ include "backup.resources" . | indent 16 }}
+              securityContext:
+{{ include "backup.securityContext" . | indent 16 }}
+              volumeMounts:
+{{ include "backup.volumeMounts" . | indent 16 }}
+            # 2. The only phase that needs the Postgres image.
+            - name: dump
+              image: {{ include "backup.pgImage" . | quote }}
+              command: ["/bin/sh", "/scripts/dump.sh"]
+              env:
+{{ include "backup.env" . | indent 16 }}
+              resources:
+{{ include "backup.resources" . | indent 16 }}
+              securityContext:
+{{ include "backup.securityContext" . | indent 16 }}
+              volumeMounts:
+{{ include "backup.volumeMounts" . | indent 16 }}
+          containers:
+            # 3. Checksum, manifest, upload, prune, and the status row.
+            - name: ship
+              image: {{ include "backup.pythonImage" . | quote }}
+              command: ["python", "/scripts/ship.py"]
+              env:
+{{ include "backup.env" . | indent 16 }}
+              resources:
+{{ include "backup.resources" . | indent 16 }}
+              securityContext:
+{{ include "backup.securityContext" . | indent 16 }}
+              volumeMounts:
+{{ include "backup.volumeMounts" . | indent 16 }}
+          volumes:
+{{ include "backup.volumes" . | indent 12 }}
+{{- end }}

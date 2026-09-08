@@ -15,13 +15,36 @@ services:
 azureDevopsConfig:
   configMapName: azure-devops-config
 
+# Raised from 500m/512Mi. The old limit was half a core for the whole portal; the
+# backend renders every page and every widget fragment, so CPU is the binding
+# constraint, not memory. Requests stay modest so pods still schedule easily.
 resources:
   requests:
-    cpu: 100m
-    memory: 256Mi
-  limits:
-    cpu: 500m
+    cpu: 250m
     memory: 512Mi
+  limits:
+    cpu: "2"
+    memory: 1Gi
+
+# How a new version replaces the old one. The default here suits a SINGLE replica
+# (test): bring the new pod up, wait for readiness, then retire the old one — no
+# gap in service, at the cost of one extra pod's worth of quota for the duration.
+#
+# That extra pod is the catch. In a namespace with a ResourceQuota, `maxSurge: 1`
+# means a rollout REQUIRES headroom for one more backend, and if the quota cannot
+# fit it the ReplicaSet cannot even create the pod: the Deployment reports
+# `ReplicaFailure: FailedCreate`, the old pods serve on indefinitely, and it looks
+# identical to "the deploy never happened". Prod overrides this — see
+# deployment/values-prod.yaml.
+strategy:
+  maxUnavailable: 0
+  maxSurge: 1
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
 
 tier: backend
 
@@ -39,6 +62,9 @@ secrets:
   jwtSecret: ""
   hubAdminUsername: ""
   hubAdminPassword: ""
+  # Optional second local account, always a regular user. Empty = not created.
+  hubUserUsername: ""
+  hubUserPassword: ""
   snowBaseUrl: ""
   snowApiUsername: ""
   snowApiPassword: ""
@@ -51,8 +77,22 @@ ingress:
   enabled: true
   className: openshift-default
   host: devops-hub.your-domain.example.com
+  # Extra names for the SAME Routes. Must match frontend.ingress.aliasHosts: the
+  # page comes from `/` and then calls `/api` on the same origin, so a name only
+  # one of them answers to gives a portal that renders and then 503s everything.
+  aliasHosts: []
   path: /api
-  tls: true
+  # OFF by default and opt-in, exactly like the frontend. It was `true` here while
+  # the template had no tls block at all, so it meant nothing; making it false and
+  # meaningful is the honest direction. The pipeline turns it on from the presence
+  # of HUB_TLS_SECRET.
+  tls: false
+  # The same secret as frontend.ingress.tlsSecretName - one certificate covers the
+  # hostname, and both Routes serve that one hostname.
+  tlsSecretName: ""
   annotations:
     route.openshift.io/termination: "edge"
-    route.openshift.io/insecure-edge-termination-policy: "Allow"
+    # Redirect, not Allow, to match the frontend. Allow left /api answering on plain
+    # HTTP indefinitely, so anything that reached it over http - a stale bookmark, a
+    # script - sent its auth cookie in clear.
+    route.openshift.io/insecure-edge-termination-policy: "Redirect"

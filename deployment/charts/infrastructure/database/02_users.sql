@@ -1,13 +1,17 @@
--- Bootstrap platform admin (idempotent). Other users are created on first SSO login.
-
-INSERT INTO users (username, email, full_name, role_id)
-VALUES (
-    'golden.mihel@gmail.com',
-    'golden.mihel@gmail.com',
-    'Golden Mihel',
-    1
-)
-ON CONFLICT (email) DO UPDATE SET
-    role_id = EXCLUDED.role_id,
-    is_active = true,
-    updated_at = CURRENT_TIMESTAMP;
+-- Users are created on first SSO login. Nothing is seeded here.
+--
+-- This file used to hard-code a personal e-mail address as Platform Admin and
+-- re-assert that role on every initialisation. Two things were wrong with it:
+--
+--   * the address was an external, personal one, which cannot sign in on a closed
+--     network anyway — so the row was permanently unusable clutter that appeared in
+--     User Role Management as an admin nobody could account for;
+--   * it re-granted role_id 1 on conflict, meaning an admin removed through the UI
+--     would come back as an admin the next time the database was initialised.
+--
+-- The real bootstrap admin comes from HUB_ADMIN_USERNAME in the deployment secret
+-- and is upserted by ensure_bootstrap_platform_admin() at backend startup, which is
+-- the one place that should decide it. See backend/app/db.py.
+--
+-- Deliberately left as a comment rather than an empty file: an empty .sql in the
+-- init directory is easy to mistake for something that failed to render.

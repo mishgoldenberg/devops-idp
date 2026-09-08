@@ -63,7 +63,8 @@
 			></ul>
 		</div>
 
-		<a href="/ui/support" class="btn btn-xs btn-outline w-full shrink-0">
+		<!-- btn-outline alone is grey (base-content); btn-primary tints it brand blue. -->
+		<a href="/ui/support" class="btn btn-xs btn-outline btn-primary w-full shrink-0">
 			Open Support
 		</a>
 	</div>
@@ -129,7 +130,18 @@
 			if (s === "new" || s === "open") return "text-accent";
 			if (s === "on hold") return "text-warning";
 			if (s === "resolved" || s === "closed") return "text-success";
-			if (s === "cancelled") return "text-base-content/50";
+			if (s === "cancelled" || s === "canceled") return "text-base-content/50";
+			return "text-base-content/60";
+		}
+
+		// Severity, as the word ServiceNow itself uses (this instance has a custom
+		// "Urgent" level above High). Priority is a derived number and is deliberately
+		// not shown — it was never what the row was meant to say.
+		function severityColor(urgency) {
+			const u = (urgency || "").toLowerCase();
+			if (u.startsWith("urgent")) return "text-error";
+			if (u.startsWith("high")) return "text-warning";
+			if (u.startsWith("low") || u.startsWith("plan")) return "text-base-content/50";
 			return "text-base-content/60";
 		}
 
@@ -137,6 +149,44 @@
 			return pinned
 				? '<svg viewBox="0 0 20 20" class="h-4 w-4 fill-current text-warning" aria-hidden="true"><path d="M11.7 1.7a1 1 0 011.4 0l5.2 5.2a1 1 0 010 1.4l-1.4 1.4a1 1 0 01-1 .26l-2.9-.82-3.6 3.6.73 3a1 1 0 01-1.67.94l-2.65-2.65-3.3 3.3a1 1 0 01-1.41-1.41l3.3-3.3L1.78 9.97a1 1 0 01.94-1.67l3 .73 3.6-3.6-.82-2.9a1 1 0 01.26-1L11.7 1.7z"/></svg>'
 				: '<svg viewBox="0 0 20 20" class="h-4 w-4 fill-current text-base-content/40 hover:text-warning transition" aria-hidden="true"><path d="M11.7 1.7a1 1 0 011.4 0l5.2 5.2a1 1 0 010 1.4l-1.4 1.4a1 1 0 01-1 .26l-2.9-.82-3.6 3.6.73 3a1 1 0 01-1.67.94l-2.65-2.65-3.3 3.3a1 1 0 01-1.41-1.41l3.3-3.3L1.78 9.97a1 1 0 01.94-1.67l3 .73 3.6-3.6-.82-2.9a1 1 0 01.26-1L11.7 1.7zm.7 2.12l-.42 2.07a1 1 0 01-.73.76L8 7.2l4.8 4.8 .55-2.25a1 1 0 01.76-.73l2.07-.42L12.4 3.82z"/></svg>';
+		}
+
+		// One row shape, shared with Recent Activity so a ticket reads identically
+		// wherever it appears: title, status, severity word, last-update time, an unread
+		// dot only when there is an update this user hasn't opened, and the pin.
+		function ticketRow(it) {
+			const idStr = escapeHtml(it.id);
+			const idDisplay = escapeHtml((it.meta && it.meta.id_display) || "");
+			const urgency = escapeHtml(it.urgency || (it.meta && it.meta.urgency) || "");
+			const title = escapeHtml(it.title || "");
+			const status = escapeHtml(it.status || "");
+			const ago = escapeHtml(timeAgo(it.updated_at));
+			const url = String(it.url || "/ui/support");
+			const dot = it.has_update
+				? '<span class="w-2 h-2 rounded-full bg-error shrink-0" title="Updated since you last opened this"></span>'
+				: '<span class="w-2 h-2 shrink-0"></span>';
+			const pinnedCls = it.pinned
+				? "bg-warning/5 border-warning/30"
+				: "bg-base-200/60 border-base-300";
+			return (
+				'<li class="rounded-lg border ' + pinnedCls + ' px-3 py-2 flex items-center gap-2 transition hover:border-primary/50 hover:bg-base-200" data-id="' + idStr + '">' +
+					'<div class="flex-1 min-w-0">' +
+						'<a href="' + escapeHtml(url) + '" class="block text-sm font-medium text-base-content hover:text-primary truncate" data-snow-open>' +
+							title +
+						'</a>' +
+						'<div class="flex items-center gap-2 text-xs mt-0.5">' +
+							(idDisplay ? '<span class="font-mono text-[11px] text-base-content/70 shrink-0">' + idDisplay + '</span>' : '') +
+							'<span class="' + statusColor(it.status || "") + ' font-medium truncate">' + status + '</span>' +
+							(urgency ? '<span class="' + severityColor(urgency) + ' font-medium truncate">' + urgency + '</span>' : '') +
+							(ago ? '<span class="ml-auto shrink-0 text-base-content/40">' + ago + '</span>' : '') +
+						'</div>' +
+					'</div>' +
+					dot +
+					'<button type="button" class="btn btn-ghost btn-xs btn-circle" data-snow-pin aria-label="Toggle pin" title="' + (it.pinned ? "Unpin" : "Pin to top") + '">' +
+						renderPinSvg(!!it.pinned) +
+					'</button>' +
+				'</li>'
+			);
 		}
 
 		function render() {
@@ -150,42 +200,7 @@
 				return;
 			}
 
-			listEl.innerHTML = visible
-				.map((it) => {
-					const idStr = escapeHtml(it.id);
-					const idDisplay = escapeHtml((it.meta && it.meta.id_display) || "");
-					const priority = escapeHtml((it.meta && it.meta.priority) || "");
-					const title = escapeHtml(it.title || "");
-					const status = escapeHtml(it.status || "");
-					const statusCls = statusColor(it.status || "");
-					const ago = escapeHtml(timeAgo(it.updated_at));
-					const url = String(it.url || "/ui/support");
-					const dot = it.has_update
-						? '<span class="w-2 h-2 rounded-full bg-error shrink-0" title="Updated since you last opened this"></span>'
-						: '<span class="w-2 h-2 shrink-0"></span>';
-					const pin = renderPinSvg(!!it.pinned);
-					const pinnedCls = it.pinned ? "bg-warning/5 border-warning/30" : "bg-base-200/60 border-base-300";
-					return (
-						'<li class="rounded-lg border ' + pinnedCls + ' px-3 py-2 flex items-center gap-2 transition hover:border-primary/50 hover:bg-base-200" data-id="' + idStr + '">' +
-							'<div class="flex-1 min-w-0">' +
-								'<a href="' + escapeHtml(url) + '" class="block text-sm font-medium text-base-content hover:text-primary truncate" data-snow-open>' +
-									title +
-								'</a>' +
-								'<div class="flex items-center gap-2 text-xs text-base-content/60 mt-0.5">' +
-									(idDisplay ? '<span class="badge badge-outline badge-xs">' + idDisplay + '</span>' : '') +
-									'<span class="' + statusCls + ' font-medium truncate">' + status + '</span>' +
-									(ago ? '<span class="ml-auto shrink-0 text-base-content/40">' + ago + '</span>' : '') +
-								'</div>' +
-								(priority ? '<div class="text-[10px] text-base-content/40 mt-0.5 truncate">Priority: ' + priority + '</div>' : '') +
-							'</div>' +
-							dot +
-							'<button type="button" class="btn btn-ghost btn-xs btn-circle" data-snow-pin aria-label="Toggle pin" title="' + (it.pinned ? "Unpin" : "Pin to top") + '">' +
-								pin +
-							'</button>' +
-						'</li>'
-					);
-				})
-				.join("");
+			listEl.innerHTML = visible.map(ticketRow).join("");
 
 			setStatus(null);
 		}

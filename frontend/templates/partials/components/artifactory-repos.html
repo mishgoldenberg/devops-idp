@@ -12,7 +12,7 @@
 				<h3 class="text-sm font-bold uppercase tracking-widest text-base-content/70">
 					Artifactory Repos
 				</h3>
-				<p class="text-xs text-base-content/50">Live latest artifacts on hover</p>
+				<p class="text-xs text-base-content/50">Latest artifacts, per repository</p>
 			</div>
 		</div>
 
@@ -31,13 +31,9 @@
 				<span class="loading loading-spinner loading-sm text-base-content/30"></span>
 			</div>
 			<ul
-				class="hidden h-full overflow-y-auto overscroll-contain flex-col gap-2 pr-1"
+				class="hidden absolute inset-0 overflow-y-auto overscroll-contain pr-1"
 				data-arti-list
 			></ul>
-			<div
-				class="hidden absolute right-2 top-2 z-10 w-80 origin-top-right rounded-xl border border-base-300 bg-base-100 p-4 shadow-xl opacity-0 scale-95 translate-y-1 transform transition-all duration-150 ease-out"
-				data-arti-panel
-			></div>
 		</div>
 	</div>
 </div>
@@ -48,35 +44,22 @@
 		if (!root) return;
 		const listEl = root.querySelector("[data-arti-list]");
 		const statusEl = root.querySelector("[data-arti-status]");
-		const panelEl = root.querySelector("[data-arti-panel]");
 		const searchEl = root.querySelector("[data-arti-search]");
 		const retryBtn = root.querySelector("[data-arti-retry]");
 		const controlsEl = root.querySelector("[data-arti-controls]");
 		const detailsCache = new Map();
 		let allRepos = [];
 		let searchTimer = null;
-		let panelTimer = null;
-
-		function scheduleHidePanel() {
-			clearTimeout(panelTimer);
-			panelTimer = setTimeout(hidePanel, 180);
-		}
-
-		function showPanel() {
-			panelEl.classList.remove("hidden");
-			requestAnimationFrame(() => {
-				panelEl.classList.remove("opacity-0", "scale-95", "translate-y-1");
-				panelEl.classList.add("opacity-100", "scale-100", "translate-y-0");
-			});
-		}
-
-		function hidePanel() {
-			panelEl.classList.remove("opacity-100", "scale-100", "translate-y-0");
-			panelEl.classList.add("opacity-0", "scale-95", "translate-y-1");
-			setTimeout(() => {
-				if (panelEl.classList.contains("opacity-0")) panelEl.classList.add("hidden");
-			}, 160);
-		}
+		// The artifact list used to open on HOVER, in a floating panel over the list. It
+		// covered the row it belonged to — the repository name included — and keeping it
+		// attached to that row needed a hover-intent delay, a hide grace period, and two
+		// positioning passes because the clamp depends on a height that only exists once
+		// the content is in the DOM.
+		//
+		// It is a button now, and the artifacts open INSIDE the row beneath it. No
+		// overlay, no positioning, and nothing covering the name you are reading.
+		// Which row is open, kept across re-renders (search, pin, refresh).
+		let expandedRepo = null;
 
 		function escapeHtml(value) {
 			return String(value == null ? "" : value)
@@ -115,12 +98,15 @@
 			statusEl.classList.add("block", "text-base-content");
 			statusEl.innerHTML = `
 				<div class="w-full rounded-xl border border-primary/30 bg-primary/5 p-4 text-left opacity-100 scale-100 translate-y-0 transform transition-all duration-150 ease-out">
-					<h4 class="font-semibold text-sm text-base-content">Connect to Artifactory</h4>
+					<div class="flex items-center gap-1.5">
+						<h4 class="font-semibold text-sm text-base-content flex-1">Connect to Artifactory</h4>
+						<button type="button" class="btn btn-ghost btn-xs btn-circle text-primary" data-pat-help="artifactory" title="How do I create this token?" aria-label="How do I create this token?">?</button>
+					</div>
 					<p class="mt-1 text-xs text-base-content/60">Generate an API Key or Access Token from your profile</p>
 					<input data-arti-token type="password" class="input input-bordered input-sm mt-3 w-full" placeholder="Paste API Key or Access Token" />
 					<div class="mt-3 flex gap-2">
-						<button type="button" class="btn btn-primary btn-xs" data-arti-save-token>Save</button>
-						<button type="button" class="btn btn-ghost btn-xs" data-arti-cancel-token>Cancel</button>
+						<button type="button" class="btn btn-primary btn-xs rounded-full px-4" data-arti-save-token>Save</button>
+						<button type="button" class="btn btn-ghost btn-xs rounded-full px-4" data-arti-cancel-token>Cancel</button>
 					</div>
 				</div>
 			`;
@@ -134,7 +120,6 @@
 			statusEl.classList.add("h-full", "items-center", "justify-center", "text-base-content/50");
 			statusEl.classList.add("hidden");
 			listEl.classList.remove("hidden");
-			listEl.classList.add("flex");
 		}
 
 		function showEmpty(message) {
@@ -158,72 +143,121 @@
 			return allRepos.filter((repo) => `${repo.name || ""} ${repo.type || ""} ${repo.description || ""}`.toLowerCase().includes(q));
 		}
 
-		function render(repos) {
-			if (!repos.length) {
-				showEmpty('<span class="text-base-content/50">No repositories found</span>');
-				return;
-			}
-			listEl.innerHTML = repos.map((repo) => `
+		// Same pin glyph as the Azure DevOps / ServiceNow widgets — pinning used to be
+		// a star here and a pin there, which read like two different features.
+		function renderPinSvg(pinned) {
+			return pinned
+				? '<svg viewBox="0 0 20 20" class="h-4 w-4 fill-current text-warning" aria-hidden="true"><path d="M11.7 1.7a1 1 0 011.4 0l5.2 5.2a1 1 0 010 1.4l-1.4 1.4a1 1 0 01-1 .26l-2.9-.82-3.6 3.6.73 3a1 1 0 01-1.67.94l-2.65-2.65-3.3 3.3a1 1 0 01-1.41-1.41l3.3-3.3L1.78 9.97a1 1 0 01.94-1.67l3 .73 3.6-3.6-.82-2.9a1 1 0 01.26-1L11.7 1.7z"/></svg>'
+				: '<svg viewBox="0 0 20 20" class="h-4 w-4 fill-current text-base-content/40 hover:text-warning transition" aria-hidden="true"><path d="M11.7 1.7a1 1 0 011.4 0l5.2 5.2a1 1 0 010 1.4l-1.4 1.4a1 1 0 01-1 .26l-2.9-.82-3.6 3.6.73 3a1 1 0 01-1.67.94l-2.65-2.65-3.3 3.3a1 1 0 01-1.41-1.41l3.3-3.3L1.78 9.97a1 1 0 01.94-1.67l3 .73 3.6-3.6-.82-2.9a1 1 0 01.26-1L11.7 1.7zm.7 2.12l-.42 2.07a1 1 0 01-.73.76L8 7.2l4.8 4.8 .55-2.25a1 1 0 01.76-.73l2.07-.42L12.4 3.82z"/></svg>';
+		}
+
+		// One repo's markup. Each row is `content-visibility:auto` (see render() below) so
+		// the browser skips laying out and painting rows scrolled out of view.
+		function repoRowHtml(repo) {
+			const isOpen = expandedRepo === repo.name;
+			return `
 				<li
-					class="rounded-lg border border-base-300 bg-base-200/60 px-3 py-2.5 transition hover:border-info/50 hover:bg-base-200"
+					class="rounded-lg border ${repo.pinned ? "border-warning/30 bg-warning/5" : "border-base-300 bg-base-200/60"} px-3 py-2.5 mb-2 transition hover:border-info/50 hover:bg-base-200"
+					style="${isOpen ? "" : "content-visibility:auto;contain-intrinsic-size:0 72px;"}"
 					data-repo-name="${escapeHtml(repo.name)}"
 				>
 					<a href="${escapeHtml(repo.url || "#")}" target="_blank" rel="noopener noreferrer" class="flex items-center justify-between gap-2 hover:text-info">
 						<span class="text-sm font-semibold truncate">${escapeHtml(repo.name)}</span>
 						<span class="flex items-center gap-1">
-							${repo.pinned ? '<span class="badge badge-info badge-xs">Pinned</span>' : ""}
-							<button type="button" class="btn btn-ghost btn-xs px-1" title="${repo.pinned ? "Unpin" : "Pin"}" data-arti-pin="${escapeHtml(repo.name)}" data-pinned="${repo.pinned ? "1" : "0"}">${repo.pinned ? "★" : "☆"}</button>
-							<span class="badge badge-outline badge-xs">${escapeHtml(repo.type)}</span>
+							<span class="text-[11px] uppercase tracking-wide text-base-content/50">${escapeHtml(repo.type)}</span>
+							<button type="button" class="btn btn-ghost btn-xs btn-circle" title="Latest artifacts" aria-label="Show latest artifacts" aria-expanded="${isOpen ? "true" : "false"}" data-arti-expand="${escapeHtml(repo.name)}">
+								<svg viewBox="0 0 24 24" class="h-4 w-4" data-chevron style="transition:transform 150ms ease;${isOpen ? "transform:rotate(180deg)" : ""}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+							</button>
+							<button type="button" class="btn btn-ghost btn-xs btn-circle" title="${repo.pinned ? "Unpin" : "Pin to top"}" aria-label="Toggle pin" data-arti-pin="${escapeHtml(repo.name)}" data-pinned="${repo.pinned ? "1" : "0"}">${renderPinSvg(!!repo.pinned)}</button>
 						</span>
 					</a>
-					<p class="mt-1 text-xs text-base-content/50 truncate">${escapeHtml(repo.description || "Mock repository")}</p>
+					<p class="mt-1 text-xs text-base-content/50 truncate">${escapeHtml(repo.description || "")}</p>
+					<div class="${isOpen ? "" : "hidden "}mt-2 border-t border-base-300 pt-2" data-arti-files></div>
 				</li>
-			`).join("");
-			showList();
+			`;
 		}
 
-		function renderPanel(details, anchor) {
-			const rect = anchor.getBoundingClientRect();
-			const rootRect = root.getBoundingClientRect();
-			panelEl.style.top = `${Math.max(8, rect.top - rootRect.top)}px`;
+		// Long lists used to lag the whole dashboard because every repo row was laid out
+		// and painted at once. The first fix hand-rolled JS windowing (padding standing in
+		// for off-screen rows); it dropped the row count but relied on the <ul> being a
+		// definite height, and when that height didn't resolve on the dashboard the padding
+		// pushed the rows straight out of the card. So windowing is gone. Instead each row
+		// is `content-visibility:auto` with an intrinsic-size hint: the browser itself skips
+		// layout and paint for rows scrolled out of view, so hundreds of repos stay cheap
+		// while the DOM is a plain, height-constrained scroll list (absolute inset-0 on the
+		// <ul>) that physically cannot overflow the card.
+		function render(repos) {
+			const list = Array.isArray(repos) ? repos : [];
+			if (!list.length) {
+				showEmpty('<span class="text-base-content/50">No repositories found</span>');
+				return;
+			}
+			showList();
+			listEl.scrollTop = 0;
+			listEl.innerHTML = list.map(repoRowHtml).join("");
+			restoreExpanded();
+		}
+
+		function renderFiles(details, box) {
+			if (!box) return;
 			const artifacts = Array.isArray(details.artifacts) ? details.artifacts : [];
-			panelEl.innerHTML = `
-				<div class="flex items-start justify-between gap-2">
-					<div>
-						<a href="${escapeHtml(details.url || "#")}" target="_blank" rel="noopener noreferrer" class="text-sm font-semibold hover:text-info">${escapeHtml(details.name || "")}</a>
-						<p class="text-xs text-base-content/50">Latest artifacts</p>
-					</div>
-					<span class="badge badge-info badge-sm">${escapeHtml(details.type || "")}</span>
-				</div>
-				${artifacts.length ? `
-					<ul class="mt-3 flex max-h-48 flex-col gap-2 overflow-y-auto pr-1">
+			box.innerHTML = artifacts.length
+				? `<ul class="flex max-h-48 flex-col gap-1.5 overflow-y-auto pr-1">
 						${artifacts.map((a) => `
 							<li class="rounded-lg bg-base-200 px-2 py-1.5">
 								<a href="${escapeHtml(a.url || "#")}" target="_blank" rel="noopener noreferrer" class="flex items-center gap-2 hover:text-info">
 									<span class="truncate text-xs font-medium">${escapeHtml(a.name)}</span>
-									<span class="badge badge-outline badge-xs ml-auto">${escapeHtml(a.type)}</span>
+									<span class="ml-auto text-[10px] uppercase tracking-wide text-base-content/50">${escapeHtml(a.type)}</span>
 								</a>
 								<p class="mt-0.5 text-[10px] text-base-content/50">${escapeHtml(timeAgo(a.last_updated))}</p>
 							</li>
 						`).join("")}
-					</ul>` : '<p class="mt-3 text-xs text-base-content/50">No data available</p>'}
-			`;
-			showPanel();
+					</ul>`
+				: '<p class="text-xs text-base-content/50">No artifacts to show.</p>';
 		}
 
-		async function loadDetails(repoName, anchor) {
+		async function loadFiles(repoName, box) {
+			if (!box) return;
 			if (detailsCache.has(repoName)) {
-				renderPanel(detailsCache.get(repoName), anchor);
+				renderFiles(detailsCache.get(repoName), box);
 				return;
 			}
-			panelEl.innerHTML = '<div class="flex items-center gap-2 text-xs text-base-content/50"><span class="loading loading-spinner loading-xs"></span> Loading artifacts…</div>';
-			showPanel();
+			box.innerHTML = '<div class="flex items-center gap-2 text-xs text-base-content/50"><span class="loading loading-spinner loading-xs"></span> Loading artifacts…</div>';
 			const res = await fetch(`/api/integrations/artifactory/repo-details?name=${encodeURIComponent(repoName)}`, { credentials: "same-origin" });
 			if (!res.ok) throw new Error("http " + res.status);
 			const body = await res.json();
 			const details = body && body.data ? body.data : {};
 			detailsCache.set(repoName, details);
-			renderPanel(details, anchor);
+			renderFiles(details, box);
+		}
+
+		// A re-render (search, pin, refresh) rebuilds every row, so the open one has to be
+		// filled again — from the cache, without a request.
+		function restoreExpanded() {
+			if (!expandedRepo) return;
+			const row = listEl.querySelector('li[data-repo-name="' + expandedRepo.replace(/"/g, "") + '"]');
+			const box = row && row.querySelector("[data-arti-files]");
+			if (!box) { expandedRepo = null; return; }
+			box.classList.remove("hidden");
+			loadFiles(expandedRepo, box).catch(() => {
+				box.innerHTML = '<p class="text-xs text-error">Could not load artifacts.</p>';
+			});
+		}
+
+		// One function for both directions so Undo is literally the same call with the
+		// flag flipped — an undo implemented as its own code path is an undo that drifts
+		// out of step with the thing it reverses.
+		async function setPinned(itemId, pinned) {
+			const res = await fetch("/api/integrations/artifactory/pins", {
+				method: pinned ? "POST" : "DELETE",
+				credentials: "same-origin",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ item_id: itemId, item_name: itemId }),
+			});
+			if (!res.ok) throw new Error("pin");
+			allRepos = allRepos.map((r) => (r.name === itemId ? { ...r, pinned } : r));
+			allRepos.sort((a, b) => (Number(!a.pinned) - Number(!b.pinned)) || String(a.name || "").localeCompare(String(b.name || "")));
+			render(filteredRepos());
 		}
 
 		listEl.addEventListener("click", async (e) => {
@@ -232,39 +266,72 @@
 			e.preventDefault();
 			e.stopPropagation();
 			const itemId = pinBtn.dataset.artiPin;
-			const pinned = pinBtn.dataset.pinned === "1";
+			const wasPinned = pinBtn.dataset.pinned === "1";
 			try {
-				const res = await fetch("/api/integrations/artifactory/pins", {
-					method: pinned ? "DELETE" : "POST",
-					credentials: "same-origin",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ item_id: itemId, item_name: itemId }),
+				await setPinned(itemId, !wasPinned);
+				window.portalToast?.({
+					kind: "success",
+					message: wasPinned ? `Unpinned ${itemId}.` : `Pinned ${itemId}.`,
+					action: {
+						label: "Undo",
+						run: () =>
+							setPinned(itemId, wasPinned).catch(() =>
+								window.portalToast?.({ kind: "error", message: "Could not undo that." })
+							),
+					},
 				});
-				if (!res.ok) throw new Error("pin");
-				allRepos = allRepos.map((r) => (r.name === itemId ? { ...r, pinned: !pinned } : r));
-				allRepos.sort((a, b) => (Number(!a.pinned) - Number(!b.pinned)) || String(a.name || "").localeCompare(String(b.name || "")));
-				render(filteredRepos());
 			} catch {
 				window.portalToast?.({ kind: "error", message: "Could not update pin." });
 			}
 		});
 
-		listEl.addEventListener("mouseover", (e) => {
-			const row = e.target.closest("[data-repo-name]");
-			if (!row) return;
-			clearTimeout(panelTimer);
-			loadDetails(row.dataset.repoName, row).catch(() => {
-				panelEl.innerHTML = '<p class="text-xs text-error">Could not load details.</p>';
-				showPanel();
+		// One repository open at a time: two expanded rows in a list this narrow is a
+		// list nobody can scan, and clicking the open one again is the obvious way to
+		// close it.
+		listEl.addEventListener("click", (e) => {
+			const btn = e.target.closest("[data-arti-expand]");
+			if (!btn) return;
+			// The button sits inside the row's <a>, so without this the click also opens
+			// the repository in a new tab.
+			e.preventDefault();
+			e.stopPropagation();
+			const name = btn.getAttribute("data-arti-expand");
+			const row = btn.closest("li[data-repo-name]");
+			const box = row && row.querySelector("[data-arti-files]");
+			if (!box) return;
+
+			const wasOpen = expandedRepo === name;
+			listEl.querySelectorAll("[data-arti-files]").forEach((el) => el.classList.add("hidden"));
+			listEl.querySelectorAll("[data-arti-expand]").forEach((el) => {
+				el.setAttribute("aria-expanded", "false");
+				const icon = el.querySelector("[data-chevron]");
+				if (icon) icon.style.transform = "";
+			});
+			// An expanded row is taller than the intrinsic-size hint that reserves space
+			// for it while it is off-screen, so the hint has to go while it is open or the
+			// scrollbar jumps when it scrolls out of view.
+			listEl.querySelectorAll("li[data-repo-name]").forEach((el) => {
+				el.style.contentVisibility = "auto";
+				el.style.containIntrinsicSize = "0 72px";
+			});
+			if (wasOpen) {
+				expandedRepo = null;
+				return;
+			}
+
+			expandedRepo = name;
+			box.classList.remove("hidden");
+			btn.setAttribute("aria-expanded", "true");
+			const icon = btn.querySelector("[data-chevron]");
+			if (icon) icon.style.transform = "rotate(180deg)";
+			if (row) {
+				row.style.contentVisibility = "visible";
+				row.style.containIntrinsicSize = "";
+			}
+			loadFiles(name, box).catch(() => {
+				box.innerHTML = '<p class="text-xs text-error">Could not load artifacts.</p>';
 			});
 		});
-
-		listEl.addEventListener("mouseleave", () => {
-			scheduleHidePanel();
-		});
-
-		panelEl.addEventListener("mouseenter", () => clearTimeout(panelTimer));
-		panelEl.addEventListener("mouseleave", scheduleHidePanel);
 
 		statusEl.addEventListener("click", async (e) => {
 			const saveBtn = e.target.closest("[data-arti-save-token]");

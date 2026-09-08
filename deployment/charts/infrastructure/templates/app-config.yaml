@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: app-config
+  name: app-config{{ .Values.global.nameSuffix }}
 data:
   # ============================================
   # GENERAL APPLICATION SETTINGS

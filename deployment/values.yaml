@@ -29,9 +29,36 @@ global:
     pullPolicy: "Always"
   replicaCount: 1
 
-  # Set to "false" in closed networks where integrations (Azure DevOps,
+  # How many database dumps are kept in Artifactory. A GLOBAL because two charts
+  # need the same number: the infrastructure chart passes it to the backup job that
+  # does the pruning, and the backend chart passes it to the portal, which uses it to
+  # say which of the recorded backups are still restorable and which have aged out.
+  # A second copy would drift, and the drift shows up as the portal offering a
+  # restore point that Artifactory deleted days ago.
+  backupKeepLast: 3
+
+  # Suffix appended to EVERY resource name and `app` label in all three charts.
+  # "" for production, "-test" for test. This is what lets both stacks live in one
+  # namespace: without it the second release would overwrite the first's Deployments
+  # and, worse, its Services would select the first's pods — sending test traffic
+  # into production with nothing on screen to indicate it.
+  nameSuffix: ""
+
+  # See the comment in the Deployment templates: Kubernetes keeps 10 old ReplicaSets
+  # per Deployment by default, which is where the long list of "0 of 0 pods" entries
+  # comes from. They are rollback history, not stray pods.
+  revisionHistoryLimit: 2
+
+  # Set to "false" where integrations (Azure DevOps,
   # Artifactory, SonarQube, ServiceNow, SSO) use internal/self-signed certs.
   integrationTlsVerify: "true"
+
+  # True capacity of the disk Artifactory stores its binaries on, e.g. "6 TB".
+  # Artifactory only reports the mount its data dir is on, which here is a small
+  # partition, so the storage widget cannot derive a real total by itself. Leave
+  # empty to have the widget report the capacity as unknown rather than guess.
+  # Overridden per-environment from the pipeline (ARTIFACTORY_DISK_TOTAL).
+  artifactoryDiskTotal: ""
 
   # This makes DB connection details available to backend/frontend
   endpoints:

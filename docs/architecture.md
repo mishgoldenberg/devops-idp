@@ -29,9 +29,11 @@ and what happens end-to-end when a user performs a typical action.
 │   ─ cache.py + redis_client.py  Redis get_cached / invalidate      │
 │   ─ integrations_cache.py       60 s TTL wrapper for ADO/SNOW      │
 │   ─ resilient_http.py           timeouts + retries + safe_call     │
-│   ─ terraform_runner.py         Submits a K8s Job to run Terraform │
 │   ─ audit.py                    Writes audit_events rows           │
+│   ─ request_audit.py            Middleware + log mirror into audit │
+│   ─ widget_registry.py          The ONE dashboard widget catalogue │
 │   ─ safe_mode.py                Global "simulate only" toggle      │
+│   ─ terraform_runner.py         LEGACY, not the live path (§7)     │
 └──────────┬──────────────────────────────────┬──────────────────────┘
            │                                  │
            ▼                                  ▼
@@ -70,7 +72,9 @@ Self-service execution lives in its own runtime:
 | External HTTP                | `backend/app/api/*.py` via `httpx`| Per-integration; resilience wrapped by `resilient_http.py` |
 | Integration cache            | `backend/app/integrations_cache.py` | 60 s TTL keyed `ext:<integration>:<owner>:<key>`         |
 | Auth                         | `backend/app/security.py`         | JWT + `get_current_user` used by every router              |
-| Terraform jobs               | `backend/app/terraform_runner.py` | K8s Job is the execution sandbox                           |
+| Provisioning                 | `backend/app/api/azure_devops.py` | REST calls with the admin PAT; no Terraform, no K8s Job    |
+| Widget catalogue             | `backend/app/widget_registry.py`  | One list; a second copy always drifts                      |
+| Dashboard announcements      | `backend/app/api/announcements.py`| Admin → everyone, dismissed per person and per version     |
 
 ## 3. Authentication flow
 
@@ -149,17 +153,14 @@ Browser                  Backend                    Kubernetes         Azure Dev
    │              else:     │                          │                    │
    │                        │  azure_devops.ensure_    │                    │
    │                        │    custom_ado_process()──┼────────────────────► (process create)
-   │                        │  terraform_runner.submit_│                    │
-   │                        │    terraform_job()───────┼──► create BatchV1  │
-   │                        │                          │    Job + CM        │
+   │                        │  _create_project_in_     │                    │
+   │                        │    collection()  ────────┼────────────────────► POST _apis/projects
+   │                        │  (REST, admin PAT, ONE   │                    │   (the collection
+   │                        │   collection - the one   │                    │    the request named)
+   │                        │   the request named)     │                    │
    │                        │  UPDATE status=IN_PROGRESS                    │
-   │                        │  audit.log(TERRAFORM_STARTED)                 │
-   │                        │                          │ Job runs:          │
-   │                        │                          │ ─ plan             │
-   │                        │                          │ ─ apply ──────────► project created
-   │                        │                          │ ─ writes log to GCS│
    │                        │                          │                    │
-   │                        │  poll job status         │                    │
+   │                        │  poll operation status   │                    │
    │                        │  UPDATE status=COMPLETED │                    │
    │                        │  audit.log()             │                    │
    │                        │  create_notification()   │                    │

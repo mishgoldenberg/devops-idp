@@ -2,20 +2,62 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ .Chart.Name }}-ingress
+  name: {{ .Chart.Name }}{{ .Values.global.nameSuffix }}-ingress
   annotations:
     {{- toYaml .Values.ingress.annotations | nindent 4 }}
 spec:
   ingressClassName: {{ .Values.ingress.className | default "openshift-default" }}
+  {{- /*
+       `required`, not a plain value: an Ingress rendered with an EMPTY host
+       does not fail, it matches EVERY hostname. Deploying test with its
+       hostname variable unset therefore hijacked the production URL and
+       served it from the test backend and its empty database - which looks
+       exactly like production having been wiped, while the real data sat
+       untouched on its own volume.
+
+       Failing the render is the only safe behaviour: a deploy that cannot
+       name its own hostname must not produce a catch-all route.
+
+       aliasHosts must match the frontend's, and for a harder reason than tidiness:
+       the browser fetches the page from `/` and then calls `/api` on the SAME
+       origin. A name that only the frontend answers to serves a portal whose every
+       request 503s.
+  */}}
+  {{- $primary := required "ingress.host is empty. An Ingress with no host matches EVERY hostname and will hijack other environments. Set HUB_HOSTNAME (main) or HUB_HOSTNAME_TEST (dev) in the variable group." .Values.ingress.host }}
+  {{- $hosts := prepend (compact (.Values.ingress.aliasHosts | default (list))) $primary }}
   rules:
-    - host: {{ .Values.ingress.host }}
+    {{- range $hosts }}
+    - host: {{ . | quote }}
       http:
         paths:
-          - path: {{ .Values.ingress.path }}
+          - path: {{ $.Values.ingress.path }}
             pathType: Prefix
             backend:
               service:
-                name: {{ .Chart.Name }}-service
+                name: {{ $.Chart.Name }}{{ $.Values.global.nameSuffix }}-service
                 port:
-                  number: {{ .Values.service.port }}
+                  number: {{ $.Values.service.port }}
+    {{- end }}
+  {{- if .Values.ingress.tls }}
+  {{- /*
+       This block did not exist, and its absence was invisible: `ingress.tls: true`
+       sat in backend/values.yaml being read by nothing, and the annotation above
+       gave the Route edge termination with the router's DEFAULT wildcard
+       certificate. Under *.apps.<cluster> that is genuinely correct.
+
+       On a vanity hostname it fails in the worst-looking way. The frontend Route
+       gets the real certificate and the page loads, then every HTMX call to /api
+       hits THIS Route, gets a certificate for another name, and is rejected by the
+       browser - a portal that renders and then does nothing, with the reason
+       visible only in the network console.
+
+       Same secret as the frontend: one certificate, one hostname, two Routes.
+  */}}
+  tls:
+    - hosts:
+        {{- range $hosts }}
+        - {{ . | quote }}
+        {{- end }}
+      secretName: {{ required "ingress.tlsSecretName is empty while ingress.tls is true. The /api Route would serve the router's default wildcard certificate, so the portal would load and every API call would fail on certificate. Set backend.ingress.tlsSecretName to the same secret as the frontend." .Values.ingress.tlsSecretName }}
+  {{- end }}
 {{- end }}

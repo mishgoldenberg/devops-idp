@@ -5,10 +5,10 @@ trigger:
       - main
 
 pool:
-  name: devops-closed-network
+  name: devops-hub
 
 variables:
-  - group: devops-hub-closed-network
+  - group: devops-hub
   - name: imageTag
     value: $(Build.BuildId)
   - name: imageRepository
@@ -20,6 +20,66 @@ variables:
   - name: helmReleaseName
     value: devops-hub
 
+  # -- Environment routing ---------------------------------------------------
+  # `main` deploys production, anything else (in practice `dev`) deploys test.
+  # Both land in the SAME namespace; they are kept apart by the name suffix and
+  # the hostname, not by cluster-level isolation.
+  #
+  # Written as compile-time template expressions rather than a runtime `if` in the
+  # deploy script, so the environment is fixed before the job starts and the deploy
+  # step contains no branch logic at all - it cannot pick the wrong one part-way.
+  - name: envName
+    ${{ if eq(variables['Build.SourceBranch'], 'refs/heads/main') }}:
+      value: prod
+    ${{ else }}:
+      value: test
+  - name: helmValuesFile
+    ${{ if eq(variables['Build.SourceBranch'], 'refs/heads/main') }}:
+      value: ./deployment/values-prod.yaml
+    ${{ else }}:
+      value: ./deployment/values-test.yaml
+  # Prod keeps HUB_HOSTNAME. Test needs HUB_HOSTNAME_TEST adding to the variable
+  # group, e.g. devops-hub-test.corp.example.
+  - name: deployHostname
+    ${{ if eq(variables['Build.SourceBranch'], 'refs/heads/main') }}:
+      value: $(HUB_HOSTNAME)
+    ${{ else }}:
+      value: $(HUB_HOSTNAME_TEST)
+  # Name of the kubernetes.io/tls secret holding this environment's certificate.
+  # Only needed when the hostname is OUTSIDE the cluster's *.apps wildcard - a
+  # hostname under it is already covered by the router's own certificate. Leave the
+  # variable undefined and the Ingress renders exactly as it always has.
+  #
+  # The test branch resolves to the EMPTY STRING, not to a $(HUB_TLS_SECRET_TEST)
+  # macro. Test runs on a hostname under the cluster's *.apps wildcard, which the
+  # router's own certificate already covers, so it needs no secret and never will -
+  # and naming a variable that nobody is ever going to define fails the build with
+  # "HUB_TLS_SECRET_TEST not found" rather than quietly resolving to unset.
+  # To put test on a vanity hostname later: define HUB_TLS_SECRET_TEST in the
+  # variable group and change the else branch back to $(HUB_TLS_SECRET_TEST).
+  - name: deployTlsSecret
+    ${{ if eq(variables['Build.SourceBranch'], 'refs/heads/main') }}:
+      value: $(HUB_TLS_SECRET)
+    ${{ else }}:
+      value: ''
+  # An optional SECOND name for the same portal - typically the short form that
+  # resolves through the client's DNS search suffix, so https://devops-hub reaches
+  # devops-hub.<corp-domain>. The browser sends the name it was TYPED, not the name
+  # DNS resolved to, so the router needs a Route for it or it answers 503. Leave the
+  # variable undefined and nothing changes.
+  # Empty for test, for the same reason as deployTlsSecret above.
+  - name: deployHostAlias
+    ${{ if eq(variables['Build.SourceBranch'], 'refs/heads/main') }}:
+      value: $(HUB_HOSTNAME_ALIAS)
+    ${{ else }}:
+      value: ''
+  # Must agree with the values file above.
+  - name: nameSuffix
+    ${{ if eq(variables['Build.SourceBranch'], 'refs/heads/main') }}:
+      value: ''
+    ${{ else }}:
+      value: '-test'
+
 stages:
   - stage: Build
     displayName: Build
@@ -30,16 +90,97 @@ stages:
           - checkout: self
           - script: |
               set -euo pipefail
-              python -m pip install --upgrade pip
-              python -m pip install -r backend/app/requirements.txt
+              python3 -m pip install --upgrade pip
+              python3 -m pip install -r backend/app/requirements.txt
             displayName: pip install requirements
+
+          # frontend/static/css/output.css is committed and shipped as-is — nothing
+          # rebuilds it here. A Tailwind class that is not already in that file silently
+          # does nothing in the browser, so the template looks right and the page is
+          # wrong. This catches that before it ships. Pure python3: no npm, no network.
+          - script: |
+              set -euo pipefail
+              python3 scripts/check_css_classes.py
+            displayName: Check templates against compiled CSS
+
+          # A syntax error in an inline <script> makes the browser discard the WHOLE
+          # block, so every handler in it silently never attaches and the widget just
+          # sits there doing nothing. This catches the text-level ways a JS template
+          # literal gets broken. Pure python3, same as the CSS check.
+          - script: |
+              set -euo pipefail
+              python3 scripts/check_inline_js.py
+            displayName: Check inline script blocks
+
+          # Every router is imported at module scope, so a module that is missing
+          # from the commit does not degrade a feature — it stops the backend
+          # before it binds a port, and the cluster reports CrashLoopBackOff with
+          # no clue as to why. The usual cause is `git commit -am`, which stages
+          # modified files and silently skips NEW ones. This catches it here,
+          # where the message can say so, instead of in the cluster.
+          - script: |
+              set -euo pipefail
+              python3 scripts/check_imports.py
+            displayName: Check imports and template includes resolve
+
+          # The frontend's nginx site config exists TWICE - baked into the image and
+          # rendered by the chart, which mounts its copy over the image's so proxy_pass
+          # can name the environment's own backend. Only the chart copy runs, so a fix
+          # applied to the image copy alone changes nothing and looks done. That is how
+          # X-Forwarded-Proto stayed broken through a deploy.
+          - script: |
+              set -euo pipefail
+              python3 scripts/check_nginx_sync.py
+            displayName: Check both nginx configs agree
+
+          # Every self-service form opens by asking the same six questions as the
+          # Support wizard's first step, and the two are separate hand-written copies:
+          # the wizard is markup, the forms are data. The catalog copy was written from
+          # memory and drifted on all four axes at once - free text where the wizard has
+          # a fixed list of branches, a different field order, English-only labels, and
+          # a seventh field that exists nowhere in the wizard. These names are also what
+          # ServiceNow variables are matched on.
+          - script: |
+              set -euo pipefail
+              python3 scripts/check_requester_fields.py
+            displayName: Check the requester section matches the Support wizard
+
+          # The changelog is written by hand and the images are tagged from it, so a
+          # malformed or out-of-order version here becomes a Docker tag that sorts
+          # wrongly in Artifactory and a What's New page that reads as broken. Both
+          # are invisible until somebody looks. Also catches entries that are still
+          # commit subjects wearing a hat.
+          - script: |
+              set -euo pipefail
+              python3 scripts/check_changelog.py
+            displayName: Check the changelog
+
 
       - job: docker_build_and_push
         displayName: docker-build-and-push
         dependsOn:
           - backend_build
         steps:
+          # The full history, not a shallow clone: the changelog below is read from
+          # `git log`, and a depth-1 checkout has exactly one commit in it.
           - checkout: self
+            fetchDepth: 0
+
+          # The build stamp: backend/app/build_info.json, carrying the branch, the
+          # build number and the commit. The branch is what tells the running backend
+          # whether it is test or production, and therefore which version line to
+          # record this deployment against.
+          #
+          # It does NOT carry the changelog. That is written by hand in
+          # backend/app/changelog.py and ships in the image like any other source
+          # file — commits are not a changelog.
+          #
+          # Never fails the build.
+          - script: |
+              set -uo pipefail
+              python3 scripts/gen_build_info.py || echo "build info skipped"
+            displayName: Stamp the build
+
           - script: |
               set -euo pipefail
               echo "$(ARTIFACTORY_DOCKER_PASSWORD)" | docker login "$(ARTIFACTORY_DOCKER_REGISTRY)" --username "$(ARTIFACTORY_DOCKER_USERNAME)" --password-stdin
@@ -61,11 +202,66 @@ stages:
               docker push "$(frontendImage)"
               docker tag "$(frontendImage)" "$(imageRepository)/frontend:latest"
               docker push "$(imageRepository)/frontend:latest"
+
+              # A tag that says WHICH RELEASE this image is, per environment:
+              # 1.3.0-test and 1.3.0-prod. The build-id tag is what the deploy
+              # actually pulls, and it answers "which build" -- it cannot answer
+              # "is test on the same release as production", which is the question
+              # anyone actually asks in front of two clusters.
+              #
+              # The version comes from the changelog, which the guard above has
+              # already checked, so this cannot invent a tag for a release nobody
+              # wrote up. The environment comes from the branch, and only from a
+              # real branch ref: a pull request build is refs/pull/N/merge, is
+              # never deployed, and must not move either environment's tag.
+              VERSION="$(python3 scripts/check_changelog.py --version)"
+              case "$(Build.SourceBranch)" in
+                refs/heads/main|refs/heads/master) RELEASE_ENV="prod" ;;
+                refs/heads/*)                      RELEASE_ENV="test" ;;
+                *)                                 RELEASE_ENV="" ;;
+              esac
+              if [ -n "$VERSION" ] && [ -n "$RELEASE_ENV" ]; then
+                for image in backend frontend; do
+                  docker tag "$(imageRepository)/$image:$(imageTag)"                              "$(imageRepository)/$image:$VERSION-$RELEASE_ENV"
+                  docker push "$(imageRepository)/$image:$VERSION-$RELEASE_ENV"
+                done
+                echo "tagged $VERSION-$RELEASE_ENV"
+              else
+                echo "no release tag: version='$VERSION' env='$RELEASE_ENV'"
+              fi
             displayName: Build and push backend and frontend images
+
+          # Every run pushes a new backend+frontend tag, so the Docker repo grows without
+          # bound. Keep only the newest 5 tags of each (plus :latest). Pure stdlib Python,
+          # no pip. Housekeeping only — continueOnError so a prune hiccup never blocks a
+          # deploy. Needs ARTIFACTORY_DOCKER_REPO_KEY (the Docker repo KEY, e.g.
+          # docker-local) added to the variable group; without it the step no-ops.
+          - script: |
+              set -euo pipefail
+              python3 scripts/artifactory_image_retention.py
+            displayName: Prune old images (keep last 5 backend & frontend)
+            continueOnError: true
+            env:
+              ARTIFACTORY_BASE_URL: $(ARTIFACTORY_BASE_URL)
+              ARTIFACTORY_DOCKER_REPO_KEY: $(ARTIFACTORY_DOCKER_REPO_KEY)
+              ARTIFACTORY_DOCKER_USERNAME: $(ARTIFACTORY_DOCKER_USERNAME)
+              ARTIFACTORY_DOCKER_PASSWORD: $(ARTIFACTORY_DOCKER_PASSWORD)
+              ARTIFACTORY_IMAGE_RETENTION: "5"
+              ARTIFACTORY_TLS_VERIFY: "false"
 
   - stage: Deploy
     displayName: Deploy
     dependsOn: Build
+    # Only a real branch deploys. A pull-request build has
+    # Build.SourceBranch = refs/pull/<n>/merge, which is NOT refs/heads/main — so the
+    # environment expression above fell to its `else` and quietly redeployed TEST.
+    # Opening a PR from dev into main therefore produced a green run that looked like
+    # a production release and changed nothing in production. Build it, do not deploy
+    # it: there is no environment that a merge candidate belongs in.
+    condition: >-
+      and(succeeded(),
+          or(eq(variables['Build.SourceBranch'], 'refs/heads/main'),
+             eq(variables['Build.SourceBranch'], 'refs/heads/dev')))
     jobs:
       - job: deploy
         displayName: Deploy to OpenShift
@@ -73,28 +269,166 @@ stages:
           - checkout: self
           - script: |
               set -euo pipefail
+              echo "=================================================================="
+              echo " branch        : $(Build.SourceBranch)"
+              echo " commit        : $(Build.SourceVersion)"
+              echo " environment   : $(envName)"
+              echo " release       : $(helmReleaseName)$(nameSuffix)"
+              echo " name suffix   : '$(nameSuffix)'"
+              echo " hostname      : $(deployHostname)"
+              echo " values file   : $(helmValuesFile)"
+              echo " image tag     : $(imageTag)"
+              echo " namespace     : $(OPENSHIFT_NAMESPACE)"
+              echo "=================================================================="
+
+              # The environment is chosen by a compile-time expression, which cannot be
+              # inspected once the job is running. Re-derive it here from the same input
+              # and refuse to continue if the two disagree — the failure mode this
+              # guards is silent and expensive: deploying test while believing you
+              # deployed production.
+              case "$(Build.SourceBranch)" in
+                refs/heads/main) EXPECTED=prod ;;
+                *)               EXPECTED=test ;;
+              esac
+              if [ "$EXPECTED" != "$(envName)" ]; then
+                echo "##vso[task.logissue type=error]Branch $(Build.SourceBranch) should deploy '$EXPECTED' but the pipeline resolved '$(envName)'."
+                exit 1
+              fi
+
+              # helm fails on a missing values file with a message that reads like a
+              # chart problem. Say what it actually is: the file is not on this branch.
+              if [ ! -f "$(helmValuesFile)" ]; then
+                echo "##vso[task.logissue type=error]$(helmValuesFile) does not exist on $(Build.SourceBranch). The environment overlay has not been merged into this branch."
+                exit 1
+              fi
+
+              if [ -z "$(deployHostname)" ]; then
+                echo "##vso[task.logissue type=error]Hostname variable is empty for $(envName). Set HUB_HOSTNAME (main) / HUB_HOSTNAME_TEST (dev) in the variable group."
+                exit 1
+              fi
+            displayName: "Announce and verify the target environment"
+          - script: |
+              set -euo pipefail
               cd "$(Build.SourcesDirectory)"
+              # This intermediate file holds every deployment secret in cleartext. The
+              # build agent is self-hosted and persistent, so its workspace survives
+              # between runs — an un-deleted copy is a plaintext secret dump sitting on
+              # a shared box. Delete it on ANY exit (success, failure, helm error), and
+              # write it 0600 so it is never group/world-readable while it exists.
+              SECRETS_FILE="$PIPELINE_WORKSPACE/helm-secrets-values.json"
+              trap 'rm -f "$SECRETS_FILE"' EXIT
               oc login "$(OPENSHIFT_API_URL)" --token="$(OPENSHIFT_TOKEN)" --insecure-skip-tls-verify="$(OPENSHIFT_INSECURE_SKIP_TLS_VERIFY)"
-              python - <<'PY'
+              python3 - <<'PY'
               import json
               import os
+              import sys
+
+              # Azure DevOps does NOT put SECRET variables into the environment. They
+              # reach a script only through the explicit `env:` mapping on THAT step.
+              #
+              # That mapping is the last child of the step, so appending a new step after
+              # it silently reparents it to the new step — which is exactly what happened
+              # when the verification step was added. The deploy then ran with none of
+              # these variables set, every os.environ.get(...) returned "", and the
+              # all-secrets Secret was rewritten with an empty value for every key.
+              #
+              # Nothing reported a problem. The running pods keep working from the env
+              # they were started with, so the damage is invisible until the next pod
+              # starts — and then it is `fe_sendauth: no password supplied` and a pod
+              # that never goes Ready.
+              #
+              # A missing secret is therefore a HARD STOP, here, before anything is
+              # applied. Writing a blank Secret is worse than not deploying.
+              REQUIRED = ("POSTGRES_PASSWORD", "JWT_SECRET",
+                          "HUB_ADMIN_USERNAME", "HUB_ADMIN_PASSWORD")
+              missing = [name for name in REQUIRED if not os.environ.get(name, "").strip()]
+              if missing:
+                  print(
+                      "##vso[task.logissue type=error]These secrets are empty in this "
+                      "step's environment: " + ", ".join(missing) + ". Deploying would "
+                      "overwrite the all-secrets Secret with blank values and break every "
+                      "pod that starts afterwards. Check that the `env:` block is attached "
+                      "to THIS step (secret variables are not exported automatically) and "
+                      "that the variable group defines them."
+                  )
+                  sys.exit(1)
+
+              def _clean(name):
+                  """Environment value, with an unexpanded macro treated as empty."""
+                  value = os.environ.get(name, "").strip()
+                  return "" if value.startswith("$(") else value
 
               secrets = {
                   "postgresPassword": os.environ.get("POSTGRES_PASSWORD", ""),
                   "redisPassword": os.environ.get("REDIS_PASSWORD", ""),
                   "hubAdminUsername": os.environ.get("HUB_ADMIN_USERNAME", ""),
                   "hubAdminPassword": os.environ.get("HUB_ADMIN_PASSWORD", ""),
+                  # Optional second local account (always a regular user). Empty = not created.
+                  "hubUserUsername": os.environ.get("HUB_USER_USERNAME", ""),
+                  "hubUserPassword": os.environ.get("HUB_USER_PASSWORD", ""),
                   "jwtSecret": os.environ.get("JWT_SECRET", ""),
                   "azureDevopsBaseUrl": os.environ.get("AZURE_DEVOPS_BASE_URL", ""),
                   "azureDevopsAdminPat": os.environ.get("AZURE_DEVOPS_ADMIN_PAT", ""),
+                  "adoNetbiosDomain": os.environ.get("ADO_NETBIOS_DOMAIN", ""),
                   "snowBaseUrl": os.environ.get("SNOW_BASE_URL", ""),
                   "snowApiUsername": os.environ.get("SNOW_API_USERNAME", ""),
                   "snowApiPassword": os.environ.get("SNOW_API_PASSWORD", ""),
                   "artifactoryBaseUrl": os.environ.get("ARTIFACTORY_BASE_URL", ""),
+                  # Write-capable Artifactory account for the nightly database dump.
+                  "artifactoryBackupUsername": _clean("ARTIFACTORY_BACKUP_USERNAME"),
+                  "artifactoryBackupToken": _clean("ARTIFACTORY_BACKUP_TOKEN"),
+                  "artifactoryAdminUsername": _clean("ARTIFACTORY_ADMIN_USERNAME"),
+                  "artifactoryAdminToken": _clean("ARTIFACTORY_ADMIN_TOKEN"),
+                  "artifactoryAdminPassword": _clean("ARTIFACTORY_ADMIN_PASSWORD"),
                   "sonarqubeBaseUrl": os.environ.get("SONARQUBE_BASE_URL", ""),
                   "confluenceBaseUrl": os.environ.get("CONFLUENCE_BASE_URL", ""),
               }
-              with open(os.environ["PIPELINE_WORKSPACE"] + "/helm-secrets-values.json", "w", encoding="utf-8") as f:
+
+              # Backups are enabled by the presence of a credential to take them
+              # with, not by a flag someone can leave on. The chart `required`s the
+              # repository settings when this is true, so the two states are
+              # "backups, working" and "no backups, said out loud" — never a
+              # CronJob authenticating with an empty string every night into a log
+              # nobody reads.
+              # The destination host is ARTIFACTORY_BASE_URL — the one the portal's
+              # Artifactory widgets and scripts/artifactory_image_retention.py already
+              # use. A second URL variable pointing at the same server is one more
+              # thing to keep in step, and the failure when they drift is a backup
+              # written somewhere nobody looks.
+              #
+              # `_clean` is what makes this correct: an undefined Azure DevOps variable
+              # is not empty — the macro is left in the text verbatim, so
+              # `$(ARTIFACTORY_BACKUP_TOKEN)` arrives as that literal string and would
+              # pass a plain truthiness test. Unexpanded means unset.
+              backup_ready = all(
+                  _clean(name)
+                  for name in ("ARTIFACTORY_BASE_URL",
+                               "ARTIFACTORY_BACKUP_USERNAME", "ARTIFACTORY_BACKUP_TOKEN")
+              )
+              flag_path = os.environ["PIPELINE_WORKSPACE"] + "/backup-enabled.txt"
+              with open(flag_path, "w", encoding="utf-8") as f:
+                  f.write("true" if backup_ready else "false")
+              if not backup_ready:
+                  print(
+                      "##vso[task.logissue type=warning]Database backups are DISABLED for "
+                      "this deploy: one of ARTIFACTORY_BASE_URL, "
+                      "ARTIFACTORY_BACKUP_USERNAME or ARTIFACTORY_BACKUP_TOKEN is empty in "
+                      "the variable group. The portal's Platform Managing page will report "
+                      "that no backup has ever run."
+                  )
+              # The rest are optional — an integration nobody has configured yet is a
+              # legitimate empty. Say which ones are blank anyway, because "the Azure
+              # DevOps widgets are empty for everybody" is much easier to understand
+              # when the deploy log already said the PAT was not set.
+              blank = sorted(k for k, v in secrets.items() if not str(v).strip())
+              if blank:
+                  print("##[warning]Deployed with these settings EMPTY: " + ", ".join(blank))
+
+              # Open with 0600 from the start (not create-then-chmod) so the secrets
+              # are never briefly world-readable under the agent's umask.
+              path = os.environ["PIPELINE_WORKSPACE"] + "/helm-secrets-values.json"
+              fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+              with os.fdopen(fd, "w", encoding="utf-8") as f:
                   json.dump({"backend": {"secrets": secrets}}, f)
               PY
 
@@ -107,36 +441,225 @@ stages:
               oc secrets link default artifactory-pull-secret --for=pull \
                 -n "$(OPENSHIFT_NAMESPACE)" 2>/dev/null || true
 
-              oc delete jobs -l app.kubernetes.io/component=observability-migrate-async \
+              # Scoped to this release: prod and test share a namespace, so an
+              # unscoped delete would remove the OTHER environment's migration job.
+              oc delete jobs -l app.kubernetes.io/component=observability-migrate-async,app.kubernetes.io/instance="$(helmReleaseName)$(nameSuffix)" \
                 -n "$(OPENSHIFT_NAMESPACE)" 2>/dev/null || true
 
-              helm template "$(helmReleaseName)" ./deployment \
+              # Written by the python block above from whether the backup credentials
+              # exist. Read back rather than recomputed so the flag and the warning
+              # can never disagree.
+              BACKUP_ENABLED=$(cat "$(Pipeline.Workspace)/backup-enabled.txt")
+
+              # Route TLS is enabled by HAVING a certificate secret to point at, not
+              # by a flag - the same rule as the backups above. An Azure DevOps
+              # variable that is not defined arrives as the literal macro text, so
+              # test for that too: a leftover macro is not a secret name.
+              TLS_SECRET="$(deployTlsSecret)"
+              case "$TLS_SECRET" in
+                "$"*"("*) TLS_SECRET="" ;;
+              esac
+
+              # Same macro guard: an undefined Azure DevOps variable arrives as its
+              # literal $(NAME) text, and that is not a hostname. An empty alias must
+              # stay empty rather than becoming a rule with no host, which matches
+              # EVERY hostname and hijacks the other environment.
+              HOST_ALIAS="$(deployHostAlias)"
+              case "$HOST_ALIAS" in
+                "$"*"("*) HOST_ALIAS="" ;;
+              esac
+              if [ -n "$HOST_ALIAS" ]; then
+                if [ -n "$TLS_SECRET" ]; then
+                  echo "Host alias: $HOST_ALIAS (must be in the certificate SAN list, or it warns)"
+                else
+                  echo "Host alias: $HOST_ALIAS"
+                fi
+              fi
+              if [ -n "$TLS_SECRET" ]; then
+                INGRESS_TLS=true
+                echo "Route TLS: using certificate secret '$TLS_SECRET' for $(deployHostname)"
+              else
+                INGRESS_TLS=false
+                echo "Route TLS: no HUB_TLS_SECRET set - the Route uses the cluster default wildcard certificate. Correct for a hostname under *.apps.<cluster>; NOT correct for a vanity hostname."
+              fi
+
+              helm template "$(helmReleaseName)$(nameSuffix)" ./deployment \
                 --namespace "$(OPENSHIFT_NAMESPACE)" \
+                -f "$(helmValuesFile)" \
                 -f "$(Pipeline.Workspace)/helm-secrets-values.json" \
+                --set infrastructure.postgres.backup.enabled="${BACKUP_ENABLED}" \
+                --set-string infrastructure.postgres.backup.artifactory.baseUrl="$(ARTIFACTORY_BASE_URL)" \
+                --set-string infrastructure.postgres.backup.pythonImage="$(imageRepository)/backend:$(imageTag)" \
                 --set-string global.customImage.repository="$(imageRepository)" \
                 --set-string backend.image.tag="$(imageTag)" \
                 --set-string frontend.image.tag="$(imageTag)" \
-                --set-string backend.ingress.host="$(HUB_HOSTNAME)" \
-                --set-string frontend.ingress.host="$(HUB_HOSTNAME)" \
+                --set-string global.nameSuffix="$(nameSuffix)" \
+                --set-string backend.ingress.host="$(deployHostname)" \
+                --set-string frontend.ingress.host="$(deployHostname)" \
                 --set-string infrastructure.postgres.image="$(POSTGRES_IMAGE)" \
                 --set-string infrastructure.redis.image="$(REDIS_IMAGE)" \
                 --set-string backend.ingress.className="$(INGRESS_CLASS_NAME)" \
                 --set-string frontend.ingress.className="$(INGRESS_CLASS_NAME)" \
+                --set frontend.ingress.tls="${INGRESS_TLS}" \
+                --set-string frontend.ingress.tlsSecretName="${TLS_SECRET}" \
+                --set backend.ingress.tls="${INGRESS_TLS}" \
+                --set-string backend.ingress.tlsSecretName="${TLS_SECRET}" \
+                ${HOST_ALIAS:+--set-string backend.ingress.aliasHosts[0]="${HOST_ALIAS}"} \
+                ${HOST_ALIAS:+--set-string frontend.ingress.aliasHosts[0]="${HOST_ALIAS}"} \
                 --set-string global.integrationTlsVerify="false" \
+                --set-string global.artifactoryDiskTotal="$(ARTIFACTORY_DISK_TOTAL)" \
                 | oc apply -n "$(OPENSHIFT_NAMESPACE)" -f -
             displayName: Deploy with Helm
+            # ── DO NOT MOVE, AND DO NOT APPEND A STEP BETWEEN THIS AND THE SCRIPT ABOVE.
+            #
+            # `env:` is a property of the step it is indented under, and it is the LAST
+            # child — so adding a new step directly after it reparents the whole block
+            # to that new step. The deploy then runs without a single secret, writes an
+            # all-secrets Secret full of empty strings, and exits 0. The guard at the top
+            # of the python block above now catches that, but keep the block here.
+            #
+            # Azure DevOps exports NON-secret variables to the environment automatically;
+            # secret ones only through a mapping like this. That asymmetry is why the
+            # failure is silent: $(OPENSHIFT_TOKEN) in the script text still worked (it is
+            # macro substitution, not an env var), so `oc login` succeeded and the deploy
+            # looked entirely normal.
             env:
               PIPELINE_WORKSPACE: $(Pipeline.Workspace)
               POSTGRES_PASSWORD: $(POSTGRES_PASSWORD)
               REDIS_PASSWORD: $(REDIS_PASSWORD)
               HUB_ADMIN_USERNAME: $(HUB_ADMIN_USERNAME)
               HUB_ADMIN_PASSWORD: $(HUB_ADMIN_PASSWORD)
+              HUB_USER_USERNAME: $(HUB_USER_USERNAME)
+              HUB_USER_PASSWORD: $(HUB_USER_PASSWORD)
               JWT_SECRET: $(JWT_SECRET)
               AZURE_DEVOPS_BASE_URL: $(AZURE_DEVOPS_BASE_URL)
               AZURE_DEVOPS_ADMIN_PAT: $(AZURE_DEVOPS_ADMIN_PAT)
+              ADO_NETBIOS_DOMAIN: $(ADO_NETBIOS_DOMAIN)
               SNOW_BASE_URL: $(SNOW_BASE_URL)
               SNOW_API_USERNAME: $(SNOW_API_USERNAME)
               SNOW_API_PASSWORD: $(SNOW_API_PASSWORD)
               ARTIFACTORY_BASE_URL: $(ARTIFACTORY_BASE_URL)
+              # Backup credentials. Secret variables, so they reach the script only
+              # through this mapping. The destination host is ARTIFACTORY_BASE_URL
+              # above — deliberately the same one the portal already uses — and the
+              # repository name is a chart value, not a pipeline variable.
+              ARTIFACTORY_BACKUP_USERNAME: $(ARTIFACTORY_BACKUP_USERNAME)
+              ARTIFACTORY_BACKUP_TOKEN: $(ARTIFACTORY_BACKUP_TOKEN)
+              # Optional. A dedicated Artifactory administrator for the quota
+              # self-service; unset leaves these as the literal macro text, which
+              # _clean() treats as empty, and the backend falls back to the backup
+              # pair above.
+              ARTIFACTORY_ADMIN_USERNAME: $(ARTIFACTORY_ADMIN_USERNAME)
+              ARTIFACTORY_ADMIN_TOKEN: $(ARTIFACTORY_ADMIN_TOKEN)
+              ARTIFACTORY_ADMIN_PASSWORD: $(ARTIFACTORY_ADMIN_PASSWORD)
               SONARQUBE_BASE_URL: $(SONARQUBE_BASE_URL)
               CONFLUENCE_BASE_URL: $(CONFLUENCE_BASE_URL)
+
+          - script: |
+              set -euo pipefail
+              NS="$(OPENSHIFT_NAMESPACE)"
+              SUFFIX="$(nameSuffix)"
+              TAG="$(imageTag)"
+              oc login "$(OPENSHIFT_API_URL)" --token="$(OPENSHIFT_TOKEN)" --insecure-skip-tls-verify="$(OPENSHIFT_INSECURE_SKIP_TLS_VERIFY)" >/dev/null
+
+              # `oc apply` succeeds when it changed nothing at all, so on its own a green
+              # pipeline means "the manifests were accepted", not "the new code is
+              # running". Production sat on an older image for weeks behind a run that
+              # reported success. Everything below turns that into a failed build.
+
+              fail=0
+              for dep in backend frontend; do
+                name="${dep}${SUFFIX}"
+
+                # 1. Did the object even get the tag we just built?
+                live=$(oc get deploy "$name" -n "$NS" -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)
+                if [ -z "$live" ]; then
+                  echo "##vso[task.logissue type=error]Deployment $name does not exist in $NS."
+                  fail=1
+                  continue
+                fi
+                echo "$name -> $live"
+                case "$live" in
+                  *:"$TAG") : ;;
+                  *)
+                    echo "##vso[task.logissue type=error]$name is on '$live' but this build produced tag '$TAG'. The apply did not take effect on this environment."
+                    fail=1
+                    continue
+                    ;;
+                esac
+
+                # 2. Did the pods actually come up on it? A stuck rollout (no room for
+                #    the surge pod, image cannot be pulled, readiness never passes)
+                #    leaves the OLD pods serving indefinitely, which looks identical
+                #    from outside to "nothing was deployed".
+                if ! oc rollout status "deploy/$name" -n "$NS" --timeout=5m; then
+                  echo "##vso[task.logissue type=error]$name did not finish rolling out. The previous version is still serving traffic."
+                  oc get pods -n "$NS" -l "app=$name" -o wide || true
+
+                  # The REASON, not just the fact. "did not finish rolling out" plus a
+                  # pod list is a message that sends someone to a terminal to find out
+                  # what actually happened — which is the whole failure this stage exists
+                  # to prevent. The new pod knows why it is not Ready; ask it.
+                  bad=$(oc get pods -n "$NS" -l "app=$name" \
+                          -o 'custom-columns=N:.metadata.name,R:.status.containerStatuses[0].ready' \
+                          --no-headers 2>/dev/null | awk '$2=="false"{print $1; exit}')
+                  if [ -n "$bad" ]; then
+                    echo "----- $bad: events -----"
+                    oc describe pod "$bad" -n "$NS" | sed -n '/Events:/,$p' | head -25 || true
+                    if [ "$dep" = "backend" ]; then
+                      echo "----- $bad: /api/health/ready -----"
+                      # Names the cause outright: {"database":"down"} vs {"schema":"pending"}
+                      # with the failing bootstrap step. Runs inside the pod, so it works
+                      # even though a NotReady pod is out of its Service.
+                      oc exec "$bad" -n "$NS" -- python3 -c "import http.client as h; c=h.HTTPConnection('127.0.0.1',8000,timeout=5); c.request('GET','/api/health/ready'); r=c.getresponse(); print(r.status, r.read().decode())" 2>&1 || true
+                    fi
+                    echo "----- $bad: last 60 log lines -----"
+                    oc logs "$bad" -n "$NS" --tail=60 2>&1 || true
+                  else
+                    # No unready pod means the pod was never CREATED — a quota or admission
+                    # rejection, not a sick container. `describe deploy` shows the condition
+                    # (ReplicaFailure/FailedCreate) but NOT its message, and the message is
+                    # the entire diagnosis. Go get it, from the two places it exists.
+                    echo "----- $name: no new pod was created -----"
+                    oc get deploy "$name" -n "$NS" \
+                      -o jsonpath='{range .status.conditions[?(@.type=="ReplicaFailure")]}{.reason}{": "}{.message}{"\n"}{end}' 2>/dev/null || true
+                    rs=$(oc describe deploy "$name" -n "$NS" 2>/dev/null | awk '/NewReplicaSet:/{print $2}')
+                    if [ -n "$rs" ] && [ "$rs" != "<none>" ]; then
+                      echo "----- $rs events -----"
+                      oc describe rs "$rs" -n "$NS" 2>/dev/null | sed -n '/Events:/,$p' | head -15 || true
+                    fi
+                    echo "----- namespace quota -----"
+                    oc describe quota -n "$NS" 2>/dev/null | head -30 || true
+                    oc describe deploy "$name" -n "$NS" | tail -20 || true
+                  fi
+                  fail=1
+                fi
+              done
+
+              # 3. Ask the LIVE HOSTNAME what it is running. This is the only check that
+              #    covers the whole path — DNS, route, service, pod — and it is the one
+              #    that catches a stale Route still claiming this hostname and serving
+              #    the other environment's pods.
+              url="https://$(deployHostname)/api/health/live"
+              if body=$(curl -fsS --max-time 20 -k "$url" 2>/dev/null); then
+                echo "live: $body"
+                running=$(printf '%s' "$body" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("build",""))' 2>/dev/null || echo "")
+                if [ -z "$running" ]; then
+                  echo "##[warning]$url did not report a build id; skipping the end-to-end check."
+                elif [ "$running" != "$TAG" ]; then
+                  echo "##vso[task.logissue type=error]$(deployHostname) is serving build '$running', not '$TAG'. Something else owns this hostname — check for a second Route claiming it: oc get route -n $NS"
+                  fail=1
+                else
+                  echo "$(deployHostname) is serving build $TAG."
+                fi
+              else
+                # Only a definite negative fails the build. The agent may simply have no
+                # route to the ingress, which is a network fact, not a bad deploy.
+                echo "##[warning]Could not reach $url from the build agent; skipping the end-to-end check."
+              fi
+
+              [ "$fail" -eq 0 ] || exit 1
+              echo "Deployment verified: $(envName) is running build $TAG."
+            displayName: "Verify the deployment actually landed"
+            # Deliberately NO `env:` here. This step needs `oc` and nothing else, and
+            # every secret it does not receive is a secret it cannot leak into a log.

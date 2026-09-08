@@ -1,0 +1,21 @@
+{{/*
+  A PodDisruptionBudget stops VOLUNTARY disruption — a node drain, a cluster upgrade —
+  from taking the last replica with it. Without one, routine maintenance is an outage.
+
+  Guarded on replicaCount > 1: a budget of minAvailable 1 against a single replica
+  would BLOCK the drain forever rather than protect anything, which turns a node
+  upgrade into a stuck cluster. So it only exists once there is something to spare.
+*/}}
+{{- if gt (int .Values.global.replicaCount) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Chart.Name }}{{ .Values.global.nameSuffix }}
+  labels:
+    app: {{ .Chart.Name }}{{ .Values.global.nameSuffix }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: {{ .Chart.Name }}{{ .Values.global.nameSuffix }}
+{{- end }}

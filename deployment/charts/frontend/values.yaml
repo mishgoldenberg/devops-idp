@@ -23,8 +23,38 @@ ingress:
   enabled: true
   className: openshift-default
   host: devops-hub.your-domain.example.com
+  # Extra names for the SAME Routes - a short name that resolves through the
+  # client's DNS search suffix, for example. Must match backend.ingress.aliasHosts,
+  # and every entry must be in the certificate's SAN list or it warns like any other
+  # wrong name. Set from HUB_HOSTNAME_ALIAS in the variable group.
+  aliasHosts: []
   path: /
-  tls: true
+  # OFF by default, and that default is the safe one: a hostname under the
+  # cluster's *.apps wildcard is already served over TLS by the router's own
+  # certificate, so this block is not needed and switching it on without a secret
+  # only breaks the render.
+  #
+  # Turn it on ONLY for a vanity hostname outside the wildcard, together with
+  # tlsSecretName. The pipeline derives both from whether HUB_TLS_SECRET is set, so
+  # in practice you set that variable and nothing here.
+  tls: false
+  # The kubernetes.io/tls secret holding the certificate for `host`, created out of
+  # band (it has a private key and outlives any release):
+  #   oc create secret tls devops-hub-tls --cert=fullchain.crt --key=server.key -n <ns>
+  #
+  # Only needed when `host` is OUTSIDE the cluster's *.apps wildcard. A hostname
+  # under the wildcard is already covered by the router's own certificate and needs
+  # neither this nor a DNS request.
+  tlsSecretName: ""
   annotations:
     route.openshift.io/termination: "edge"
-    route.openshift.io/insecure-edge-termination-policy: "Allow"
+    # Redirect, not Allow. Allow keeps plain HTTP working, which contradicts HSTS —
+    # the browser is told never to use HTTP while the Route still answers on it, and
+    # the first request of every session is the one that travels in clear.
+    route.openshift.io/insecure-edge-termination-policy: "Redirect"
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
