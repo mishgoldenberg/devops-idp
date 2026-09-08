@@ -2,13 +2,15 @@
 
 # 🛠️ DevOps Hub
 
-**Self-hosted developer portal that unifies Azure DevOps, SonarQube, Artifactory, ServiceNow, and Confluence behind a single role-aware dashboard — with approval workflows and Kubernetes-powered self-service.**
+**An internal developer portal that puts Azure DevOps, ServiceNow, SonarQube, Artifactory and Confluence behind one login — with self-service provisioning and an approval workflow on top.**
 
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![CI](https://img.shields.io/github/actions/workflow/status/mishgoldenberg/devops-idp/ci.yml?branch=main&style=for-the-badge&label=CI&logo=githubactions&logoColor=white)](https://github.com/mishgoldenberg/devops-idp/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.120-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![HTMX](https://img.shields.io/badge/HTMX-1.9-3D72D7?style=for-the-badge&logo=htmx&logoColor=white)](https://htmx.org/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![Redis](https://img.shields.io/badge/Redis-7-DC382D?style=for-the-badge&logo=redis&logoColor=white)](https://redis.io/)
-[![Helm](https://img.shields.io/badge/Helm-Kubernetes-0F1689?style=for-the-badge&logo=helm&logoColor=white)](https://helm.sh/)
+[![Helm](https://img.shields.io/badge/Deploy-Helm-0F1689?style=for-the-badge&logo=helm&logoColor=white)](https://helm.sh/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
 
 </div>
@@ -17,9 +19,13 @@
 
 ## What is this?
 
-Engineering teams that rely on Azure DevOps, SonarQube, Artifactory, ServiceNow, and Confluence spend their day switching between five separate UIs with no central way to request access, track approvals, or monitor the health of all their tools. DevOps Hub is a self-hosted web portal that surfaces all of those systems in one place: a role-aware, widget-based dashboard each user configures for themselves.
+Developers lose a surprising amount of the day to tab-switching. Your work items are in Azure DevOps, your tickets are in ServiceNow, your code quality is in SonarQube, your artifacts are in Artifactory, your runbooks are in Confluence — and each one has its own login, its own idea of who you are, and its own answer to "what needs me today?"
 
-When a developer needs a new Azure DevOps project, Confluence space, or SonarQube licence, they submit a self-service request through the portal; it flows through a configurable approval chain and is provisioned automatically by a Terraform Kubernetes Job on approval. All browser traffic goes exclusively through the FastAPI backend — no credentials are ever sent to the browser or stored in logs. Every action is written to an append-only audit log.
+**DevOps Hub** is an internal developer portal that answers that question once. It signs you in through your existing identity provider, reads all five systems on your behalf, and renders a single dashboard of the things actually waiting on you: pull requests needing your review, pipelines that broke, tickets assigned to you, quality gates that failed.
+
+It also goes the other way. Requests that normally mean filing a ticket and waiting — *create me an Azure DevOps project*, *raise my Artifactory quota*, *schedule a cleanup job for my repository* — are self-service forms that route through an approval workflow and are then **actually executed** against the target system, not just recorded as done.
+
+The browser never talks to any external system directly. Every integration call goes through the backend, which holds the credentials, caches responses in Redis, and writes an audit record of what it did.
 
 ---
 
@@ -27,199 +33,262 @@ When a developer needs a new Azure DevOps project, Confluence space, or SonarQub
 
 | | |
 |---|---|
-| 📊 **Role-aware dashboard** | Widget layout adapts to the user's role — 7-level RBAC hierarchy from Platform Admin to Regular User |
-| 🔗 **Five integrations** | Azure DevOps, SonarQube, Artifactory, ServiceNow, and Confluence — all responses cached in Redis |
-| ✅ **Approval workflows** | Self-service requests route through a configurable approver chain; executed automatically on approval |
-| 🤖 **Terraform self-service** | ADO project creation runs as a Kubernetes Job — async, idempotent, GCS-backed state |
-| 🔐 **OIDC authentication** | RedHat SSO / any OIDC provider; sessions held in HttpOnly JWT cookies; credentials stored server-side only |
-| 📋 **Audit log** | Append-only `audit_events` table records every user action with IP, user agent, and timestamp |
-| 🚢 **Helm deployment** | Umbrella Helm chart deploys backend, Nginx proxy, PostgreSQL, Redis, and ingress to Kubernetes |
+| 🔐 **SSO + RBAC** | OIDC sign-in (Keycloak / Red Hat SSO compatible) with a role hierarchy enforced server-side, plus local accounts as a fallback |
+| 🧩 **Personal dashboards** | Twelve widgets across five systems — drag, resize, hide. Admin policy sets what *may* be shown; each user narrows it from there |
+| ⚡ **Self-service that executes** | Project creation, quota increases and cleanup schedules run for real against the target system once approved |
+| ✅ **Approval workflow** | Rule-driven routing, an approver inbox, and a typed request catalogue that the database enum is generated from |
+| 🎫 **Ticketing built in** | Raise and track ServiceNow tickets from the portal, with answers landing in the catalog item's own fields |
+| 🛡️ **Safe Mode** | A single admin toggle turns every side-effecting action into a simulated success — demo and test without touching production |
+| 📊 **Observability** | Request auditing, outbound-call logging, per-integration health, and a deployment timeline showing which build reached which environment |
+| 🔑 **Runtime credentials** | Integration secrets are configured in the admin UI and stored encrypted, not baked into environment variables |
+| 🌍 **Bidirectional UI** | Every user-entered value renders `dir="auto"`, so RTL content sits correctly beside its label |
+| ⌨️ **Keyboard-first** | Command palette, shortcut overlay, and shortcuts matched on the physical key so they survive a non-Latin layout |
+| 🚀 **Deploy anywhere** | Helm umbrella chart for any Kubernetes — OpenShift, EKS, GKE, AKS — or `docker compose up` on a laptop |
 
 ---
 
 ## 🏗️ How it works
 
 ```
-Browser (HTMX partial renders at /ui/*)
-       │
-       ▼
-FastAPI Backend (:8000)
-       │
-       ├── /auth/*     ──► OIDC provider ──► JWT cookie set
-       │
-       ├── RBAC check (7-level hierarchy) ──► allow / 403
-       │
-       ├── Business logic (approvals, dashboards, audit)
-       │          │                    │
-       │          ▼                    ▼
-       │      PostgreSQL            Redis (60s TTL)
-       │   (users, approvals,    (all external API
-       │    audit, widgets)       responses cached)
-       │
-       └── External adapters (never called directly by browser)
-                  │
-                  ├──► Azure DevOps REST  (work items, repos, pipelines)
-                  ├──► SonarQube API      (quality gates, coverage, debt)
-                  ├──► Artifactory        (storage stats, artifact info)
-                  ├──► ServiceNow OAuth2  (incidents, support tickets)
-                  └──► Confluence REST    (pages, spaces)
+                         Browser
+                            │
+              ┌─────────────┴─────────────┐
+              │  /ui/…            /api/…  │
+              │  HTMX fragments   JSON    │
+              └─────────────┬─────────────┘
+                            ▼
+              ┌───────────────────────────┐
+              │   FastAPI  (one image)    │
+              │  ┌─────────────────────┐  │
+              │  │ auth · RBAC · audit │  │
+              │  └─────────────────────┘  │
+              │  26 routers, one per      │
+              │  integration or feature   │
+              └──┬──────────┬─────────┬───┘
+                 │          │         │
+       ┌─────────▼──┐  ┌────▼────┐    │
+       │ PostgreSQL │  │  Redis  │    │  credentials held server-side
+       │            │  │ ~60s TTL│    │  the browser never sees them
+       │ users      │  │  cache  │    │
+       │ approvals  │  └─────────┘    │
+       │ dashboards │                 │
+       │ audit      │                 ▼
+       └────────────┘   ┌──────────────────────────────┐
+                        │ Azure DevOps   ServiceNow    │
+                        │ SonarQube      Artifactory   │
+                        │ Confluence                   │
+                        └──────────────────────────────┘
 ```
+
+**The read path.** A dashboard widget asks the backend, not the vendor. The backend checks Redis (`ext:<integration>:<owner>:<key>`, ~60s), calls the system if it misses, and returns a rendered HTML fragment that HTMX swaps into place. A Redis outage is swallowed — the cache degrades, the portal doesn't.
+
+**The write path.** A self-service form is declared as data in `catalog_forms.py` and rendered by one generic renderer, so a new form is a dictionary rather than a template. On submit it becomes an approval request of a typed kind; on approval an executor calls the real API — creating the Azure DevOps project, opening the pull request, raising the quota — and the request is only marked complete when that executor says so.
+
+**The trust boundary.** Integration credentials live in the database encrypted at rest, with the key derived from the app's signing secret via HKDF. No integration token is ever returned to the frontend or written to a log.
 
 ---
 
 ## 🚀 Quick Start
 
-### 1. Clone and install
+**Prerequisites:** Docker and Docker Compose. Nothing else — there is no JavaScript build step.
+
+### 1. Clone
 
 ```bash
 git clone https://github.com/mishgoldenberg/devops-idp.git
 cd devops-idp
-npm install
 ```
 
 ### 2. Configure
 
 ```bash
-cp .env.example .env
+cp env.example .env
 ```
 
-Edit `.env` with your values:
+Set at minimum a signing secret and the first admin account:
 
-| Variable | Required | Description |
-|---|:---:|---|
-| `POSTGRES_PASSWORD` | ✅ | Password for the local PostgreSQL container |
-| `REDIS_PASSWORD` | ✅ | Password for the local Redis container |
-| `JWT_SECRET` | ✅ | Random 32+ character string used to sign session tokens |
-| `HUB_ADMIN_USERNAME` | ✅ | Email address granted Platform Admin on first startup |
-| `HUB_ADMIN_PASSWORD` | ✅ | Password for the bootstrap admin account |
-| `AZURE_DEVOPS_BASE_URL` | ✅ | Full Azure DevOps org URL: `https://dev.azure.com/your-org` |
-| `AZURE_DEVOPS_ADMIN_PAT` | ✅ | PAT with Project/Process/Build read+write scopes |
-| `SNOW_BASE_URL` | ✅ | ServiceNow instance URL |
-| `SNOW_API_USERNAME` | ✅ | ServiceNow service account username |
-| `SNOW_API_PASSWORD` | ✅ | ServiceNow service account password |
-| `SONARQUBE_BASE_URL` | ✅ | SonarQube instance URL |
-| `ARTIFACTORY_BASE_URL` | ✅ | Artifactory instance URL |
-| `CONFLUENCE_BASE_URL` | ✅ | Confluence instance URL |
+```bash
+JWT_SECRET=<a long random string>
+HUB_ADMIN_USERNAME=admin
+HUB_ADMIN_PASSWORD=<a password>
+```
 
-> Generate a strong JWT secret with: `openssl rand -hex 32`
+Integrations are **not** configured here — you add them in the admin UI after signing in, and they are stored encrypted.
 
-### 3. Start the stack
+### 3. Run
 
 ```bash
 docker compose up -d
 ```
 
-PostgreSQL, Redis, and the FastAPI backend start with health checks — the backend waits until both databases are ready.
+| | |
+|---|---|
+| UI | http://localhost:8000/ui/ |
+| API docs | http://localhost:8000/docs |
+| Health | http://localhost:8000/api/health |
 
-### 4. Initialize the database
+Sign in with the admin account from step 2. The schema creates itself on first start.
 
-```bash
-npm run migrate   # Creates schema: tables, enums, indexes
-npm run seed      # Inserts roles, widget types, and seed data
-```
+### 4. Connect a system
 
-### 5. Open the portal
-
-Navigate to [http://localhost:8000/ui/](http://localhost:8000/ui/) and sign in with the `HUB_ADMIN_USERNAME` credentials.
+**Admin → Integrations →** pick a system, paste its base URL and a service credential, and press Test. The dashboard widgets for that system light up as soon as the test passes.
 
 ---
 
-## 🔑 OIDC / SSO Setup
+## ☸️ Deploying to Kubernetes
 
-DevOps Hub uses OIDC for authentication. The SSO provider and client credentials are configured at runtime through the admin UI — no environment variables needed for OIDC itself.
+A Helm umbrella chart lives in [`deployment/`](deployment/). Backend and frontend are separate images: the backend renders the UI, the frontend is a thin nginx proxy in front of it.
 
-**Step 1 — Log in as the bootstrap admin**
+```bash
+helm upgrade --install devops-hub ./deployment \
+  --namespace devops-hub --create-namespace \
+  --set global.imageRepository=<your-registry>/devops-hub \
+  --set global.imageTag=1.6.17 \
+  --set backend.ingress.host=hub.example.com
+```
 
-On first startup, the account at `HUB_ADMIN_USERNAME` is created with the Platform Admin role. Log in with this account using the local login form at `/ui/login`.
+Or render and apply, which is what CI does:
 
-**Step 2 — Configure your OIDC provider**
+```bash
+helm template devops-hub ./deployment -f deployment/values.yaml | kubectl apply -f -
+```
 
-Navigate to **Admin → SSO Configuration** and enter your provider's discovery URL, client ID, and client secret. The portal fetches the OpenID configuration automatically and stores the client secret encrypted in the database.
+```
+deployment/
+├── charts/backend/          FastAPI Deployment · Service · Ingress
+├── charts/frontend/         nginx proxy Deployment · Service · Ingress
+├── charts/infrastructure/   PostgreSQL · Redis · config · secrets
+└── values.yaml              image repo, endpoints, replica counts
+```
 
-**Step 3 — Test SSO login**
+Everything a hardened cluster asks for is already set: non-root containers, `readOnlyRootFilesystem` with a writable `/tmp`, startup/liveness/readiness probes with liveness kept dependency-free, resource requests and limits, and a rolling update sized to fit inside a namespace quota.
 
-Click **Test SSO** in the admin UI before enabling it. Once verified, enable SSO — all subsequent logins will redirect to your provider.
+Nothing is OpenShift-specific — it is plain Kubernetes with `Ingress`. Swap the ingress annotations for your controller and it runs on EKS, GKE, AKS or a laptop `kind` cluster.
+
+---
+
+## ⚙️ Configuration Reference
+
+### Required
+
+| Variable | Description |
+|---|---|
+| `DATABASE_URL` | PostgreSQL connection string |
+| `REDIS_HOST` / `REDIS_PORT` | Redis endpoint for the integration cache |
+| `JWT_SECRET` | Signs session tokens; also derives the key that encrypts stored credentials |
+| `HUB_ADMIN_USERNAME` / `HUB_ADMIN_PASSWORD` | The bootstrap admin account |
+
+### Commonly set
+
+| Variable | Default | Description |
+|---|---|---|
+| `REDIS_PASSWORD` | — | If your Redis requires auth |
+| `JWT_EXPIRY` | `8h` | How long a session lasts |
+| `SAFE_MODE` | `false` | Start with every side-effecting action simulated |
+| `INTEGRATION_TLS_VERIFY` | `true` | Set `false` only for internal CAs you cannot install |
+| `LOGIN_MAX_FAILURES` / `LOGIN_LOCKOUT_SECONDS` | `5` / `900` | Local sign-in rate limiting, per account and per client IP |
+| `AUTH_ACTIVE_CHECK_TTL` | `30` | How often a live session is re-checked against account state |
+
+Integration credentials (Azure DevOps PAT, ServiceNow service account, Artifactory token, …) are **not** environment variables. They are entered in the admin UI and stored encrypted in the database, so rotating one is a form, not a redeploy.
+
+The full inventory of endpoints, variables and tables is generated from the code — see [`docs/env.md`](docs/env.md), [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) and [`docs/database.md`](docs/database.md), all regenerated by `python scripts/gen_docs.py`.
+
+### Dashboard widgets
+
+| Widget | System |
+|---|---|
+| Needs You · Quick Links · Recent Activity | — |
+| Tasks · Pull Requests (mine) · Pull Requests (to review) · Pipelines | Azure DevOps |
+| My Tickets | ServiceNow |
+| Projects | SonarQube |
+| Repositories · Storage *(admin)* | Artifactory |
+| Pages | Confluence |
+
+### Self-service request types
+
+| Type | What actually happens on approval |
+|---|---|
+| `ADO_PROJECT_CREATE` | The project is created in the target collection over the Azure DevOps REST API |
+| `ARTIFACTORY_QUOTA_INCREASE` | The repository's quota is raised |
+| `ARTIFACTORY_CLEANER_CREATE` / `_UPDATE` / `_DELETE` | A retention spec is written to its repository through a pull request |
 
 ---
 
 ## 🗂️ Project Structure
 
 ```
-devops-hub/
-├── backend/
-│   └── app/                   # FastAPI application root
-│       ├── main.py            # Entry point, startup hooks, ensure_tables()
-│       ├── config.py          # All settings loaded from environment
-│       ├── security.py        # JWT auth (auth_token cookie, HS256)
-│       ├── db.py              # PostgreSQL connection pool + DDL helpers
-│       ├── cache.py           # Redis client (60s TTL cache)
-│       ├── ui.py              # All HTMX/Jinja2 HTML routes
-│       ├── sso_config.py      # OIDC discovery and client secret encryption
-│       ├── terraform_runner.py# Kubernetes Job submission for ADO provisioning
-│       ├── Dockerfile
-│       ├── requirements.txt
-│       └── api/               # One router per integration or domain
-│           ├── auth.py        # OIDC callback, JWT issuance
-│           ├── azure_devops.py# Work items, repos, pipelines, project creation
-│           ├── sonarqube.py   # Quality gates, coverage, technical debt
-│           ├── artifactory.py # Artifact storage and download stats
-│           ├── servicenow.py  # Incidents and support tickets
-│           ├── approvals.py   # Request submission and approval chain
-│           ├── dashboards.py  # Per-user widget layout persistence
-│           └── health.py      # /api/health/live and /api/health/ready
+devops-idp/
+├── backend/app/
+│   ├── main.py                 App factory, startup hooks, schema bootstrap
+│   ├── config.py               Every setting, loaded from the environment
+│   ├── ui.py                   HTMX HTML routes — the UI layer
+│   ├── api/                    26 routers, one per integration or feature
+│   ├── db.py                   psycopg2 pool + idempotent DDL
+│   ├── cache.py                get_cached(key, ttl, producer)
+│   ├── security.py             JWT sessions, RBAC helpers
+│   ├── secrets_manager.py      Runtime integration credentials, encrypted
+│   ├── safe_mode.py            The simulate-everything toggle
+│   ├── widget_registry.py      The one dashboard widget catalogue
+│   ├── catalog_forms.py        Self-service forms declared as data
+│   ├── request_types.py        Request types the DB enum is built from
+│   └── changelog.py            Hand-written release notes, shown in-app
 ├── frontend/
-│   ├── nginx.conf             # Nginx reverse proxy (production)
-│   ├── static/                # Compiled Tailwind CSS and SVG icons
-│   └── templates/             # Jinja2 page and partial templates
-├── deployment/                # Helm umbrella chart
-│   ├── Chart.yaml
-│   ├── values.yaml            # Global values (registry URL, service endpoints)
-│   └── charts/                # Sub-charts: backend, frontend, infrastructure, ingress-nginx
-├── scripts/
-│   └── db.js                  # Migration and seed runner (Node.js)
-├── docs/                      # Architecture, API reference, integration guides
-├── docker-compose.yml         # Local development orchestration
-├── .env.example               # Environment variable template
-└── package.json               # npm scripts: migrate, seed, db:reset
+│   ├── templates/              Jinja2 pages and HTMX partials
+│   ├── static/css/output.css   Precompiled Tailwind + DaisyUI
+│   └── nginx.conf              Proxy config (mirrored in the chart)
+├── deployment/                 Helm umbrella chart
+├── scripts/                    Doc generation and CI guards
+└── docs/                       Architecture, runbook, API reference
 ```
+
+### Guards
+
+`scripts/` holds checks that CI runs on every build, each written after a real outage:
+
+| Guard | Refuses a build when |
+|---|---|
+| `check_imports.py` | A name is used but never defined, or a template fails to parse |
+| `check_css_classes.py` | A template uses a class not compiled into `output.css` |
+| `check_inline_js.py` | An inline script block is not valid JavaScript |
+| `check_nginx_sync.py` | The image's nginx config and the chart's copy disagree |
+| `check_changelog.py` | A release entry is missing, malformed, or written for developers |
 
 ---
 
-## ⚙️ Customisation
+## 🔧 Extending it
 
-- **Add a new integration** — create a new router in `backend/app/api/` that calls the external API through `cache.py` for Redis caching, register it in `backend/app/main.py`, and add the corresponding Jinja2 partial in `frontend/templates/partials/`.
+**Add a dashboard widget** — one entry in `widget_registry.py` and one HTMX component partial. The Customize drawer, the admin visibility policy and the render context all read from that entry, so there is no second list to update.
 
-- **Change the RBAC hierarchy** — the 7-level role structure lives in the `roles` table, seeded by `scripts/db.js`. Edit the seed data and run `npm run db:reset` to rebuild.
+**Add a self-service form** — describe it in `catalog_forms.py`:
 
-- **Add or remove dashboard widgets** — widget types are registered in the `widget_types` table (part of `npm run seed`). Add a new type there, then create the matching HTMX partial in `frontend/templates/partials/components/`.
+```python
+"my_request": {
+    "title": "Request something",
+    "sections": [
+        {"title": "What you need", "fields": [
+            {"key": "project", "label": "Project", "type": "select", "source": "ado_projects"},
+            {"key": "reason",  "label": "Why",     "type": "textarea", "required": True},
+        ]},
+    ],
+}
+```
 
-- **Enable HashiCorp Vault for secret storage** — set `USE_VAULT=true`, `VAULT_ADDR`, `VAULT_TOKEN`, and `VAULT_PATH` in `.env`. The backend switches secret backends automatically.
+One renderer draws it, one endpoint validates it against the same spec. To make it *do* something, add the type to `request_types.py` and an executor branch in `api/approvals.py` — the database enum follows on the next start.
 
-- **Tune Terraform job limits** — set `TF_GCS_BUCKET`, `TF_GCP_SERVICE_ACCOUNT`, `TF_K8S_NAMESPACE`, and `TERRAFORM_JOB_TIMEOUT_SECONDS` in `.env`. See [docs/SELF_SERVICE_TERRAFORM.md](docs/SELF_SERVICE_TERRAFORM.md) for infrastructure prerequisites.
+**Add an integration** — a router in `backend/app/api/`, its reads wrapped in `integrations_cache`, its outbound calls through `resilient_http` so failures are classified rather than surfaced as `HTTPStatusError`.
 
 ---
 
-## 🚢 Deployment
+## 🤝 Contributing
 
-Build your container image and push it to your registry, then update `global.customImage.repository` in [deployment/values.yaml](deployment/values.yaml). Deploy with Helm:
+Issues and pull requests are welcome — start with **[CONTRIBUTING.md](CONTRIBUTING.md)**, which covers setup, the guards, and how to add a widget, a form or an integration.
 
-```bash
-helm dependency build ./deployment
+Two house rules worth knowing before you write anything, because CI enforces both:
 
-helm upgrade --install devops-hub ./deployment \
-  --namespace devops-hub-prod \
-  --create-namespace \
-  --atomic \
-  --timeout 15m \
-  --set-string global.customImage.repository="your-registry/devops-hub" \
-  --set-string backend.ingress.host="devops.your-domain.example.com" \
-  --set secrets.postgresPassword="<strong-password>" \
-  --set secrets.jwtSecret="<random-32-char-string>" \
-  --set secrets.hubAdminUsername="admin@your-domain.example.com" \
-  --set secrets.hubAdminPassword="<strong-password>"
-```
+- **`output.css` is committed, not built in CI.** If you use a Tailwind class that isn't compiled into it, `check_css_classes.py` fails the build — rebuild it locally with `npm run build:css` in `frontend/` and commit the result, or use an inline style.
+- **Every change adds a changelog entry** in `backend/app/changelog.py`, written from the user's side — the symptom they saw, not the function you fixed.
 
-See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full variable list and a step-by-step guide.
+Everyone taking part is expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md). Found a security problem? Please report it privately — see [SECURITY.md](SECURITY.md).
 
 ---
 

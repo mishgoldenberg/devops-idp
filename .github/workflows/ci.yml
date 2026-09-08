@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  guards:
+    name: Guards
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r backend/app/requirements.txt
+
+      # Everything below is pure Python on purpose: no Node, no network, no
+      # cluster. Each of these was written after something reached production
+      # that one of them would have caught.
+
+      - name: Every name resolves, every template parses
+        run: python scripts/check_imports.py
+
+      - name: No template uses a CSS class that is not compiled
+        run: python scripts/check_css_classes.py
+
+      - name: Every inline script block is valid JavaScript
+        run: python scripts/check_inline_js.py
+
+      - name: Both copies of the nginx config agree
+        run: python scripts/check_nginx_sync.py
+
+      - name: The requester section is defined once and reused
+        run: python scripts/check_requester_fields.py
+
+      - name: The changelog is present and written for users
+        run: python scripts/check_changelog.py
+
+      - name: Everything compiles
+        run: python -m compileall -q backend/app scripts

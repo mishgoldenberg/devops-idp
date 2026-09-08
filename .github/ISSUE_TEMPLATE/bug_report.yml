@@ -1,0 +1,96 @@
+name: Bug report
+description: Something behaves differently from how it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this.
+
+        **If this is a security problem, close this and use the
+        [Security tab](https://github.com/mishgoldenberg/devops-idp/security/advisories/new)
+        instead** — a public issue tells everyone before there is a fix.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, in the order you saw it.
+      placeholder: |
+        I opened the dashboard and the Pipelines widget stayed on its skeleton
+        loader. Nothing appeared and no error was shown.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The version shown on the What's New page, or the commit you built.
+      placeholder: "1.6.17"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: How is it running?
+      options:
+        - docker compose (local)
+        - Kubernetes / OpenShift via the Helm chart
+        - Backend directly with uvicorn
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: integration
+    attributes:
+      label: Which integration is involved?
+      description: Leave as "None" if the problem is in the portal itself.
+      options:
+        - None / the portal itself
+        - Azure DevOps
+        - ServiceNow
+        - SonarQube
+        - Artifactory
+        - Confluence
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: >
+        From the backend pod or container. This is rendered as code, so no
+        backticks needed.
+      render: text
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I have removed any tokens, passwords, hostnames or personal data from the text above
+          required: true
+        - label: I searched existing issues for this
+          required: true

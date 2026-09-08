@@ -1,0 +1,55 @@
+name: Feature request
+description: Suggest a capability, a widget, a form, or an integration
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: >
+        Describe the situation, not the solution. The best features here came
+        from someone describing a tab they kept having to open.
+      placeholder: |
+        Every morning I check three SonarQube projects for failed quality gates,
+        one at a time, because the widget only shows the project list.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like it to do?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of thing is this?
+      options:
+        - A dashboard widget
+        - A self-service form or request type
+        - A new integration
+        - An admin capability
+        - Something else
+    validations:
+      required: true
+
+  - type: input
+    id: system
+    attributes:
+      label: Which external system, if any?
+      placeholder: "Azure DevOps, ServiceNow, GitLab, Jira…"
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What do you do today instead?
+      description: Including "nothing, I just live with it" — that is useful to know.
+
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Would you like to build it?
+      options:
+        - label: I would be willing to open a pull request for this

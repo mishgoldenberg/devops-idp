@@ -84,4 +84,28 @@ venv/
 y-backup/
 *-backup/
 
+# Written by scripts/gen_build_info.py at build time and baked into the image:
+# the branch, the build number and the commit. Never committed, because a copy
+# in the history would be one build permanently out of date. The changelog
+# itself is NOT here - it is written by hand in backend/app/changelog.py.
+backend/app/build_info.json
 
+# Round change-documents are a DELIVERY MECHANISM, not source. apply_docx.py
+# stages with `git add -A`, so without this every round pushes its own .docx
+# into the repo and the history fills up with binaries nobody reads from git.
+# Already pushed some? `git rm -r --cached "*.docx"` then commit — that untracks
+# them without deleting the files on disk.
+*.docx
+~$*.docx
+# ...except documentation written to be shared, which lives under docs/.
+!docs/*.docx
+
+# Local agent/editor configuration. Machine-specific paths, no value to anyone
+# cloning this.
+.claude/
+
+# Security review material. Written against ONE deployment -- its topology, its
+# compensating controls, its open questions. Useful to the team that owns that
+# deployment and to nobody else, so it stays out of a public repository.
+docs/RED_TEAM_BRIEF.md
+docs/PENTEST_CHECKLIST_HE.docx
