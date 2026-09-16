@@ -129,21 +129,21 @@ def body(doc, text: str, bold: bool = False) -> None:
 
 # -- the round ---------------------------------------------------------------
 
-ROUND = "116"
+ROUND = "117"
 
-SUMMARY = ("An approved Azure DevOps project request creates the project again: the "
-           "constant naming the four valid processes was lost in the move off Terraform "
-           "while the line reading it survived, and the build now refuses any name "
-           "nothing defines")
+SUMMARY = ("The image the Artifactory cleaner's CronJob runs, and the console its objects "
+           "live in, move out of the source and into the variable group -- they describe "
+           "this installation rather than the product, and the repository is public")
 
 DELETES = []
 
 FILES = [
-    "backend/app/api/azure_devops.py",
+    "backend/app/artifactory_cleaner.py",
+    "frontend/templates/partials/components/approvals-container.html",
+    "azure-pipelines.yml",
+    "deployment/charts/backend/templates/secrets.yaml",
+    "deployment/charts/backend/templates/deployment.yaml",
     "backend/app/changelog.py",
-    "scripts/check_imports.py",
-    "CLAUDE.md",
-    "scripts/gen_round_docx.py",
 ]
 
 PREAMBLE = ""

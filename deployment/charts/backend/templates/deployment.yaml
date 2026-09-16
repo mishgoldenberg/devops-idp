@@ -148,6 +148,20 @@ spec:
                 secretKeyRef:
                   name: all-secrets{{ .Values.global.nameSuffix }}
                   key: ARTIFACTORY_BASE_URL
+            # Read by artifactory_cleaner.py when it GENERATES a cleaner's CronJob
+            # and when it links to one. The generated file is committed to another
+            # repository and applied on another cluster, so a wrong image here is a
+            # nightly ImagePullBackOff somewhere this backend cannot see.
+            - name: ADO_CLEANER_IMAGE
+              valueFrom:
+                secretKeyRef:
+                  name: all-secrets{{ .Values.global.nameSuffix }}
+                  key: ADO_CLEANER_IMAGE
+            - name: OPENSHIFT_CONSOLE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: all-secrets{{ .Values.global.nameSuffix }}
+                  key: OPENSHIFT_CONSOLE_URL
             - name: SONARQUBE_BASE_URL
               valueFrom:
                 secretKeyRef:

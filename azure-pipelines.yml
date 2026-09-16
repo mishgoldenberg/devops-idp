@@ -380,6 +380,14 @@ stages:
                   "artifactoryAdminUsername": _clean("ARTIFACTORY_ADMIN_USERNAME"),
                   "artifactoryAdminToken": _clean("ARTIFACTORY_ADMIN_TOKEN"),
                   "artifactoryAdminPassword": _clean("ARTIFACTORY_ADMIN_PASSWORD"),
+                  # Where the Artifactory cleaner CronJob pulls jfrog-cli from, and
+                  # the console those cleaners are visible in. Both are properties of
+                  # THIS installation, not of the product, so they are configuration
+                  # rather than constants in the source. Optional: _clean() turns an
+                  # unexpanded macro into "", and the backend falls back to a public
+                  # image and to naming the objects without linking to them.
+                  "adoCleanerImage": _clean("ADO_CLEANER_IMAGE"),
+                  "openshiftConsoleUrl": _clean("OPENSHIFT_CONSOLE_URL"),
                   "sonarqubeBaseUrl": os.environ.get("SONARQUBE_BASE_URL", ""),
                   "confluenceBaseUrl": os.environ.get("CONFLUENCE_BASE_URL", ""),
               }
@@ -552,6 +560,10 @@ stages:
               ARTIFACTORY_ADMIN_USERNAME: $(ARTIFACTORY_ADMIN_USERNAME)
               ARTIFACTORY_ADMIN_TOKEN: $(ARTIFACTORY_ADMIN_TOKEN)
               ARTIFACTORY_ADMIN_PASSWORD: $(ARTIFACTORY_ADMIN_PASSWORD)
+              # Optional. Unset leaves the literal macro text, which _clean()
+              # reads as empty.
+              ADO_CLEANER_IMAGE: $(ADO_CLEANER_IMAGE)
+              OPENSHIFT_CONSOLE_URL: $(OPENSHIFT_CONSOLE_URL)
               SONARQUBE_BASE_URL: $(SONARQUBE_BASE_URL)
               CONFLUENCE_BASE_URL: $(CONFLUENCE_BASE_URL)
 
