@@ -50,6 +50,10 @@
 			{{ error }}
 		</div>
 		{% else %}
+		{# Full width above the selects, as in the pull-request widgets: a third column does
+		   not fit a one-column widget. #}
+		<input type="search" class="input input-bordered portal-widget-search shrink-0" data-pipe-search dir="auto"
+			placeholder="Search pipeline, run number or result" aria-label="Search pipeline runs" />
 		<!-- Inline grid: a bare `grid-cols-2` is not in the precompiled output.css. -->
 		<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem;">
 			<label class="form-control">
@@ -118,6 +122,12 @@
 		let selectedCollection = pick("pipe_collection", collectionKey);
 		let selectedProject = pick("pipe_project", projectKey);
 		let scope = pick("pipe_scope", scopeKey) === "all" ? "all" : "mine";
+
+		const searchEl = root.querySelector("[data-pipe-search]");
+		let term = "";
+		let searchTimer = null;
+		// The last answer, kept so a search re-filters it instead of asking again.
+		let loaded = { runs: [], note: "", moreHtml: "" };
 
 		const whyEl = root.querySelector("[data-pipe-why]");
 		const whyBodyEl = root.querySelector("[data-pipe-why-body]");
@@ -208,6 +218,8 @@
 			pending: { dot: "bg-warning animate-pulse", text: "text-warning", label: "Pending" },
 		};
 
+		const FINISHED = new Set(["succeeded", "failed", "partial", "canceled"]);
+
 		function runRow(run) {
 			const state = RUN_STATE[run.status] || {
 				dot: "",
@@ -236,6 +248,11 @@
 					"</div>" +
 					'<span class="text-xs font-semibold shrink-0 ' + state.text + '">' + escapeHtml(state.label) + "</span>" +
 					(when ? '<span class="text-xs text-base-content/40 shrink-0">' + escapeHtml(when) + "</span>" : "") +
+					// Only a FINISHED run can be run again; the dialog checks with Azure
+					// DevOps first and asks you to confirm.
+					(FINISHED.has(run.status) && run.definition_id && window.portalAdo
+						? '<button type="button" class="btn btn-ghost btn-xs text-primary shrink-0" data-pipe-rerun="' + escapeHtml(run.id) + '" title="Run this pipeline again on the same branch">Run again…</button>'
+						: "") +
 				"</li>"
 			);
 		}
@@ -354,12 +371,59 @@
 						'class="flex items-center justify-center gap-1 rounded-lg border border-dashed border-base-300 px-3 py-2 text-xs font-medium text-base-content/60 hover:border-primary/50 hover:text-primary transition-colors">' +
 						'More in Azure DevOps</a></li>';
 				}
-				listEl.innerHTML = note + shown.map(runRow).join("") + moreHtml;
-				setStatus(null);
+				loaded = { runs: shown, note: note, moreHtml: moreHtml };
+				render();
 			} catch (_) {
 				setStatus("Service unavailable");
 			}
 		}
+
+		// Every word must appear somewhere in the run: "deploy failed" finds failed deploys.
+		function matches(run) {
+			if (!term) return true;
+			const label = (RUN_STATE[run.status] || {}).label || run.status;
+			const text = [run.name, "#" + run.run_id, run.project, run.collection, run.requested_for,
+				label, run.result].join(" ").toLowerCase();
+			return term.split(/\s+/).every((word) => text.indexOf(word) !== -1);
+		}
+
+		function render() {
+			const visible = loaded.runs.filter(matches);
+			if (!visible.length) {
+				setStatus(term ? "Nothing matches “" + searchEl.value.trim() + "”." : "No pipeline runs in this project.");
+				return;
+			}
+			listEl.innerHTML = loaded.note + visible.map(runRow).join("") + (term ? "" : loaded.moreHtml);
+			setStatus(null);
+		}
+
+		listEl?.addEventListener("click", (event) => {
+			const btn = event.target.closest("[data-pipe-rerun]");
+			if (!btn) return;
+			event.preventDefault();
+			const run = loaded.runs.find((r) => String(r.id) === btn.getAttribute("data-pipe-rerun"));
+			if (run && window.portalAdo) {
+				window.portalAdo.open("rerun", {
+					collection: run.collection, project: run.project, id: run.id, run_id: run.run_id,
+					name: run.name, source_branch: run.source_branch, title: run.name,
+				});
+			}
+		});
+
+		// A run queued through the dialog belongs at the top of this list.
+		function onAdoChanged() {
+			if (!root.isConnected) { document.removeEventListener("portal:ado-changed", onAdoChanged); return; }
+			load();
+		}
+		document.addEventListener("portal:ado-changed", onAdoChanged);
+
+		searchEl?.addEventListener("input", () => {
+			clearTimeout(searchTimer);
+			searchTimer = setTimeout(() => {
+				term = searchEl.value.trim().toLowerCase();
+				render();
+			}, 150);
+		});
 
 		collectionSelect?.addEventListener("change", () => {
 			selectedCollection = collectionSelect.value || "";

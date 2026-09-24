@@ -10,7 +10,7 @@ from urllib.parse import quote
 import httpx
 
 from resilient_http import tls_verify
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
 
 from db import execute, query_all, query_one
@@ -22,8 +22,16 @@ log = logging.getLogger(__name__)
 
 router = APIRouter()
 
-SystemName = Literal["azure", "sonarqube", "artifactory", "confluence"]
-_TOKEN_SYSTEMS = {"azure", "sonarqube", "artifactory", "confluence"}
+from integrations_cache import cached_external, cached_external_swr, forget_external
+import sonar_insights
+from devbot import config as devbot_config
+from devbot import llm as devbot_llm
+from devbot import models as devbot_models
+
+SystemName = Literal["azure", "sonarqube", "artifactory", "confluence", "devbot"]
+# "devbot" is the person's own key to the AI model gateway. It is kept here, with the
+# other tokens, so Connections and the DevBot page read and write the same one.
+_TOKEN_SYSTEMS = {"azure", "sonarqube", "artifactory", "confluence", "devbot"}
 _PIN_SYSTEMS = {"sonarqube", "artifactory"}
 
 
@@ -104,6 +112,21 @@ def _require_token(current_user: AuthUser, system: str) -> str:
     )
 
 
+def _optional_token(current_user: AuthUser, system: str) -> str:
+    """The user's token if they have one, otherwise "".
+
+    Unlike _require_token this does not refuse. Where an instance grants Browse to
+    anonymous users -- which is how this SonarQube is configured -- every read the
+    dashboard widgets make works without a token, so demanding one first would put
+    a "connect your account" wall in front of data the server hands to anybody. A
+    token is still used when present: it is what makes a private project visible.
+    """
+    try:
+        return _get_token(_user_id(current_user), system) or ""
+    except HTTPException:
+        return ""
+
+
 def _pin_ids(user_id: str, system: str) -> set[str]:
     rows = query_all(
         "SELECT item_id FROM user_pins WHERE user_id = %s AND system = %s",
@@ -174,10 +197,39 @@ def integrations_health(current_user: AuthUser = Depends(get_current_user)) -> D
             result["detail"] = f"{label} is unreachable: {type(exc).__name__}."
         return result
 
-    with ThreadPoolExecutor(max_workers=3) as pool:
+    with ThreadPoolExecutor(max_workers=4) as pool:
         systems = list(pool.map(probe, ["sonarqube", "artifactory", "confluence"]))
+        systems.append(_devbot_health(uid))
 
     return {"success": True, "data": systems, "timestamp": _now_iso()}
+
+
+def _devbot_health(uid: str) -> Dict[str, Any]:
+    """The model key, checked the way DevBot uses it: by listing the models it may use.
+
+    Read through the same ten-minute cache the DevBot page uses, so opening Connections
+    does not spend one of the key's requests every time.
+    """
+    result = {"system": "devbot", "label": "DevBot AI", "configured": devbot_config.enabled(),
+              "connected": False, "healthy": False, "detail": ""}
+    if not result["configured"]:
+        result["detail"] = "DevBot is not set up on this Hub yet. Ask a platform admin."
+        return result
+    key = _get_token(uid, "devbot")
+    if not key:
+        result["detail"] = "Not connected — add your AI model key to use DevBot."
+        return result
+    result["connected"] = True
+    try:
+        available = devbot_models.available(key)
+        result["healthy"] = bool(available)
+        result["detail"] = (
+            f"Connected. Your key may use {len(available)} chat model{'s' if len(available) != 1 else ''}."
+            if available else "Your key may not use any chat model."
+        )
+    except devbot_llm.LLMError as exc:
+        result["detail"] = exc.message
+    return result
 
 
 @router.get("/{system}/token")
@@ -199,6 +251,13 @@ def save_token(
         raise HTTPException(status_code=400, detail="Token is too short")
     if name in {"sonarqube", "artifactory", "confluence"}:
         _test_token(name, raw)
+    elif name == "devbot":
+        if not devbot_config.enabled():
+            raise HTTPException(status_code=409, detail="DevBot is not set up on this Hub yet. Ask a platform admin.")
+        try:
+            devbot_llm.validate_key(raw)
+        except devbot_llm.LLMError as exc:
+            raise HTTPException(status_code=400, detail=exc.message)
     execute(
         """
         INSERT INTO user_integrations (user_id, system, token_encrypted)
@@ -265,7 +324,11 @@ def sonarqube_projects(current_user: AuthUser = Depends(get_current_user)) -> Di
     token = _require_token(current_user, "sonarqube")
     base = _base_url("sonarqube")
     try:
-        response = _sonar_request(f"{base}/api/projects/search", token)
+        # NOT /api/projects/search: that one requires Administer System and
+        # answers 403 to every ordinary user, which the widget then reported as an
+        # expired token. search_projects needs only Browse.
+        response = _sonar_request(f"{base}/api/components/search_projects", token,
+                                  params={"ps": 500})
     except HTTPException:
         raise
     except Exception as exc:
@@ -323,6 +386,339 @@ def sonarqube_project_details(project_key: str, current_user: AuthUser = Depends
         "duplications": measures.get("duplicated_lines_density", "0"),
         "lines_of_code": measures.get("ncloc", "0"),
     }
+    return {"success": True, "data": data, "timestamp": _now_iso()}
+
+
+def _sonar_failure(base: str, exc: Exception) -> HTTPException:
+    """One place that turns a SonarQube failure into something actionable."""
+    status_code = getattr(exc, "status_code", None)
+    # The wrapper is not what _describe_connect_failure knows how to read: it
+    # classifies on the httpx exception TYPE, and a SonarUnavailable matches none of
+    # them, so every refusal, DNS failure and timeout came out as "unknown".
+    exc = getattr(exc, "cause", None) or exc
+    if status_code in {401, 403}:
+        return HTTPException(
+            status_code=401,
+            detail="SonarQube refused the request. If the project is private, "
+                   "connect a User Token on the Connections page.",
+        )
+    return HTTPException(status_code=502, detail=_describe_connect_failure("sonarqube", base, exc))
+
+
+# The SonarQube snapshot is answered from the cache at once for up to _KEEP and
+# refreshed behind the answer once it is older than _FRESH (cached_external_swr).
+# Gates only change when a project is analysed, so a two-minute-old snapshot is
+# not a stale one, and nobody should wait for a crawl to learn nothing changed.
+_SONAR_SNAPSHOT_FRESH_S = 120
+_SONAR_SNAPSHOT_KEEP_S = 1800
+
+
+def _sonar_snapshot(base: str, token: str, cache_owner: str, refresh: bool = False):
+    """(rows, age_seconds, refreshing) -- the one read /overview and /pull-requests share.
+
+    Everyone WITHOUT a token shares the anonymous snapshot instead of each paying for
+    an identical crawl; token holders keep their own, because a token is exactly
+    what makes the answer differ.
+    """
+    return cached_external_swr(
+        "sonarqube", cache_owner, "overview:swr",
+        lambda: sonar_insights.snapshot(base, token),
+        fresh=_SONAR_SNAPSHOT_FRESH_S, keep=_SONAR_SNAPSHOT_KEEP_S, refresh=refresh,
+    )
+
+
+@router.get("/sonarqube/overview")
+def sonarqube_overview(
+    refresh: bool = Query(False),
+    current_user: AuthUser = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Every project with its quality gate and its numbers, in one read.
+
+    FOUR WIDGETS SHARE THIS RESPONSE. Quality gates, new code, hotspots and the
+    project list differ in what they show, not in what they fetch, so they are
+    views over one cached snapshot rather than four independent trips to a server
+    that is now close enough to have a measurable latency.
+
+    ``refresh`` is the widget's own reload button: it waits for a new snapshot
+    instead of being handed the cached one.
+    """
+    base = _base_url("sonarqube")
+    token = _optional_token(current_user, "sonarqube")
+    owner = _user_id(current_user)
+    try:
+        rows, age, refreshing = _sonar_snapshot(base, token, owner if token else "anon", refresh)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _sonar_failure(base, exc)
+
+    rows = _with_pin_flags(list(rows), owner, "sonarqube", "project_key")
+    failing = [r for r in rows if r.get("gate_failing")]
+    return {
+        "success": True,
+        "data": rows,
+        # How old the answer is, and whether a newer one is being fetched: the
+        # widgets ask again a few seconds later when it is.
+        "age_seconds": age,
+        "refreshing": refreshing,
+        "summary": {
+            "total": len(rows),
+            "failing": len(failing),
+            "passing": len([r for r in rows if r.get("gate_ok")]),
+            "unknown": len([r for r in rows if r.get("gate_unknown")]),
+            "hotspots": sum(int(r.get("hotspots") or 0) for r in rows),
+            "new_violations": sum(int(r.get("new_violations") or 0) for r in rows),
+            # Whether the token was USED, not whether one is stored. With
+            # anonymous Browse granted, a dead token still returns a full-looking
+            # list -- just a smaller one - so "a token exists" is the one signal
+            # that cannot tell anybody their token has expired.
+            "connected": bool(token) and sonar_insights.answered_scheme(base) == "basic",
+            "token_stored": bool(token),
+        },
+        "timestamp": _now_iso(),
+    }
+
+
+@router.get("/sonarqube/hotspots")
+def sonarqube_hotspots(
+    project_key: str,
+    current_user: AuthUser = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Hotspots still to review on ONE project.
+
+    Per project because SonarQube 9.9 has no instance-wide hotspot search -- the
+    endpoint requires a project key. The widget ranks projects from the snapshot
+    and calls this only for the one somebody opens.
+    """
+    base = _base_url("sonarqube")
+    token = _optional_token(current_user, "sonarqube")
+    key = (project_key or "").strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="project_key is required")
+    try:
+        rows = cached_external(
+            "sonarqube", _user_id(current_user) if token else "anon", f"hotspots:{key}",
+            lambda: sonar_insights.hotspots_to_review(base, token, key),
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _sonar_failure(base, exc)
+    return {"success": True, "data": rows, "timestamp": _now_iso()}
+
+
+@router.get("/sonarqube/my-issues")
+def sonarqube_my_issues(
+    refresh: bool = Query(False),
+    current_user: AuthUser = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Open issues on lines this user last touched.
+
+    BY AUTHOR, NOT BY ASSIGNEE. Nobody assigns SonarQube issues here, so an
+    assignee search is permanently empty and an always-empty widget teaches people
+    to ignore the widget. The SCM author comes from the analysis itself, so it is
+    populated whether or not anyone has ever signed in to SonarQube.
+
+    Every identity the portal holds for the user is tried at once, because which
+    one appears in a commit depends on how git was configured on the machine that
+    made it, and that is not something the portal gets to decide.
+    """
+    base = _base_url("sonarqube")
+    token = _optional_token(current_user, "sonarqube")
+    email = str(current_user.get("email") or "").strip()
+    username = str(current_user.get("username") or "").strip()
+    identities = [i for i in (email, username, username.split("\\")[-1]) if i]
+    if not identities:
+        return {"success": True, "data": [], "identities": [], "timestamp": _now_iso()}
+    if refresh:
+        forget_external("sonarqube", _user_id(current_user), "my-issues")
+    try:
+        rows = cached_external(
+            "sonarqube", _user_id(current_user), "my-issues",
+            # A hundred, not twenty-five: the widget now searches and filters these
+            # in the browser, and a filter over the first page of a list is a filter
+            # that quietly finds nothing.
+            lambda: sonar_insights.issues_for_authors(base, token, identities, limit=100),
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _sonar_failure(base, exc)
+    return {
+        "success": True,
+        "data": rows,
+        "identities": identities,
+        "timestamp": _now_iso(),
+    }
+
+
+@router.get("/sonarqube/pull-requests")
+def sonarqube_pull_requests(
+    refresh: bool = Query(False),
+    current_user: AuthUser = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """The quality gate on the pull requests this user opened.
+
+    Azure DevOps knows which pull requests are the user's; SonarQube knows whether
+    each one passed. Nothing joins them, because no authoritative link between an
+    Azure DevOps repository and a SonarQube project is readable here --
+    alm_settings/get_binding needs Administer on the project. So the join is a
+    conservative name match, and anything ambiguous is REPORTED as unmatched
+    rather than guessed: attaching one team's gate to another team's pull request
+    is worse than saying nothing.
+    """
+    base = _base_url("sonarqube")
+    token = _optional_token(current_user, "sonarqube")
+    owner = _user_id(current_user)
+
+    try:
+        # The two helpers the Azure DevOps route itself uses. Calling the route
+        # function directly would pass FastAPI Query objects as arguments.
+        from api.azure_devops import _fetch_pull_requests_live, _filter_pull_requests
+        who = str(current_user.get("username") or "").strip()
+        if not who:
+            raise HTTPException(status_code=400, detail="No Azure DevOps username on this account")
+        if refresh:
+            forget_external("ado", owner, f"pull-requests:{who}:")
+        fetched = cached_external(
+            "ado", owner, f"pull-requests:{who}:",
+            lambda: _fetch_pull_requests_live(who, current_user, None),
+        )
+        # "created", not "author": _filter_pull_requests only knows "created" and
+        # "review", and an unrecognised role filters NOTHING -- the widget would have
+        # shown every pull request the user merely reviews as though it were theirs.
+        ado = (_filter_pull_requests(fetched, None, None, "created") or {}).get("data") or []
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not read your pull requests from Azure DevOps: {type(exc).__name__}",
+        )
+
+    open_prs = [p for p in ado if str(p.get("status") or "").lower() in {"active", "open", ""}]
+    if not open_prs:
+        return {"success": True, "data": [], "unmatched": [], "timestamp": _now_iso()}
+
+    sonar_owner = owner if token else "anon"
+    try:
+        # The same cache entry /overview fills -- including the shared "anon" one
+        # when there is no token -- so this widget does not pay for a second crawl.
+        projects, _age, _refreshing = _sonar_snapshot(base, token, sonar_owner)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _sonar_failure(base, exc)
+
+    repos = sorted({str(p.get("repository") or "") for p in open_prs if p.get("repository")})
+    mapping = sonar_insights.match_projects_to_repos(projects, repos)
+
+    def project_gates(project_key: str):
+        suffix = f"pr-list:{project_key}"
+        if refresh:
+            forget_external("sonarqube", sonar_owner, suffix)
+        return cached_external(
+            "sonarqube", sonar_owner, suffix,
+            lambda: sonar_insights.pull_request_gates(base, token, project_key),
+        )
+
+    gates: Dict[str, Dict[str, Any]] = {}
+    supported = True
+    # Bounded: each of these is a separate round trip, and a handler that walks
+    # every matched project has no ceiling on how long it takes. Side by side rather
+    # than one after another, which is what made this widget the slow one.
+    keys = sorted(set(mapping.values()))[:12]
+    if keys:
+        with ThreadPoolExecutor(max_workers=min(6, len(keys))) as pool:
+            futures = {key: pool.submit(project_gates, key) for key in keys}
+        for project_key, future in futures.items():
+            try:
+                for pr in future.result():
+                    gates[f"{project_key}#{pr['id']}"] = pr
+            except sonar_insights.PullRequestsUnsupported:
+                # A licence fact, not a failure, and true for the whole instance -- so
+                # tell the user what their edition does instead.
+                supported = False
+            except Exception as exc:
+                # One project refusing must not empty the widget for the others.
+                log.warning("SonarQube: pull requests unreadable for %s: %s", project_key, exc)
+
+    rows: List[Dict[str, Any]] = []
+    unmatched: List[str] = []
+    for pr in open_prs:
+        repo = str(pr.get("repository") or "")
+        project_key = mapping.get(repo, "")
+        analysis = gates.get(f"{project_key}#{pr.get('id')}") if project_key else None
+        if not project_key:
+            unmatched.append(repo)
+        rows.append({
+            "id": pr.get("id"),
+            "title": pr.get("title"),
+            "repository": repo,
+            "project": pr.get("project"),
+            "collection": pr.get("collection"),
+            "source_branch": pr.get("source_branch"),
+            "target_branch": pr.get("target_branch"),
+            "created_date": pr.get("created_date"),
+            "url": pr.get("url"),
+            "sonar_project": project_key,
+            # The key SonarQube filed the analysis under, which is what the detail
+            # call has to name. Usually the Azure DevOps id, but read, not assumed.
+            "sonar_pr": (analysis or {}).get("id", ""),
+            "analysed": bool(analysis),
+            "gate": (analysis or {}).get("gate", ""),
+            "gate_ok": bool((analysis or {}).get("gate_ok")),
+            "gate_failing": bool((analysis or {}).get("gate_failing")),
+            "bugs": (analysis or {}).get("bugs"),
+            "vulnerabilities": (analysis or {}).get("vulnerabilities"),
+            "code_smells": (analysis or {}).get("code_smells"),
+            "analysed_at": (analysis or {}).get("analysed_at", ""),
+            "sonar_url": (analysis or {}).get("url", ""),
+        })
+
+    rows.sort(key=lambda r: (not r["gate_failing"], not r["analysed"], str(r.get("title") or "")))
+    return {
+        "success": True,
+        "data": rows,
+        "unmatched": sorted(set(unmatched)),
+        "pr_analysis_supported": supported,
+        "timestamp": _now_iso(),
+    }
+
+
+@router.get("/sonarqube/pull-request-details")
+def sonarqube_pull_request_details(
+    project_key: str,
+    pull_request: str,
+    current_user: AuthUser = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """One pull request's own analysis, for the row somebody expanded.
+
+    Fetched on demand rather than with the list: two calls per pull request is
+    fine for the one being read and wasteful for the twelve that are not.
+    """
+    base = _base_url("sonarqube")
+    token = _optional_token(current_user, "sonarqube")
+    key = (project_key or "").strip()
+    pr = (pull_request or "").strip()
+    if not key or not pr:
+        raise HTTPException(status_code=400, detail="project_key and pull_request are required")
+    try:
+        data = cached_external(
+            "sonarqube", _user_id(current_user) if token else "anon", f"pr-details:{key}#{pr}",
+            lambda: sonar_insights.pull_request_details(base, token, key, pr),
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        if getattr(exc, "status_code", None) == 404:
+            # Not a fault: the pull request exists in Azure DevOps and SonarQube has
+            # simply not analysed it (or has already purged the analysis).
+            raise HTTPException(
+                status_code=404,
+                detail="SonarQube has no analysis for this pull request yet.",
+            )
+        raise _sonar_failure(base, exc)
     return {"success": True, "data": data, "timestamp": _now_iso()}
 
 
@@ -773,7 +1169,7 @@ def _test_token(system: str, token: str) -> None:
     base = _base_url(system)
     try:
         if system == "sonarqube":
-            response = _sonar_request(f"{base}/api/projects/search", token, params={"ps": 1}, timeout=8.0)
+            response = _sonar_request(f"{base}/api/components/search_projects", token, params={"ps": 1}, timeout=8.0)
         elif system == "confluence":
             # What confluence_recent() uses. /rest/api/space is not enabled everywhere.
             headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
@@ -974,13 +1370,18 @@ def _sonar_request(
 ) -> httpx.Response:
     """GET against SonarQube, tolerant of token-auth differences between versions.
 
-    SonarQube >= 10.0 accepts ``Authorization: Bearer <token>``; older versions
-    only accept the token as the HTTP Basic *username* (empty password). Try
-    Bearer first, then fall back to Basic so both server generations work.
+    SonarQube >= 10.0 accepts ``Authorization: Bearer <token>``; 9.x only accepts
+    the token as the HTTP Basic *username* (empty password).
+
+    BASIC FIRST, and that order matters more than it looks. 9.x does not REJECT a
+    Bearer header -- it ignores any header that is not Basic and serves the request
+    anonymously, so the Bearer attempt comes back 200 with whatever an anonymous
+    user may see. Trying Bearer first therefore succeeds, wrongly, on exactly the
+    instances that need Basic, and silently hides every private project.
     """
     attempts = (
-        {"headers": {"Authorization": f"Bearer {token}", "Accept": "application/json"}},
         {"auth": (token, ""), "headers": {"Accept": "application/json"}},
+        {"headers": {"Authorization": f"Bearer {token}", "Accept": "application/json"}},
     )
     response: Optional[httpx.Response] = None
     for kwargs in attempts:

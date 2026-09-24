@@ -89,6 +89,21 @@
 					</div>
 					<div class="flex items-center justify-between gap-4">
 						<div class="min-w-0">
+							<p class="font-medium">Streak flame</p>
+							<p class="text-xs text-base-content/60 mt-0.5">
+								The small flame beside the bell: how many workdays in a row you
+								have done something in the Hub. Only you and the admins see it.
+							</p>
+						</div>
+						<input
+							type="checkbox"
+							class="toggle toggle-primary shrink-0"
+							id="settings-streak-toggle"
+							aria-label="Show the streak flame"
+						/>
+					</div>
+					<div class="flex items-center justify-between gap-4">
+						<div class="min-w-0">
 							<p class="font-medium">Auto-refresh</p>
 							<p class="text-xs text-base-content/60 mt-0.5">
 								How often widgets quietly re-fetch in the background. They
@@ -246,6 +261,22 @@
 			current = toggle.checked ? "reduced" : "full";
 			root.setAttribute("data-motion", current);
 			try { localStorage.setItem(key, current); } catch (_) {}
+		});
+	})();
+
+	// --- Streak flame -----------------------------------------------------------
+	// Per browser, like the other display preferences here; the flame listens for the
+	// event and appears or goes without a reload.
+	(function () {
+		const toggle = document.getElementById("settings-streak-toggle");
+		if (!toggle) return;
+		const key = "portal-streak";
+		let shown = true;
+		try { shown = localStorage.getItem(key) !== "hidden"; } catch (_) {}
+		toggle.checked = shown;
+		toggle.addEventListener("change", () => {
+			try { localStorage.setItem(key, toggle.checked ? "shown" : "hidden"); } catch (_) {}
+			window.dispatchEvent(new CustomEvent("portal:streak-visibility"));
 		});
 	})();
 

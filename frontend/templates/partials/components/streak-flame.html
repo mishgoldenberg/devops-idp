@@ -1,0 +1,218 @@
+{#
+	The streak flame, beside the bell (rules in backend/app/streaks.py).
+
+	Deliberately small: a number and a flame, amber once today has counted, grey until
+	then. Everything else -- today's four activities, the last two weeks, the freezes --
+	waits in the popover for whoever is curious. A note appears only at a milestone and
+	for the weekend bonus, never on a timer. Settings can hide the flame altogether.
+#}
+<style>
+	.streak-chip {
+		min-height: 2.25rem;
+		height: 2.25rem;
+		padding: 0 0.55rem;
+		gap: 0.3rem;
+		font-weight: 700;
+		font-variant-numeric: tabular-nums;
+	}
+	/* The flame is drawn in the banner's own 2px line, grey until today counts and lit
+	   -- orange line, faint orange fill -- once it has. Its own orange rather than
+	   --wa: that is a pale yellow in the dark themes, and a pale yellow flame reads as
+	   anything but fire. */
+	.streak-chip { --streak-fire: #fe640b; }
+	[data-theme="dark"] .streak-chip,
+	[data-theme="night"] .streak-chip { --streak-fire: #fb923c; }
+	.streak-chip svg { width: 1.2rem; height: 1.2rem; }
+	.streak-chip[data-state="done"] svg { color: var(--streak-fire); }
+	.streak-chip[data-state="done"] svg path { fill: currentColor; fill-opacity: 0.22; }
+	.streak-chip[data-state="pending"] svg,
+	.streak-chip[data-state="rest"] svg { color: currentColor; opacity: 0.6; }
+	[data-streak-panel] .streak-big { font-size: 2rem; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
+	[data-streak-panel] .streak-muted { color: hsl(var(--bc) / 0.55); }
+	[data-streak-panel] .streak-list { display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.8rem; }
+	[data-streak-panel] .streak-list li { display: flex; align-items: center; gap: 0.5rem; }
+	[data-streak-panel] .streak-dot {
+		width: 1rem;
+		height: 1rem;
+		border-radius: 9999px;
+		flex: none;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		border: 1.5px solid hsl(var(--bc) / 0.25);
+	}
+	[data-streak-panel] .streak-dot[data-on] { background: hsl(var(--su)); border-color: hsl(var(--su)); color: hsl(var(--b1)); }
+	[data-streak-panel] .streak-dot svg { width: 0.7rem; height: 0.7rem; }
+	/* Two weeks, one square a day. Weekends are drawn smaller and hollow: they are
+	   there to keep the calendar readable, not to be filled. */
+	[data-streak-panel] .streak-days { display: grid; grid-template-columns: repeat(14, minmax(0, 1fr)); gap: 3px; }
+	[data-streak-panel] .streak-day {
+		aspect-ratio: 1 / 1;
+		border-radius: 3px;
+		background: hsl(var(--bc) / 0.08);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 0.55rem;
+		color: hsl(var(--bc) / 0.5);
+	}
+	[data-streak-panel] .streak-day[data-level="1"] { background: hsl(var(--wa) / 0.35); }
+	[data-streak-panel] .streak-day[data-level="2"] { background: hsl(var(--wa) / 0.6); }
+	[data-streak-panel] .streak-day[data-level="3"] { background: hsl(var(--wa) / 0.85); }
+	[data-streak-panel] .streak-day[data-rest] { background: transparent; box-shadow: inset 0 0 0 1px hsl(var(--bc) / 0.12); }
+	[data-streak-panel] .streak-day[data-frozen] { background: hsl(var(--in) / 0.18); color: hsl(var(--in)); }
+	[data-streak-panel] .streak-day[data-today] { outline: 2px solid hsl(var(--p)); outline-offset: 1px; }
+	[data-streak-panel] .streak-axis { display: flex; justify-content: space-between; font-size: 0.65rem; color: hsl(var(--bc) / 0.45); margin-top: 0.2rem; }
+	[data-streak-panel] .streak-notice {
+		border-radius: 0.6rem;
+		padding: 0.5rem 0.65rem;
+		background: hsl(var(--in) / 0.1);
+		font-size: 0.8rem;
+	}
+	[data-streak-panel] .streak-how { font-size: 0.72rem; color: hsl(var(--bc) / 0.6); line-height: 1.45; }
+	[data-streak-panel] .streak-how summary { cursor: pointer; font-weight: 600; color: hsl(var(--bc) / 0.7); }
+</style>
+
+<div class="dropdown dropdown-end" data-streak-root style="display:none">
+	<button type="button" tabindex="0" class="btn btn-ghost banner-icon-btn streak-chip" data-streak-btn
+		aria-label="Your streak" title="Your streak">
+		<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>
+		<span data-streak-count>0</span>
+	</button>
+	<div tabindex="0" class="dropdown-content z-50 mt-3 w-80 max-w-[calc(100vw-2rem)] card card-compact bg-base-100 text-base-content shadow-xl border border-base-300" data-streak-panel>
+		<div class="card-body p-4 gap-3" data-streak-body></div>
+	</div>
+</div>
+
+<script>
+	(function () {
+		const root = document.querySelector("[data-streak-root]");
+		if (!root) return;
+		// Read once the page has parsed: the banner comes before the sidebar, so an
+		// immediate "is there a sidebar" check is always no.
+		if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);
+		else start();
+
+		function start() {
+		if (!document.querySelector("[data-portal-sidebar]")) return; // signed in only
+		const btn = root.querySelector("[data-streak-btn]");
+		const countEl = root.querySelector("[data-streak-count]");
+		const bodyEl = root.querySelector("[data-streak-body]");
+		const HIDE_KEY = "portal-streak";
+		const MILESTONE_KEY = "portal-streak-milestone";
+		const MILESTONES = [5, 10, 20, 30, 50, 75, 100, 150, 200];
+		const KINDS = [
+			["visit", "Used the Hub"],
+			["pr", "Opened, reviewed or commented on a pull request"],
+			["pipeline", "A pipeline you ran succeeded"],
+			["workitem", "Closed or moved a work item"],
+		];
+		const TICK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
+		const DAY_LETTER = ["S", "M", "T", "W", "T", "F", "S"];
+
+		function hidden() {
+			try { return localStorage.getItem(HIDE_KEY) === "hidden"; } catch (_) { return false; }
+		}
+		function esc(v) {
+			return String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+		}
+
+		function paint(d) {
+			const today = d.today || {};
+			const done = (today.kinds || []).length > 0;
+			const state = !today.workday ? "rest" : done ? "done" : "pending";
+			btn.setAttribute("data-state", state);
+			countEl.textContent = String(d.current || 0);
+			btn.title = state === "done"
+				? d.current + " workdays in a row. Today counts."
+				: state === "pending" ? "Do one thing in the Hub today to keep your " + d.current + "-day streak."
+				: "Weekend: nothing today counts or breaks your streak.";
+
+			const f = d.freezes || {};
+			const strip = (d.days || []).map((x) => {
+				const dt = new Date(x.day + "T12:00:00");
+				const level = x.kinds.length >= 3 ? 3 : x.kinds.length;
+				const label = dt.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" }) +
+					(x.frozen ? ": a freeze kept the streak" : !x.workday ? ": weekend" : x.kinds.length ? ": " + x.kinds.length + " of 4" : ": nothing");
+				return '<span class="streak-day" title="' + esc(label) + '"' +
+					(x.workday ? "" : " data-rest") + (x.frozen ? " data-frozen" : "") + (x.today ? " data-today" : "") +
+					(x.workday && level ? ' data-level="' + level + '"' : "") + ">" +
+					(x.frozen ? "❄" : DAY_LETTER[dt.getDay()]) + "</span>";
+			}).join("");
+			const checklist = today.workday
+				? '<ul class="streak-list">' + KINDS.map((k) => {
+					const on = (today.kinds || []).indexOf(k[0]) !== -1;
+					return '<li><span class="streak-dot"' + (on ? " data-on" : "") + ">" + (on ? TICK : "") + "</span><span" + (on ? "" : ' class="streak-muted"') + ">" + esc(k[1]) + "</span></li>";
+				}).join("") + "</ul>"
+				: '<p class="text-sm streak-muted">Weekend. Nothing today counts toward your streak, and nothing breaks it.</p>';
+			const sync = d.sync || {};
+			const syncLine = sync.running
+				? '<p class="text-xs streak-muted">Reading your Azure DevOps history…</p>'
+				: sync.error ? '<p class="text-xs streak-muted">' + esc(/not connected/i.test(sync.error)
+					? "Azure DevOps is not connected, so only Hub visits count. Connect it on the Connections page."
+					: "Azure DevOps history could not be read just now; Hub visits still count.") + "</p>" : "";
+
+			bodyEl.innerHTML =
+				'<div class="flex items-end justify-between gap-3">' +
+					'<div><div class="streak-big">' + esc(d.current || 0) + '</div><div class="text-xs streak-muted">workdays in a row</div></div>' +
+					'<div class="text-right text-xs streak-muted">Longest: <b>' + esc(d.longest || 0) + "</b><br>❄ " + esc(f.left) + " of " + esc(f.allowed) + " freezes left" + (f.bonus ? " (+2 weekend)" : "") + "</div>" +
+				"</div>" +
+				(d.notice ? '<div class="streak-notice" dir="rtl">' + esc(d.notice.text) + " ❄+" + esc(d.notice.bonus) + "</div>" : "") +
+				'<div><div class="text-xs font-semibold streak-muted mb-1">Today</div>' + checklist + "</div>" +
+				'<div><div class="streak-days">' + strip + '</div><div class="streak-axis"><span>two weeks ago</span><span>today</span></div></div>' +
+				syncLine +
+				'<details class="streak-how"><summary>How it works</summary><p class="mt-1">' +
+					"A workday (Sunday to Thursday) counts when you do any one of the four things above. " +
+					"Fridays and Saturdays never count and never break it. Each month has 5 freezes: a missed workday uses one " +
+					"by itself, for holidays and sick days. Using the Hub on a weekend adds 2 more that month. " +
+					"Only you and the admins can see your streak." +
+				'</p></details>' +
+				'<div class="flex justify-end"><button type="button" class="btn btn-ghost btn-xs streak-muted" data-streak-hide>Hide the flame</button></div>';
+			root.style.display = "";
+		}
+
+		function celebrate(d) {
+			if (!d.today || !d.today.workday || !(d.today.kinds || []).length) return;
+			const reached = MILESTONES.filter((m) => d.current >= m).pop();
+			if (!reached) return;
+			let last = 0;
+			try { last = parseInt(localStorage.getItem(MILESTONE_KEY) || "0", 10) || 0; } catch (_) {}
+			if (reached <= last) return;
+			try { localStorage.setItem(MILESTONE_KEY, String(reached)); } catch (_) {}
+			window.portalToast?.({ kind: "success", message: reached + " workdays in a row. Nice." });
+		}
+
+		async function load() {
+			if (hidden() || document.visibilityState !== "visible") return;
+			try {
+				const res = await fetch("/api/streaks/me", { credentials: "same-origin" });
+				if (!res.ok) return;
+				const d = (await res.json()).data || {};
+				paint(d);
+				celebrate(d);
+				if (d.notice) {
+					window.portalToast?.({ kind: "info", message: d.notice.text + " ❄+" + d.notice.bonus });
+					fetch("/api/streaks/me/notice-seen", { method: "POST", credentials: "same-origin" }).catch(() => {});
+				}
+			} catch (_) {
+				/* the flame is a nicety: no flame is better than an error in the banner */
+			}
+		}
+
+		bodyEl.addEventListener("click", (event) => {
+			if (!event.target.closest("[data-streak-hide]")) return;
+			try { localStorage.setItem(HIDE_KEY, "hidden"); } catch (_) {}
+			root.style.display = "none";
+			window.portalToast?.({ kind: "info", message: "The streak flame is hidden. Settings can bring it back." });
+		});
+		// Settings flips it back on without a reload.
+		window.addEventListener("portal:streak-visibility", () => { if (hidden()) root.style.display = "none"; else load(); });
+		// Something done through the Hub may have just counted.
+		document.addEventListener("portal:ado-changed", () => setTimeout(load, 800));
+		document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") load(); });
+		setInterval(load, 10 * 60 * 1000);
+		// After the widgets: the flame is never what the page waits for.
+		setTimeout(load, 1500);
+		}
+	})();
+</script>

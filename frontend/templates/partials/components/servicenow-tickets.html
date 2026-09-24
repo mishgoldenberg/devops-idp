@@ -50,6 +50,9 @@
 			</div>
 		</div>
 
+		<input type="search" class="input input-bordered portal-widget-search shrink-0" data-snow-search dir="auto"
+			placeholder="Search number, title or status" aria-label="Search tickets" />
+
 		<div class="flex-1 min-h-0 flex flex-col" data-snow-body>
 			<div
 				class="flex-1 min-h-0 flex items-center justify-center text-xs text-base-content/50"
@@ -189,14 +192,25 @@
 			);
 		}
 
+		// Every word must appear somewhere in the ticket: "vpn open" finds the open VPN ones.
+		function matches(it) {
+			if (!term) return true;
+			const m = it.meta || {};
+			const text = [it.title, m.id_display, it.status, it.urgency, m.urgency].join(" ").toLowerCase();
+			return term.split(/\s+/).every((word) => text.indexOf(word) !== -1);
+		}
+
 		function render() {
-			const visible = filter === "pinned"
+			const scoped = filter === "pinned"
 				? items.filter((i) => i.pinned)
 				: items;
+			const visible = scoped.filter(matches);
 
 			if (!visible.length) {
 				listEl.innerHTML = "";
-				setStatus(filter === "pinned" ? "No pinned tickets yet." : "No tickets assigned to you.");
+				setStatus(scoped.length && term
+					? "Nothing matches “" + searchEl.value.trim() + "”."
+					: filter === "pinned" ? "No pinned tickets yet." : "No tickets assigned to you.");
 				return;
 			}
 
@@ -204,6 +218,17 @@
 
 			setStatus(null);
 		}
+
+		const searchEl = root.querySelector("[data-snow-search]");
+		let term = "";
+		let searchTimer = null;
+		searchEl?.addEventListener("input", () => {
+			clearTimeout(searchTimer);
+			searchTimer = setTimeout(() => {
+				term = searchEl.value.trim().toLowerCase();
+				render();
+			}, 150);
+		});
 
 		async function load() {
 			try {

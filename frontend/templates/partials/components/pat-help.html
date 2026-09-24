@@ -55,7 +55,7 @@
 		const GUIDES = {
 			azure: {
 				title: "Create an Azure DevOps token",
-				intro: "A Personal Access Token (PAT) lets the portal read your work items, pull requests and pipeline runs as you.",
+				intro: "A Personal Access Token (PAT) lets the portal show your work items, pull requests and pipeline runs, and act on them as you: review a pull request, run a pipeline again, move or assign a work item. Every action asks you to confirm it first, and Azure DevOps records it under your name.",
 				steps: [
 					"In Azure DevOps, click your profile picture in the top-right corner, then choose <b>Security</b>.",
 					"Select <b>Personal access tokens</b>.",
@@ -63,7 +63,8 @@
 					"Name it something you will recognise later — <b>DevOps Hub</b> works.",
 					"For <b>Collection</b>, pick the one you work in. If you work across several, choose <b>All accessible collections</b>.",
 					"For <b>Expiration</b>, choose the longest your organisation allows — a custom date up to the maximum. A short expiry means the portal stops working in a few weeks with no warning.",
-					"Under <b>Scopes</b>, the portal needs <b>Work Items (Read)</b>, <b>Code (Read)</b> and <b>Build (Read)</b>. If your organisation only offers <b>Full access</b>, that is fine too.",
+					"Under <b>Scopes</b>, choose <b>Custom defined</b>, then <b>Show all scopes</b>, and tick: <b>Work Items — Read &amp; write</b>, <b>Code — Read &amp; write</b>, <b>Build — Read &amp; execute</b>, <b>User Profile — Read</b> (so the portal knows which reviewer is you) and <b>Project and Team — Read</b> (for the people you can assign work to). If your organisation only offers <b>Full access</b>, that is fine too.",
+					"Already connected with an older, read-only token? It keeps working for reading. To use the actions, create a new token with the scopes above and paste it over the old one.",
 					"Click <b>Create</b>, then <b>copy the token</b>.",
 					"Paste it into the box you opened this from, and press Save.",
 				],
@@ -107,6 +108,18 @@
 					"Paste it into the box you opened this from, and press Save.",
 				],
 				note: "The token is shown only once. If your Confluence is Cloud rather than Data Center, the menus differ slightly but the token works the same way.",
+			},
+			devbot: {
+				title: "Get your AI model key",
+				intro: "DevBot talks to the AI models with your own key. The key decides which models you may use and how many questions a minute you can ask, and DevBot shows you both.",
+				steps: [
+					{% if devbot_key_help_url %}"Open <a class=\"link link-primary\" target=\"_blank\" rel=\"noopener noreferrer\" href=\"{{ devbot_key_help_url | e }}\">{{ devbot_key_help_url | e }}</a>, where the AI model keys are issued.",{% else %}"Open the AI services portal your organisation issues model keys from.",{% endif %}
+					"Sign in and create a new key. It may be called a <b>virtual key</b> or an <b>API key</b>. Name it something you will recognise, such as <b>DevOps Hub</b>.",
+					"Give it access to the chat models you want to use. In DevBot, models marked <b>Live data</b> are the ones that can read your systems.",
+					"Copy the key. It usually starts with <b>sk-</b>.",
+					"Paste it into the box you opened this from, and press Save.",
+				],
+				note: "The key is stored encrypted and never leaves the Hub's server. Every question you ask counts against its limits, so a key you share with others shares its limits too.",
 			},
 		};
 

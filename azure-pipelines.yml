@@ -516,6 +516,9 @@ stages:
                 ${HOST_ALIAS:+--set-string frontend.ingress.aliasHosts[0]="${HOST_ALIAS}"} \
                 --set-string global.integrationTlsVerify="false" \
                 --set-string global.artifactoryDiskTotal="$(ARTIFACTORY_DISK_TOTAL)" \
+                --set-string global.devbotLlmBaseUrl="$(DEVBOT_LLM_BASE_URL)" \
+                --set-string global.devbotDefaultModel="$(DEVBOT_DEFAULT_MODEL)" \
+                --set-string global.devbotKeyHelpUrl="$(DEVBOT_KEY_HELP_URL)" \
                 | oc apply -n "$(OPENSHIFT_NAMESPACE)" -f -
             displayName: Deploy with Helm
             # ── DO NOT MOVE, AND DO NOT APPEND A STEP BETWEEN THIS AND THE SCRIPT ABOVE.

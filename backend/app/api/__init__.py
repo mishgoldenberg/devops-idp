@@ -39,6 +39,11 @@ from . import (
     activity,
     integrations,
     quick_links,
+    usage,
+    ado_actions,
+    streak,
+    devbot,
+    confluence_actions,
 )
 
 
@@ -66,6 +71,8 @@ api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 
 # External integrations
 api_router.include_router(azure_devops.router, prefix="/azure-devops", tags=["azure-devops"])
+# Writes to Azure DevOps as the signed-in person, each checked and confirmed first.
+api_router.include_router(ado_actions.router, prefix="/azure-devops/actions", tags=["azure-devops"])
 api_router.include_router(servicenow.router, prefix="/support", tags=["support"])
 
 # Approvals
@@ -123,6 +130,19 @@ api_router.include_router(announcements.router, prefix="/announcements", tags=["
 # "What's New": the version this deployment is running and the changelog that
 # got it here. Written once at start-up, read by everyone.
 api_router.include_router(release_notes.router, prefix="/release-notes", tags=["release-notes"])
+
+# Portal usage: the once-a-minute activity beat, and the admin Users page's reads.
+api_router.include_router(usage.router, prefix="/usage", tags=["usage"])
+
+# The banner flame: the signed-in person's own daily streak.
+api_router.include_router(streak.router, prefix="/streaks", tags=["streaks"])
+
+# DevBot, the chat assistant: conversations, and questions answered from every
+# connected system with the person's own tokens and their own model key.
+api_router.include_router(devbot.router, prefix="/devbot", tags=["devbot"])
+# Writes to Confluence as the signed-in person, checked and confirmed first -- the same
+# dialog and the same rules as the Azure DevOps actions above.
+api_router.include_router(confluence_actions.router, prefix="/confluence/actions", tags=["confluence"])
 
 # Portal-wide search: fans out across every integration above, so it is registered last.
 api_router.include_router(search.router, prefix="/search", tags=["search"])

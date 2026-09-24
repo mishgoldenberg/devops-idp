@@ -25,11 +25,13 @@ UI can't double-execute a request.
 from __future__ import annotations
 
 import logging
+import os
 import threading
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import activity
 import audit
@@ -84,6 +86,24 @@ class CreateApprovalRequest(BaseModel):
 
 class ApproveRejectRequest(BaseModel):
     comments: Optional[str] = None
+
+
+class RateRequest(BaseModel):
+    rating: int = Field(..., ge=1, le=5)
+    comment: str = Field("", max_length=1000)
+
+
+def _sla_days() -> int:
+    raw = (os.getenv("REQUEST_SLA_DAYS") or "").strip()
+    try:
+        return max(1, int(raw)) if raw and "$(" not in raw else 3
+    except ValueError:
+        return 3
+
+
+# How long a request may wait for a decision before it is flagged, to its requester
+# and to approvers. Days, counted from submission.
+REQUEST_SLA_DAYS = _sla_days()
 
 
 # ─── Create ──────────────────────────────────────────────────────────────
@@ -278,6 +298,7 @@ def _present(rows: Optional[List[Dict[str, Any]]], is_admin: bool) -> List[Dict[
     rows = list(rows or [])
     if not rows:
         return rows
+    _attach_wait_and_rating(rows)
 
     import cleaner_store
 
@@ -305,6 +326,130 @@ def _present(rows: Optional[List[Dict[str, Any]]], is_admin: bool) -> List[Dict[
                 k: v for k, v in result.items() if k not in _REVIEWER_ONLY_RESULT_KEYS
             }
     return rows
+
+
+def _attach_wait_and_rating(rows: List[Dict[str, Any]]) -> None:
+    """How long a pending request has waited, whether that is longer than
+    REQUEST_SLA_DAYS, and the requester's rating of a finished one -- on every row
+    both the list and the detail return, so the two cannot disagree."""
+    ids = [str(r.get("id")) for r in rows if r.get("id")]
+    ratings: Dict[str, Dict[str, Any]] = {}
+    if ids:
+        try:
+            for rated in query_all(
+                "SELECT request_id::text AS id, rating, comment FROM request_ratings "
+                "WHERE request_id::text = ANY(%s)",
+                [ids],
+            ) or []:
+                ratings[str(rated["id"])] = rated
+        except Exception as exc:  # a missing table must not empty the page
+            log.warning("request ratings unavailable: %s: %s", type(exc).__name__, exc)
+    now = datetime.now(timezone.utc)
+    for row in rows:
+        waited: Optional[float] = None
+        created = row.get("created_at")
+        if str(row.get("status") or "").upper() == "PENDING" and isinstance(created, datetime):
+            stamp = created if created.tzinfo else created.replace(tzinfo=timezone.utc)
+            waited = max(0.0, (now - stamp).total_seconds() / 86400.0)
+        row["waiting_days"] = int(waited) if waited is not None else None
+        row["overdue"] = bool(waited is not None and waited >= REQUEST_SLA_DAYS)
+        row["sla_days"] = REQUEST_SLA_DAYS
+        rated = ratings.get(str(row.get("id")))
+        row["rating"] = int(rated["rating"]) if rated else None
+        row["rating_comment"] = str((rated or {}).get("comment") or "")
+
+
+@router.get("/requests-summary")
+def requests_summary(current_user: AuthUser = Depends(get_current_user)):
+    """For approvers: how many requests are waiting, how many longer than they
+    should, and how requesters rated the last 90 days of finished ones."""
+    if not _can_approve_any(current_user):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    waiting = query_one(
+        """
+        SELECT COUNT(*) FILTER (WHERE status = 'PENDING') AS pending,
+               COUNT(*) FILTER (WHERE status = 'PENDING'
+                                  AND created_at <= CURRENT_TIMESTAMP - make_interval(days => %s)) AS overdue
+          FROM approval_requests
+        """,
+        [REQUEST_SLA_DAYS],
+    ) or {}
+    rated: Dict[str, Any] = {}
+    try:
+        rated = query_one(
+            """
+            SELECT COUNT(*) AS count, AVG(rating)::float AS average,
+                   COUNT(*) FILTER (WHERE rating <= 2) AS low
+              FROM request_ratings
+             WHERE updated_at > CURRENT_TIMESTAMP - INTERVAL '90 days'
+            """
+        ) or {}
+    except Exception as exc:
+        log.warning("request ratings summary unavailable: %s: %s", type(exc).__name__, exc)
+    return {
+        "success": True,
+        "data": {
+            "sla_days": REQUEST_SLA_DAYS,
+            "pending": int(waiting.get("pending") or 0),
+            "overdue": int(waiting.get("overdue") or 0),
+            "ratings": {
+                "count": int(rated.get("count") or 0),
+                "average": round(float(rated.get("average") or 0), 1) if rated.get("count") else None,
+                "low": int(rated.get("low") or 0),
+            },
+        },
+        "timestamp": _now_iso(),
+    }
+
+
+@router.post("/requests/{request_id}/rating")
+def rate_request(
+    request_id: str,
+    body: RateRequest,
+    current_user: AuthUser = Depends(get_current_user),
+):
+    """The requester's rating of a finished request. Theirs to give and to change."""
+    row = _load_request(request_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Request not found")
+    if str(row.get("requester_id")) != str(current_user["id"]):
+        raise HTTPException(status_code=403, detail="Only the person who asked can rate a request.")
+    if str(row.get("status") or "").upper() not in TERMINAL_OK_STATUSES:
+        raise HTTPException(status_code=409, detail="A request can be rated once it has completed.")
+    email = str(current_user.get("email") or "").strip().lower()
+    comment = (body.comment or "").strip()
+    execute(
+        """
+        INSERT INTO request_ratings (request_id, user_email, rating, comment)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (request_id) DO UPDATE
+           SET rating = EXCLUDED.rating, comment = EXCLUDED.comment, updated_at = CURRENT_TIMESTAMP
+        """,
+        [request_id, email, int(body.rating), comment or None],
+    )
+    saved = query_one("SELECT rating, comment FROM request_ratings WHERE request_id = %s", [request_id])
+    if not saved or int(saved.get("rating") or 0) != int(body.rating):
+        # Read back, not assumed: a rating that did not land must not be thanked for.
+        raise HTTPException(status_code=500, detail="The rating was not saved. Try again.")
+    # A low rating is worth the approver's attention while it is fresh.
+    approver_id = row.get("approver_id")
+    if int(body.rating) <= 2 and approver_id:
+        approver = query_one("SELECT email FROM users WHERE id = %s", [approver_id]) or {}
+        if approver.get("email"):
+            create_notification(
+                user_email=str(approver["email"]),
+                message=(
+                    f"{email or 'A requester'} rated \"{row.get('request_title') or 'a request'}\" "
+                    f"{int(body.rating)}/5" + (f": {comment[:200]}" if comment else ".")
+                ),
+                notif_type="warning",
+                link="/ui/approvals",
+            )
+    return {
+        "success": True,
+        "data": {"rating": int(saved["rating"]), "comment": str(saved.get("comment") or "")},
+        "timestamp": _now_iso(),
+    }
 
 
 @router.get("/requests/{request_id}")

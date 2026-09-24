@@ -13,10 +13,14 @@ Why a dedicated helper?
 
 from __future__ import annotations
 
+import json
 import logging
-from typing import Callable, TypeVar
+import threading
+import time
+from typing import Callable, Dict, Tuple, TypeVar
 
 from cache import get_cached, invalidate_prefix
+from redis_client import get_redis
 
 
 _log = logging.getLogger(__name__)
@@ -50,6 +54,108 @@ def invalidate_owner(integration: str, owner: str) -> None:
     integration = (integration or "ext").strip().lower()[:32]
     owner = (owner or "anon").strip().lower()[:255]
     invalidate_prefix(f"ext:{integration}:{owner}")
+
+
+_flight_guard = threading.Lock()
+_flights: Dict[str, threading.Lock] = {}
+
+
+def _flight(key: str) -> threading.Lock:
+    with _flight_guard:
+        return _flights.setdefault(key, threading.Lock())
+
+
+def _read_stamped(key: str):
+    """(value, stored_at) from the cache, or None. Redis errors are a miss."""
+    try:
+        raw = get_redis().get(key)
+        if raw:
+            entry = json.loads(raw)
+            if isinstance(entry, dict) and "at" in entry and "v" in entry:
+                return entry["v"], float(entry["at"])
+    except Exception:
+        pass
+    return None
+
+
+def _write_stamped(key: str, value, keep: int) -> None:
+    try:
+        get_redis().setex(key, keep, json.dumps({"at": time.time(), "v": value}, default=str))
+    except Exception:
+        pass
+
+
+def cached_external_swr(
+    integration: str,
+    owner: str,
+    suffix: str,
+    producer: Callable[[], T],
+    *,
+    fresh: int,
+    keep: int,
+    refresh: bool = False,
+) -> Tuple[T, int, bool]:
+    """Answer from the cache at once, and bring the answer up to date behind it.
+
+    Returns ``(value, age_seconds, refreshing)``.
+
+      * younger than ``fresh``  -- returned as it is;
+      * older, but within ``keep`` -- returned AT ONCE, while one background
+        thread fetches a new one (``refreshing`` says so, and the widget asks again
+        a few seconds later);
+      * absent, or ``refresh`` -- fetched now, with one caller per key doing the
+        work and everybody else waiting for its answer rather than repeating it.
+
+    For reads that are slow and change slowly: nobody waits for a crawl to find out
+    that nothing has changed. A failed read raises and is never stored, and a failed
+    BACKGROUND read leaves the previous answer in place and says so at WARNING.
+    Stored as {"at", "v"}, so give it a suffix no plain cached_external() uses.
+    """
+    key = _key(integration, owner, suffix)
+    asked = time.time()
+    if not refresh:
+        hit = _read_stamped(key)
+        if hit is not None:
+            value, at = hit
+            age = max(0, int(asked - at))
+            if age < fresh:
+                return value, age, False
+            return value, age, _refresh_in_background(key, producer, keep)
+
+    lock = _flight(key)
+    with lock:
+        # Whoever held the lock may have just fetched exactly what this caller wants.
+        hit = _read_stamped(key)
+        if hit is not None and (hit[1] >= asked or (not refresh and time.time() - hit[1] < fresh)):
+            return hit[0], max(0, int(time.time() - hit[1])), False
+        value = producer()
+        _write_stamped(key, value, keep)
+        return value, 0, False
+
+
+def _refresh_in_background(key: str, producer: Callable[[], T], keep: int) -> bool:
+    """Start one refresh of ``key`` unless one is already running. True either way
+    a refresh is under way."""
+    lock = _flight(key)
+    if not lock.acquire(blocking=False):
+        return True
+
+    def run() -> None:
+        try:
+            _write_stamped(key, producer(), keep)
+        except Exception as exc:
+            _log.warning("cache: background refresh of %s failed; the previous answer stays: %s: %s",
+                         key, type(exc).__name__, exc)
+        finally:
+            lock.release()
+
+    try:
+        threading.Thread(target=run, name="cache-refresh", daemon=True).start()
+    except Exception as exc:
+        lock.release()
+        _log.warning("cache: could not start a background refresh of %s: %s", key, exc)
+        return False
+    return True
 
 
 def forget_external(integration: str, owner: str, suffix: str) -> None:

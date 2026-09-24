@@ -1,0 +1,865 @@
+{#
+	Users -- everything about the people using the portal, in one admin page.
+
+	Two things live here that used to be apart or missing:
+
+	  * MANAGEMENT -- role and account state for everyone. This was a section of
+	    Platform Managing, between SSO and Quick Links, which is where somebody
+	    looking for "who is on this" did not think to look. The old one-way "Grant
+	    Admin" picker is gone: the role column below does promotion and demotion both.
+	  * ADOPTION -- when each person first signed in, when they were last here and
+	    how much time they actually spend. The numbers come from the usage beat in
+	    portal-chrome.html; what counts as "active" is written down in
+	    usage_tracking.py and, in one sentence, at the foot of this page.
+
+	All of it is read client-side from /api/usage/* and /api/admin/*, so a slow
+	query shows as a loading panel, not as a page that takes ten seconds to open.
+#}
+<style>
+	/* Eight figures: one row of eight, two of four, or four of two -- never seven
+	   and a straggler, which is what auto-fit made of it. */
+	[data-users-page] .us-kpis {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.75rem;
+	}
+	@media (min-width: 48rem) {
+		[data-users-page] .us-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+	}
+	@media (min-width: 90rem) {
+		[data-users-page] .us-kpis { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+	}
+	[data-users-page] .us-kpi {
+		border: 1px solid hsl(var(--bc) / 0.1);
+		border-radius: 0.9rem;
+		background: hsl(var(--b1));
+		padding: 0.85rem 1rem;
+		min-width: 0;
+	}
+	[data-users-page] .us-kpi-label {
+		font-size: 0.7rem;
+		font-weight: 600;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: hsl(var(--bc) / 0.5);
+	}
+	[data-users-page] .us-kpi-value {
+		font-size: 1.6rem;
+		font-weight: 800;
+		line-height: 1.15;
+		margin-top: 0.2rem;
+		font-variant-numeric: tabular-nums;
+	}
+	/* Explanations: one paragraph under every figure and chart, and a legend for the
+	   table. Shown until the reader hides them -- the page is read by people who did not
+	   build it, and a number whose definition you have to ask for is a number nobody uses. */
+	[data-users-page] .us-explain {
+		display: none;
+		font-size: 0.72rem;
+		line-height: 1.45;
+		color: hsl(var(--bc) / 0.72);
+		margin-top: 0.55rem;
+		padding-top: 0.5rem;
+		border-top: 1px dashed hsl(var(--bc) / 0.15);
+	}
+	[data-users-page][data-explain] .us-explain { display: block; }
+	[data-users-page] .us-legend { display: grid; grid-template-columns: max-content minmax(0, 1fr); column-gap: 0.9rem; row-gap: 0.3rem; }
+	[data-users-page] .us-legend dt { font-weight: 600; color: hsl(var(--bc) / 0.8); white-space: nowrap; }
+	[data-users-page] .us-kpi-note {
+		font-size: 0.72rem;
+		color: hsl(var(--bc) / 0.55);
+		margin-top: 0.15rem;
+	}
+	[data-users-page] .us-charts {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+		gap: 1rem;
+	}
+	[data-users-page] .us-chart-bars {
+		display: flex;
+		align-items: flex-end;
+		gap: 3px;
+		height: 8.5rem;
+		padding-top: 0.5rem;
+	}
+	[data-users-page] .us-bar {
+		flex: 1 1 0;
+		min-width: 3px;
+		border-radius: 3px 3px 0 0;
+		background: hsl(var(--p) / 0.75);
+		position: relative;
+	}
+	[data-users-page] .us-bar:hover { background: hsl(var(--p)); }
+	[data-users-page] .us-bar.is-zero { background: hsl(var(--bc) / 0.08); height: 2px !important; }
+	[data-users-page] .us-bar.is-today { background: hsl(var(--s) / 0.85); }
+	[data-users-page] .us-axis {
+		display: flex;
+		justify-content: space-between;
+		font-size: 0.68rem;
+		color: hsl(var(--bc) / 0.45);
+		margin-top: 0.35rem;
+	}
+	[data-users-page] .us-hbar-row {
+		display: grid;
+		grid-template-columns: minmax(6rem, 9rem) minmax(0, 1fr) max-content;
+		gap: 0.6rem;
+		align-items: center;
+		font-size: 0.8rem;
+		padding: 0.2rem 0;
+	}
+	[data-users-page] .us-hbar-track {
+		height: 0.55rem;
+		border-radius: 9999px;
+		background: hsl(var(--bc) / 0.07);
+		overflow: hidden;
+	}
+	[data-users-page] .us-hbar-fill { height: 100%; border-radius: 9999px; background: hsl(var(--p) / 0.75); }
+	[data-users-page] .us-toolbar {
+		display: grid;
+		grid-template-columns: minmax(12rem, 2fr) minmax(9rem, 1fr) minmax(9rem, 1fr);
+		gap: 0.75rem;
+		align-items: end;
+	}
+	[data-users-page] .us-label {
+		display: block;
+		font-size: 0.68rem;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: hsl(var(--bc) / 0.5);
+		margin-bottom: 0.2rem;
+	}
+	/* The table scrolls INSIDE the card, both ways: the card is the same size with
+	   six accounts and with five hundred, and a narrow window scrolls the table, not
+	   the page. Sticky header so row forty still has labelled columns. */
+	[data-users-page] .us-scroll {
+		max-height: 38rem;
+		overflow: auto;
+		border: 1px solid hsl(var(--b3));
+		border-radius: 0.75rem;
+	}
+	[data-users-page] .us-table { width: 100%; min-width: 60rem; border-collapse: separate; border-spacing: 0; }
+	[data-users-page] .us-table th {
+		position: sticky;
+		top: 0;
+		z-index: 1;
+		background: hsl(var(--b1));
+		font-size: 0.68rem;
+		font-weight: 700;
+		letter-spacing: 0.05em;
+		text-transform: uppercase;
+		color: hsl(var(--bc) / 0.55);
+		text-align: start;
+		padding: 0.6rem 0.75rem;
+		border-bottom: 1px solid hsl(var(--b3));
+		white-space: nowrap;
+	}
+	[data-users-page] .us-table td {
+		padding: 0.55rem 0.75rem;
+		border-bottom: 1px solid hsl(var(--bc) / 0.06);
+		font-size: 0.82rem;
+		vertical-align: middle;
+	}
+	[data-users-page] .us-table tr.us-row:hover td { background: hsl(var(--b2) / 0.6); }
+	[data-users-page] .us-table tr.us-row.is-open td { background: hsl(var(--b2)); }
+	[data-users-page] .us-num,
+	[data-users-page] .us-table th.us-num { text-align: end; font-variant-numeric: tabular-nums; white-space: nowrap; }
+	[data-users-page] .us-muted { color: hsl(var(--bc) / 0.5); }
+	[data-users-page] .us-person { display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
+	[data-users-page] .us-avatar {
+		width: 2rem;
+		height: 2rem;
+		border-radius: 9999px;
+		flex: none;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 0.72rem;
+		font-weight: 700;
+		color: hsl(var(--pc));
+		background: hsl(var(--p) / 0.8);
+	}
+	[data-users-page] .us-person-text { min-width: 0; }
+	/* Shrink-wrapped, so a Hebrew name reads right-to-left INSIDE its own box and the
+	   box still starts where the e-mail under it starts. As a full-width block, dir=auto
+	   pushed the name to the far edge of the column, away from its own avatar. */
+	[data-users-page] .us-person-name { display: inline-block; vertical-align: top; unicode-bidi: isolate; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 16rem; }
+	[data-users-page] .us-person-mail { font-size: 0.72rem; color: hsl(var(--bc) / 0.5); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 16rem; }
+	[data-users-page] .us-state {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		font-size: 0.75rem;
+		white-space: nowrap;
+	}
+	[data-users-page] .us-state::before {
+		content: "";
+		width: 0.5rem;
+		height: 0.5rem;
+		border-radius: 9999px;
+		background-color: currentColor;
+		flex: none;
+	}
+	[data-users-page] .us-state[data-tone="live"] { color: hsl(var(--su)); }
+	[data-users-page] .us-state[data-tone="recent"] { color: hsl(var(--bc) / 0.75); }
+	[data-users-page] .us-state[data-tone="quiet"] { color: hsl(var(--wa)); }
+	[data-users-page] .us-state[data-tone="never"] { color: hsl(var(--bc) / 0.4); }
+	[data-users-page] .us-state[data-tone="never"]::before { background-color: transparent; box-shadow: inset 0 0 0 1.5px currentColor; }
+	[data-users-page] .us-icon-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.8rem;
+		height: 1.8rem;
+		border-radius: 9999px;
+		color: hsl(var(--bc) / 0.5);
+	}
+	[data-users-page] .us-icon-btn:hover { background: hsl(var(--bc) / 0.08); color: hsl(var(--bc) / 0.9); }
+	[data-users-page] .us-icon-btn svg { width: 1rem; height: 1rem; transition: transform 150ms ease; }
+	[data-users-page] .is-open .us-icon-btn svg { transform: rotate(180deg); }
+	[data-users-page] .us-detail {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+		gap: 1rem;
+		padding: 0.5rem 0.25rem 0.75rem;
+	}
+	[data-users-page] .us-detail-card {
+		border: 1px solid hsl(var(--bc) / 0.1);
+		border-radius: 0.75rem;
+		background: hsl(var(--b1));
+		padding: 0.75rem 0.9rem;
+		min-width: 0;
+	}
+	[data-users-page] .us-detail-title {
+		font-size: 0.68rem;
+		font-weight: 700;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: hsl(var(--bc) / 0.5);
+		margin-bottom: 0.5rem;
+	}
+	[data-users-page] .us-facts {
+		display: grid;
+		grid-template-columns: max-content minmax(0, 1fr);
+		column-gap: 0.9rem;
+		row-gap: 0.25rem;
+		font-size: 0.8rem;
+	}
+	[data-users-page] .us-facts dt { color: hsl(var(--bc) / 0.5); }
+	[data-users-page] .us-facts dd { min-width: 0; overflow-wrap: anywhere; }
+	[data-users-page] .us-mini-bars { display: flex; align-items: flex-end; gap: 2px; height: 3.5rem; }
+	[data-users-page] .us-mini-bars span { flex: 1 1 0; border-radius: 2px 2px 0 0; background: hsl(var(--p) / 0.7); min-width: 2px; }
+	[data-users-page] .us-mini-bars span.is-zero { background: hsl(var(--bc) / 0.08); height: 2px !important; }
+	[data-users-page] .us-list { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.8rem; }
+	[data-users-page] .us-list li { display: flex; justify-content: space-between; gap: 0.75rem; min-width: 0; }
+	[data-users-page] .us-list li > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+</style>
+
+<div class="page-shell" data-users-page>
+	<header class="page-header">
+		<div>
+			<h1 class="page-title">Users</h1>
+			<p class="page-subtitle">Who uses the Hub, how much, and what they can do</p>
+		</div>
+		<div class="flex items-center gap-2">
+			<button type="button" class="btn btn-ghost btn-sm" data-us-explain-toggle aria-pressed="true">Hide explanations</button>
+			<select class="select select-bordered select-sm" data-us-range aria-label="Period" title="The period for new accounts, time, sessions and the three charts">
+				<option value="7">Last 7 days</option>
+				<option value="30" selected>Last 30 days</option>
+				<option value="90">Last 90 days</option>
+				<option value="0">All time</option>
+			</select>
+			<button type="button" class="btn btn-outline btn-primary btn-sm" data-us-refresh>&#8635; Refresh</button>
+		</div>
+	</header>
+
+	<div class="page-content-flush">
+		{#
+			Wider than portal-content-container (60rem): the table has ten columns and
+			the page is a dashboard of numbers, not a form. Still capped, so a very wide
+			monitor does not stretch a chart into a line.
+		#}
+		<div class="portal-content-container space-y-6" style="max-width: 104rem">
+			<section class="us-kpis" data-us-kpis>
+				<div class="us-kpi"><div class="us-kpi-label">Loading</div><div class="us-kpi-value">…</div></div>
+			</section>
+
+			<section class="us-charts">
+				<div class="section-card">
+					<div class="card-body p-5">
+						<h2 class="section-title" data-us-daily-title>People per day</h2>
+						<div class="text-xs text-base-content/50" data-us-daily-note>Different people who used the Hub each day</div>
+						<div class="us-chart-bars" data-us-daily></div>
+						<div class="us-axis" data-us-daily-axis></div>
+						<div class="us-explain" data-us-daily-explain></div>
+					</div>
+				</div>
+				<div class="section-card">
+					<div class="card-body p-5">
+						<h2 class="section-title">Where the time goes</h2>
+						<div class="text-xs text-base-content/50">Active time per page, everybody together</div>
+						<div class="mt-2" data-us-pages></div>
+						<div class="us-explain">
+							Which parts of the Hub hold people's attention: the active time spent on each
+							page by everybody, over the period. The longest bar is the page people use the
+							most; a page missing from the list is one nobody spent time on. Point at a time
+							to see how many page views and how many different people it came from.
+						</div>
+					</div>
+				</div>
+				<div class="section-card">
+					<div class="card-body p-5">
+						<h2 class="section-title">When people arrive</h2>
+						<div class="text-xs text-base-content/50">Sessions started, by hour of the day (your time zone)</div>
+						<div class="us-chart-bars" data-us-hours></div>
+						<div class="us-axis"><span>00</span><span>06</span><span>12</span><span>18</span><span>23</span></div>
+						<div class="us-explain">
+							What time of day people sit down to use the Hub: each of the 24 bars is one hour
+							of the day, in your own time zone, and its height is how many sessions began in
+							that hour over the period. Tall bars are the busy hours; the empty ones are the
+							safest time for maintenance. Point at a bar for its count.
+						</div>
+					</div>
+				</div>
+			</section>
+
+			<section class="section-card">
+				<div class="card-body p-5 gap-4">
+					<div>
+						<h2 class="section-title">Everyone</h2>
+						<p class="text-sm text-base-content/60">
+							Open a row for that person's activity, pages, sessions and connected systems.
+							Role changes apply at their next sign-in; deactivation signs them out within a minute.
+						</p>
+					</div>
+
+					<div class="us-toolbar">
+						<label class="min-w-0">
+							<span class="us-label">Search</span>
+							<input type="search" class="input input-bordered input-sm w-full" placeholder="Name, e-mail or role" data-us-search dir="auto" />
+						</label>
+						<label class="min-w-0">
+							<span class="us-label">Show</span>
+							<select class="select select-bordered select-sm w-full" data-us-filter>
+								<option value="">Everyone</option>
+								<option value="week">Active in the last 7 days</option>
+								<option value="quiet">Quiet for 30+ days</option>
+								<option value="never">Never measured</option>
+								<option value="new">Joined in the last 30 days</option>
+								<option value="admins">Admins</option>
+								<option value="inactive">Deactivated</option>
+							</select>
+						</label>
+						<label class="min-w-0">
+							<span class="us-label">Sort</span>
+							<select class="select select-bordered select-sm w-full" data-us-sort>
+								<option value="last">Last active</option>
+								<option value="time">Most time (30 days)</option>
+								<option value="days">Most days active (30 days)</option>
+								<option value="streak">Longest current streak</option>
+								<option value="newest">Newest first</option>
+								<option value="name">Name</option>
+							</select>
+						</label>
+					</div>
+
+					<div class="hidden alert text-sm" role="status" data-us-alert></div>
+
+					<div class="us-scroll">
+						<table class="us-table">
+							<thead>
+								<tr>
+									<th>Person</th>
+									<th style="width: 11rem">Role</th>
+									<th title="When the account was created: the first time this person signed in">First sign-in</th>
+									<th title="When the Hub last saw them using it. Here now = within the last half hour">Last active</th>
+									<th class="us-num" title="Their active time in the last 7 days">Time · 7d</th>
+									<th class="us-num" title="Their active time in the last 30 days">Time · 30d</th>
+									<th class="us-num" title="On how many of the last 30 days they used the Hub">Days · 30d</th>
+									<th class="us-num" title="How many separate sittings they had in the last 30 days">Sessions · 30d</th>
+								<th class="us-num" title="Workdays in a row they have done something in the Hub, and their longest run">Streak</th>
+									<th style="width: 7rem">Account</th>
+									<th style="width: 2.5rem"><span class="sr-only">Details</span></th>
+								</tr>
+							</thead>
+							<tbody data-us-tbody>
+								<tr><td colspan="11" class="us-muted">Loading…</td></tr>
+							</tbody>
+						</table>
+					</div>
+					<div class="flex items-center justify-between gap-3 flex-wrap">
+						<span class="text-xs text-base-content/50" data-us-count></span>
+						<button type="button" class="btn btn-ghost btn-xs" style="display:none" data-us-more></button>
+					</div>
+					<div class="us-explain">
+						<dl class="us-legend">
+							<dt>First sign-in</dt><dd>When the account was created, which is the first time this person signed in to the Hub.</dd>
+							<dt>Last active</dt><dd>When the Hub last saw them using it. "Here now" means within the last half hour. For anyone not measured since tracking began, it is their last sign-in.</dd>
+							<dt>Time · 7d / 30d</dt><dd>Their active time in the last 7 and 30 days, counted the same way as "Time in the Hub" above.</dd>
+							<dt>Days · 30d</dt><dd>On how many of the last 30 days they used the Hub at all. 20 means almost every working day; 1 means once this month.</dd>
+							<dt>Sessions · 30d</dt><dd>How many separate sittings they had in the last 30 days. A sitting ends after 30 minutes with nothing happening.</dd>
+						<dt>Streak</dt><dd>Workdays in a row (Sunday to Thursday) on which they used the Hub, worked on a pull request, had a pipeline succeed or moved a work item; their longest run is in brackets. Five freezes a month cover holidays. They see it as the flame beside the bell; only they and admins can.</dd>
+							<dt>The arrow</dt><dd>Opens that person's day-by-day activity, the pages they use most, their recent sittings, the systems they have connected and what they did last.</dd>
+						</dl>
+					</div>
+					<p class="text-xs text-base-content/50" data-us-method>
+						Active time counts only while a Hub tab is on screen and someone has used the mouse or
+						keyboard in the last two minutes, and never more than the clock allows however many tabs are open.
+					</p>
+				</div>
+			</section>
+		</div>
+	</div>
+</div>
+
+<script>
+	(function () {
+		"use strict";
+		const root = document.querySelector("[data-users-page]");
+		if (!root) return;
+		const $ = function (sel) { return root.querySelector(sel); };
+		const kpisEl = $("[data-us-kpis]");
+		const dailyEl = $("[data-us-daily]");
+		const dailyAxisEl = $("[data-us-daily-axis]");
+		const pagesEl = $("[data-us-pages]");
+		const hoursEl = $("[data-us-hours]");
+		const tbody = $("[data-us-tbody]");
+		const searchEl = $("[data-us-search]");
+		const filterEl = $("[data-us-filter]");
+		const sortEl = $("[data-us-sort]");
+		const rangeEl = $("[data-us-range]");
+		const countEl = $("[data-us-count]");
+		const moreBtn = $("[data-us-more]");
+		const alertEl = $("[data-us-alert]");
+		const methodEl = $("[data-us-method]");
+		const dailyTitleEl = $("[data-us-daily-title]");
+		const dailyNoteEl = $("[data-us-daily-note]");
+		const dailyExplainEl = $("[data-us-daily-explain]");
+		const explainBtn = $("[data-us-explain-toggle]");
+
+		// Explanations are on until somebody turns them off, and stay the way they left them.
+		const EXPLAIN_KEY = "portal-users-explain";
+		function setExplain(on) {
+			root.toggleAttribute("data-explain", on);
+			explainBtn.textContent = on ? "Hide explanations" : "What do these mean?";
+			explainBtn.setAttribute("aria-pressed", on ? "true" : "false");
+		}
+		let explainOn = true;
+		try { explainOn = localStorage.getItem(EXPLAIN_KEY) !== "0"; } catch (_) {}
+		setExplain(explainOn);
+		explainBtn.addEventListener("click", function () {
+			explainOn = !explainOn;
+			setExplain(explainOn);
+			try { localStorage.setItem(EXPLAIN_KEY, explainOn ? "1" : "0"); } catch (_) {}
+		});
+
+		// Page keys as the sidebar names them. Anything unlisted is title-cased.
+		const PAGE_NAMES = {
+			home: "Dashboard", "azure-devops": "Azure DevOps", artifactory: "Artifactory", sonarqube: "SonarQube",
+			confluence: "Confluence", search: "Search", connections: "Connections", automations: "Requests",
+			"my-requests": "My Requests", support: "Support", suggestions: "Suggestions", changelog: "What's New",
+			observability: "Observability", "platform-managing": "Platform Managing", approvals: "Approvals",
+			"audit-logs": "Logs", users: "Users", profile: "Profile", settings: "Settings", other: "Other",
+		};
+		const PAGE = 60;
+		let users = [];
+		let roles = [];
+		let shown = PAGE;
+		let openEmail = null;
+		const detailCache = new Map();
+		let alertTimer = null;
+
+		function esc(v) {
+			return String(v === null || v === undefined ? "" : v)
+				.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+				.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+		}
+		function fmt(n) { return Number(n || 0).toLocaleString("en-US"); }
+		function pageName(key) {
+			const k = String(key || "");
+			return PAGE_NAMES[k] || (k ? k.replace(/-/g, " ").replace(/^./, function (c) { return c.toUpperCase(); }) : "—");
+		}
+		// Durations the way people say them: "3h 20m", "12m", "under a minute". A table
+		// cell with nothing in it says "—"; a headline figure says "0m", because a dash
+		// there reads as "broken", not as "nobody has used it yet".
+		function dur(seconds, zero) {
+			const s = Math.max(0, Math.round(Number(seconds || 0)));
+			if (!s) return zero || "—";
+			if (s < 60) return "<1m";
+			const m = Math.round(s / 60);
+			if (m < 60) return m + "m";
+			const h = Math.floor(m / 60);
+			const rest = m % 60;
+			return h + "h" + (rest ? " " + rest + "m" : "");
+		}
+		function ago(iso) {
+			const t = Date.parse(iso || "");
+			if (isNaN(t)) return "";
+			const secs = Math.max(1, Math.floor((Date.now() - t) / 1000));
+			if (secs < 120) return "just now";
+			if (secs < 3600) return Math.floor(secs / 60) + "m ago";
+			if (secs < 86400) return Math.floor(secs / 3600) + "h ago";
+			if (secs < 86400 * 45) return Math.floor(secs / 86400) + "d ago";
+			return date(iso);
+		}
+		function date(iso) {
+			const t = Date.parse(iso || "");
+			if (isNaN(t)) return "—";
+			return new Date(t).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+		}
+		function dateTime(iso) {
+			const t = Date.parse(iso || "");
+			if (isNaN(t)) return "—";
+			return new Date(t).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+		}
+		function initials(name) {
+			const parts = String(name || "?").replace(/@.*/, "").split(/[\s._-]+/).filter(Boolean);
+			return ((parts[0] || "?").charAt(0) + (parts.length > 1 ? parts[parts.length - 1].charAt(0) : "")).toUpperCase();
+		}
+		function daysSince(iso) {
+			const t = Date.parse(iso || "");
+			return isNaN(t) ? Infinity : (Date.now() - t) / 86400000;
+		}
+		function showAlert(kind, text) {
+			alertEl.className = "alert text-sm " + (kind === "ok" ? "alert-success" : "alert-error");
+			alertEl.textContent = text;
+			clearTimeout(alertTimer);
+			// A refusal ("this is the last admin") is worth reading; it stays longer.
+			alertTimer = setTimeout(function () { alertEl.className = "hidden alert text-sm"; }, kind === "ok" ? 4000 : 9000);
+		}
+		function api(url, options) {
+			const run = window.portalFetch
+				? window.portalFetch(url, Object.assign({ credentials: "same-origin" }, options || {}), 20000)
+				: fetch(url, Object.assign({ credentials: "same-origin" }, options || {}));
+			return run.then(function (res) {
+				return res.json().catch(function () { return {}; }).then(function (json) {
+					if (!res.ok) throw new Error((json && typeof json.detail === "string" && json.detail) || "Request failed (HTTP " + res.status + ")");
+					return json;
+				});
+			});
+		}
+
+		// ── the top of the page ─────────────────────────────────────────
+		// What every figure means, in the words of somebody reading it rather than
+		// somebody who built it. Shown under each figure, and as its tooltip.
+		const EXPLAIN = {
+			people: "Every account that has signed in to the Hub at least once: an account is made on a person's first sign-in. Deactivated accounts are counted here and left out of the active number underneath.",
+			fresh: "Accounts whose first sign-in falls in the period chosen at the top of the page. Under All time that is everybody.",
+			today: "How many different people used the Hub today. Each person counts once, however long they stayed or however many tabs they had open.",
+			week: "How many different people used the Hub at least once in the last 7 days, today included. It does not change with the period at the top.",
+			month: "How many different people used the Hub at least once in the last 30 days. The percentage is out of every account.",
+			time: "All the active time spent in the Hub, everybody added together, over the period. Time counts only while a Hub tab is on screen and someone has used the mouse or keyboard in the last two minutes, so a tab left open all day adds nothing, and two tabs never count double.",
+			day: "On a day someone uses the Hub, how long they spend in it, on average. It is the active time divided by the number of person-days (one person on one day), so days a person does not come at all do not drag it down.",
+			sessions: "How many separate sittings there were in the period. A sitting starts with the first page someone opens and ends after 30 minutes with nothing happening. The note shows the average active time in one sitting.",
+		};
+		function spanText(s) {
+			if (s.days) return "last " + s.days + " days";
+			return s.tracking_since ? "since " + date(s.tracking_since) : "all time";
+		}
+		function kpi(label, value, note, explain) {
+			return '<div class="us-kpi" title="' + esc(explain || "") + '"><div class="us-kpi-label">' + esc(label) + '</div><div class="us-kpi-value">' + esc(value) +
+				"</div>" + (note ? '<div class="us-kpi-note">' + esc(note) + "</div>" : "") +
+				(explain ? '<div class="us-explain">' + esc(explain) + "</div>" : "") + "</div>";
+		}
+		function paintSummary(s) {
+			const pct = function (part) { return s.users ? Math.round(100 * part / s.users) + "% of everyone" : ""; };
+			const span = spanText(s);
+			const notWeek = s.days !== 7;
+			kpisEl.innerHTML =
+				kpi("People", fmt(s.users), fmt(s.active_accounts) + " active accounts", EXPLAIN.people) +
+				kpi("New", fmt(s.new_range), span + (notWeek ? " · " + fmt(s.new_7d) + " this week" : ""), EXPLAIN.fresh) +
+				kpi("Here today", fmt(s.dau), pct(s.dau), EXPLAIN.today) +
+				kpi("This week", fmt(s.wau), pct(s.wau), EXPLAIN.week) +
+				kpi("This month", fmt(s.mau), pct(s.mau), EXPLAIN.month) +
+				kpi("Time in the Hub", dur(s.seconds_range, "0m"), s.seconds_range
+					? span + (notWeek ? " · " + dur(s.seconds_7d, "0m") + " this week" : "")
+					: "none yet · credited after a minute of use", EXPLAIN.time) +
+				kpi("A day's use", dur(s.avg_seconds_per_active_day, "0m"), "per person, on days they come", EXPLAIN.day) +
+				kpi("Sessions", fmt(s.sessions_range), span + " · " + dur(s.avg_session_seconds_range, "0m") + " each", EXPLAIN.sessions);
+
+			// A long period is drawn a week to a bar; say so wherever the chart says "day".
+			const weekly = s.bucket === "week";
+			dailyTitleEl.textContent = weekly ? "People per week" : "People per day";
+			dailyNoteEl.textContent = (weekly ? "Different people who used the Hub each week" : "Different people who used the Hub each day") + " · " + span;
+			dailyExplainEl.textContent = "Each bar is one " + (weekly ? "week" : "day") + " of the period, and its height is how many different " +
+				"people used the Hub in it; a person counts once however much they used it. The last, differently " +
+				"coloured bar is " + (weekly ? "this week" : "today") + ", still counting. Grey stubs are " + (weekly ? "weeks" : "days") +
+				" nobody came, which is normal at weekends. Point at a bar for its date, the total time spent and any new accounts.";
+			const series = s.series || [];
+			const max = Math.max(1, ...series.map(function (d) { return d.active_users; }));
+			dailyEl.innerHTML = series.map(function (d, i) {
+				const h = Math.round(100 * d.active_users / max);
+				const title = (weekly ? "Week of " : "") + date(d.day) + ": " + d.active_users + (d.active_users === 1 ? " person" : " people") + ", " + dur(d.active_seconds, "0m") +
+					(d.new_users ? ", " + d.new_users + " new" : "");
+				return '<span class="us-bar' + (d.active_users ? "" : " is-zero") + (i === series.length - 1 ? " is-today" : "") +
+					'" style="height:' + h + '%" title="' + esc(title) + '"></span>';
+			}).join("");
+			dailyAxisEl.innerHTML = series.length
+				? "<span>" + esc(date(series[0].day)) + "</span><span>" + (weekly ? "this week" : "today") + "</span>"
+				: "";
+
+			const pages = s.pages || [];
+			const pageMax = Math.max(1, ...pages.map(function (p) { return p.active_seconds; }));
+			pagesEl.innerHTML = pages.length
+				? pages.map(function (p) {
+					return '<div class="us-hbar-row"><span class="truncate">' + esc(pageName(p.page)) + "</span>" +
+						'<div class="us-hbar-track"><div class="us-hbar-fill" style="width:' + Math.max(2, Math.round(100 * p.active_seconds / pageMax)) + '%"></div></div>' +
+						'<span class="us-muted text-xs" title="' + esc(fmt(p.page_views) + " views by " + fmt(p.users) + " people") + '">' + esc(dur(p.active_seconds)) + "</span></div>";
+				}).join("")
+				: '<p class="text-sm us-muted">Nothing measured yet.</p>';
+
+			// The server counts by UTC hour; shift into the viewer's own zone.
+			const shift = -new Date().getTimezoneOffset() / 60;
+			const local = new Array(24).fill(0);
+			Object.keys(s.hours_utc || {}).forEach(function (h) {
+				const idx = ((Number(h) + Math.round(shift)) % 24 + 24) % 24;
+				local[idx] += Number(s.hours_utc[h] || 0);
+			});
+			const hourMax = Math.max(1, ...local);
+			hoursEl.innerHTML = local.map(function (n, h) {
+				return '<span class="us-bar' + (n ? "" : " is-zero") + '" style="height:' + Math.round(100 * n / hourMax) + '%" title="' +
+					esc(String(h).padStart(2, "0") + ":00 — " + n + (n === 1 ? " session" : " sessions")) + '"></span>';
+			}).join("");
+
+			// When the last beat arrived from ANY browser: the one place a tracker that
+			// has silently stopped counting would show it.
+			methodEl.textContent = methodEl.textContent.replace(/\s*Measured since.*$/, "") +
+				(s.tracking_since ? " Measured since " + date(s.tracking_since) + "; earlier visits show only a first and last sign-in." : " Nothing measured yet.") +
+				(s.last_beat_at ? " Last activity received " + ago(s.last_beat_at) + "." : "");
+		}
+
+		// ── the table ───────────────────────────────────────────────────
+		function lastState(u) {
+			const d = daysSince(u.last_seen);
+			if (!u.last_seen) return '<span class="us-state" data-tone="never">Never</span>';
+			const tone = d < 0.02 ? "live" : d < 30 ? "recent" : "quiet";
+			return '<span class="us-state" data-tone="' + tone + '" title="' + esc(dateTime(u.last_seen)) + '">' + esc(tone === "live" ? "Here now" : ago(u.last_seen)) + "</span>";
+		}
+		function matching() {
+			const q = String(searchEl.value || "").trim().toLowerCase();
+			const f = filterEl.value;
+			const list = users.filter(function (u) {
+				if (q && [u.display_name, u.email, u.role_name].join(" ").toLowerCase().indexOf(q) === -1) return false;
+				if (f === "week") return u.seconds_7d > 0 || daysSince(u.last_seen) < 7;
+				if (f === "quiet") return u.is_active && daysSince(u.last_seen) >= 30;
+				if (f === "never") return !u.tracked;
+				if (f === "new") return daysSince(u.first_seen) < 30;
+				if (f === "admins") return u.is_admin;
+				if (f === "inactive") return !u.is_active;
+				return true;
+			});
+			const by = sortEl.value;
+			list.sort(function (a, b) {
+				if (by === "time") return b.seconds_30d - a.seconds_30d;
+				if (by === "days") return b.days_30d - a.days_30d || b.seconds_30d - a.seconds_30d;
+				if (by === "streak") return (b.streak_current || 0) - (a.streak_current || 0) || (b.streak_longest || 0) - (a.streak_longest || 0);
+				if (by === "newest") return String(b.first_seen || "").localeCompare(String(a.first_seen || ""));
+				if (by === "name") return String(a.display_name).localeCompare(String(b.display_name), undefined, { sensitivity: "base" });
+				return String(b.last_seen || "").localeCompare(String(a.last_seen || ""));
+			});
+			return list;
+		}
+		function rowHtml(u) {
+			const open = openEmail === u.email;
+			const roleCell = u.is_self
+				? '<span class="text-sm">' + esc(u.role_name) + '</span> <span class="us-muted text-xs">(you)</span>'
+				: '<select class="select select-bordered select-xs w-full" data-us-role="' + esc(u.email) + '">' +
+					roles.map(function (r) {
+						return '<option value="' + esc(r.name) + '"' + (r.name === u.role_name ? " selected" : "") + ">" + esc(r.name) + "</option>";
+					}).join("") + "</select>";
+			const account = u.is_self
+				? '<span class="us-muted text-xs">—</span>'
+				: '<button type="button" class="btn btn-ghost btn-xs ' + (u.is_active ? "text-error" : "text-success") +
+					'" data-us-active="' + esc(u.email) + '" data-active="' + (u.is_active ? "1" : "0") + '">' +
+					(u.is_active ? "Deactivate" : "Reactivate") + "</button>";
+			return '<tr class="us-row' + (open ? " is-open" : "") + '"' + (u.is_active ? "" : ' style="opacity:.6"') + ' data-us-email="' + esc(u.email) + '">' +
+				'<td><div class="us-person"><span class="us-avatar" aria-hidden="true" dir="auto">' + esc(initials(u.display_name)) + "</span>" +
+				'<div class="us-person-text"><div><span class="us-person-name" dir="auto" title="' + esc(u.display_name) + '">' + esc(u.display_name) + "</span></div>" +
+				'<div class="us-person-mail" title="' + esc(u.email) + '">' + esc(u.email) + "</div></div></div></td>" +
+				"<td>" + roleCell + "</td>" +
+				'<td class="whitespace-nowrap" title="' + esc(dateTime(u.first_seen)) + '">' + esc(date(u.first_seen)) + "</td>" +
+				"<td>" + lastState(u) + "</td>" +
+				'<td class="us-num">' + esc(dur(u.seconds_7d)) + "</td>" +
+				'<td class="us-num">' + esc(dur(u.seconds_30d)) + "</td>" +
+				'<td class="us-num">' + (u.days_30d ? esc(u.days_30d) : '<span class="us-muted">—</span>') + "</td>" +
+				'<td class="us-num">' + (u.sessions_30d ? esc(u.sessions_30d) : '<span class="us-muted">—</span>') + "</td>" +
+				'<td class="us-num">' + (u.streak_current || u.streak_longest
+					? esc(u.streak_current || 0) + ' <span class="us-muted">(' + esc(u.streak_longest || 0) + ")</span>"
+					: '<span class="us-muted">—</span>') + "</td>" +
+				"<td>" + account + "</td>" +
+				'<td><button type="button" class="us-icon-btn" data-us-open="' + esc(u.email) + '" aria-expanded="' + (open ? "true" : "false") + '" title="Details">' +
+				'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button></td>' +
+				"</tr>" +
+				(open ? '<tr class="us-detail-row"><td colspan="11" data-us-detail>' + detailBody(detailCache.get(u.email)) + "</td></tr>" : "");
+		}
+		function paint() {
+			const list = matching();
+			const slice = list.slice(0, shown);
+			tbody.innerHTML = slice.length
+				? slice.map(rowHtml).join("")
+				: '<tr><td colspan="11" class="us-muted">' + (users.length ? "Nobody matches that." : "No accounts yet.") + "</td></tr>";
+			countEl.textContent = users.length
+				? (list.length === users.length ? fmt(slice.length) + " of " + fmt(users.length) + " people" : fmt(slice.length) + " of " + fmt(list.length) + " matching (" + fmt(users.length) + " in total)")
+				: "";
+			const remaining = list.length - slice.length;
+			moreBtn.style.display = remaining > 0 ? "" : "none";
+			moreBtn.textContent = remaining > 0 ? "Show " + Math.min(remaining, PAGE) + " more" : "";
+			if (openEmail && !detailCache.has(openEmail)) loadDetail(openEmail);
+		}
+
+		// ── one person, opened ──────────────────────────────────────────
+		function detailBody(d) {
+			if (!d) return '<div class="p-3"><span class="loading loading-spinner loading-sm text-base-content/30"></span></div>';
+			if (d.error) return '<div class="p-3 text-sm text-error">' + esc(d.error) + "</div>";
+			const max = Math.max(1, ...d.series.map(function (x) { return x.active_seconds; }));
+			const bars = '<div class="us-mini-bars">' + d.series.map(function (x) {
+				return '<span class="' + (x.active_seconds ? "" : "is-zero") + '" style="height:' + Math.round(100 * x.active_seconds / max) + '%" title="' +
+					esc((d.bucket === "week" ? "Week of " : "") + date(x.day) + ": " + dur(x.active_seconds, "0m") + ", " + x.page_views + " page views") + '"></span>';
+			}).join("") + "</div>";
+			const c = d.counts || {};
+			const facts = [
+				["First sign-in", dateTime(d.first_seen)],
+				["Last sign-in", d.last_login ? dateTime(d.last_login) : "—"],
+				["Time, all measured", dur(c.total_seconds)],
+				["Sessions", fmt(c.sessions)],
+				["Requests", fmt(c.requests) + (c.requests_pending ? " (" + fmt(c.requests_pending) + " waiting)" : "")],
+				["Tickets raised here", fmt(c.tickets)],
+				["Suggestions", fmt(c.suggestions)],
+				["Username", d.username || "—"],
+				["Name from SSO", d.sso_name || "not seen yet"],
+			];
+			const pages = (d.pages || []).length
+				? '<ul class="us-list">' + d.pages.map(function (p) {
+					return "<li><span>" + esc(pageName(p.page)) + '</span><span class="us-muted">' + esc(dur(p.active_seconds)) + " · " + fmt(p.page_views) + " views</span></li>";
+				}).join("") + "</ul>"
+				: '<p class="text-sm us-muted">No pages measured in this period.</p>';
+			const sessions = (d.sessions || []).length
+				? '<ul class="us-list">' + d.sessions.map(function (x) {
+					return "<li><span>" + esc(dateTime(x.started_at)) + (x.entry_page ? ' <span class="us-muted">· ' + esc(pageName(x.entry_page)) + "</span>" : "") +
+						'</span><span class="us-muted">' + esc(dur(x.active_seconds)) + " · " + fmt(x.page_views) + " pages</span></li>";
+				}).join("") + "</ul>"
+				: '<p class="text-sm us-muted">No sessions measured yet.</p>';
+			const connected = (d.connected || []).length
+				? '<ul class="us-list">' + d.connected.map(function (x) {
+					const name = { azure: "Azure DevOps", sonarqube: "SonarQube", artifactory: "Artifactory", confluence: "Confluence" }[x.system] || x.system;
+					return "<li><span>" + esc(name) + '</span><span class="us-muted">since ' + esc(date(x.since)) + "</span></li>";
+				}).join("") + "</ul>"
+				: '<p class="text-sm us-muted">No personal tokens connected.</p>';
+			const actions = (d.recent_actions || []).length
+				? '<ul class="us-list">' + d.recent_actions.map(function (a) {
+					return '<li><span dir="auto" title="' + esc(a.item) + '">' + esc(a.item || a.action) + '</span><span class="us-muted">' + esc(ago(a.at)) + "</span></li>";
+				}).join("") + "</ul>"
+				: '<p class="text-sm us-muted">Nothing recorded.</p>';
+			return '<div class="us-detail">' +
+				'<div class="us-detail-card"><div class="us-detail-title">Active time, ' + esc(d.days ? "last " + d.days + " days" : "all time") + (d.bucket === "week" ? ", by week" : "") + "</div>" + bars +
+				'<div class="us-axis"><span>' + esc(date((d.series[0] || {}).day)) + "</span><span>" + (d.bucket === "week" ? "this week" : "today") + "</span></div></div>" +
+				'<div class="us-detail-card"><div class="us-detail-title">Account</div><dl class="us-facts">' +
+				facts.map(function (f) { return "<dt>" + esc(f[0]) + '</dt><dd><span dir="auto">' + esc(f[1]) + "</span></dd>"; }).join("") + "</dl></div>" +
+				'<div class="us-detail-card"><div class="us-detail-title">Pages they use</div>' + pages + "</div>" +
+				'<div class="us-detail-card"><div class="us-detail-title">Recent sessions</div>' + sessions + "</div>" +
+				'<div class="us-detail-card"><div class="us-detail-title">Connected systems</div>' + connected + "</div>" +
+				'<div class="us-detail-card"><div class="us-detail-title">Recent activity</div>' + actions + "</div>" +
+				"</div>";
+		}
+		function loadDetail(email) {
+			api("/api/usage/users/detail?email=" + encodeURIComponent(email) + "&days=" + encodeURIComponent(rangeEl.value))
+				.then(function (json) { detailCache.set(email, json.data || {}); })
+				.catch(function (err) { detailCache.set(email, { error: err.message }); })
+				.then(function () {
+					const cell = tbody.querySelector('tr[data-us-email="' + (window.CSS && CSS.escape ? CSS.escape(email) : email) + '"] + tr [data-us-detail]');
+					if (cell && openEmail === email) cell.innerHTML = detailBody(detailCache.get(email));
+				});
+		}
+
+		// ── loading ─────────────────────────────────────────────────────
+		// `quiet`: the timed update -- a failure keeps the figures already shown.
+		function loadSummary(quiet) {
+			return api("/api/usage/summary?days=" + encodeURIComponent(rangeEl.value))
+				.then(function (json) { paintSummary(json.data || {}); })
+				.catch(function (err) {
+					if (quiet) return;
+					kpisEl.innerHTML = '<div class="us-kpi"><div class="us-kpi-label">Usage</div><div class="text-sm text-error mt-1">' + esc(err.message) + "</div></div>";
+				});
+		}
+		function loadUsers() {
+			return Promise.all([api("/api/admin/roles"), api("/api/usage/users")]).then(function (res) {
+				roles = res[0].data || [];
+				users = res[1].data || [];
+				paint();
+			}).catch(function (err) {
+				tbody.innerHTML = '<tr><td colspan="11" class="text-sm text-error">' + esc(err.message) + "</td></tr>";
+			});
+		}
+		function loadAll() {
+			detailCache.clear();
+			loadSummary();
+			loadUsers();
+		}
+
+		// ── events ──────────────────────────────────────────────────────
+		let searchTimer = null;
+		searchEl.addEventListener("input", function () {
+			clearTimeout(searchTimer);
+			searchTimer = setTimeout(function () { shown = PAGE; paint(); }, 150);
+		});
+		filterEl.addEventListener("change", function () { shown = PAGE; paint(); });
+		sortEl.addEventListener("change", paint);
+		moreBtn.addEventListener("click", function () { shown += PAGE; paint(); });
+		rangeEl.addEventListener("change", function () { detailCache.clear(); loadSummary(); paint(); });
+		$("[data-us-refresh]").addEventListener("click", loadAll);
+
+		tbody.addEventListener("click", function (event) {
+			const open = event.target.closest("[data-us-open]");
+			if (open) {
+				const email = open.getAttribute("data-us-open");
+				openEmail = openEmail === email ? null : email;
+				paint();
+				return;
+			}
+			const btn = event.target.closest("[data-us-active]");
+			if (!btn) return;
+			const email = btn.getAttribute("data-us-active");
+			const makeActive = btn.getAttribute("data-active") === "0";
+			btn.disabled = true;
+			api("/api/admin/users/active", {
+				method: "PUT",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ email: email, is_active: makeActive }),
+			}).then(function (res) {
+				showAlert("ok", res.message || "Saved.");
+				loadUsers();
+			}).catch(function (err) {
+				showAlert("err", err.message || "Could not update the account");
+				btn.disabled = false;
+			});
+		});
+		tbody.addEventListener("change", function (event) {
+			const sel = event.target.closest("[data-us-role]");
+			if (!sel) return;
+			const email = sel.getAttribute("data-us-role");
+			sel.disabled = true;
+			api("/api/admin/users/role", {
+				method: "PUT",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ email: email, role_name: sel.value }),
+			}).then(function (res) {
+				// The warning is the part an admin needs: a demotion does not take hold
+				// until the session expires, so "done" on its own would be a lie.
+				const warn = res && res.data && res.data.warning;
+				showAlert("ok", (res.message || "Saved.") + (warn ? " " + warn : ""));
+				loadUsers();
+			}).catch(function (err) {
+				showAlert("err", err.message || "Could not change the role");
+				loadUsers(); // put the select back to what is actually stored
+			});
+		});
+
+		loadAll();
+		// The headline figures and charts keep up on their own while the page is on
+		// screen. The table does not: redrawing it would close a role menu somebody has
+		// open, so it waits for Refresh.
+		const summaryTimer = setInterval(function () {
+			if (!root.isConnected) { clearInterval(summaryTimer); return; }
+			if (document.visibilityState === "visible") loadSummary(true);
+		}, 60000);
+	})();
+</script>

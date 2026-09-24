@@ -171,6 +171,14 @@
 		   including accounts that have logged in before — and costs one extra viewing to
 		   the handful who replayed it on purpose. */
 		const SEEN_KEY = "portal-tour-seen-v2";
+		/* A step added after people have already taken the tour carries `fresh`. Bumping
+		   SEEN_KEY instead would show everybody the whole tour again for one new step;
+		   this shows them only what is new, once, and the full tour includes it anyway. */
+		const FRESH = "devbot-1";
+		const FRESH_KEY = "portal-tour-fresh-" + FRESH;
+		/* Steps with `page` belong to one page and form that page's own first-visit tour
+		   (see scheduleAutoStart); a replay from Help on that page includes them too. */
+		const PAGE_KEYS = { devbot: "portal-tour-devbot-v1" };
 
 		// Steps are declarative so adding one is a line, not a code change. `sel` may
 		// match nothing — that step is then skipped, which is what keeps the tour
@@ -190,6 +198,67 @@
 					"Your work at the top, then each connected system, then admin tools if you " +
 					"have them. The rail can be resized by dragging its edge, or collapsed to " +
 					"icons from the button at the bottom.",
+			},
+			{
+				sel: '[data-portal-sidebar] a[href="/ui/devbot"]',
+				fresh: FRESH,
+				title: "DevBot AI",
+				body:
+					"Ask questions in your own words, in English or Hebrew, and DevBot answers from Azure DevOps, " +
+					"SonarQube, Artifactory and Confluence with your own access. Ask why a pipeline failed and it " +
+					"reads the log, finds the fix in Confluence and offers the next steps. It uses your own AI " +
+					"model key: connect it on its page.",
+			},
+			/* DevBot's own page. The intro (no target) only runs in the page's first-visit
+			   tour; the rest also join a replay from Help while on that page. */
+			{
+				sel: null,
+				page: "devbot",
+				title: "Welcome to DevBot AI",
+				body:
+					"A one-minute tour of the assistant: where to pick a model, what your AI key allows, and how " +
+					"DevBot shows its work. You can replay it from the Help menu.",
+			},
+			{
+				sel: "[data-devbot-model]",
+				page: "devbot",
+				title: "Pick a model",
+				body:
+					"Only the models your AI key may use are listed. Those marked Live data can read your systems; " +
+					"Chat only ones answer from general knowledge. You can switch in the middle of a conversation.",
+			},
+			{
+				sel: "[data-devbot-foot]",
+				page: "devbot",
+				title: "What your key allows",
+				body:
+					"Your AI key's requests and tokens a minute, its budget and when it expires. Every answer shows " +
+					"what it cost, and Usage adds it up. DevBot keeps each question small to stay inside the limits.",
+			},
+			{
+				sel: "[data-devbot-list]",
+				page: "devbot",
+				title: "Your conversations",
+				body:
+					"Each one is kept for 30 days after you last use it. Rename or delete one from its row; a " +
+					"delete can be undone for a few seconds.",
+			},
+			{
+				sel: "[data-devbot-form]",
+				page: "devbot",
+				title: "Ask anything",
+				body:
+					"Enter sends, Shift+Enter starts a new line. You watch every lookup as it happens, and each " +
+					"answer links the sources it used. When a change makes sense, DevBot prepares it for you, and " +
+					"nothing is sent until you review and confirm it.",
+			},
+			{
+				sel: "[data-devbot-about]",
+				page: "devbot",
+				title: "What can it do?",
+				body:
+					"Everything DevBot can read and do, which systems are connected for you, and exactly what is " +
+					"sent where.",
 			},
 			/* The dashboard is THREE separate regions stacked on top of each other, and
 			   [data-widget-grid] is only the last of them — "Needs you" and Quick Links are
@@ -292,9 +361,24 @@
 			window.removeEventListener("scroll", onScroll, true);
 		}
 
+		let mode = "full";
+
 		function finish() {
-			try { localStorage.setItem(SEEN_KEY, "1"); } catch (_) {}
+			try {
+				// The full tour covers the fresh steps and whatever page it ran on too.
+				if (mode === "full") {
+					localStorage.setItem(SEEN_KEY, "1");
+					localStorage.setItem(FRESH_KEY, "1");
+				}
+				if (mode === "fresh") localStorage.setItem(FRESH_KEY, "1");
+				if (PAGE_KEYS[mode]) localStorage.setItem(PAGE_KEYS[mode], "1");
+				if (mode === "full" && currentPage() && PAGE_KEYS[currentPage()]) localStorage.setItem(PAGE_KEYS[currentPage()], "1");
+			} catch (_) {}
 			teardown();
+		}
+
+		function currentPage() {
+			return document.querySelector("[data-devbot]") ? "devbot" : "";
 		}
 
 		function onKey(event) {
@@ -575,7 +659,9 @@
 			render(delta);
 		}
 
-		function start() {
+		/* `which`: "full" (the default, and what Help replays), "fresh" (only the steps
+		   added since the person took the tour), or a page name (that page's own tour). */
+		function start(which) {
 			// The first-run timer below may still be pending when someone replays the
 			// tour from the Help menu — without this it fires mid-tour and silently
 			// throws the person back to step one.
@@ -584,16 +670,22 @@
 				autoStartTimer = null;
 			}
 			teardown();
+			mode = typeof which === "string" && which ? which : "full";
 			// Drop steps whose target is not on this page BEFORE numbering them, so
 			// "Step 3 of 6" is honest and there are no dead stops.
 			steps = STEPS.filter((s) => {
+				if (mode === "fresh" && s.fresh !== FRESH) return false;
+				if (PAGE_KEYS[mode] && s.page !== mode) return false;
+				// A page's intro card belongs to that page's own tour only.
+				if (mode === "full" && s.page && !s.sel) return false;
 				if (!s.sel) return true;
 				const node = document.querySelector(s.sel);
 				if (!node) return false;
 				const r = node.getBoundingClientRect();
 				return r.width > 0 && r.height > 0;
 			});
-			if (steps.length < 2) return; // nothing worth touring on this page
+			// One new step is worth showing on its own; a full tour of one is not a tour.
+			if (steps.length < (mode === "fresh" ? 1 : 2)) return;
 			index = 0;
 
 			spot = el("div", "tour-spot");
@@ -632,12 +724,24 @@
 		   a question before the answer existed". */
 		function scheduleAutoStart() {
 			let seen = "1";
-			try { seen = localStorage.getItem(SEEN_KEY); } catch (_) {}
-			if (seen) return;
+			let fresh = "1";
+			let pageSeen = "1";
+			const page = currentPage();
+			try {
+				seen = localStorage.getItem(SEEN_KEY);
+				fresh = localStorage.getItem(FRESH_KEY);
+				if (page) pageSeen = localStorage.getItem(PAGE_KEYS[page]);
+			} catch (_) {}
+			// A page with its own tour runs it on the first visit, whatever else has been seen.
+			if (page && !pageSeen) {
+				autoStartTimer = setTimeout(() => start(page), 1200);
+				return;
+			}
 			if (!document.querySelector("[data-widget-grid]")) return;
 			// Let the widgets place themselves first, or the spotlight measures a grid
 			// that is still three skeletons tall.
-			autoStartTimer = setTimeout(start, 1200);
+			if (!seen) autoStartTimer = setTimeout(() => start("full"), 1200);
+			else if (!fresh) autoStartTimer = setTimeout(() => start("fresh"), 1200);
 		}
 
 		if (document.readyState === "loading") {

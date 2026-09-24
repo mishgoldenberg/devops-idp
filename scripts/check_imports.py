@@ -469,6 +469,7 @@ def startup_imports(tree: ast.Module):
 
 TEMPLATE_ROOT = REPO_ROOT / "frontend" / "templates"
 _INCLUDE_RE = None
+_RENDER_RE = None
 
 
 def check_template_includes() -> list[str]:
@@ -497,6 +498,43 @@ def check_template_includes() -> list[str]:
                 problems.append(
                     f"{path.relative_to(REPO_ROOT)}:{line}: includes '{target}' "
                     f"- no such template; is the file missing from the commit?"
+                )
+    return problems
+
+
+def check_rendered_templates() -> list[str]:
+    """A ROUTE that renders a template which is not in the tree.
+
+    The include check above walks templates looking at each other. Nothing was
+    looking at the Python that names a template by hand:
+
+        templates.TemplateResponse("partials/components/whatever.html", {...})
+
+    That string is not an include and not an import, so a route could name a file
+    that does not exist and every check in this script passed. It fails at REQUEST
+    time, as a 500 on one widget, for whoever opens the page -- and a round can ship
+    with the route present, the widget registered, and the template simply missing.
+
+    Caught exactly that: five SonarQube widget routes were added a step ahead of
+    their partials and this script said OK.
+    """
+    global _RENDER_RE
+    import re
+
+    if _RENDER_RE is None:
+        _RENDER_RE = re.compile(r"""TemplateResponse\(\s*["']([^"']+\.html)["']""")
+    problems: list[str] = []
+    if not TEMPLATE_ROOT.is_dir():
+        return problems
+    for path in sorted((REPO_ROOT / "backend").rglob("*.py")):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for match in _RENDER_RE.finditer(text):
+            target = match.group(1)
+            if not (TEMPLATE_ROOT / target).exists():
+                line = text.count("\n", 0, match.start()) + 1
+                problems.append(
+                    f"{path.relative_to(REPO_ROOT)}:{line}: renders '{target}' "
+                    f"- no such template; the route 500s the moment it is opened"
                 )
     return problems
 
@@ -657,6 +695,7 @@ def check() -> int:
         problems.extend(undefined_names(path, tree))
 
     problems.extend(check_template_includes())
+    problems.extend(check_rendered_templates())
     problems.extend(check_template_syntax())
 
     if problems:
@@ -685,7 +724,7 @@ def check() -> int:
         return 1
 
     print(
-        f"OK - {checked} module(s), every template include resolves, every template parses"
+        f"OK - {checked} module(s), every template include and render resolves, every template parses"
     )
     return 0
 

@@ -528,12 +528,18 @@ def ensure_tables() -> None:
     ensure_user_quick_links_table()
     ensure_catalog_submissions_table()
     ensure_artifactory_cleaners_table()
-    # Imported here, not at module scope: release_notes reads through this module, so
-    # importing it back at the top is a cycle. The table's DDL lives with the code
+    # Imported here, not at module scope: release_notes and usage_tracking read
+    # through this module, so importing them back at the top is a cycle. The table's DDL lives with the code
     # that owns it rather than being a second copy here.
     from release_notes import ensure_release_notes_table
+    from streaks import ensure_tables as ensure_streak_tables
+    from usage_tracking import ensure_usage_tables
+    from devbot.store import ensure_tables as ensure_devbot_tables
 
     ensure_release_notes_table()
+    ensure_usage_tables()
+    ensure_streak_tables()
+    ensure_devbot_tables()
 
 
 def ensure_approval_request_types() -> None:
@@ -928,6 +934,11 @@ def ensure_user_preference_columns() -> None:
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_theme VARCHAR(32)",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_density VARCHAR(32)",
+        # The name the identity provider gives this person, refreshed at every SSO
+        # sign-in and never editable in the portal. `full_name` is the DISPLAY name,
+        # which the person may change to anything; a ticket raised in their name has
+        # to carry who they actually are (identity.trusted_name).
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS sso_name VARCHAR(255)",
     ):
         try:
             execute(sql)
@@ -1348,6 +1359,25 @@ def ensure_approval_workflow_tables() -> None:
     except Exception:
         pass
 
+    # How the requester rated a completed request (1-5, optional comment). One per
+    # request; deleted with it.
+    try:
+        execute(
+            """
+            CREATE TABLE IF NOT EXISTS request_ratings (
+                request_id  UUID PRIMARY KEY REFERENCES approval_requests(id) ON DELETE CASCADE,
+                user_email  VARCHAR(255) NOT NULL,
+                rating      SMALLINT NOT NULL CHECK (rating BETWEEN 1 AND 5),
+                comment     TEXT,
+                created_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+    except Exception as exc:
+        # approval_requests may not exist yet on a minimal dev DB.
+        logging.getLogger(__name__).warning("request_ratings not created: %s: %s", type(exc).__name__, exc)
+
     # In-app notifications (bell + dropdown). Email-keyed so the UI can
     # resolve them directly from the SSO token without an extra users join.
     execute(
@@ -1377,6 +1407,21 @@ def ensure_approval_workflow_tables() -> None:
             execute(stmt)
         except Exception:
             pass
+
+    # When each person last OPENED My Requests, Support and Suggestions. The sidebar's
+    # "something changed" dot is every notification pointing into that page since this
+    # stamp -- separate from is_read, because clearing the bell is not the same as
+    # having looked at the page, and the dot must not vanish with it.
+    execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_section_seen (
+            user_email VARCHAR(255) NOT NULL,
+            section    VARCHAR(32)  NOT NULL,
+            seen_at    TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_email, section)
+        )
+        """
+    )
 
 
 # Env-provided bootstrap admin identity. Empty means "not configured".

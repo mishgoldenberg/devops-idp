@@ -56,6 +56,11 @@
 		   underneath without drawing a second outline around it. */
 		box-shadow: 0 0 0 2px hsl(var(--b2));
 	}
+	/* The `display` above beats the utility `hidden` (same specificity, later sheet),
+	   which left a red "0" on the bell of everybody with nothing unread. */
+	.notif-count.hidden {
+		display: none;
+	}
 </style>
 
 {#
@@ -323,6 +328,9 @@
 			{% endfor %}
 		</ul>
 	</div>
+
+	{# The streak flame (streak-flame.html): small, beside the bell, hideable in Settings. #}
+	{% include 'partials/components/streak-flame.html' %}
 
 	<!--
 		Notifications (top-right of every page). Simple DaisyUI dropdown
@@ -1033,6 +1041,8 @@
 	the (?) buttons next to the token prompts work everywhere without each page opting in.
 -->
 {% include 'partials/components/pat-help.html' with context %}
+{# Every Azure DevOps action, with its check and confirmation: window.portalAdo.open(kind, target). #}
+{% include 'partials/components/ado-actions.html' %}
 
 <!--
 	The shared chrome: app shell, scrollbars, compact density, the sidebar's hide/resize

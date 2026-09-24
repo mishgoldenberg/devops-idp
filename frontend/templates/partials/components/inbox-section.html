@@ -24,15 +24,36 @@
 		background-color: hsl(var(--b2));
 	}
 
+	/* Why this is here, as a dot and a word -- not a filled oval. The colour says
+	   what kind of thing it is: blue waits on you, green is good news, red is a
+	   refusal or a failure. */
 	.inbox-why {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
 		font-size: 0.6875rem;
+		font-weight: 600;
 		white-space: nowrap;
-		padding: 0.1rem 0.5rem;
-		border-radius: 9999px;
-		background-color: hsl(var(--p) / 0.12);
 		color: hsl(var(--p));
+		/* A fixed column, so every title starts at the same x whatever the reason
+		   says; a long reason ellipsises and keeps its full text in the title. */
+		flex: 0 0 10.5rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.inbox-why::before {
+		content: "";
+		width: 0.45rem;
+		height: 0.45rem;
+		border-radius: 9999px;
+		background-color: currentColor;
 		flex: none;
 	}
+	.inbox-why[data-tone="good"] { color: hsl(var(--su)); }
+	.inbox-why[data-tone="bad"] { color: hsl(var(--er)); }
+	/* The header count reuses the class; it is a number, not a status. */
+	#inbox-count.inbox-why { flex: none; color: hsl(var(--bc) / 0.55); }
+	#inbox-count.inbox-why::before { display: none; }
 
 	.inbox-actions {
 		display: inline-flex;
@@ -156,6 +177,8 @@
 			return hours >= 1 ? hours + "h" : "now";
 		}
 
+		let shown = [];
+
 		function done() {
 			// Whatever the outcome, the placeholder's job is over. Leaving it up on a
 			// failure would be a permanent shimmer at the top of the dashboard.
@@ -196,12 +219,13 @@
 					? items.length + (items.length === 1 ? " item" : " items")
 					: "nothing waiting";
 
+				shown = items.slice(0, 8);
 				listEl.innerHTML = items
 					.slice(0, 8)
 					.map(
 						(i) => `
 					<div class="inbox-row" data-key="${esc(i.key || "")}" data-stamp="${esc(i.age || "")}" data-title="${esc(i.title)}">
-						<a class="inbox-why" href="${esc(i.url || "#")}"${
+						<a class="inbox-why" data-tone="${esc(i.tone || "")}" title="${esc(i.why)}" href="${esc(i.url || "#")}"${
 							/^https?:/i.test(i.url || "") ? ' target="_blank" rel="noopener noreferrer"' : ""
 						} style="text-decoration:none">${esc(i.why)}</a>
 						<a class="min-w-0 flex-1" href="${esc(i.url || "#")}"${
@@ -211,6 +235,7 @@
 							<span class="block text-xs truncate" style="color:hsl(var(--bc)/0.55)">${esc(i.subtitle)}</span>
 							${i.people ? `<span class="block inbox-people truncate">${esc(i.people)}</span>` : ""}
 						</a>
+						${i.pr && window.portalAdo ? `<button type="button" class="btn btn-xs btn-outline btn-primary shrink-0" data-review="${esc(i.key || "")}" title="Vote on it in Azure DevOps, after a check and your confirmation">Review…</button>` : ""}
 						<span class="inbox-sys shrink-0">${esc(i.system)}</span>
 						<span class="text-xs text-base-content/40 shrink-0" style="min-width:2.2rem;text-align:right">${esc(ago(i.age))}</span>
 						${i.key ? `
@@ -299,6 +324,15 @@
 		}
 
 		listEl?.addEventListener("click", (event) => {
+			// Review… opens the review dialog; it does NOT tick the row off. The row goes
+			// when Azure DevOps shows the vote, on the reload that follows it.
+			const review = event.target.closest("[data-review]");
+			if (review) {
+				event.preventDefault();
+				const item = shown.find((x) => x.key === review.getAttribute("data-review"));
+				if (item && item.pr) window.portalAdo?.open("vote", item.pr);
+				return;
+			}
 			const btn = event.target.closest("[data-act]");
 			if (!btn) return;
 			event.preventDefault();
@@ -310,6 +344,7 @@
 		// the same 45-second-old answer the user just decided to doubt.
 		document.getElementById("inbox-refresh")?.addEventListener("click", () => load(true));
 		window.addEventListener("portal:refreshed", () => load(true));
+		document.addEventListener("portal:ado-changed", () => load(true));
 		load();
 	})();
 </script>

@@ -1,0 +1,1524 @@
+{#
+	Every SonarQube widget, one partial, scoped by data-sonar-widget on the root:
+
+	  projects  every project, its gate and its numbers
+	  gates     projects by quality-gate result, failing first
+	  newcode   what landed in the current new-code period
+	  hotspots  security reviews still outstanding
+	  issues    open issues on lines this user last touched
+	  prs       the gate on this user's open pull requests
+
+	WHY ONE FILE. These were four partials, each with its own row, its own marker
+	and its own idea of what a control was, so the six widgets offered six different
+	sets of things you could do. They now share one engine: every one has search, a
+	filter, a sort and pins in the same places, and every row opens the same way --
+	a chevron that expands a detail card INSIDE the row. They differ only in the
+	configuration near the bottom of the script: where the data comes from, what the
+	filter offers, and what the card shows.
+
+	Four of the six read /api/integrations/sonarqube/overview, which the backend caches
+	once per token (and once for everybody without one), so they cost one crawl, not
+	four. Pins are SonarQube pins, shared by the project widgets: pinning a project in
+	Quality Gates floats it in SonarQube Projects too.
+
+	The root is selected by MODE, never by the bare attribute: on the dashboard up to
+	six copies of this partial are on the page at once, and querySelector with the
+	bare attribute hands the first one to all six scripts.
+#}
+{% set sq_heads = {
+	"projects": ["SonarQube Projects", "Quality gate and metrics, per project"],
+	"gates": ["Quality Gates", "Projects by gate result"],
+	"newcode": ["New Code", "What landed in the current period"],
+	"hotspots": ["Security Hotspots", "Reviews still outstanding"],
+	"issues": ["My SonarQube Issues", "Open issues on lines you last touched"],
+	"prs": ["PR Quality Gates", "The gate on your open pull requests"],
+} %}
+{% set sq_head = sq_heads.get(mode) or sq_heads["projects"] %}
+<style>
+	/* Hand-written, scoped to the widget: output.css is precompiled, so none of this
+	   could be expressed with utility classes that are not already in it. The block
+	   repeats once per widget on the page; the rules are identical, so that is
+	   harmless, and it keeps the look next to the markup it styles. */
+	[data-sonar-widget] select {
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		overflow: hidden;
+		direction: ltr;
+	}
+	[data-sonar-widget] .sq-toolbar {
+		display: grid;
+		grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1fr) auto;
+		align-items: end;
+		gap: 0.5rem;
+	}
+	/* Level with the 1.5rem controls beside it. */
+	[data-sonar-widget] .sq-reload { width: 1.5rem; height: 1.5rem; }
+	/* `input-xs` is not compiled into output.css; this is its size, so the search
+	   box sits level with the two select-xs beside it. */
+	[data-sonar-widget] .sq-toolbar input {
+		height: 1.5rem;
+		min-height: 1.5rem;
+		font-size: 0.75rem;
+		padding-inline: 0.5rem;
+	}
+	[data-sonar-widget] .sq-control-label {
+		font-size: 10px;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: hsl(var(--bc) / 0.5);
+		margin-bottom: 0.15rem;
+		display: block;
+	}
+	[data-sonar-widget] .sq-row {
+		border: 1px solid hsl(var(--bc) / 0.1);
+		background: hsl(var(--b2) / 0.6);
+		border-radius: 0.6rem;
+		padding: 0.55rem 0.7rem;
+		margin-bottom: 0.5rem;
+		transition: border-color 120ms ease, background-color 120ms ease;
+	}
+	[data-sonar-widget] .sq-row:hover {
+		border-color: hsl(var(--bc) / 0.22);
+		background: hsl(var(--b2));
+	}
+	[data-sonar-widget] .sq-row.is-pinned {
+		border-color: hsl(var(--wa) / 0.35);
+		background: hsl(var(--wa) / 0.06);
+	}
+	[data-sonar-widget] .sq-row.is-open {
+		border-color: hsl(var(--bc) / 0.25);
+		background: hsl(var(--b1));
+		box-shadow: 0 1px 2px hsl(var(--bc) / 0.06);
+	}
+	[data-sonar-widget] .sq-name {
+		font-size: 0.875rem;
+		font-weight: 600;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		min-width: 0;
+	}
+	[data-sonar-widget] a.sq-name:hover {
+		text-decoration: underline;
+		text-underline-offset: 2px;
+	}
+	[data-sonar-widget] .sq-meta {
+		font-size: 11px;
+		color: hsl(var(--bc) / 0.55);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		margin-top: 0.1rem;
+	}
+	[data-sonar-widget] .sq-kicker {
+		font-size: 10px;
+		font-weight: 600;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: hsl(var(--bc) / 0.45);
+	}
+	[data-sonar-widget] .sq-mark {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+		font-size: 11px;
+		font-weight: 500;
+		white-space: nowrap;
+	}
+	[data-sonar-widget] .sq-mark::before {
+		content: "";
+		width: 0.5rem;
+		height: 0.5rem;
+		border-radius: 9999px;
+		background-color: currentColor;
+		flex: none;
+	}
+	[data-sonar-widget] .sq-mark[data-tone="ok"] { color: hsl(var(--su)); }
+	[data-sonar-widget] .sq-mark[data-tone="fail"] { color: hsl(var(--er)); }
+	[data-sonar-widget] .sq-mark[data-tone="warn"] { color: hsl(var(--wa)); }
+	[data-sonar-widget] .sq-mark[data-tone="muted"] { color: hsl(var(--bc) / 0.5); }
+	/* "Not analysed" is the absence of a result, so its dot is hollow rather than a
+	   colour that implies a verdict. */
+	[data-sonar-widget] .sq-mark[data-tone="muted"]::before {
+		background-color: transparent;
+		box-shadow: inset 0 0 0 1.5px currentColor;
+	}
+	[data-sonar-widget] .sq-icon-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.6rem;
+		height: 1.6rem;
+		border-radius: 9999px;
+		color: hsl(var(--bc) / 0.45);
+		transition: background-color 120ms ease, color 120ms ease;
+	}
+	[data-sonar-widget] .sq-icon-btn:hover {
+		background: hsl(var(--bc) / 0.08);
+		color: hsl(var(--bc) / 0.85);
+	}
+	[data-sonar-widget] .sq-icon-btn[data-pinned="1"] { color: hsl(var(--wa)); }
+	[data-sonar-widget] .sq-icon-btn svg { width: 1rem; height: 1rem; }
+	[data-sonar-widget] .sq-icon-btn.is-busy svg { animation: sq-spin 0.8s linear infinite; }
+	@keyframes sq-spin { to { transform: rotate(360deg); } }
+	[data-sonar-widget] [data-sq-list] { overflow-anchor: none; }
+	[data-sonar-widget] .sq-spacer { list-style: none; margin: 0; padding: 0; border: 0; }
+	/* The end of what is drawn so far; scrolling to it draws the next page. */
+	[data-sonar-widget] .sq-more {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.6rem;
+		padding: 0.35rem 0 0.7rem;
+		font-size: 11px;
+		color: hsl(var(--bc) / 0.5);
+	}
+	[data-sonar-widget] .sq-more button {
+		font-weight: 600;
+		color: hsl(var(--p));
+	}
+	[data-sonar-widget] .sq-more button:hover { text-decoration: underline; text-underline-offset: 2px; }
+	[data-sonar-widget] .sq-chevron { transition: transform 150ms ease; }
+	[data-sonar-widget] .is-open .sq-chevron { transform: rotate(180deg); }
+
+	/* ── the detail card ───────────────────────────────────────────────── */
+	[data-sonar-widget] .sq-card {
+		display: flex;
+		flex-direction: column;
+		gap: 0.6rem;
+		margin-top: 0.6rem;
+		padding-top: 0.6rem;
+		border-top: 1px solid hsl(var(--bc) / 0.1);
+	}
+	[data-sonar-widget] .sq-gate {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		padding: 0.55rem 0.7rem;
+		border-radius: 0.6rem;
+		background: hsl(var(--bc) / 0.05);
+		color: hsl(var(--bc) / 0.6);
+	}
+	[data-sonar-widget] .sq-gate[data-tone="ok"] { background: hsl(var(--su) / 0.1); color: hsl(var(--su)); }
+	[data-sonar-widget] .sq-gate[data-tone="fail"] { background: hsl(var(--er) / 0.09); color: hsl(var(--er)); }
+	[data-sonar-widget] .sq-gate svg { width: 1.5rem; height: 1.5rem; flex: none; }
+	[data-sonar-widget] .sq-gate-title { font-size: 0.85rem; font-weight: 700; line-height: 1.2; }
+	[data-sonar-widget] .sq-gate-sub { font-size: 11px; color: hsl(var(--bc) / 0.6); margin-top: 0.1rem; }
+	[data-sonar-widget] .sq-section-title {
+		font-size: 10px;
+		font-weight: 700;
+		letter-spacing: 0.07em;
+		text-transform: uppercase;
+		color: hsl(var(--bc) / 0.5);
+		margin-bottom: 0.35rem;
+	}
+	[data-sonar-widget] .sq-tiles {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(6.4rem, 1fr));
+		gap: 0.45rem;
+	}
+	[data-sonar-widget] .sq-tile {
+		border: 1px solid hsl(var(--bc) / 0.1);
+		border-radius: 0.6rem;
+		background: hsl(var(--b1));
+		padding: 0.5rem 0.6rem;
+		min-width: 0;
+	}
+	[data-sonar-widget] .sq-tile-top {
+		display: flex;
+		align-items: center;
+		gap: 0.45rem;
+		min-width: 0;
+	}
+	/* Icons only. The coverage and duplication rings carry their own colour class,
+	   and this rule -- attribute + class + element -- would out-rank it and paint
+	   every ring the same grey. */
+	[data-sonar-widget] .sq-tile-top > svg:not(.sq-ring) { width: 1.05rem; height: 1.05rem; flex: none; color: hsl(var(--bc) / 0.45); }
+	[data-sonar-widget] .sq-tile-value {
+		font-size: 1.05rem;
+		font-weight: 700;
+		line-height: 1.1;
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
+	}
+	[data-sonar-widget] .sq-tile-value.is-bad { color: hsl(var(--er)); }
+	[data-sonar-widget] .sq-tile-value.is-warn { color: hsl(var(--wa)); }
+	[data-sonar-widget] .sq-tile-label {
+		font-size: 11px;
+		color: hsl(var(--bc) / 0.55);
+		margin-top: 0.2rem;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	/* Wraps rather than truncating: "61.2% estimated after merge" is the half of
+	   the coverage tile people open a pull request to read. */
+	[data-sonar-widget] .sq-tile-note {
+		font-size: 10.5px;
+		line-height: 1.3;
+		color: hsl(var(--bc) / 0.5);
+		margin-top: 0.1rem;
+	}
+	/* SonarQube's own grade colours, so an A here is the A people know from there. */
+	[data-sonar-widget] .sq-grade {
+		margin-inline-start: auto;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.3rem;
+		height: 1.3rem;
+		border-radius: 0.3rem;
+		font-size: 0.72rem;
+		font-weight: 800;
+		color: #fff;
+		flex: none;
+	}
+	[data-sonar-widget] .sq-grade[data-grade="A"] { background: #00aa00; }
+	[data-sonar-widget] .sq-grade[data-grade="B"] { background: #b0d513; color: #1f2d00; }
+	[data-sonar-widget] .sq-grade[data-grade="C"] { background: #eabe06; color: #2d2400; }
+	[data-sonar-widget] .sq-grade[data-grade="D"] { background: #ed7d20; }
+	[data-sonar-widget] .sq-grade[data-grade="E"] { background: #d4333f; }
+	[data-sonar-widget] .sq-ring { width: 1.35rem; height: 1.35rem; flex: none; }
+	[data-sonar-widget] .sq-ring-track { stroke: hsl(var(--bc) / 0.13); }
+	[data-sonar-widget] .sq-conds { display: flex; flex-direction: column; gap: 0.3rem; }
+	[data-sonar-widget] .sq-cond {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.5rem;
+		font-size: 12px;
+	}
+	[data-sonar-widget] .sq-cond > svg { width: 0.95rem; height: 0.95rem; flex: none; margin-top: 0.1rem; }
+	[data-sonar-widget] .sq-cond.is-fail > svg { color: hsl(var(--er)); }
+	[data-sonar-widget] .sq-cond.is-ok > svg { color: hsl(var(--su)); }
+	[data-sonar-widget] .sq-cond-need { font-size: 11px; color: hsl(var(--bc) / 0.55); }
+	[data-sonar-widget] .sq-cond-val { margin-inline-start: auto; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+	[data-sonar-widget] .sq-cond.is-fail .sq-cond-val { color: hsl(var(--er)); }
+	[data-sonar-widget] .sq-facts {
+		display: grid;
+		grid-template-columns: max-content minmax(0, 1fr);
+		column-gap: 0.75rem;
+		row-gap: 0.2rem;
+		font-size: 11.5px;
+	}
+	[data-sonar-widget] .sq-facts dt { color: hsl(var(--bc) / 0.5); }
+	[data-sonar-widget] .sq-facts dd { min-width: 0; overflow-wrap: anywhere; }
+	[data-sonar-widget] .sq-foot {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		flex-wrap: wrap;
+		font-size: 11px;
+		color: hsl(var(--bc) / 0.55);
+	}
+	[data-sonar-widget] .sq-mono {
+		font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+		font-size: 10.5px;
+		overflow-wrap: anywhere;
+		user-select: all;
+	}
+	[data-sonar-widget] .sq-link {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		font-size: 11.5px;
+		font-weight: 600;
+		color: hsl(var(--p));
+		white-space: nowrap;
+	}
+	[data-sonar-widget] .sq-link:hover { text-decoration: underline; text-underline-offset: 2px; }
+	[data-sonar-widget] .sq-link svg { width: 0.8rem; height: 0.8rem; }
+	[data-sonar-widget] .sq-hot {
+		display: flex;
+		gap: 0.5rem;
+		align-items: flex-start;
+		font-size: 12px;
+		padding: 0.35rem 0;
+		border-bottom: 1px dashed hsl(var(--bc) / 0.1);
+	}
+	[data-sonar-widget] .sq-hot:last-child { border-bottom: 0; }
+	[data-sonar-widget] .sq-message {
+		font-size: 12.5px;
+		line-height: 1.4;
+		overflow-wrap: anywhere;
+	}
+</style>
+
+<div class="section-card h-full flex flex-col" data-sonar-widget="{{ mode }}" data-sonar-base="{{ sonar_base | default('') }}">
+	<div class="card-body p-5 flex flex-col h-full gap-3">
+		<div class="flex items-center gap-3">
+			<div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-warning/30 bg-warning/10">
+				{% if mode == "issues" %}
+				<svg viewBox="0 0 24 24" class="h-5 w-5 fill-current text-warning" aria-hidden="true">
+					<path d="M12 2L1 21h22L12 2zm0 5l7.5 12.9h-15L12 7zm-1 4v4h2v-4h-2zm0 5.5V18h2v-1.5h-2z" />
+				</svg>
+				{% elif mode == "prs" %}
+				<svg viewBox="0 0 24 24" class="h-5 w-5 fill-current text-warning" aria-hidden="true">
+					<path d="M6 3a3 3 0 00-1 5.83V15.2A3 3 0 106 21a3 3 0 001-5.83V11a5 5 0 005 5h1.2a3 3 0 100-2H12a3 3 0 01-3-3V8.83A3 3 0 006 3z" />
+				</svg>
+				{% else %}
+				<svg viewBox="0 0 24 24" class="h-5 w-5 fill-current text-warning" aria-hidden="true">
+					<path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4z" />
+				</svg>
+				{% endif %}
+			</div>
+			<div class="min-w-0 flex-1">
+				<h3 class="text-sm font-bold uppercase tracking-widest text-base-content/70 truncate">{{ sq_head[0] }}</h3>
+				<p class="text-xs text-base-content/50 truncate" data-sq-subtitle>{{ sq_head[1] }}</p>
+			</div>
+		</div>
+
+		<div class="sq-toolbar" style="display:none" data-sq-toolbar>
+			<label class="min-w-0">
+				<span class="sq-control-label">Search</span>
+				<input type="search" class="input input-bordered input-sm w-full" data-sq-search aria-label="Search this widget" dir="auto" />
+			</label>
+			<label class="min-w-0">
+				<span class="sq-control-label" data-sq-filter-label>Show</span>
+				<select class="select select-bordered select-xs w-full" data-sq-filter aria-label="Filter"></select>
+			</label>
+			<label class="min-w-0">
+				<span class="sq-control-label">Sort</span>
+				<select class="select select-bordered select-xs w-full" data-sq-sort aria-label="Sort"></select>
+			</label>
+			{#
+				Here, not in the header's top-right corner: on the dashboard that corner is
+				where the move and resize handles appear on hover, and a reload button beside
+				them was one slip away from dragging the widget.
+			#}
+			<button type="button" class="sq-icon-btn sq-reload" title="Reload: fetch the newest from SonarQube" aria-label="Reload" data-sq-reload>
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/></svg>
+			</button>
+		</div>
+
+		<div class="flex-1 min-h-0 relative">
+			<div class="h-full flex items-center justify-center text-center text-xs text-base-content/50" data-sq-status>
+				<span class="loading loading-spinner loading-sm text-base-content/30"></span>
+			</div>
+			<ul class="absolute inset-0 overflow-y-auto overscroll-contain pr-1" style="display:none" data-sq-list></ul>
+		</div>
+
+		{#
+			Pull requests only: the repositories no SonarQube project could be matched
+			to. Without this line those pull requests read exactly like ones that have
+			never been analysed, and the two need different fixes. A <div>, not a <p>:
+			DaisyUI gives every <p> inside .card-body flex-grow 1, which made this line
+			take half the card and squeezed the list above it.
+		#}
+		<div class="shrink-0 border-t border-base-300 pt-2 text-[11px] text-base-content/50 truncate" style="display:none" data-sq-foot dir="auto"></div>
+	</div>
+</div>
+
+<script>
+	(function () {
+		"use strict";
+		const MODE = "{{ mode }}";
+		const root = document.querySelector('[data-sonar-widget="' + MODE + '"]');
+		if (!root) return;
+		const sonarBase = (root.getAttribute("data-sonar-base") || "").replace(/\/+$/, "");
+		const listEl = root.querySelector("[data-sq-list]");
+		const statusEl = root.querySelector("[data-sq-status]");
+		const subtitleEl = root.querySelector("[data-sq-subtitle]");
+		const toolbarEl = root.querySelector("[data-sq-toolbar]");
+		const searchEl = root.querySelector("[data-sq-search]");
+		const filterEl = root.querySelector("[data-sq-filter]");
+		const filterLabelEl = root.querySelector("[data-sq-filter-label]");
+		const sortEl = root.querySelector("[data-sq-sort]");
+		const footEl = root.querySelector("[data-sq-foot]");
+		const reloadBtn = root.querySelector("[data-sq-reload]");
+
+		// ── small helpers ────────────────────────────────────────────────
+		function esc(value) {
+			return String(value === null || value === undefined ? "" : value)
+				.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+				.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+		}
+		function num(value) {
+			const parsed = Number(value);
+			return Number.isFinite(parsed) ? parsed : 0;
+		}
+		function hasNum(value) {
+			return value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value));
+		}
+		function fmt(value) {
+			return num(value).toLocaleString("en-US");
+		}
+		function pct(value) {
+			return hasNum(value) ? num(value).toFixed(1) + "%" : "—";
+		}
+		function plural(n, one, many) {
+			return fmt(n) + " " + (num(n) === 1 ? one : (many || one + "s"));
+		}
+		function timeAgo(iso) {
+			const t = Date.parse(iso || "");
+			if (isNaN(t)) return "";
+			const secs = Math.max(1, Math.floor((Date.now() - t) / 1000));
+			if (secs < 60) return "just now";
+			if (secs < 3600) return Math.floor(secs / 60) + "m ago";
+			if (secs < 86400) return Math.floor(secs / 3600) + "h ago";
+			if (secs < 86400 * 30) return Math.floor(secs / 86400) + "d ago";
+			return new Date(t).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+		}
+		function shortDate(iso) {
+			const t = Date.parse(iso || "");
+			if (isNaN(t)) return "";
+			return new Date(t).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+		}
+		// SonarQube stores effort in minutes and a working day is 8 hours there.
+		function debt(minutes) {
+			const m = num(minutes);
+			if (m <= 0) return "";
+			if (m < 60) return m + "min";
+			const hours = Math.round(m / 60);
+			if (hours < 8) return hours + "h";
+			return Math.round(hours / 8) + "d";
+		}
+		function sonarUrl(path, params) {
+			if (!sonarBase) return "";
+			const q = Object.keys(params).map(function (k) {
+				return encodeURIComponent(k) + "=" + encodeURIComponent(params[k]);
+			}).join("&");
+			return sonarBase + path + (q ? "?" + q : "");
+		}
+
+		// ── icons (stroke glyphs, 24px grid) ─────────────────────────────
+		const ICON = {
+			bug: '<path d="M8 2l1.88 1.88M14.12 3.88L16 2M9 7.13v-1a3 3 0 116 0v1M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 014-4h4a4 4 0 014 4v3c0 3.3-2.7 6-6 6zM12 20v-9M6.53 9C4.6 8.8 3 7.1 3 5M6 13H2M3 21c0-2.1 1.7-3.9 3.8-4M20.97 5c0 2.1-1.6 3.8-3.5 4M22 13h-4M17.2 17c2.1.1 3.8 1.9 3.8 4"/>',
+			lock: '<rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 019.9-1"/>',
+			smell: '<circle cx="12" cy="12" r="1.2"/><path d="M7.5 4.2C7.2 3.7 6.6 3.5 6.2 3.8 3.9 5.5 2.3 8.1 2 11c-.1.5.4 1 1 1h5c0-1.5.8-2.8 2-3.4-1.1-1.9-2-3.5-2.5-4.4zM21 12c.6 0 1-.4 1-1-.3-2.9-1.8-5.5-4.1-7.1-.4-.3-1.1-.2-1.3.3-.6.9-1.5 2.5-2.6 4.3 1.2.7 2 2 2 3.5h5zM7.5 19.8c-.3.5-.1 1.1.4 1.3 2.6 1.2 5.6 1.2 8.2 0 .5-.2.7-.8.4-1.3-.5-.9-1.4-2.5-2.5-4.3-1.2.7-2.8.7-4 0-1.1 1.8-2 3.4-2.5 4.3z"/>',
+			shield: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 01-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 011-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 011.52 0C14.51 3.81 17 5 19 5a1 1 0 011 1z"/><path d="M12 8v4M12 16h.01"/>',
+			flask: '<path d="M10 2v7.53a2 2 0 01-.21.9L4.72 20.55a1 1 0 00.9 1.45h12.76a1 1 0 00.9-1.45l-5.07-10.13a2 2 0 01-.21-.89V2M8.5 2h7M7 16h10"/>',
+			file: '<path d="M15 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V7z"/><path d="M14 2v4a2 2 0 002 2h4"/>',
+			clock: '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
+			ok: '<circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/>',
+			fail: '<circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/>',
+			none: '<circle cx="12" cy="12" r="10"/><path d="M8 12h8"/>',
+			external: '<path d="M15 3h6v6M10 14L21 3M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/>',
+			chevron: '<path d="M6 9l6 6 6-6"/>',
+			pin: '<path d="M12 17v5M9 10.76a2 2 0 01-1.11 1.79l-1.78.9A2 2 0 005 15.24V16a1 1 0 001 1h12a1 1 0 001-1v-.76a2 2 0 00-1.11-1.79l-1.78-.9A2 2 0 0115 10.76V7a1 1 0 011-1 2 2 0 000-4H8a2 2 0 000 4 1 1 0 011 1z"/>',
+		};
+		function icon(name, extra) {
+			return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"' +
+				(extra ? " " + extra : "") + ">" + (ICON[name] || "") + "</svg>";
+		}
+		// A pinned pin is filled; the outline is the invitation.
+		function pinIcon(on) {
+			return icon("pin", on ? 'style="fill:currentColor"' : "");
+		}
+
+		// ── visual building blocks ───────────────────────────────────────
+		function mark(tone, label) {
+			return '<span class="sq-mark" data-tone="' + tone + '">' + esc(label) + "</span>";
+		}
+		function grade(letter) {
+			return letter ? '<span class="sq-grade" data-grade="' + esc(letter) + '" title="Rating ' + esc(letter) + '">' + esc(letter) + "</span>" : "";
+		}
+		// Coverage: more is better. Duplication: less is better. The thresholds are
+		// SonarQube's own defaults for the Sonar way gate.
+		function coverageTone(value) {
+			if (!hasNum(value)) return "text-base-content/30";
+			return num(value) >= 80 ? "text-success" : num(value) >= 50 ? "text-warning" : "text-error";
+		}
+		function duplicationTone(value) {
+			if (!hasNum(value)) return "text-base-content/30";
+			return num(value) <= 3 ? "text-success" : num(value) <= 10 ? "text-warning" : "text-error";
+		}
+		function ring(value, toneClass) {
+			const circumference = 2 * Math.PI * 15;
+			const p = hasNum(value) ? Math.max(0, Math.min(100, num(value))) : 0;
+			const dash = (circumference * p / 100).toFixed(2);
+			return '<svg viewBox="0 0 36 36" class="sq-ring ' + toneClass + '" aria-hidden="true">' +
+				'<circle cx="18" cy="18" r="15" fill="none" stroke-width="5" class="sq-ring-track"/>' +
+				(p > 0 ? '<circle cx="18" cy="18" r="15" fill="none" stroke-width="5" stroke="currentColor" stroke-linecap="round" stroke-dasharray="' +
+					dash + " " + circumference.toFixed(2) + '" transform="rotate(-90 18 18)"/>' : "") +
+				"</svg>";
+		}
+		function tile(opts) {
+			const valueClass = opts.bad ? " is-bad" : opts.warn ? " is-warn" : "";
+			return '<div class="sq-tile"' + (opts.title ? ' title="' + esc(opts.title) + '"' : "") + ">" +
+				'<div class="sq-tile-top">' + (opts.lead || "") +
+				'<span class="sq-tile-value' + valueClass + '">' + esc(opts.value) + "</span>" +
+				(opts.grade ? grade(opts.grade) : "") + "</div>" +
+				'<div class="sq-tile-label">' + esc(opts.label) + "</div>" +
+				(opts.note ? '<div class="sq-tile-note">' + esc(opts.note) + "</div>" : "") +
+				"</div>";
+		}
+		function gateBanner(tone, title, sub) {
+			const glyph = tone === "ok" ? "ok" : tone === "fail" ? "fail" : "none";
+			return '<div class="sq-gate" data-tone="' + tone + '">' + icon(glyph) +
+				'<div class="min-w-0"><div class="sq-gate-title">' + esc(title) + "</div>" +
+				(sub ? '<div class="sq-gate-sub">' + esc(sub) + "</div>" : "") + "</div></div>";
+		}
+		function conditionList(conditions, showPassed) {
+			const list = Array.isArray(conditions) ? conditions : [];
+			const failing = list.filter(function (c) { return !c.passed; });
+			const passed = list.filter(function (c) { return c.passed; });
+			const rows = failing.concat(showPassed ? passed : []);
+			if (!rows.length) return "";
+			return '<ul class="sq-conds">' + rows.map(function (c) {
+				return '<li class="sq-cond ' + (c.passed ? "is-ok" : "is-fail") + '">' + icon(c.passed ? "ok" : "fail") +
+					'<div class="min-w-0"><div>' + esc(c.label || c.metric) + "</div>" +
+					(c.needs ? '<div class="sq-cond-need">' + esc(c.needs) + "</div>" : "") + "</div>" +
+					'<span class="sq-cond-val">' + esc(c.actual_display || c.actual || "") + "</span></li>";
+			}).join("") + "</ul>";
+		}
+		function section(title, body) {
+			return body ? '<div><div class="sq-section-title">' + esc(title) + "</div>" + body + "</div>" : "";
+		}
+		function link(href, label) {
+			return href ? '<a class="sq-link" href="' + esc(href) + '" target="_blank" rel="noopener noreferrer">' + esc(label) + icon("external") + "</a>" : "";
+		}
+		function testsTile(data) {
+			if (!hasNum(data.tests)) return "";
+			const failed = num(data.test_failures) + num(data.test_errors);
+			return tile({
+				lead: icon("flask"),
+				value: fmt(data.tests),
+				label: "Unit tests",
+				note: failed ? plural(failed, "failing") : (num(data.skipped_tests) ? fmt(data.skipped_tests) + " skipped" : "all passing"),
+				bad: failed > 0,
+			});
+		}
+
+		// ── project detail (projects, gates, new code) ───────────────────
+		function projectGate(p) {
+			const failing = (p.failing_conditions || []).length;
+			const analysed = p.analysis_date ? "Analysed " + timeAgo(p.analysis_date) : "";
+			if (p.gate_failing) {
+				return gateBanner("fail", "Quality gate failed", [plural(failing, "condition") + " not met", analysed].filter(Boolean).join(" · "));
+			}
+			if (p.gate_ok) return gateBanner("ok", "Quality gate passed", analysed);
+			return gateBanner("none", "Not analysed yet", "SonarQube has no analysis for this project");
+		}
+		function overallTiles(p) {
+			return '<div class="sq-tiles">' +
+				tile({ lead: icon("bug"), value: fmt(p.bugs), label: "Bugs", grade: p.reliability, bad: num(p.bugs) > 0 }) +
+				tile({ lead: icon("lock"), value: fmt(p.vulnerabilities), label: "Vulnerabilities", grade: p.security, bad: num(p.vulnerabilities) > 0 }) +
+				tile({ lead: icon("smell"), value: fmt(p.code_smells), label: "Code smells", grade: p.maintainability, note: debt(p.debt_minutes) ? debt(p.debt_minutes) + " of debt" : "" }) +
+				tile({ lead: icon("shield"), value: fmt(p.hotspots_to_review), label: "Open hotspots", grade: p.security_review, warn: num(p.hotspots_to_review) > 0,
+					note: num(p.hotspots) ? Math.round(num(p.hotspots_reviewed)) + "% reviewed" : "" }) +
+				tile({ lead: ring(p.coverage, coverageTone(p.coverage)), value: pct(p.coverage), label: "Coverage" }) +
+				tile({ lead: ring(p.duplications, duplicationTone(p.duplications)), value: pct(p.duplications), label: "Duplications" }) +
+				testsTile(p) +
+				"</div>";
+		}
+		// Labels without "new": the section heading above says it once, and in a tile a
+		// hundred pixels wide "Coverage on new code" is "Coverage on ne...".
+		function newCodeTiles(p) {
+			return '<div class="sq-tiles">' +
+				tile({ lead: icon("bug"), value: fmt(p.new_bugs), label: "Bugs", bad: num(p.new_bugs) > 0 }) +
+				tile({ lead: icon("lock"), value: fmt(p.new_vulnerabilities), label: "Vulnerabilities", bad: num(p.new_vulnerabilities) > 0 }) +
+				tile({ lead: icon("smell"), value: fmt(p.new_code_smells), label: "Code smells" }) +
+				tile({ lead: icon("shield"), value: fmt(p.new_hotspots), label: "Hotspots", warn: num(p.new_hotspots) > 0 }) +
+				tile({ lead: ring(p.new_coverage, coverageTone(p.new_coverage)), value: pct(p.new_coverage), label: "Coverage" }) +
+				tile({ lead: ring(p.new_duplications, duplicationTone(p.new_duplications)), value: pct(p.new_duplications), label: "Duplications" }) +
+				"</div>";
+		}
+		function projectFoot(p) {
+			const facts = [];
+			if (num(p.ncloc)) facts.push(fmt(p.ncloc) + " lines");
+			if (p.visibility === "private") facts.push("private");
+			if ((p.tags || []).length) facts.push("tags: " + p.tags.join(", "));
+			return '<div class="sq-foot"><div class="min-w-0">' +
+				(facts.length ? "<div>" + esc(facts.join(" · ")) + "</div>" : "") +
+				'<div class="sq-mono" title="Project key">' + esc(p.key) + "</div></div>" +
+				link(sonarUrl("/dashboard", { id: p.key }), "View in SonarQube") + "</div>";
+		}
+		function projectCard(p, focus) {
+			if (!p.has_measures) {
+				return '<div class="sq-card">' + projectGate(p) + projectFoot(p) + "</div>";
+			}
+			const newSince = p.new_code_since ? "since " + shortDate(p.new_code_since) : "current period";
+			const newSummary = num(p.new_lines)
+				? plural(p.new_lines, "new line") + " · " + plural(p.new_violations, "new issue") + " · " + pct(p.new_coverage) + " coverage"
+				: "No new code in this period";
+			const parts = [projectGate(p)];
+			const conditions = conditionList(p.conditions, focus !== "newcode");
+			if (focus === "gates") parts.push(section("Gate conditions", conditions));
+			else if (p.gate_failing) parts.push(section("Why the gate failed", conditionList(p.conditions, false)));
+			if (focus === "newcode") {
+				parts.push(section("New code · " + newSince, newCodeTiles(p)));
+				parts.push(section("Overall", overallTiles(p)));
+			} else {
+				parts.push(section("Overall code", overallTiles(p)));
+				parts.push(section("New code · " + newSince, '<p class="text-xs text-base-content/70">' + esc(newSummary) + "</p>"));
+			}
+			parts.push(projectFoot(p));
+			return '<div class="sq-card">' + parts.join("") + "</div>";
+		}
+
+		// ── hotspot detail (fetched for the one project opened) ──────────
+		const hotspotCache = new Map();
+		function hotspotCard(p, box) {
+			const head = '<div class="sq-tiles">' +
+				tile({ lead: icon("shield"), value: fmt(p.hotspots_to_review), label: "To review", warn: num(p.hotspots_to_review) > 0, grade: p.security_review }) +
+				tile({ lead: ring(p.hotspots_reviewed, coverageTone(p.hotspots_reviewed)), value: Math.round(num(p.hotspots_reviewed)) + "%", label: "Reviewed", note: plural(p.hotspots, "hotspot") + " in total" }) +
+				"</div>";
+			const foot = '<div class="sq-foot"><span class="sq-mono">' + esc(p.key) + "</span>" +
+				link(sonarUrl("/security_hotspots", { id: p.key }), "Review in SonarQube") + "</div>";
+			function paint(listHtml) {
+				box.innerHTML = '<div class="sq-card">' + head + section("Waiting for review", listHtml) + foot + "</div>";
+			}
+			if (hotspotCache.has(p.key)) { paint(hotspotCache.get(p.key)); return; }
+			paint('<span class="loading loading-spinner loading-xs text-base-content/30"></span>');
+			getJson("/api/integrations/sonarqube/hotspots?project_key=" + encodeURIComponent(p.key)).then(function (payload) {
+				const rows = payload.data || [];
+				const order = { HIGH: 0, MEDIUM: 1, LOW: 2 };
+				rows.sort(function (a, b) { return (order[a.probability] ?? 3) - (order[b.probability] ?? 3); });
+				const html = rows.length
+					? "<ul>" + rows.map(function (h) {
+						const tone = h.probability === "HIGH" ? "fail" : h.probability === "MEDIUM" ? "warn" : "muted";
+						return '<li class="sq-hot"><div class="shrink-0" style="padding-top:0.15rem">' + mark(tone, titleCase(h.probability) || "Unknown") + "</div>" +
+							'<div class="min-w-0"><div class="font-semibold">' + esc(h.category) + "</div>" +
+							'<div class="sq-meta" dir="auto">' + esc(h.message) + "</div>" +
+							'<div class="sq-mono">' + esc(h.file) + (h.line ? ":" + esc(h.line) : "") + "</div></div></li>";
+					}).join("") + "</ul>"
+					: '<p class="text-xs text-base-content/50">Nothing left to review here.</p>';
+				hotspotCache.set(p.key, html);
+				if (box.isConnected) paint(html);
+			}).catch(function (err) {
+				if (box.isConnected) paint('<p class="text-xs text-error">' + esc(err.message) + "</p>");
+			});
+		}
+
+		// ── issue detail ──────────────────────────────────────────────────
+		function issueCard(i) {
+			const facts = [
+				["Severity", titleCase(i.severity)],
+				["Type", i.type],
+				["Rule", i.rule],
+				["Effort", i.effort],
+				["Project", i.project],
+				["Line", i.line ? String(i.line) : ""],
+				["Author", i.author],
+				["Raised", i.created ? timeAgo(i.created) : ""],
+				["Tags", (i.tags || []).join(", ")],
+			].filter(function (f) { return f[1]; });
+			return '<div class="sq-card">' +
+				'<p class="sq-message" dir="auto">' + esc(i.message) + "</p>" +
+				'<dl class="sq-facts">' + facts.map(function (f) {
+					return "<dt>" + esc(f[0]) + "</dt><dd>" + esc(f[1]) + "</dd>";
+				}).join("") + "</dl>" +
+				'<div class="sq-foot"><span class="sq-mono">' + esc(i.component || i.file) + "</span>" +
+				link(sonarUrl("/project/issues", { id: i.project, open: i.key }), "Open in SonarQube") + "</div></div>";
+		}
+		function titleCase(text) {
+			const t = String(text || "").toLowerCase().replace(/_/g, " ");
+			return t ? t.charAt(0).toUpperCase() + t.slice(1) : "";
+		}
+
+		// ── pull request detail (its own analysis, fetched when opened) ──
+		const prCache = new Map();
+		function prCard(pr, box) {
+			const links = '<div class="sq-foot"><span class="sq-mono">' + esc(pr.sonar_project || "") + "</span>" +
+				'<span class="flex items-center gap-3">' +
+				link(pr.url, "Pull request") +
+				(pr.sonar_project && pr.sonar_pr ? link(sonarUrl("/dashboard", { id: pr.sonar_project, pullRequest: pr.sonar_pr }), "View in SonarQube") : "") +
+				"</span></div>";
+			if (!pr.sonar_project) {
+				box.innerHTML = '<div class="sq-card">' + gateBanner("none", "No SonarQube project found",
+					"No project matches the repository " + (pr.repository || "") + ", so there is nothing to show yet.") + links + "</div>";
+				return;
+			}
+			if (!pr.analysed || !pr.sonar_pr) {
+				box.innerHTML = '<div class="sq-card">' + gateBanner("none", "Not analysed",
+					"SonarQube has no analysis for this pull request yet. It appears after the pipeline's SonarQube step runs.") + links + "</div>";
+				return;
+			}
+			function paint(d) {
+				const issues = num(d.bugs) + num(d.vulnerabilities) + num(d.code_smells);
+				const tone = d.gate_failing ? "fail" : d.gate_ok ? "ok" : "none";
+				const title = d.gate_failing ? "Quality gate failed" : d.gate_ok ? "Quality gate passed" : "No gate result";
+				const sub = [plural(issues, "issue"), num(d.new_lines) ? plural(d.new_lines, "new line") : "", pr.analysed_at ? "analysed " + timeAgo(pr.analysed_at) : ""]
+					.filter(Boolean).join(" · ");
+				const coverNote = hasNum(d.coverage_after_merge) ? pct(d.coverage_after_merge) + " estimated after merge" : "";
+				const dupNote = hasNum(d.duplications_after_merge) ? pct(d.duplications_after_merge) + " estimated after merge" : "";
+				const tiles = '<div class="sq-tiles">' +
+					tile({ lead: icon("bug"), value: fmt(d.bugs), label: "Bugs", bad: num(d.bugs) > 0 }) +
+					tile({ lead: icon("lock"), value: fmt(d.vulnerabilities), label: "Vulnerabilities", bad: num(d.vulnerabilities) > 0 }) +
+					tile({ lead: icon("smell"), value: fmt(d.code_smells), label: "Code smells" }) +
+					tile({ lead: icon("shield"), value: fmt(d.hotspots), label: "Hotspots", warn: num(d.hotspots) > 0 }) +
+					"</div>";
+				const quality = '<div class="sq-tiles">' +
+					tile({ lead: ring(d.new_coverage, coverageTone(d.new_coverage)), value: hasNum(d.new_coverage) ? pct(d.new_coverage) : "—",
+						label: "Coverage", note: coverNote || (num(d.new_lines_to_cover) ? "" : "nothing coverable changed"), title: coverNote }) +
+					tile({ lead: ring(d.new_duplications, duplicationTone(d.new_duplications)), value: pct(d.new_duplications),
+						label: "Duplicated code", note: dupNote, title: dupNote }) +
+					testsTile(d) +
+					"</div>";
+				box.innerHTML = '<div class="sq-card">' + gateBanner(tone, title, sub) +
+					(d.gate_failing ? section("Why the gate failed", conditionList(d.conditions, false)) : "") +
+					section(plural(issues, "issue"), tiles) +
+					section("Coverage, duplications and tests", quality) +
+					(!d.gate_failing && (d.conditions || []).length ? section("Gate conditions", conditionList(d.conditions, true)) : "") +
+					links + "</div>";
+			}
+			const cacheKey = pr.sonar_project + "#" + pr.sonar_pr;
+			if (prCache.has(cacheKey)) { paint(prCache.get(cacheKey)); return; }
+			box.innerHTML = '<div class="sq-card"><span class="loading loading-spinner loading-xs text-base-content/30"></span></div>';
+			getJson("/api/integrations/sonarqube/pull-request-details?project_key=" + encodeURIComponent(pr.sonar_project) +
+				"&pull_request=" + encodeURIComponent(pr.sonar_pr)).then(function (payload) {
+				prCache.set(cacheKey, payload.data || {});
+				if (box.isConnected) paint(payload.data || {});
+			}).catch(function (err) {
+				if (box.isConnected) {
+					box.innerHTML = '<div class="sq-card"><p class="text-xs text-error">' + esc(err.message) + "</p>" + links + "</div>";
+				}
+			});
+		}
+
+		// ── per-mode configuration ───────────────────────────────────────
+		// source:  the endpoint the rows come from
+		// rows:    payload -> the rows this widget lists
+		// pinId:   the stable key a pin is stored under
+		// filters: [value, label, test] -- the first entry is the default
+		// sorts:   [value, label, compare]
+		// row:     the collapsed row's marker and second line
+		// detail:  what opens beneath it
+		function byName(a, b) { return String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base" }); }
+		function recent(field) { return function (a, b) { return String(b[field] || "").localeCompare(String(a[field] || "")); }; }
+		function gateMark(p) {
+			if (p.gate_failing) return mark("fail", "Failing");
+			if (p.gate_ok) return mark("ok", "Passing");
+			return mark("muted", "Not analysed");
+		}
+		function firstFailure(p) {
+			const c = (p.failing_conditions || [])[0];
+			if (!c) return "";
+			const more = (p.failing_conditions || []).length - 1;
+			return (c.label || c.metric) + " " + (c.actual_display || c.actual) + (c.needs ? " (" + c.needs + ")" : "") + (more > 0 ? " · +" + more + " more" : "");
+		}
+		const SEVERITY_RANK = { BLOCKER: 0, CRITICAL: 1, MAJOR: 2, MINOR: 3, INFO: 4 };
+
+		const MODES = {
+			projects: {
+				source: "/api/integrations/sonarqube/overview",
+				placeholder: "Name or key",
+				filterLabel: "Gate",
+				filters: [
+					["", "All", function () { return true; }],
+					["failing", "Failing", function (p) { return p.gate_failing; }],
+					["passing", "Passing", function (p) { return p.gate_ok; }],
+					["none", "Not analysed", function (p) { return !p.gate_ok && !p.gate_failing; }],
+				],
+				sorts: [
+					["name", "Name", byName],
+					["worst", "Worst first", function (a, b) {
+						return (Number(!!b.gate_failing) - Number(!!a.gate_failing)) ||
+							((num(b.bugs) + num(b.vulnerabilities)) - (num(a.bugs) + num(a.vulnerabilities))) || byName(a, b);
+					}],
+					["issues", "Most issues", function (a, b) {
+						return (num(b.bugs) + num(b.vulnerabilities) + num(b.code_smells)) - (num(a.bugs) + num(a.vulnerabilities) + num(a.code_smells)) || byName(a, b);
+					}],
+					["coverage", "Lowest coverage", function (a, b) {
+						return (Number(!!b.has_measures) - Number(!!a.has_measures)) || num(a.coverage) - num(b.coverage) || byName(a, b);
+					}],
+					["recent", "Recently analysed", recent("analysis_date")],
+					["size", "Largest", function (a, b) { return num(b.ncloc) - num(a.ncloc) || byName(a, b); }],
+				],
+				subtitle: function (all) {
+					const failing = all.filter(function (p) { return p.gate_failing; }).length;
+					return plural(all.length, "project") + (failing ? " · " + fmt(failing) + " failing" : "");
+				},
+				row: function (p) {
+					const meta = [p.analysis_date ? "Analysed " + timeAgo(p.analysis_date) : "Never analysed", num(p.ncloc) ? fmt(p.ncloc) + " lines" : ""];
+					return { mark: gateMark(p), meta: meta.filter(Boolean).join(" · ") };
+				},
+				detail: function (p, box) { box.innerHTML = projectCard(p, "projects"); },
+			},
+			gates: {
+				source: "/api/integrations/sonarqube/overview",
+				placeholder: "Name or key",
+				filterLabel: "Gate",
+				filters: [
+					["failing", "Failing", function (p) { return p.gate_failing; }],
+					["passing", "Passing", function (p) { return p.gate_ok; }],
+					["all", "All analysed", function (p) { return p.gate_ok || p.gate_failing; }],
+				],
+				sorts: [
+					["conditions", "Most conditions failed", function (a, b) {
+						return (Number(!!b.gate_failing) - Number(!!a.gate_failing)) ||
+							((b.failing_conditions || []).length - (a.failing_conditions || []).length) || byName(a, b);
+					}],
+					["name", "Name", byName],
+					["recent", "Recently analysed", recent("analysis_date")],
+				],
+				subtitle: function (all) {
+					const failing = all.filter(function (p) { return p.gate_failing; }).length;
+					return failing ? fmt(failing) + " of " + fmt(all.length) + " failing" : "All " + fmt(all.length) + " passing";
+				},
+				empty: function (all, filter) {
+					if (filter === "failing" && all.length) {
+						return '<p class="text-success">No project is failing its gate.</p>';
+					}
+					return "";
+				},
+				row: function (p) {
+					return { mark: gateMark(p), meta: p.gate_failing ? firstFailure(p) : (p.analysis_date ? "Analysed " + timeAgo(p.analysis_date) : "") };
+				},
+				detail: function (p, box) { box.innerHTML = projectCard(p, "gates"); },
+			},
+			newcode: {
+				source: "/api/integrations/sonarqube/overview",
+				placeholder: "Name or key",
+				filterLabel: "Show",
+				filters: [
+					["", "All with new code", function (p) { return num(p.new_lines) > 0; }],
+					["issues", "With new issues", function (p) { return num(p.new_lines) > 0 && num(p.new_violations) > 0; }],
+					["clean", "Clean", function (p) { return num(p.new_lines) > 0 && !num(p.new_violations); }],
+				],
+				sorts: [
+					["issues", "Most new issues", function (a, b) { return num(b.new_violations) - num(a.new_violations) || byName(a, b); }],
+					["lines", "Most new lines", function (a, b) { return num(b.new_lines) - num(a.new_lines) || byName(a, b); }],
+					["coverage", "Lowest new coverage", function (a, b) { return num(a.new_coverage) - num(b.new_coverage) || byName(a, b); }],
+					["name", "Name", byName],
+				],
+				subtitle: function (all) {
+					return fmt(all.filter(function (p) { return num(p.new_lines) > 0; }).length) + " with new code";
+				},
+				empty: function (all, filter) {
+					return filter === "" ? "<p>Nothing new analysed in the current period.</p>" : "";
+				},
+				row: function (p) {
+					const issues = num(p.new_violations);
+					return {
+						mark: issues ? mark("warn", fmt(issues) + " new") : mark("ok", "Clean"),
+						meta: [plural(p.new_lines, "new line"), num(p.new_bugs) ? plural(p.new_bugs, "bug") : "", "coverage " + pct(p.new_coverage)].filter(Boolean).join(" · "),
+					};
+				},
+				detail: function (p, box) { box.innerHTML = projectCard(p, "newcode"); },
+			},
+			hotspots: {
+				source: "/api/integrations/sonarqube/overview",
+				placeholder: "Name or key",
+				filterLabel: "Show",
+				filters: [
+					["", "To review", function (p) { return num(p.hotspots_to_review) > 0; }],
+					["done", "Fully reviewed", function (p) { return num(p.hotspots) > 0 && !num(p.hotspots_to_review); }],
+					["all", "All with hotspots", function (p) { return num(p.hotspots) > 0; }],
+				],
+				sorts: [
+					["open", "Most to review", function (a, b) { return num(b.hotspots_to_review) - num(a.hotspots_to_review) || byName(a, b); }],
+					["reviewed", "Least reviewed", function (a, b) { return num(a.hotspots_reviewed) - num(b.hotspots_reviewed) || byName(a, b); }],
+					["name", "Name", byName],
+				],
+				subtitle: function (all) {
+					return fmt(all.filter(function (p) { return num(p.hotspots_to_review) > 0; }).length) + " projects to review";
+				},
+				empty: function (all, filter) {
+					return filter === "" ? '<p class="text-success">No hotspots awaiting review.</p>' : "";
+				},
+				row: function (p) {
+					return {
+						mark: num(p.hotspots_to_review) ? mark("warn", fmt(p.hotspots_to_review) + " to review") : mark("ok", "Reviewed"),
+						meta: plural(p.hotspots, "hotspot") + " · " + Math.round(num(p.hotspots_reviewed)) + "% reviewed",
+					};
+				},
+				detail: function (p, box) { hotspotCard(p, box); },
+			},
+			issues: {
+				source: "/api/integrations/sonarqube/my-issues",
+				placeholder: "File, message or rule",
+				filterLabel: "Show",
+				pinPrefix: "issue:",
+				filters: [
+					["", "All issues", function () { return true; }],
+					["sev:BLOCKER", "Blocker", function (i) { return i.severity === "BLOCKER"; }],
+					["sev:CRITICAL", "Critical", function (i) { return i.severity === "CRITICAL"; }],
+					["sev:MAJOR", "Major", function (i) { return i.severity === "MAJOR"; }],
+					["sev:MINOR", "Minor", function (i) { return i.severity === "MINOR"; }],
+					["sev:INFO", "Info", function (i) { return i.severity === "INFO"; }],
+					["type:Bug", "Bugs", function (i) { return i.type === "Bug"; }],
+					["type:Vulnerability", "Vulnerabilities", function (i) { return i.type === "Vulnerability"; }],
+					["type:Code Smell", "Code smells", function (i) { return i.type === "Code Smell"; }],
+				],
+				sorts: [
+					["severity", "Severity", function (a, b) {
+						return ((SEVERITY_RANK[a.severity] ?? 9) - (SEVERITY_RANK[b.severity] ?? 9)) || String(b.created || "").localeCompare(String(a.created || ""));
+					}],
+					["newest", "Newest", recent("created")],
+					["file", "File", function (a, b) { return String(a.file || "").localeCompare(String(b.file || "")) || num(a.line) - num(b.line); }],
+					["project", "Project", function (a, b) { return String(a.project || "").localeCompare(String(b.project || "")); }],
+				],
+				rows: function (payload) {
+					return (payload.data || []).map(function (i) {
+						return Object.assign({}, i, { id: i.key, name: String(i.file || "").split("/").pop() || i.file });
+					});
+				},
+				searchText: function (i) { return [i.file, i.message, i.rule, i.project, i.type, i.severity].join(" "); },
+				subtitle: function (all) { return all.length ? plural(all.length, "open issue") + " on your lines" : "Open issues on lines you last touched"; },
+				empty: function (all, filter, payload) {
+					if (all.length) return "";
+					const who = (payload.identities || []).join(", ");
+					return "<p>No open issues on lines you last touched.</p>" +
+						(who ? '<p class="mt-1 text-base-content/40">Matched against: ' + esc(who) + "</p>" : "");
+				},
+				row: function (i) {
+					const tone = i.severity === "BLOCKER" || i.severity === "CRITICAL" ? "fail" : i.severity === "MAJOR" ? "warn" : "muted";
+					return {
+						kicker: [i.type, i.line ? "line " + i.line : ""].filter(Boolean).join(" · "),
+						mark: mark(tone, titleCase(i.severity)),
+						meta: i.message,
+					};
+				},
+				detail: function (i, box) { box.innerHTML = issueCard(i); },
+				link: function () { return ""; },
+			},
+			prs: {
+				source: "/api/integrations/sonarqube/pull-requests",
+				placeholder: "Title, repo or branch",
+				filterLabel: "Gate",
+				pinPrefix: "pr:",
+				filters: [
+					["", "All", function () { return true; }],
+					["failing", "Failing", function (r) { return r.gate_failing; }],
+					["passed", "Passed", function (r) { return r.gate_ok; }],
+					["none", "Not analysed", function (r) { return !r.analysed; }],
+				],
+				sorts: [
+					["worst", "Worst gate first", function (a, b) {
+						return (Number(!!b.gate_failing) - Number(!!a.gate_failing)) || (Number(!!b.analysed) - Number(!!a.analysed)) ||
+							String(b.created_date || "").localeCompare(String(a.created_date || ""));
+					}],
+					["newest", "Newest", recent("created_date")],
+					["repo", "Repository", function (a, b) { return String(a.repository || "").localeCompare(String(b.repository || "")); }],
+					["title", "Title", byName],
+				],
+				rows: function (payload) {
+					return (payload.data || []).map(function (r) {
+						return Object.assign({}, r, { id: String(r.repository || "") + "#" + String(r.id || ""), name: r.title || "Untitled pull request" });
+					});
+				},
+				searchText: function (r) { return [r.title, r.repository, r.source_branch, r.target_branch, r.project].join(" "); },
+				subtitle: function (all) {
+					const failing = all.filter(function (r) { return r.gate_failing; }).length;
+					return all.length ? plural(all.length, "open pull request") + (failing ? " · " + fmt(failing) + " failing" : "") : "The gate on your open pull requests";
+				},
+				empty: function (all, filter, payload) {
+					// A LICENCE FACT, NOT A FAILURE. Pull-request analysis ships in the
+					// Branch plugin (Developer Edition and above).
+					if (payload.pr_analysis_supported === false) return "<p>This SonarQube edition does not analyse pull requests.</p>";
+					return all.length ? "" : "<p>No open pull requests.</p>";
+				},
+				row: function (r) {
+					const counts = r.analysed ? [
+						num(r.bugs) ? plural(r.bugs, "bug") : "",
+						num(r.vulnerabilities) ? plural(r.vulnerabilities, "vulnerability", "vulnerabilities") : "",
+						num(r.code_smells) ? plural(r.code_smells, "code smell") : "",
+					].filter(Boolean) : [];
+					return {
+						mark: r.gate_failing ? mark("fail", "Failing") : r.gate_ok ? mark("ok", "Passed") : mark("muted", "Not analysed"),
+						meta: [r.repository, (r.source_branch && r.target_branch) ? r.source_branch + " → " + r.target_branch : "", counts.join(", "), timeAgo(r.created_date)]
+							.filter(Boolean).join(" · "),
+					};
+				},
+				detail: function (r, box) { prCard(r, box); },
+				link: function (r) { return r.url || ""; },
+				foot: function (payload) {
+					const names = (payload.unmatched || []).filter(Boolean);
+					if (!names.length) return "";
+					const noun = names.length === 1 ? " repository has" : " repositories have";
+					return names.length + noun + " no matching SonarQube project: " + names.slice(0, 3).join(", ") + (names.length > 3 ? ", +" + (names.length - 3) + " more" : "");
+				},
+			},
+		};
+		const cfg = MODES[MODE] || MODES.projects;
+		const PIN_PREFIX = cfg.pinPrefix || "";
+
+		// ── state ────────────────────────────────────────────────────────
+		// Filter and sort follow the portal's rule for widget state: the URL first,
+		// so a link shows what its sender saw, then this browser's last choice.
+		const US = window.portalUrlState;
+		const K = function (name) { return "portal-sq-" + MODE + "-" + name; };
+		const Q = function (name) { return "sq_" + MODE + "_" + name; };
+		function initial(name, fallback) {
+			let value = "";
+			try { value = US ? US.resolve(Q(name), K(name)) : (localStorage.getItem(K(name)) || ""); } catch (_) { value = ""; }
+			return value || fallback;
+		}
+		function remember(name, value) {
+			if (US) { US.set(Q(name), value, K(name)); return; }
+			try { localStorage.setItem(K(name), value); } catch (_) {}
+		}
+
+		let payload = {};
+		let allRows = [];
+		let pins = new Set();
+		let openId = null;
+		let filterValue = initial("filter", cfg.filters[0][0]);
+		if (!cfg.filters.some(function (f) { return f[0] === filterValue; })) filterValue = cfg.filters[0][0];
+		let sortValue = initial("sort", cfg.sorts[0][0]);
+		if (!cfg.sorts.some(function (s) { return s[0] === sortValue; })) sortValue = cfg.sorts[0][0];
+		let searchTimer = null;
+		// Rows are drawn a page at a time, and never more than WINDOW pages at once.
+		// Hundreds of projects drawn together, by four widgets on one dashboard, froze
+		// the page; drawing forty at a time fixed the loading and not the scrolling,
+		// because scrolling to the end drew every one of them anyway. So a page that
+		// scrolls out of sight above is swapped for a spacer of exactly its measured
+		// height, and drawn again when scrolled back to. Search, filter and sort still
+		// run over every row; only the drawing is limited.
+		const STEP = 40;
+		const WINDOW = 3;
+		let drawn = [];   // every row the current search, filter and sort select, in order
+		let lo = 0;       // first page in the list
+		let hi = 1;       // one past the last page in the list
+		let pageH = {};   // measured height of each page that has been swapped out
+		let scrollTick = false;
+		// A cached answer that is being refreshed behind it: ask again shortly.
+		let followUp = null;
+		let followUps = 0;
+
+		searchEl.placeholder = cfg.placeholder || "Search";
+		filterLabelEl.textContent = cfg.filterLabel || "Show";
+		filterEl.innerHTML = cfg.filters.map(function (f) {
+			return '<option value="' + esc(f[0]) + '">' + esc(f[1]) + "</option>";
+		}).join("");
+		sortEl.innerHTML = cfg.sorts.map(function (s) {
+			return '<option value="' + esc(s[0]) + '">' + esc(s[1]) + "</option>";
+		}).join("");
+		filterEl.value = filterValue;
+		sortEl.value = sortValue;
+		function syncTitles() {
+			[filterEl, sortEl].forEach(function (sel) {
+				const opt = sel.options[sel.selectedIndex];
+				sel.title = opt ? opt.textContent : "";
+			});
+		}
+		syncTitles();
+
+		// A name is not an identity: two SonarQube projects called "Polaris" are two
+		// different projects, and a project literally named "." says nothing. Where
+		// the name cannot tell rows apart, the key does.
+		let nameCounts = {};
+		function displayName(item) {
+			const name = String(item.name || "");
+			if (!/[A-Za-z0-9\u0590-\u05FF]/.test(name)) return item.key || name || "(unnamed)";
+			return name;
+		}
+		function needsKey(item) {
+			if (!item.key || MODE === "issues" || MODE === "prs") return false;
+			// Already standing in for a name that says nothing; no need to say it twice.
+			if (displayName(item) !== String(item.name || "")) return false;
+			return (nameCounts[String(item.name || "").toLowerCase()] || 0) > 1;
+		}
+
+		// ── rendering ────────────────────────────────────────────────────
+		function showStatus(html, isError) {
+			listEl.style.display = "none";
+			statusEl.style.display = "";
+			statusEl.className = isError
+				? "h-full flex items-center justify-center rounded-xl border border-error/20 bg-error/5 p-4 text-center text-xs text-error"
+				: "h-full flex items-center justify-center text-center text-xs text-base-content/50 px-4";
+			statusEl.innerHTML = "<div>" + html + "</div>";
+		}
+		function showList() {
+			statusEl.style.display = "none";
+			listEl.style.display = "";
+		}
+
+		function pinKey(item) { return PIN_PREFIX + String(item.id || item.key || ""); }
+
+		function rowHtml(item, page) {
+			const id = String(item.id || item.key || "");
+			const on = pins.has(pinKey(item));
+			const isOpen = openId === id;
+			const r = cfg.row(item);
+			const name = displayName(item);
+			const href = cfg.link ? cfg.link(item) : sonarUrl("/dashboard", { id: item.key });
+			const nameHtml = href
+				? '<a class="sq-name" href="' + esc(href) + '" target="_blank" rel="noopener noreferrer" dir="auto" title="' + esc(name) + '">' + esc(name) + "</a>"
+				: '<span class="sq-name" dir="auto" title="' + esc(name) + '">' + esc(name) + "</span>";
+			const meta = [needsKey(item) ? item.key : "", r.meta].filter(Boolean).join(" · ");
+			return '<li class="sq-row' + (on ? " is-pinned" : "") + (isOpen ? " is-open" : "") + '" data-sq-id="' + esc(id) + '"' +
+				(page === undefined ? "" : ' data-sq-page="' + page + '"') + ">" +
+				'<div class="flex items-center gap-2">' +
+				'<div class="min-w-0 flex-1">' +
+				(r.kicker ? '<div class="sq-kicker">' + esc(r.kicker) + "</div>" : "") +
+				'<div class="flex items-center min-w-0">' + nameHtml + "</div>" +
+				(meta ? '<div class="sq-meta" dir="auto" title="' + esc(meta) + '">' + esc(meta) + "</div>" : "") +
+				"</div>" +
+				'<div class="shrink-0 flex items-center gap-1">' + r.mark +
+				'<button type="button" class="sq-icon-btn" data-sq-expand="' + esc(id) + '" aria-expanded="' + (isOpen ? "true" : "false") +
+				'" title="' + (isOpen ? "Hide details" : "Show details") + '">' + icon("chevron", 'class="sq-chevron"') + "</button>" +
+				'<button type="button" class="sq-icon-btn" data-sq-pin="' + esc(id) + '" data-pinned="' + (on ? "1" : "0") +
+				'" title="' + (on ? "Unpin" : "Pin to top") + '" aria-label="' + (on ? "Unpin" : "Pin to top") + '">' + pinIcon(on) + "</button>" +
+				"</div></div>" +
+				'<div data-sq-detail' + (isOpen ? "" : ' style="display:none"') + "></div>" +
+				"</li>";
+		}
+
+		function visibleRows() {
+			const filter = cfg.filters.find(function (f) { return f[0] === filterValue; }) || cfg.filters[0];
+			const sort = cfg.sorts.find(function (s) { return s[0] === sortValue; }) || cfg.sorts[0];
+			const term = String(searchEl.value || "").trim().toLowerCase();
+			const rows = allRows.filter(function (item) {
+				if (!filter[2](item)) return false;
+				if (!term) return true;
+				const text = cfg.searchText ? cfg.searchText(item) : [item.name, item.key].join(" ");
+				return String(text || "").toLowerCase().indexOf(term) !== -1;
+			});
+			rows.sort(function (a, b) {
+				// Pinned first, whatever the sort -- that is the entire point of a pin.
+				const pa = pins.has(pinKey(a)) ? 0 : 1;
+				const pb = pins.has(pinKey(b)) ? 0 : 1;
+				return (pa - pb) || sort[2](a, b);
+			});
+			return rows;
+		}
+
+		// `fromTop`: the person changed WHAT is listed (search, filter, sort), so start
+		// again from the first page. Anything else -- a pin, a reload -- keeps the pages
+		// they had scrolled to.
+		function render(fromTop) {
+			if (fromTop) { lo = 0; hi = 1; pageH = {}; }
+			const rows = visibleRows();
+			const total = cfg.subtitle(allRows);
+			const term = String(searchEl.value || "").trim();
+			// "Showing N" only when the person narrowed the list themselves. The default
+			// filter is already what the subtitle describes, so saying it twice is noise.
+			const narrowed = !!term || filterValue !== cfg.filters[0][0];
+			subtitleEl.textContent = total + (narrowed && allRows.length ? " · showing " + fmt(rows.length) : "");
+			if (footEl) {
+				const note = cfg.foot ? cfg.foot(payload) : "";
+				footEl.textContent = note;
+				footEl.title = note;
+				footEl.style.display = note ? "" : "none";
+			}
+			if (!rows.length) {
+				drawn = [];
+				const custom = cfg.empty ? cfg.empty(allRows, filterValue, payload) : "";
+				if (custom && !term) { showStatus(custom, false); return; }
+				showStatus(term
+					? "<p>Nothing matches “" + esc(term) + "”.</p>"
+					: "<p>Nothing to show for this filter.</p>", false);
+				return;
+			}
+			drawn = rows;
+			if (openId && !rows.some(function (r) { return String(r.id || r.key || "") === openId; })) openId = null;
+			hi = Math.max(1, Math.min(hi, pageCount()));
+			lo = Math.max(0, Math.min(lo, hi - 1));
+			let html = '<li class="sq-spacer" aria-hidden="true" data-sq-top style="height:' + Math.round(heightBefore(lo)) + 'px"></li>';
+			for (let k = lo; k < hi; k++) html += pageHtml(k);
+			listEl.innerHTML = html + moreHtml();
+			showList();
+			openCard();
+		}
+		function pageCount() { return Math.ceil(drawn.length / STEP); }
+		function pageHtml(k) {
+			return drawn.slice(k * STEP, (k + 1) * STEP).map(function (item) { return rowHtml(item, k); }).join("");
+		}
+		function pageRows(k) { return listEl.querySelectorAll('li[data-sq-page="' + k + '"]'); }
+		function spacer() { return listEl.querySelector("[data-sq-top]"); }
+		function spacerHeight() { const el = spacer(); return el ? parseFloat(el.style.height) || 0 : 0; }
+		function setSpacer(px) { const el = spacer(); if (el) el.style.height = Math.max(0, Math.round(px)) + "px"; }
+		// Page k's height as drawn: from its first row to whatever starts after it.
+		function measurePage(k) {
+			const rows = pageRows(k);
+			if (!rows.length) return 0;
+			const last = rows[rows.length - 1];
+			const next = last.nextElementSibling;
+			if (next) return next.offsetTop - rows[0].offsetTop;
+			return last.offsetTop + last.offsetHeight + (parseFloat(getComputedStyle(last).marginBottom) || 0) - rows[0].offsetTop;
+		}
+		// Pages above the window that were never measured are estimated from the ones
+		// that were; the estimate settles the moment the page is drawn (showBefore).
+		function heightBefore(k) {
+			const known = Object.keys(pageH).map(function (i) { return pageH[i]; });
+			const guess = known.length ? known.reduce(function (a, b) { return a + b; }, 0) / known.length : STEP * 72;
+			let px = 0;
+			for (let i = 0; i < k; i++) px += pageH[i] || guess;
+			return px;
+		}
+		function moreHtml() {
+			const upTo = Math.min(drawn.length, hi * STEP);
+			const left = drawn.length - upTo;
+			if (left <= 0) return "";
+			return '<li class="sq-more" data-sq-more><span>' + esc(fmt(upTo)) + " of " + esc(fmt(drawn.length)) + "</span>" +
+				'<button type="button" data-sq-more-btn>Show ' + esc(fmt(Math.min(left, STEP))) + " more</button></li>";
+		}
+		// The next page, below. When that makes the window too big, the page furthest
+		// above goes and the spacer grows by exactly its height, so nothing on screen moves.
+		function showMore() {
+			if (hi >= pageCount()) return;
+			const more = listEl.querySelector("[data-sq-more]");
+			if (more) more.remove();
+			listEl.insertAdjacentHTML("beforeend", pageHtml(hi));
+			hi += 1;
+			listEl.insertAdjacentHTML("beforeend", moreHtml());
+			openCard();
+			if (hi - lo > WINDOW) {
+				const h = measurePage(lo);
+				pageRows(lo).forEach(function (li) { li.remove(); });
+				pageH[lo] = h;
+				setSpacer(spacerHeight() + h);
+				lo += 1;
+			}
+		}
+		// The page before, above. Drawn under the spacer, which shrinks by the page's
+		// REAL height; at the very top any difference from the estimate is settled by
+		// moving the scroll position rather than the rows under the pointer.
+		function showBefore() {
+			if (lo <= 0) return;
+			const was = spacerHeight();
+			const k = lo - 1;
+			spacer().insertAdjacentHTML("afterend", pageHtml(k));
+			lo = k;
+			const h = measurePage(k);
+			pageH[k] = h;
+			let rest = was - h;
+			if (lo === 0 || rest < 0) {
+				listEl.scrollTop -= rest;
+				rest = 0;
+			}
+			setSpacer(rest);
+			openCard();
+			if (hi - lo > WINDOW) {
+				hi -= 1;
+				pageRows(hi).forEach(function (li) { li.remove(); });
+				const more = listEl.querySelector("[data-sq-more]");
+				if (more) more.remove();
+				listEl.insertAdjacentHTML("beforeend", moreHtml());
+			}
+		}
+		function onScroll() {
+			if (scrollTick) return;
+			scrollTick = true;
+			requestAnimationFrame(function () {
+				scrollTick = false;
+				// Loops, because a dragged scrollbar can cross several pages in one frame.
+				let guard = 0;
+				while (guard++ < 40 && hi < pageCount() &&
+					listEl.scrollTop + listEl.clientHeight >= listEl.scrollHeight - 240) showMore();
+				while (guard++ < 80 && lo > 0 && listEl.scrollTop < spacerHeight() + 240) showBefore();
+			});
+		}
+		// The open card, filled in wherever its row has just been drawn.
+		function openCard() {
+			if (!openId) return;
+			const li = listEl.querySelector('li[data-sq-id="' + cssEscape(openId) + '"]');
+			const box = li && li.querySelector("[data-sq-detail]");
+			if (!box || box.childElementCount) return;
+			const item = allRows.find(function (r) { return String(r.id || r.key || "") === openId; });
+			if (item) cfg.detail(item, box);
+		}
+		function cssEscape(value) {
+			return window.CSS && CSS.escape ? CSS.escape(value) : String(value).replace(/["\\]/g, "\\$&");
+		}
+
+		// ── requests ─────────────────────────────────────────────────────
+		// Every fetch has a deadline: a stalled connection must end in an error the
+		// card can show, never a spinner that spins for as long as the tab is open.
+		function getJson(url) {
+			const run = window.portalFetch
+				? window.portalFetch(url, { credentials: "same-origin" }, 20000)
+				: fetch(url, { credentials: "same-origin" });
+			return run.then(function (response) {
+				return response.json().catch(function () { return {}; }).then(function (body) {
+					if (response.ok) return body;
+					const detail = body && typeof body.detail === "string" ? body.detail : "";
+					const err = new Error(
+						detail ||
+						(response.status === 503 ? "SonarQube is not configured on this server." :
+						response.status === 401 || response.status === 428 ? "SonarQube refused the request. Connect a SonarQube token on the Connections page." :
+						"SonarQube request failed (HTTP " + response.status + ").")
+					);
+					err.status = response.status;
+					throw err;
+				});
+			});
+		}
+
+		// Projects, gates, new code and hotspots read the same snapshot and load within
+		// milliseconds of each other: one request answers all four, and its parsed
+		// body is shared (every mode copies rows before touching them).
+		function sharedJson(url) {
+			const store = window.__portalSonarShared || (window.__portalSonarShared = {});
+			const hit = store[url];
+			if (hit && (hit.pending || Date.now() - hit.at < 4000)) return hit.promise;
+			const entry = { at: Date.now(), pending: true, promise: null };
+			entry.promise = getJson(url).then(function (body) {
+				entry.pending = false;
+				entry.at = Date.now();
+				return body;
+			}, function (err) {
+				if (store[url] === entry) delete store[url];
+				throw err;
+			});
+			store[url] = entry;
+			return entry.promise;
+		}
+		function withRefresh(url) {
+			return url + (url.indexOf("?") === -1 ? "?" : "&") + "refresh=1";
+		}
+
+		function loadPins() {
+			return getJson("/api/integrations/sonarqube/pins").then(function (body) {
+				pins = new Set((body.data || []).map(function (p) { return String(p.item_id || ""); }));
+			}).catch(function () { /* pins are a nicety; the list works without them */ });
+		}
+
+		// `fresh`: the reload button -- wait for a new answer rather than the cached one.
+		// `quiet`: the follow-up to an answer that was being refreshed; it changes the
+		// list only if it succeeds, and never replaces it with a spinner or an error.
+		function load(fresh, quiet) {
+			clearTimeout(followUp);
+			if (!quiet) followUps = 0;
+			const shown = allRows.length > 0;
+			if (!shown && !quiet) showStatus('<span class="loading loading-spinner loading-sm text-base-content/30"></span>', false);
+			reloadBtn.classList.add("is-busy");
+			const rowsRequest = sharedJson(fresh ? withRefresh(cfg.source) : cfg.source);
+			Promise.all([rowsRequest, quiet ? null : loadPins()]).then(function (results) {
+				if (!root.isConnected) return;
+				payload = results[0] || {};
+				allRows = cfg.rows
+					? cfg.rows(payload)
+					: (payload.data || []).map(function (p) { return Object.assign({}, p, { id: p.key }); });
+				nameCounts = {};
+				allRows.forEach(function (item) {
+					const k = String(item.name || "").toLowerCase();
+					nameCounts[k] = (nameCounts[k] || 0) + 1;
+				});
+				toolbarEl.style.display = "";
+				render();
+				// Answered from the cache while a newer answer is fetched: ask again once
+				// it has had time to arrive, a few times at most.
+				if (payload.refreshing && followUps < 3) {
+					followUps += 1;
+					followUp = setTimeout(function () { if (root.isConnected) load(false, true); }, 5000);
+				}
+			}).catch(function (err) {
+				if (quiet && shown) return;
+				allRows = [];
+				drawn = [];
+				subtitleEl.textContent = "Unavailable";
+				toolbarEl.style.display = "none";
+				const connections = err && (err.status === 401 || err.status === 428)
+					? ' <a class="btn btn-ghost btn-xs" href="/ui/connections">Connections</a>' : "";
+				showStatus("<p>" + esc((err && err.message) || "Connection failed") + "</p>" +
+					'<div class="mt-2"><button type="button" class="btn btn-xs btn-outline btn-error" data-sq-retry>Retry</button>' + connections + "</div>", true);
+			}).then(function () {
+				reloadBtn.classList.remove("is-busy");
+			});
+		}
+
+		function setPin(item, on) {
+			const id = pinKey(item);
+			if (on) pins.add(id); else pins.delete(id);
+			render();
+			// Optimistic, then persisted; the other SonarQube widgets on the page hear
+			// about it so a project pinned here floats there too without a reload.
+			document.dispatchEvent(new CustomEvent("portal:sonar-pin", { detail: { id: id, on: on, from: MODE } }));
+			return fetch("/api/integrations/sonarqube/pins", {
+				method: on ? "POST" : "DELETE",
+				credentials: "same-origin",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ item_id: id, item_name: String(item.name || id).slice(0, 500) }),
+			}).then(function (res) {
+				if (!res.ok) throw new Error("pin");
+			}).catch(function () {
+				if (on) pins.delete(id); else pins.add(id);
+				render();
+				if (window.portalToast) window.portalToast({ kind: "error", message: "Could not change that pin." });
+			});
+		}
+
+		function onPinBroadcast(event) {
+			if (!root.isConnected) {
+				// This copy was replaced by a refresh; let the new one do the listening.
+				document.removeEventListener("portal:sonar-pin", onPinBroadcast);
+				return;
+			}
+			const d = event.detail || {};
+			if (d.from === MODE || !d.id) return;
+			if (d.on) pins.add(d.id); else pins.delete(d.id);
+			if (allRows.length) render();
+		}
+		document.addEventListener("portal:sonar-pin", onPinBroadcast);
+
+		// ── events ───────────────────────────────────────────────────────
+		listEl.addEventListener("click", function (event) {
+			if (event.target.closest("[data-sq-more-btn]")) {
+				event.preventDefault();
+				showMore();
+				return;
+			}
+			const expand = event.target.closest("[data-sq-expand]");
+			if (expand) {
+				event.preventDefault();
+				const id = expand.getAttribute("data-sq-expand");
+				const li = expand.closest("li");
+				const opening = openId !== id;
+				// One open at a time: the list is a scanning surface, and two open cards
+				// push everything else off the widget.
+				if (openId && opening) {
+					const prev = listEl.querySelector('li[data-sq-id="' + cssEscape(openId) + '"]');
+					if (prev) {
+						prev.classList.remove("is-open");
+						const prevBox = prev.querySelector("[data-sq-detail]");
+						if (prevBox) { prevBox.style.display = "none"; prevBox.innerHTML = ""; }
+						const prevBtn = prev.querySelector("[data-sq-expand]");
+						if (prevBtn) prevBtn.setAttribute("aria-expanded", "false");
+					}
+				}
+				openId = opening ? id : null;
+				const box = li.querySelector("[data-sq-detail]");
+				li.classList.toggle("is-open", opening);
+				expand.setAttribute("aria-expanded", opening ? "true" : "false");
+				expand.title = opening ? "Hide details" : "Show details";
+				if (opening) {
+					const item = allRows.find(function (r) { return String(r.id || r.key || "") === id; });
+					box.style.display = "";
+					if (item) cfg.detail(item, box);
+					// Bring the opened card into view inside the list, not the page.
+					const top = li.offsetTop - listEl.offsetTop;
+					if (top + li.offsetHeight > listEl.scrollTop + listEl.clientHeight) {
+						listEl.scrollTo({ top: Math.max(0, top - 8), behavior: "smooth" });
+					}
+				} else {
+					box.style.display = "none";
+					box.innerHTML = "";
+				}
+				return;
+			}
+			const pin = event.target.closest("[data-sq-pin]");
+			if (pin) {
+				event.preventDefault();
+				const id = pin.getAttribute("data-sq-pin");
+				const item = allRows.find(function (r) { return String(r.id || r.key || "") === id; });
+				if (item) setPin(item, pin.getAttribute("data-pinned") !== "1");
+			}
+		});
+		statusEl.addEventListener("click", function (event) {
+			if (event.target.closest("[data-sq-retry]")) load(true);
+		});
+		reloadBtn.addEventListener("click", function () { load(true); });
+		listEl.addEventListener("scroll", onScroll, { passive: true });
+		searchEl.addEventListener("input", function () {
+			clearTimeout(searchTimer);
+			searchTimer = setTimeout(function () {
+				if (!allRows.length) return;
+				listEl.scrollTop = 0;
+				render(true);
+			}, 150);
+		});
+		filterEl.addEventListener("change", function () {
+			filterValue = filterEl.value;
+			remember("filter", filterValue === cfg.filters[0][0] ? "" : filterValue);
+			syncTitles();
+			listEl.scrollTop = 0;
+			render(true);
+		});
+		sortEl.addEventListener("change", function () {
+			sortValue = sortEl.value;
+			remember("sort", sortValue === cfg.sorts[0][0] ? "" : sortValue);
+			syncTitles();
+			listEl.scrollTop = 0;
+			render(true);
+		});
+
+		// Drawn because somebody pressed the page's Refresh button (portal-chrome.html
+		// stamps the moment) rather than by the timed refresh: a Refresh answered from
+		// the cache is a button that does nothing, and the timer is what the cache is for.
+		load(Date.now() - (window.__portalRefreshAskedAt || 0) < 15000);
+	})();
+</script>

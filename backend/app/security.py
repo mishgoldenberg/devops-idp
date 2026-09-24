@@ -95,6 +95,47 @@ def user_is_active(user_id: str) -> bool:
     return active
 
 
+# In every token the SSO callback mints: "this sign-in recorded the provider's name".
+SSO_NAME_CLAIM = "sn"
+_needs_name_cache: Dict[str, Tuple[float, bool]] = {}
+
+
+def session_needs_provider_name(user_id: str) -> bool:
+    """Should a session WITHOUT ``SSO_NAME_CLAIM`` end, so a sign-in reads the name?
+
+    Yes only for an SSO account (no local password) with no provider name on record
+    (identity.trusted_name) while SSO is switched on -- so there is a sign-in that can
+    supply one. Fails OPEN, like user_is_active: an unreadable database must not sign
+    anybody out.
+    """
+    key = str(user_id)
+    now = time.monotonic()
+    with _active_lock:
+        hit = _needs_name_cache.get(key)
+        if hit and now - hit[0] < _ACTIVE_TTL_S:
+            return hit[1]
+    from db import query_one
+
+    try:
+        row = query_one(
+            """
+            SELECT (u.password_hash IS NULL
+                    AND COALESCE(TRIM(u.sso_name), '') = ''
+                    AND EXISTS (SELECT 1 FROM sso_config WHERE id = 1 AND enabled = true)) AS needs
+              FROM users u
+             WHERE u.id = %s
+            """,
+            [key],
+        )
+    except Exception as exc:
+        log.warning("provider-name check failed for %s, allowing: %s", key, exc)
+        return False
+    needs = bool(row and row.get("needs"))
+    with _active_lock:
+        _needs_name_cache[key] = (time.monotonic(), needs)
+    return needs
+
+
 def _parse_expiry(expiry: str) -> dt.timedelta:
     """
     Parse expiry string like '8h', '15m', '1d' into a timedelta.
@@ -159,6 +200,15 @@ def decode_access_token(token: str) -> Dict[str, Any]:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="This account has been deactivated.",
+            )
+        # A session from before the portal kept the provider's name has none to put on
+        # a ticket: end it once, and the sign-in that follows records it. The token
+        # that sign-in mints carries the claim, so this can never send anyone round
+        # again (session_needs_provider_name).
+        if user_id and not payload.get(SSO_NAME_CLAIM) and session_needs_provider_name(str(user_id)):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Please sign in again.",
             )
         return payload
     except jwt.ExpiredSignatureError:

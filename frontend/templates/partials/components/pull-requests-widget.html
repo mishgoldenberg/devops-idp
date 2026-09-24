@@ -35,6 +35,15 @@
 		overflow: hidden;
 		direction: ltr;
 	}
+	/* Quiet text buttons on the row's second line: the row is still mostly a link. */
+	[data-pr-root] .pr-act {
+		font-size: 0.72rem;
+		font-weight: 600;
+		color: hsl(var(--p));
+		padding: 0 0.15rem;
+		border-radius: 0.25rem;
+	}
+	[data-pr-root] .pr-act:hover { text-decoration: underline; text-underline-offset: 2px; }
 </style>
 
 <div class="section-card h-full flex flex-col" data-pr-root="{{ pr_role }}">
@@ -73,6 +82,12 @@
 			frees is worth more here: it is a list widget, and the row it saves is a
 			pull request.
 		-->
+		{#
+			Search over what is loaded, above the scoping selects: a fifth column would not
+			fit a one-column widget, and a search box is the control people reach for first.
+		#}
+		<input type="search" class="input input-bordered portal-widget-search" data-pr-search dir="auto"
+			placeholder="Search title, repository, branch or author" aria-label="Search pull requests" />
 		<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.5rem">
 			<label class="form-control">
 				<span class="label-text text-[11px] uppercase tracking-wide text-base-content/50">Collection</span>
@@ -128,6 +143,9 @@
 		const projectSel = root.querySelector("[data-pr-project]");
 		const repoSel = root.querySelector("[data-pr-repo]");
 		const sortSel = root.querySelector("[data-pr-sort]");
+		const searchEl = root.querySelector("[data-pr-search]");
+		let term = "";
+		let searchTimer = null;
 
 		// Namespaced per widget: the two PR widgets are scoped independently, so
 		// narrowing "needs my review" to one project does not also narrow "my opened".
@@ -223,9 +241,19 @@
 						'<span class="text-[11px] uppercase tracking-wide text-base-content/50">' + esc(pr.repository) + "</span>" +
 						'<span class="text-xs text-base-content/60 truncate">' + esc(pr.source_branch) + " → " + esc(pr.target_branch) + "</span>" +
 						'<span class="text-xs text-base-content/40 ml-auto shrink-0">' + esc(timeAgo(pr.created_date)) + "</span>" +
+					actions(pr) +
 					"</div>" +
 				"</li>"
 			);
+		}
+
+		// Review (only where you are asked to review) and Comment, when the row carries
+		// what the dialog has to name. Older cached rows without it just show no buttons.
+		function actions(pr) {
+			if (!pr.repository_id || !window.portalAdo) return "";
+			return '<span class="shrink-0 flex items-center gap-1">' +
+				(ROLE === "review" ? '<button type="button" class="pr-act" data-pr-act="vote">Review…</button>' : "") +
+				'<button type="button" class="pr-act" data-pr-act="pr-comment">Comment…</button></span>';
 		}
 
 		function sorted(list) {
@@ -247,8 +275,21 @@
 			return copy;
 		}
 
+		// Every word must appear somewhere in the row: "api main" finds the api repo's
+		// pull requests into main.
+		function matches(pr) {
+			if (!term) return true;
+			const text = [pr.title, pr.repository, pr.project, pr.collection, pr.source_branch,
+				pr.target_branch, pr.created_by, "#" + pr.id].join(" ").toLowerCase();
+			return term.split(/\s+/).every((word) => text.indexOf(word) !== -1);
+		}
+
 		function render() {
-			if (countEl) countEl.textContent = rows.length ? rows.length + " open" : "";
+			const visible = rows.filter(matches);
+			if (countEl) {
+				countEl.textContent = !rows.length ? ""
+					: term ? visible.length + " of " + rows.length : rows.length + " open";
+			}
 			if (!rows.length) {
 				// One line, not a full illustrated empty state: with filters above it,
 				// "nothing here" usually means "nothing matches this filter", and a big
@@ -256,7 +297,11 @@
 				setStatus("{{ pr_empty_title }} — {{ pr_empty_hint }}");
 				return;
 			}
-			listEl.innerHTML = sorted(rows).map(prRow).join("");
+			if (!visible.length) {
+				setStatus("Nothing matches “" + searchEl.value.trim() + "”.");
+				return;
+			}
+			listEl.innerHTML = sorted(visible).map(prRow).join("");
 			setStatus(null);
 		}
 
@@ -296,6 +341,19 @@
 		}
 
 		listEl?.addEventListener("click", (event) => {
+			const act = event.target.closest("[data-pr-act]");
+			if (act) {
+				event.preventDefault();
+				const row = act.closest("[data-pr-id]");
+				const pr = row && rows.find((x) => String(x.id) === row.getAttribute("data-pr-id"));
+				if (pr && window.portalAdo) {
+					window.portalAdo.open(act.getAttribute("data-pr-act"), {
+						collection: pr.collection, project: pr.project, repository_id: pr.repository_id,
+						id: pr.id, title: pr.title, my_vote: pr.my_vote,
+					});
+				}
+				return;
+			}
 			const btn = event.target.closest("[data-pr-pin]");
 			if (!btn) return;
 			event.preventDefault();
@@ -430,6 +488,22 @@
 			selectedRepo = repoSel.value || "";
 			remember("repo", selectedRepo);
 			load();
+		});
+
+		// A vote or comment made through the dialog changes these lists: an approved pull
+		// request leaves "needs my review". Removed when this copy is replaced.
+		function onAdoChanged() {
+			if (!root.isConnected) { document.removeEventListener("portal:ado-changed", onAdoChanged); return; }
+			load();
+		}
+		document.addEventListener("portal:ado-changed", onAdoChanged);
+
+		searchEl?.addEventListener("input", () => {
+			clearTimeout(searchTimer);
+			searchTimer = setTimeout(() => {
+				term = searchEl.value.trim().toLowerCase();
+				render();
+			}, 150);
 		});
 
 		sortSel?.addEventListener("change", () => {

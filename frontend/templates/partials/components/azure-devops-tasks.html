@@ -82,7 +82,12 @@
 			only carries the responsive variants of that class, so the bare one would be
 			a no-op. Inline styles need no CSS rebuild.
 		-->
-		<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.5rem;">
+		<div style="display: grid; grid-template-columns: minmax(0, 1.4fr) repeat(4, minmax(0, 1fr)); gap: 0.5rem;">
+			<label class="form-control">
+				<span class="label-text text-[11px] uppercase tracking-wide text-base-content/50">Search</span>
+				<input type="search" class="input input-bordered portal-widget-search" data-ado-search dir="auto"
+					placeholder="Title, #id, type or state" aria-label="Search work items" />
+			</label>
 			<label class="form-control">
 				<span class="label-text text-[11px] uppercase tracking-wide text-base-content/50">Project</span>
 				<select class="select select-bordered select-xs w-full" data-ado-project-select aria-label="Project">
@@ -144,6 +149,9 @@
 		const typeSelect = root.querySelector("[data-ado-type-select]");
 		const iterationSelect = root.querySelector("[data-ado-iteration-select]");
 		const areaSelect = root.querySelector("[data-ado-area-select]");
+		const searchEl = root.querySelector("[data-ado-search]");
+		let term = "";
+		let searchTimer = null;
 		const projectKey = "ado-workitems-project";
 		const typeKey = "ado-workitems-type";
 		const iterationKey = "ado-workitems-iteration";
@@ -264,14 +272,24 @@
 			return "No work items assigned to you.";
 		}
 
+		// Every word must appear somewhere in the item: "bug login" finds the login bugs.
+		function matches(it) {
+			if (!term) return true;
+			const m = it.meta || {};
+			const text = [it.title, "#" + it.id, m.id_display, m.type, it.status, m.project,
+				m.assigned_to, m.iteration, m.area_path].join(" ").toLowerCase();
+			return term.split(/\s+/).every((word) => text.indexOf(word) !== -1);
+		}
+
 		function render() {
-			const visible = filter === "pinned"
+			const scoped = filter === "pinned"
 				? items.filter((i) => i.pinned)
 				: items;
+			const visible = scoped.filter(matches);
 
 			if (!visible.length) {
 				listEl.innerHTML = "";
-				setStatus(emptyMessage());
+				setStatus(scoped.length && term ? "Nothing matches “" + searchEl.value.trim() + "”." : emptyMessage());
 				return;
 			}
 
@@ -326,6 +344,20 @@
 			restoreExpanded();
 		}
 
+		// What the portal can change on a work item, each through the shared dialog
+		// (ado-actions.html): a check with Azure DevOps first, then your confirmation.
+		const WI_ACTIONS = [
+			["wi-state", "Move…"],
+			["wi-description", "Add to description…"],
+			["wi-comment", "Comment…"],
+			["wi-assign", "Assign…"],
+		];
+		function actionsBar() {
+			return '<div class="flex flex-wrap items-center gap-1 mb-2">' +
+				WI_ACTIONS.map((a) => '<button type="button" class="btn btn-ghost btn-xs text-primary" data-wi-act="' + a[0] + '">' + a[1] + "</button>").join("") +
+				"</div>";
+		}
+
 		function renderChildren(itemId, tasks, box) {
 			if (!box) return;
 			const rows = tasks.map((task) => `
@@ -336,9 +368,9 @@
 					</a>
 				</li>
 			`).join("");
-			box.innerHTML = tasks.length
+			box.innerHTML = actionsBar() + (tasks.length
 				? `<ul class="flex max-h-48 flex-col gap-1.5 overflow-y-auto pr-1">${rows}</ul>`
-				: '<p class="text-xs text-base-content/50">No child tasks.</p>';
+				: '<p class="text-xs text-base-content/50">No child tasks.</p>');
 		}
 
 		async function loadChildren(itemId, box) {
@@ -347,7 +379,7 @@
 				renderChildren(itemId, taskCache.get(itemId), box);
 				return;
 			}
-			box.innerHTML = '<div class="flex items-center gap-2 text-xs text-base-content/50"><span class="loading loading-spinner loading-xs"></span> Loading child tasks…</div>';
+			box.innerHTML = actionsBar() + '<div class="flex items-center gap-2 text-xs text-base-content/50"><span class="loading loading-spinner loading-xs"></span> Loading child tasks…</div>';
 			const res = await fetch(`/api/azure-devops/workitem-tasks?id=${encodeURIComponent(itemId)}`, {
 				credentials: "same-origin",
 				headers: { Accept: "application/json" },
@@ -372,7 +404,7 @@
 				renderChildren(String(expandedId), taskCache.get(String(expandedId)), box);
 			} else {
 				loadChildren(String(expandedId), box).catch(() => {
-					box.innerHTML = '<p class="text-xs text-error">Could not load child tasks.</p>';
+					box.innerHTML = actionsBar() + '<p class="text-xs text-error">Could not load child tasks.</p>';
 				});
 			}
 		}
@@ -603,6 +635,20 @@
 		}
 
 		body.addEventListener("click", (e) => {
+			const act = e.target.closest("[data-wi-act]");
+			if (act) {
+				e.preventDefault();
+				const row = act.closest("li[data-id]");
+				const item = row && items.find((x) => String(x.id) === String(row.dataset.id));
+				if (!item) return;
+				const m = item.meta || {};
+				if (!window.portalAdo) {
+					window.portalToast?.({ kind: "error", message: "The action dialog did not load. Reload the page." });
+					return;
+				}
+				window.portalAdo.open(act.dataset.wiAct, { collection: m.collection || "", project: m.project || "", id: item.id, title: item.title });
+				return;
+			}
 			const pinBtn = e.target.closest("[data-ado-pin]");
 			if (pinBtn) {
 				e.preventDefault();
@@ -670,7 +716,7 @@
 			const icon = btn.querySelector("[data-chevron]");
 			if (icon) icon.style.transform = "rotate(180deg)";
 			loadChildren(id, box).catch(() => {
-				box.innerHTML = '<p class="text-xs text-error">Could not load child tasks.</p>';
+				box.innerHTML = actionsBar() + '<p class="text-xs text-error">Could not load child tasks.</p>';
 			});
 		});
 
@@ -750,6 +796,23 @@
 			selectedIteration = iterationSelect.value || "all";
 			remember(iterationKey, selectedIteration);
 			load();
+		});
+
+		// A change made through the dialog: this list, and the open row's tasks, are now
+		// out of date. The listener goes when this copy of the widget is replaced.
+		function onAdoChanged() {
+			if (!root.isConnected) { document.removeEventListener("portal:ado-changed", onAdoChanged); return; }
+			taskCache.clear();
+			load();
+		}
+		document.addEventListener("portal:ado-changed", onAdoChanged);
+
+		searchEl?.addEventListener("input", () => {
+			clearTimeout(searchTimer);
+			searchTimer = setTimeout(() => {
+				term = searchEl.value.trim().toLowerCase();
+				render();
+			}, 150);
 		});
 
 		(async function init() {

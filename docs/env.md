@@ -110,7 +110,7 @@ default behavior and whether they are required.
 
 <!-- GENERATED:ENV — do not edit by hand; run scripts/gen_docs.py -->
 
-68 variables the backend actually reads, found by parsing every `os.getenv` in `backend/app/`. A variable that is not here is not read by anything, whatever the deployment sets.
+86 variables the backend actually reads, found by parsing every `os.getenv` in `backend/app/`. A variable that is not here is not read by anything, whatever the deployment sets.
 
 | Variable | Default | Read by |
 | --- | --- | --- |
@@ -119,10 +119,10 @@ default behavior and whether they are required.
 | `ADO_CLEANER_COLLECTION` | _(none)_ | `ado_repo.py` |
 | `ADO_CLEANER_IMAGE` | _(none)_ | `artifactory_cleaner.py` |
 | `ADO_CLEANER_NAMESPACE` | _(none)_ | `artifactory_cleaner.py` |
-| `ADO_CLEANER_POOL` | _(none)_ | `artifactory_cleaner.py` |
+| `ADO_CLEANER_POOL` | _(none)_ | `ado_pipeline.py`, `artifactory_cleaner.py` |
 | `ADO_CLEANER_PROJECT` | _(none)_ | `ado_repo.py` |
 | `ADO_CLEANER_REPO` | _(none)_ | `ado_repo.py` |
-| `ADO_CLEANER_VARIABLE_GROUP` | _(none)_ | `artifactory_cleaner.py` |
+| `ADO_CLEANER_VARIABLE_GROUP` | _(none)_ | `ado_pipeline.py`, `artifactory_cleaner.py` |
 | `ADO_DEFAULT_COLLECTION` | _(none)_ | `ado_repo.py`, `azure_devops.py` |
 | `ADO_NETBIOS_DOMAIN` | _(none)_ | `azure_devops.py` |
 | `ADO_PROVISION_COLLECTIONS` | `DevCollection-Inheritance,TikshuvCollection-Inheritance` | `azure_devops.py` |
@@ -153,7 +153,17 @@ default behavior and whether they are required.
 | `DB_POOL_RETRY_COOLDOWN` | `5` | `db.py` |
 | `DB_SIZE_WARN_MB` | `600` | `audit.py` |
 | `DB_VOLUME_MB` | `1024` | `audit.py` |
-| `ENVIRONMENT` | `development` | `config.py` |
+| `DEVBOT_CONTEXT_TOKENS` | `16384` | `config.py` |
+| `DEVBOT_DEFAULT_MODEL` | _(none)_ | `config.py` |
+| `DEVBOT_HISTORY_DAYS` | `30` | `config.py` |
+| `DEVBOT_KEY_HELP_URL` | _(none)_ | `config.py` |
+| `DEVBOT_LLM_BASE_URL` | _(none)_ | `config.py` |
+| `DEVBOT_MAX_ANSWER_TOKENS` | `2000` | `config.py` |
+| `DEVBOT_MAX_PROMPT_TOKENS` | `12000` | `config.py` |
+| `DEVBOT_MAX_STREAMS` | `8` | `config.py` |
+| `DEVBOT_MAX_TOOL_ROUNDS` | `4` | `config.py` |
+| `DEVBOT_STREAM` | `true` | `config.py` |
+| `ENVIRONMENT` | `development` | `config.py`, `release_notes.py` |
 | `HOST` | `0.0.0.0` | `config.py` |
 | `HUB_ADMIN_PASSWORD` | _(secret — must be set)_ | `config.py`, `db.py` |
 | `HUB_ADMIN_USERNAME` | _(none)_ | `config.py`, `db.py` |
@@ -164,20 +174,28 @@ default behavior and whether they are required.
 | `JWT_EXPIRY` | `8h` | `config.py` |
 | `JWT_SECRET` | _(secret — must be set)_ | `config.py` |
 | `NODE_ENV` | _(none)_ | `config.py` |
+| `OPENSHIFT_CONSOLE_URL` | _(none)_ | `artifactory_cleaner.py` |
 | `PORT` | `8000` | `config.py` |
+| `PORTAL_ENVIRONMENT` | _(none)_ | `release_notes.py` |
 | `REDIS_HOST` | `redis` | `config.py` |
 | `REDIS_PASSWORD` | _(secret — must be set)_ | `config.py` |
 | `REDIS_PORT` | `6379` | `config.py` |
+| `REQUEST_RETENTION_DAYS` | _(none)_ | `retention.py` |
+| `REQUEST_SLA_DAYS` | _(none)_ | `approvals.py` |
 | `SAFE_MODE` | _(none)_ | `safe_mode.py` |
 | `SNOW_API_PASSWORD` | _(secret — must be set)_ | `servicenow.py`, `config.py`, `snow_catalog.py` |
 | `SNOW_API_USERNAME` | _(none)_ | `servicenow.py`, `config.py`, `snow_catalog.py` |
 | `SNOW_BASE_URL` | _(none)_ | `servicenow.py`, `config.py`, `snow_catalog.py` |
+| `SNOW_CALLER_PATCH` | `0` | `servicenow.py` |
+| `SNOW_CALLER_VAR` | _(none)_ | `servicenow.py` |
 | `SNOW_DEFAULT_SUPPORT_GROUP` | `Devops Support` | `servicenow.py` |
 | `SNOW_JOURNAL_ELEMENTS` | `comments` | `servicenow.py` |
+| `SNOW_PATCH_REQUESTED_FOR` | _(none)_ | `snow_catalog.py` |
 | `SNOW_PRODUCER_SYS_ID` | _(none)_ | `servicenow.py` |
 | `SNOW_SERVICE_ACCOUNT_DISPLAY` | _(none)_ | `servicenow.py` |
 | `SNOW_SUPPORT_GROUP_VAR` | `choose_a_support_group` | `servicenow.py` |
-| `SONARQUBE_BASE_URL` | _(none)_ | `integrations.py`, `config.py` |
+| `SONARQUBE_BASE_URL` | _(none)_ | `integrations.py`, `config.py`, `ui.py` |
+| `STREAK_TIMEZONE` | _(none)_ | `streaks.py` |
 | `USE_VAULT` | `false` | `secrets_manager.py` |
 | `VAULT_ADDR` | _(none)_ | `secrets_manager.py` |
 | `VAULT_PATH` | `secret/devops-control-center` | `secrets_manager.py` |

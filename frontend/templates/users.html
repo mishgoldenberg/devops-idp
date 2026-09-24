@@ -3,7 +3,7 @@
 	<head>
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-		<title>OpenShift - DevOps Hub</title>
+		<title>Users - DevOps Hub</title>
 		<link rel="stylesheet" href="../static/css/output.css" />
 		<!-- Palette override. MUST stay after output.css: both declare the same
 		     DaisyUI custom properties, so this one wins on source order alone. -->
@@ -17,13 +17,11 @@
 	</head>
 
 	<body class="h-screen bg-base-200 flex flex-col">
-		<!-- Banner -->
 		{% include 'partials/components/banner.html' with context %}
 
 		<div class="flex flex-1 min-h-0 overflow-hidden">
-			<!-- Sidebar -->
-			{% include "partials/components/sidebar.html" with context %} {% include
-			"partials/components/openshift-container.html" %}
+			{% include "partials/components/sidebar.html" with context %}
+			{% include "partials/components/users-container.html" %}
 		</div>
 	</body>
 </html>

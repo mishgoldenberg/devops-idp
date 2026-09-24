@@ -273,8 +273,8 @@
 	}
 </style>
 
-{# The signed-in name, for the "Full name" prefill. Rendered by the server because the form itself is built in the browser and has nothing else to read it from. #}
-<span data-portal-user-name="{{ user.display_name or user.username or '' }}" style="display:none"></span>
+{# The name a ticket will carry, for the read-only "Full name" prefill: the identity provider's name, not the editable display name (identity.trusted_name). Rendered by the server because the form itself is built in the browser and has nothing else to read it from. #}
+<span data-portal-user-name="{{ user.ticket_name or user.display_name or user.username or '' }}" style="display:none"></span>
 
 <dialog id="catalog-form-modal" class="modal">
 	<div class="modal-box cf-box">
@@ -1483,7 +1483,10 @@
 					if (section.remember && saved[field.key] !== undefined && saved[field.key] !== "") {
 						answers[field.key] = saved[field.key];
 					}
-					if (field.prefill === "display_name" && !answers[field.key]) {
+					// A READ-ONLY prefill always wins over a remembered answer: it is the
+					// account's own value, and a stale one from an earlier visit is a name
+					// the person can no longer correct.
+					if (field.prefill === "display_name" && (field.readonly || !answers[field.key])) {
 						const el = document.querySelector("[data-portal-user-name]");
 						if (el) answers[field.key] = el.getAttribute("data-portal-user-name") || "";
 					}

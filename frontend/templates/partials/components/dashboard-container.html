@@ -242,6 +242,106 @@
 				</div>
 			</div>
 
+			<!-- SonarQube Quality Gates -->
+			<div
+				id="sonarqube-gates-component"
+				data-widget-key="sonar_quality_gates"
+				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
+				hx-get="/ui/components/sonarqube-gates"
+				hx-trigger="intersect once, refresh, click from:#refresh-btn"
+				data-autorefresh
+				hx-target="find .widget-content"
+				hx-swap="innerHTML"
+				{% if enabled_widgets is defined and 'sonar_quality_gates' not in enabled_widgets %}style="display:none"{% endif %}
+			>
+				<div class="widget-loading h-full">
+					{% include "partials/components/widget-skeleton.html" %}
+				</div>
+				<div class="widget-content h-full">
+					{% include "partials/components/widget-skeleton.html" %}
+				</div>
+			</div>
+
+			<!-- SonarQube New Code -->
+			<div
+				id="sonarqube-new-code-component"
+				data-widget-key="sonar_new_code"
+				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
+				hx-get="/ui/components/sonarqube-new-code"
+				hx-trigger="intersect once, refresh, click from:#refresh-btn"
+				data-autorefresh
+				hx-target="find .widget-content"
+				hx-swap="innerHTML"
+				{% if enabled_widgets is defined and 'sonar_new_code' not in enabled_widgets %}style="display:none"{% endif %}
+			>
+				<div class="widget-loading h-full">
+					{% include "partials/components/widget-skeleton.html" %}
+				</div>
+				<div class="widget-content h-full">
+					{% include "partials/components/widget-skeleton.html" %}
+				</div>
+			</div>
+
+			<!-- SonarQube Security Hotspots -->
+			<div
+				id="sonarqube-hotspots-component"
+				data-widget-key="sonar_hotspots"
+				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
+				hx-get="/ui/components/sonarqube-hotspots"
+				hx-trigger="intersect once, refresh, click from:#refresh-btn"
+				data-autorefresh
+				hx-target="find .widget-content"
+				hx-swap="innerHTML"
+				{% if enabled_widgets is defined and 'sonar_hotspots' not in enabled_widgets %}style="display:none"{% endif %}
+			>
+				<div class="widget-loading h-full">
+					{% include "partials/components/widget-skeleton.html" %}
+				</div>
+				<div class="widget-content h-full">
+					{% include "partials/components/widget-skeleton.html" %}
+				</div>
+			</div>
+
+			<!-- SonarQube Issues (Yours) -->
+			<div
+				id="sonarqube-my-issues-component"
+				data-widget-key="sonar_my_issues"
+				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
+				hx-get="/ui/components/sonarqube-my-issues"
+				hx-trigger="intersect once, refresh, click from:#refresh-btn"
+				data-autorefresh
+				hx-target="find .widget-content"
+				hx-swap="innerHTML"
+				{% if enabled_widgets is defined and 'sonar_my_issues' not in enabled_widgets %}style="display:none"{% endif %}
+			>
+				<div class="widget-loading h-full">
+					{% include "partials/components/widget-skeleton.html" %}
+				</div>
+				<div class="widget-content h-full">
+					{% include "partials/components/widget-skeleton.html" %}
+				</div>
+			</div>
+
+			<!-- SonarQube Gate on My Pull Requests -->
+			<div
+				id="sonarqube-pr-gates-component"
+				data-widget-key="sonar_pr_gates"
+				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
+				hx-get="/ui/components/sonarqube-pr-gates"
+				hx-trigger="intersect once, refresh, click from:#refresh-btn"
+				data-autorefresh
+				hx-target="find .widget-content"
+				hx-swap="innerHTML"
+				{% if enabled_widgets is defined and 'sonar_pr_gates' not in enabled_widgets %}style="display:none"{% endif %}
+			>
+				<div class="widget-loading h-full">
+					{% include "partials/components/widget-skeleton.html" %}
+				</div>
+				<div class="widget-content h-full">
+					{% include "partials/components/widget-skeleton.html" %}
+				</div>
+			</div>
+
 			<!-- Artifactory Repos -->
 			<div
 				id="artifactory-repos-component"

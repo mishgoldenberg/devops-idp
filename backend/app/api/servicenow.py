@@ -37,6 +37,7 @@ from pydantic import BaseModel
 import activity
 import db
 import cache
+import identity
 from security import AuthUser, get_current_user, has_effective_admin_access_live
 
 router = APIRouter()
@@ -2156,7 +2157,10 @@ def ticket_form_diagnostics(current_user: AuthUser = Depends(get_current_user)) 
 
 @router.post("/tickets/create-flow")
 def create_ticket_flow(
-	full_name: str = Form(...),
+	# Accepted and IGNORED: the name on a ticket is the identity provider's, from
+	# identity.trusted_name, never what the browser sent. The display name a person
+	# chose for themselves is not who they are to the support team.
+	full_name: str = Form(""),
 	phone_number: str = Form(...),
 	branch: str = Form(...),
 	team: str = Form(...),
@@ -2184,7 +2188,7 @@ def create_ticket_flow(
 		raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User email missing from auth context.")
 
 	fields = {
-		"full_name": _required_form_value("full_name", full_name),
+		"full_name": identity.trusted_name(user_id=str(current_user.get("id") or ""), email=user_email),
 		"phone_number": _required_form_value("phone_number", phone_number),
 		"branch": _required_form_value("branch", branch),
 		"team": _required_form_value("team", team),

@@ -50,6 +50,7 @@ from urllib.parse import urlparse
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -65,7 +66,11 @@ import release_notes
 import request_audit
 import retention
 import safe_mode
+import streaks
+import usage_tracking
 import sso_config
+from devbot import config as devbot_config
+from devbot import store as devbot_store
 from ui import ui_router
 
 
@@ -103,6 +108,8 @@ def create_app() -> FastAPI:
     # the banner is on every page, and a route that forgot to pass it would show
     # an empty menu with nothing anywhere saying why.
     app.state.templates.env.globals["portal_quick_actions"] = catalog_forms.quick_actions()
+    # Where people create their own AI model key, for the token guide on every page.
+    app.state.templates.env.globals["devbot_key_help_url"] = devbot_config.key_help_url()
     static_dir = base_dir / "static"
 
     # Make static assets available at /static
@@ -227,6 +234,14 @@ def create_app() -> FastAPI:
         except Exception:
             request.state.portal_system_urls = {}
         return await call_next(request)
+
+    # ── Compression ─────────────────────────────────────────────────────────────
+    # Nothing compressed anything: every page sent its stylesheet (180 KB) and the
+    # shell's inline scripts raw, and the SonarQube snapshot is hundreds of KB of
+    # JSON for four widgets. Text shrinks to a fifth or less. Below 1 KB it is not
+    # worth the bytes of the gzip header. Outside everything but the audit log, which
+    # reads status codes, never bodies.
+    app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
 
     # ── Logging ─────────────────────────────────────────────────────────────────
     # Installed LAST, which makes it the OUTERMOST middleware — so it sees requests
@@ -466,6 +481,23 @@ def create_app() -> FastAPI:
                     retention.delete_old_requests()
                 except Exception as exc:
                     _log.warning("request retention sweep failed: %s", exc)
+                try:
+                    # Usage sessions and per-day activity, which grow with every minute
+                    # anybody has the portal open.
+                    usage_tracking.prune()
+                except Exception as exc:
+                    _log.warning("usage retention sweep failed: %s", exc)
+                try:
+                    # Streak days older than any streak can reach back.
+                    streaks.prune()
+                except Exception as exc:
+                    _log.warning("streak retention sweep failed: %s", exc)
+                try:
+                    # DevBot conversations nobody has opened for DEVBOT_HISTORY_DAYS,
+                    # and the usage rows older than the Usage view reads.
+                    devbot_store.purge(devbot_config.history_days())
+                except Exception as exc:
+                    _log.warning("DevBot retention sweep failed: %s", exc)
                 _time_mod.sleep(interval_seconds)
 
         try:

@@ -61,6 +61,14 @@ HOME_WIDGETS: "OrderedDict[str, Dict[str, object]]" = OrderedDict(
         ("ado_prs_for_review", {"component": "pull-requests-review-component", "label": "Pull Requests (Need my review)", "system": "azure"}),
         ("ado_pipeline_status", {"component": "pipelines-component", "label": "Pipelines", "system": "azure"}),
         ("sonar_projects", {"component": "sonarqube-projects-component", "label": "SonarQube Projects", "system": "sonarqube"}),
+        # Four of the five SonarQube widgets are views over ONE cached read
+        # (/api/integrations/sonarqube/overview). They differ in what they show,
+        # not in what they fetch, so adding them costs no extra calls upstream.
+        ("sonar_quality_gates", {"component": "sonarqube-gates-component", "label": "SonarQube Quality Gates", "system": "sonarqube"}),
+        ("sonar_new_code", {"component": "sonarqube-new-code-component", "label": "SonarQube New Code", "system": "sonarqube"}),
+        ("sonar_hotspots", {"component": "sonarqube-hotspots-component", "label": "SonarQube Security Hotspots", "system": "sonarqube"}),
+        ("sonar_my_issues", {"component": "sonarqube-my-issues-component", "label": "SonarQube Issues (Yours)", "system": "sonarqube"}),
+        ("sonar_pr_gates", {"component": "sonarqube-pr-gates-component", "label": "SonarQube Gate on My Pull Requests", "system": "sonarqube"}),
         ("artifactory_repos", {"component": "artifactory-repos-component", "label": "Artifactory Repos", "system": "artifactory"}),
         (
             "artifactory_storage",

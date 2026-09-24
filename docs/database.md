@@ -300,7 +300,7 @@ portal_flags   — standalone, used by safe_mode module.
 
 <!-- GENERATED:TABLES — do not edit by hand; run scripts/gen_docs.py -->
 
-27 tables, created idempotently at startup by `ensure_tables()` and friends. There is no migration Job in the cluster — this DDL *is* the schema mechanism, and it must stay additive: a `DROP` on this path runs on every pod start.
+38 tables, created idempotently at startup by `ensure_tables()` and friends. There is no migration Job in the cluster — this DDL *is* the schema mechanism, and it must stay additive: a `DROP` on this path runs on every pod start.
 
 | Table | Created in |
 | --- | --- |
@@ -312,22 +312,33 @@ portal_flags   — standalone, used by safe_mode module.
 | `azure_projects` | `backend/app/db.py` |
 | `backup_runs` | `backend/app/db.py` |
 | `catalog_submissions` | `backend/app/db.py` |
+| `devbot_conversations` | `backend/app/devbot/store.py` |
+| `devbot_messages` | `backend/app/devbot/store.py` |
+| `devbot_usage` | `backend/app/devbot/store.py` |
 | `favorites` | `backend/app/db.py` |
 | `inbox_dismissals` | `backend/app/db.py` |
 | `notifications` | `backend/app/db.py` |
 | `portal_flags` | `backend/app/safe_mode.py` |
 | `quick_links` | `backend/app/db.py` |
+| `release_notes` | `backend/app/release_notes.py` |
+| `request_ratings` | `backend/app/db.py` |
 | `self_service_usage` | `backend/app/db.py` |
 | `servicenow_tickets` | `backend/app/db.py` |
 | `sso_config` | `backend/app/db.py` |
 | `suggestion_comments` | `backend/app/db.py` |
 | `suggestion_votes` | `backend/app/db.py` |
 | `suggestions` | `backend/app/db.py` |
+| `user_activity_daily` | `backend/app/usage_tracking.py` |
 | `user_integrations` | `backend/app/db.py` |
 | `user_item_pins` | `backend/app/db.py` |
 | `user_item_seen` | `backend/app/db.py` |
 | `user_pins` | `backend/app/db.py` |
 | `user_quick_links` | `backend/app/db.py` |
+| `user_section_seen` | `backend/app/db.py` |
+| `user_sessions` | `backend/app/usage_tracking.py` |
+| `user_streak_bonus` | `backend/app/streaks.py` |
+| `user_streak_days` | `backend/app/streaks.py` |
+| `user_streak_sync` | `backend/app/streaks.py` |
 | `user_tickets` | `backend/app/api/servicenow.py`, `backend/app/db.py` |
 | `user_widgets` | `backend/app/db.py` |
 | `widget_usage` | `backend/app/db.py` |

@@ -29,6 +29,7 @@ import artifactory_admin
 import artifactory_cleaner
 import catalog_forms
 import cleaner_store
+import identity
 import snow_catalog
 from db import execute_returning, query_all
 from request_types import CLEANER_REQUEST_TYPES
@@ -677,6 +678,12 @@ def _submit_as_approval(
         for section in spec["sections"] if section.get("key") == "requester"
         for field in section.get("fields") or []
     }
+    # The name is the identity provider's, whatever the browser sent: this is what a
+    # ticket for the request will carry, and a display name can be anything.
+    if "full_name" in payload["requester_details"]:
+        payload["requester_details"]["full_name"] = identity.trusted_name(
+            user_id=str(current_user.get("id") or ""), email=str(current_user.get("email") or ""),
+        )
 
     result = create_request(
         CreateApprovalRequest(request_type=request_type, request_title=title, request_payload=payload),
@@ -717,6 +724,10 @@ def order_catalog_item(
         return {"number": "", "error": "", "skipped": True}
 
     payload = dict(fields)
+    # Whatever was stored with the request, the item carries the identity provider's
+    # name for its requester: a display name can be changed to anything at all.
+    if "full_name" in payload:
+        payload["full_name"] = identity.trusted_name(user_id=str(requester_id or ""), email=str(requester_email or ""))
 
     number = sys_id = error = ""
     try:

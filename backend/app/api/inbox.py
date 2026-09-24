@@ -15,6 +15,7 @@ So this asks a different question. Not "what exists" but "what is waiting for me
     to look at — the half a PR list cannot see
   * approval requests waiting on my decision (admins only)
   * my own self-service requests that failed, or completed with an incomplete grant
+  * my own requests an admin decided in the last few days -- approved or rejected
   * support tickets where the last word was theirs, not mine
 
 Every source is isolated and best-effort, exactly like search: a SonarQube that is down
@@ -26,7 +27,8 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Callable, Dict, List
+from datetime import datetime, timedelta, timezone
+from typing import Any, Callable, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -63,9 +65,22 @@ def _pull_requests_awaiting_me(user: AuthUser) -> List[Dict[str, Any]]:
             "title": pr.get("title") or "Pull request",
             "subtitle": f"{pr.get('repository') or ''} · by {pr.get('created_by') or 'someone'}",
             "url": pr.get("url"),
-            "age": pr.get("creation_date"),
+            # `created_date` is what the pull-request rows carry; `creation_date` (the
+            # raw Azure DevOps name) is never set on them, so the age was always blank.
+            "age": pr.get("created_date"),
             "why": "Waiting for your review",
             "key": f"pr:{pr.get('id') or pr.get('pull_request_id') or pr.get('url')}",
+            # What the "Review…" button hands the review dialog (ado-actions.html). A
+            # SEPARATE, labelled button, deliberately: ✓ here only means "done with this
+            # on my list", and one habitual click must never approve somebody's code.
+            "pr": {
+                "collection": pr.get("collection") or "",
+                "project": pr.get("project") or "",
+                "repository_id": pr.get("repository_id") or "",
+                "id": pr.get("id"),
+                "title": pr.get("title") or "",
+                "my_vote": pr.get("my_vote") or 0,
+            } if pr.get("repository_id") else None,
         })
     return items
 
@@ -84,7 +99,11 @@ def _approvals_awaiting_me(user: AuthUser) -> List[Dict[str, Any]]:
             "subtitle": f"from {row.get('requester_email') or 'a user'}",
             "url": "/ui/approvals",
             "age": row.get("created_at"),
-            "why": "Waiting for your decision",
+            # Past REQUEST_SLA_DAYS it says so, in red, rather than looking like any
+            # other request that arrived this morning.
+            "why": (f"Waiting {row.get('waiting_days')} days" if row.get("overdue")
+                    else "Waiting for your decision"),
+            "tone": "bad" if row.get("overdue") else "",
             "key": f"approval:{row.get('id')}",
         }
         for row in (result or {}).get("data", []) or []
@@ -92,31 +111,80 @@ def _approvals_awaiting_me(user: AuthUser) -> List[Dict[str, Any]]:
     ]
 
 
+# How long a decision stays in the strip. Long enough to be seen by somebody who
+# was away for a weekend; short enough that the strip does not turn into a history.
+# "Done" dismisses one sooner, and the dismissal is stamped with the decision time.
+_DECISION_WINDOW = timedelta(days=3)
+_WAITING_OR_FAILED = {"PENDING", "FAILED", "REJECTED"}
+
+
+def _as_utc(value: Any) -> Optional[datetime]:
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    try:
+        parsed = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
 def _my_requests_needing_attention(user: AuthUser) -> List[Dict[str, Any]]:
+    """My own requests that want me: failed, half-granted -- or just decided.
+
+    A decision is NEWS rather than work, but it is the one thing somebody who asked
+    for something is waiting to hear, and until now it only rang the bell: clear the
+    bell and it was gone. So an approval or a rejection from the last few days sits
+    here too, where the person looks first, until they wave it off.
+    """
     from . import approvals
 
     result = approvals.get_requests(status_filter=None, scope="mine", current_user=user)
+    now = datetime.now(timezone.utc)
     items: List[Dict[str, Any]] = []
     for row in (result or {}).get("data", []) or []:
         status = str(row.get("status") or "").upper()
         execution = row.get("execution_result") or {}
+        decided_at = _as_utc(row.get("approved_at"))
+        recently_decided = bool(decided_at) and now - decided_at <= _DECISION_WINDOW
+        who = str(row.get("approver_name") or row.get("approver_username") or "").strip()
+        age = row.get("created_at")
+        tone = "bad"
         if status == "FAILED":
             why = "Failed — needs another look"
         elif isinstance(execution, dict) and execution.get("grants_ok") is False:
             # The case that used to be invisible: the project exists but the person it
             # was for never got access.
             why = "Completed, but not every permission was granted"
+        elif status == "REJECTED" and recently_decided:
+            why = "Rejected"
+            age = decided_at
+        elif status not in _WAITING_OR_FAILED and recently_decided:
+            # Approved, and either still running or already done. Said as one thing:
+            # what the requester wanted to know is that the answer was yes.
+            why = "Approved"
+            tone = "good"
+            age = decided_at
         else:
             continue
+        reason = str(row.get("rejection_reason") or row.get("approver_comments") or "").strip()
+        subtitle = status.replace("_", " ").title()
+        if why in ("Approved", "Rejected"):
+            subtitle = (f"{why} by {who}" if who else why) + (f" · {reason[:140]}" if reason else "")
         items.append({
             "kind": "my_request",
             "system": "Self-service",
             "title": row.get("request_title") or row.get("request_type") or "Your request",
-            "subtitle": status.replace("_", " ").title(),
+            "subtitle": subtitle,
             "url": "/ui/my-requests",
-            "age": row.get("created_at"),
+            # The DECISION time for a decision, so dismissing it is stamped with the
+            # moment that made it news, and a later change brings it back.
+            "age": age,
             "why": why,
-            "key": f"request:{row.get('id')}",
+            "tone": tone,
+            # A decision has its own key. Sharing the failure's key would let "done"
+            # on an approval -- stamped with the approval time -- silently swallow
+            # the same request failing an hour later.
+            "key": f"request:{row.get('id')}" + (":decision" if why in ("Approved", "Rejected") else ""),
         })
     return items
 

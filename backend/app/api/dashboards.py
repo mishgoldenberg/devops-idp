@@ -429,6 +429,7 @@ def get_ado_items(
                         "id_display": f"#{wi.get('id', '')}" if wi.get("id") else "",
                         "type": wi.get("type") or "",
                         "project": wi.get("project") or "",
+                        "collection": wi.get("collection") or "",
                         "iteration": wi.get("iteration") or "",
                         "area_path": wi.get("area_path") or "",
                         "state_category": wi.get("state_category") or "",

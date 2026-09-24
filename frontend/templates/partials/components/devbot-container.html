@@ -1,0 +1,1975 @@
+{#
+	DevBot AI -- the chat page.
+
+	Laid out like the chat assistants people already know: past conversations on the
+	left, one centred column of questions and answers, the box to type in at the bottom,
+	and the model picker in the page header. Everything is loaded by the script below
+	from /api/devbot; the server only renders this shell.
+
+	WHAT THE PERSON ALWAYS SEES
+	  * which model is answering, and whether it can read live data;
+	  * their key's limits (requests and tokens a minute), and what each answer cost;
+	  * which systems each answer read, and a link to every source;
+	  * that DevBot works with THEIR tokens and never changes anything unconfirmed.
+
+	The answer arrives as server-sent events over a POST (fetch + a stream reader), so
+	it is drawn as it is written. The page never builds HTML from model output without
+	escaping it first: the Markdown renderer below escapes, then formats, and only lets
+	links to http(s) addresses through.
+
+	Written without template literals on purpose: the markup is assembled with string
+	concatenation, so there is no backtick anywhere in this script for a stray one in a
+	comment to unbalance (scripts/check_inline_js.py).
+#}
+<style>
+	[data-devbot] .devbot-header { padding-top: 1rem; padding-bottom: 1rem; }
+	/* The title side gives way, the buttons never do. Left to flex's defaults both
+	   shrink in proportion to their natural width, and the long subtitle made the
+	   title side "natural" enough to push New chat off the edge. */
+	[data-devbot] .devbot-head-title { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 0.75rem; }
+	[data-devbot] .devbot-head-actions { flex: none; display: flex; align-items: center; gap: 0.5rem; }
+	[data-devbot] .devbot-body { flex: 1 1 auto; min-height: 0; display: flex; position: relative; }
+
+	/* ── conversations ─────────────────────────────────────────────────── */
+	[data-devbot] .devbot-side {
+		width: 16.5rem;
+		flex: none;
+		display: flex;
+		flex-direction: column;
+		min-height: 0;
+		background: hsl(var(--b2));
+		border-right: 1px solid hsl(var(--b3));
+	}
+	[data-devbot] .devbot-side-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 0.85rem 0.9rem 0.35rem;
+	}
+	[data-devbot] .devbot-kicker {
+		font-size: 0.68rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: hsl(var(--bc) / 0.5);
+	}
+	[data-devbot] .devbot-side-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 0.5rem 0.75rem; }
+	[data-devbot] .devbot-group { font-size: 0.68rem; font-weight: 600; color: hsl(var(--bc) / 0.45); padding: 0.8rem 0.55rem 0.3rem; }
+	[data-devbot] .devbot-conv {
+		display: flex;
+		align-items: center;
+		gap: 0.2rem;
+		width: 100%;
+		border-radius: 0.5rem;
+		padding: 0.1rem 0.25rem 0.1rem 0.6rem;
+		font-size: 0.82rem;
+		color: hsl(var(--bc) / 0.85);
+		cursor: pointer;
+	}
+	[data-devbot] .devbot-conv:hover { background: hsl(var(--b3) / 0.6); }
+	[data-devbot] .devbot-conv[aria-current="true"] { background: hsl(var(--p) / 0.14); color: hsl(var(--bc)); font-weight: 600; }
+	[data-devbot] .devbot-conv-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0.35rem 0; }
+	[data-devbot] .devbot-conv-edit {
+		flex: 1 1 auto;
+		min-width: 0;
+		font: inherit;
+		border: 1px solid hsl(var(--p) / 0.6);
+		border-radius: 0.35rem;
+		padding: 0.2rem 0.35rem;
+		background: hsl(var(--b1));
+		color: hsl(var(--bc));
+	}
+	[data-devbot] .devbot-conv-act { opacity: 0; transition: opacity 120ms ease; }
+	[data-devbot] .devbot-conv:hover .devbot-conv-act,
+	[data-devbot] .devbot-conv:focus-within .devbot-conv-act,
+	[data-devbot] .devbot-conv[aria-current="true"] .devbot-conv-act { opacity: 1; }
+	[data-devbot] .devbot-side-empty { font-size: 0.78rem; color: hsl(var(--bc) / 0.5); padding: 0.75rem 0.6rem; line-height: 1.5; }
+	[data-devbot] .devbot-side-foot { border-top: 1px solid hsl(var(--b3)); padding: 0.75rem 0.9rem 0.85rem; font-size: 0.72rem; color: hsl(var(--bc) / 0.65); }
+	[data-devbot] .devbot-limit-row { display: flex; justify-content: space-between; gap: 0.5rem; margin-top: 0.35rem; }
+	[data-devbot] .devbot-bar { height: 4px; border-radius: 9999px; background: hsl(var(--bc) / 0.1); overflow: hidden; margin-top: 0.2rem; }
+	[data-devbot] .devbot-bar > span { display: block; height: 100%; background: hsl(var(--p)); border-radius: 9999px; min-width: 2px; }
+	[data-devbot] .devbot-bar[data-low] > span { background: hsl(var(--wa)); }
+
+	/* ── the conversation ──────────────────────────────────────────────── */
+	[data-devbot] .devbot-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; background: hsl(var(--b1)); }
+	[data-devbot] .devbot-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+	[data-devbot] .devbot-thread { max-width: 48rem; margin: 0 auto; padding: 1.75rem 1.25rem 1rem; display: flex; flex-direction: column; gap: 1.6rem; }
+	[data-devbot] .devbot-user {
+		align-self: flex-end;
+		max-width: 85%;
+		background: hsl(var(--b2));
+		border: 1px solid hsl(var(--b3));
+		border-radius: 1.1rem 1.1rem 0.3rem 1.1rem;
+		padding: 0.6rem 0.95rem;
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+		font-size: 0.92rem;
+		line-height: 1.55;
+	}
+	[data-devbot] .devbot-bot { display: flex; gap: 0.8rem; align-items: flex-start; }
+	[data-devbot] .devbot-avatar {
+		width: 1.9rem;
+		height: 1.9rem;
+		border-radius: 9999px;
+		flex: none;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: hsl(var(--p) / 0.14);
+		color: hsl(var(--p));
+	}
+	[data-devbot] .devbot-avatar svg { width: 1.05rem; height: 1.05rem; }
+	[data-devbot] .devbot-bot-body { flex: 1 1 auto; min-width: 0; padding-top: 0.15rem; }
+	[data-devbot] .devbot-working { display: flex; align-items: center; gap: 0.5rem; font-size: 0.82rem; color: hsl(var(--bc) / 0.55); }
+
+	/* The answer's Markdown. Preflight resets list and heading styles, so they are set here. */
+	[data-devbot] .devbot-md { font-size: 0.93rem; line-height: 1.65; overflow-wrap: anywhere; }
+	[data-devbot] .devbot-md > :first-child { margin-top: 0; }
+	[data-devbot] .devbot-md p { margin: 0 0 0.75rem; }
+	[data-devbot] .devbot-md > :last-child { margin-bottom: 0; }
+	[data-devbot] .devbot-md h3, [data-devbot] .devbot-md h4, [data-devbot] .devbot-md h5 { font-weight: 700; margin: 1.1rem 0 0.45rem; line-height: 1.35; }
+	[data-devbot] .devbot-md h3 { font-size: 1.12rem; }
+	[data-devbot] .devbot-md h4 { font-size: 1rem; }
+	[data-devbot] .devbot-md h5 { font-size: 0.93rem; }
+	[data-devbot] .devbot-md ul, [data-devbot] .devbot-md ol { margin: 0.2rem 0 0.8rem; padding-inline-start: 1.35rem; }
+	[data-devbot] .devbot-md ul { list-style: disc; }
+	[data-devbot] .devbot-md ol { list-style: decimal; }
+	[data-devbot] .devbot-md li { margin: 0.2rem 0; }
+	[data-devbot] .devbot-md li > ul, [data-devbot] .devbot-md li > ol { margin: 0.15rem 0 0.2rem; }
+	[data-devbot] .devbot-md strong { font-weight: 700; }
+	[data-devbot] .devbot-md em { font-style: italic; }
+	[data-devbot] .devbot-md del { opacity: 0.7; }
+	[data-devbot] .devbot-md a { color: hsl(var(--p)); text-decoration: underline; text-underline-offset: 2px; }
+	[data-devbot] .devbot-md code {
+		font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+		font-size: 0.84em;
+		background: hsl(var(--bc) / 0.08);
+		padding: 0.1rem 0.35rem;
+		border-radius: 0.3rem;
+	}
+	[data-devbot] .devbot-code {
+		margin: 0.45rem 0 0.9rem;
+		border-radius: 0.65rem;
+		overflow: hidden;
+		background: #0f172a;
+		color: #e2e8f0;
+		direction: ltr;
+		text-align: left;
+	}
+	[data-devbot] .devbot-code-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 0.3rem 0.5rem 0.3rem 0.85rem;
+		font-size: 0.7rem;
+		color: #94a3b8;
+		background: rgba(148, 163, 184, 0.12);
+	}
+	[data-devbot] .devbot-code pre { margin: 0; padding: 0.8rem 0.95rem; overflow-x: auto; font-size: 0.8rem; line-height: 1.5; }
+	[data-devbot] .devbot-code pre code { background: none; padding: 0; font-size: inherit; color: inherit; }
+	[data-devbot] .devbot-code .devbot-copy { color: #cbd5e1; }
+	[data-devbot] .devbot-table { overflow-x: auto; margin: 0.25rem 0 0.9rem; }
+	[data-devbot] .devbot-table table { border-collapse: collapse; font-size: 0.84rem; }
+	[data-devbot] .devbot-table th, [data-devbot] .devbot-table td { border: 1px solid hsl(var(--b3)); padding: 0.35rem 0.65rem; text-align: start; vertical-align: top; }
+	[data-devbot] .devbot-table th { background: hsl(var(--b2)); font-weight: 600; }
+	[data-devbot] .devbot-md blockquote { border-inline-start: 3px solid hsl(var(--bc) / 0.2); padding-inline-start: 0.8rem; color: hsl(var(--bc) / 0.75); margin: 0.5rem 0 0.8rem; }
+	[data-devbot] .devbot-md hr { border: 0; border-top: 1px solid hsl(var(--b3)); margin: 1rem 0; }
+	[data-devbot] .devbot-caret::after {
+		content: "";
+		display: inline-block;
+		width: 0.5rem;
+		height: 1rem;
+		margin-inline-start: 0.15rem;
+		vertical-align: -0.15rem;
+		background: hsl(var(--bc) / 0.6);
+		animation: devbot-blink 1s steps(2, start) infinite;
+	}
+	@keyframes devbot-blink { to { visibility: hidden; } }
+
+	/* Lookups, thinking, notices, and the line under each answer. */
+	[data-devbot] .devbot-steps { display: flex; flex-direction: column; gap: 0.35rem; margin-bottom: 0.8rem; font-size: 0.8rem; }
+	[data-devbot] .devbot-step { display: flex; align-items: flex-start; gap: 0.5rem; color: hsl(var(--bc) / 0.8); }
+	[data-devbot] .devbot-step-ico { width: 1rem; height: 1rem; flex: none; margin-top: 0.12rem; display: inline-flex; }
+	[data-devbot] .devbot-step-ico svg { width: 1rem; height: 1rem; }
+	[data-devbot] .devbot-step[data-status="done"] .devbot-step-ico { color: hsl(var(--su)); }
+	[data-devbot] .devbot-step[data-status="error"] .devbot-step-ico { color: hsl(var(--er)); }
+	[data-devbot] .devbot-step-detail { color: hsl(var(--bc) / 0.55); overflow-wrap: anywhere; }
+	[data-devbot] .devbot-trail { margin: 0.2rem 0 0 0.1rem; display: flex; flex-direction: column; gap: 0.12rem; }
+	[data-devbot] .devbot-trail span { font-size: 0.74rem; color: hsl(var(--bc) / 0.55); overflow-wrap: anywhere; }
+	[data-devbot] .devbot-trail span::before { content: "\21B3"; margin-inline-end: 0.35rem; color: hsl(var(--bc) / 0.35); }
+	[data-devbot] .devbot-spin {
+		width: 0.85rem;
+		height: 0.85rem;
+		margin: 0.07rem;
+		border-radius: 9999px;
+		border: 2px solid hsl(var(--p) / 0.25);
+		border-top-color: hsl(var(--p));
+		animation: devbot-spin 0.8s linear infinite;
+	}
+	@keyframes devbot-spin { to { transform: rotate(360deg); } }
+	[data-devbot] .devbot-sys {
+		font-size: 0.62rem;
+		font-weight: 700;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		padding: 0.05rem 0.4rem;
+		border-radius: 0.3rem;
+		background: hsl(var(--bc) / 0.08);
+		color: hsl(var(--bc) / 0.7);
+		white-space: nowrap;
+	}
+	[data-devbot] .devbot-sys[data-sys="azure"] { background: hsl(212 90% 50% / 0.14); color: hsl(212 80% 45%); }
+	[data-devbot] .devbot-sys[data-sys="sonarqube"] { background: hsl(200 80% 45% / 0.14); color: hsl(200 70% 38%); }
+	[data-devbot] .devbot-sys[data-sys="artifactory"] { background: hsl(140 55% 40% / 0.15); color: hsl(140 55% 32%); }
+	[data-devbot] .devbot-sys[data-sys="confluence"] { background: hsl(222 75% 55% / 0.14); color: hsl(222 60% 45%); }
+	[data-devbot] details.devbot-fold { margin-bottom: 0.7rem; font-size: 0.8rem; color: hsl(var(--bc) / 0.6); }
+	[data-devbot] details.devbot-fold > summary { cursor: pointer; list-style: none; display: inline-flex; align-items: center; gap: 0.35rem; user-select: none; }
+	[data-devbot] details.devbot-fold > summary::-webkit-details-marker { display: none; }
+	[data-devbot] details.devbot-fold > summary svg { width: 0.8rem; height: 0.8rem; transition: transform 120ms ease; }
+	[data-devbot] details.devbot-fold[open] > summary svg { transform: rotate(90deg); }
+	[data-devbot] .devbot-think-body {
+		white-space: pre-wrap;
+		max-height: 14rem;
+		overflow-y: auto;
+		border-inline-start: 2px solid hsl(var(--b3));
+		padding-inline-start: 0.75rem;
+		margin-top: 0.45rem;
+		font-size: 0.78rem;
+		line-height: 1.55;
+	}
+	[data-devbot] .devbot-fold .devbot-steps { margin: 0.5rem 0 0; }
+	[data-devbot] .devbot-interim { font-size: 0.82rem; font-style: italic; color: hsl(var(--bc) / 0.6); margin-bottom: 0.5rem; }
+	[data-devbot] .devbot-notice {
+		font-size: 0.78rem;
+		line-height: 1.5;
+		border-radius: 0.55rem;
+		padding: 0.45rem 0.7rem;
+		margin-top: 0.65rem;
+		background: hsl(var(--in) / 0.1);
+		border: 1px solid hsl(var(--in) / 0.25);
+	}
+	[data-devbot] .devbot-notice[data-level="warn"] { background: hsl(var(--wa) / 0.12); border-color: hsl(var(--wa) / 0.35); }
+	[data-devbot] .devbot-error {
+		border: 1px solid hsl(var(--er) / 0.35);
+		background: hsl(var(--er) / 0.08);
+		border-radius: 0.65rem;
+		padding: 0.7rem 0.85rem;
+		font-size: 0.85rem;
+		line-height: 1.5;
+	}
+	[data-devbot] .devbot-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.75rem; margin-top: 0.65rem; font-size: 0.72rem; color: hsl(var(--bc) / 0.5); }
+	[data-devbot] .devbot-icon-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		border-radius: 0.4rem;
+		padding: 0.2rem 0.4rem;
+		color: hsl(var(--bc) / 0.6);
+		background: none;
+		border: 0;
+		cursor: pointer;
+		font-size: 0.72rem;
+	}
+	[data-devbot] .devbot-icon-btn:hover { background: hsl(var(--bc) / 0.08); color: hsl(var(--bc)); }
+	[data-devbot] .devbot-icon-btn svg { width: 0.9rem; height: 0.9rem; }
+	[data-devbot] .devbot-sources { display: flex; flex-direction: column; gap: 0.3rem; margin-top: 0.5rem; font-size: 0.8rem; }
+	[data-devbot] .devbot-source { display: flex; align-items: center; gap: 0.45rem; min-width: 0; }
+	[data-devbot] .devbot-source a { color: hsl(var(--p)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+	[data-devbot] .devbot-source a:hover { text-decoration: underline; }
+
+	/* Changes DevBot proposes: reviewed and confirmed in the widgets' dialog. */
+	[data-devbot] .devbot-actions { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.85rem; }
+	[data-devbot] .devbot-action {
+		display: flex;
+		align-items: center;
+		gap: 0.7rem;
+		border: 1px solid hsl(var(--b3));
+		border-radius: 0.8rem;
+		padding: 0.55rem 0.7rem;
+		background: hsl(var(--b1));
+	}
+	[data-devbot] .devbot-action[data-suggested] { border-style: dashed; }
+	[data-devbot] .devbot-action[data-status="done"] { border-color: hsl(var(--su) / 0.45); background: hsl(var(--su) / 0.06); }
+	[data-devbot] .devbot-action[data-status="simulated"] { border-color: hsl(var(--wa) / 0.5); }
+	[data-devbot] .devbot-action[data-status="declined"] { opacity: 0.6; }
+	[data-devbot] .devbot-action-text { flex: 1 1 auto; min-width: 0; }
+	[data-devbot] .devbot-action-text b { display: block; font-size: 0.84rem; }
+	[data-devbot] .devbot-action-text span { display: block; font-size: 0.75rem; color: hsl(var(--bc) / 0.62); overflow-wrap: anywhere; }
+	[data-devbot] .devbot-action-state { display: inline-flex; align-items: center; gap: 0.25rem; font-size: 0.74rem; font-weight: 600; white-space: nowrap; }
+	[data-devbot] .devbot-action-state svg { width: 0.9rem; height: 0.9rem; color: hsl(var(--su)); }
+
+	/* ── the box to type in ────────────────────────────────────────────── */
+	[data-devbot] .devbot-composer-wrap { flex: none; padding: 0.4rem 1.25rem 0.9rem; }
+	[data-devbot] .devbot-composer {
+		max-width: 48rem;
+		margin: 0 auto;
+		display: flex;
+		align-items: flex-end;
+		gap: 0.5rem;
+		border: 1px solid hsl(var(--b3));
+		background: hsl(var(--b1));
+		border-radius: 1.4rem;
+		padding: 0.45rem 0.5rem 0.45rem 1rem;
+		box-shadow: 0 4px 18px rgba(15, 23, 42, 0.08);
+	}
+	[data-devbot] .devbot-composer:focus-within { border-color: hsl(var(--p) / 0.6); }
+	[data-devbot] .devbot-input {
+		flex: 1 1 auto;
+		resize: none;
+		border: 0;
+		outline: 0;
+		background: transparent;
+		font-size: 0.93rem;
+		line-height: 1.5;
+		max-height: 12rem;
+		padding: 0.35rem 0;
+		color: hsl(var(--bc));
+	}
+	[data-devbot] .devbot-input::placeholder { color: hsl(var(--bc) / 0.45); }
+	[data-devbot] .devbot-send {
+		width: 2.2rem;
+		height: 2.2rem;
+		border-radius: 9999px;
+		flex: none;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: hsl(var(--p));
+		color: hsl(var(--pc));
+		border: 0;
+		cursor: pointer;
+	}
+	[data-devbot] .devbot-send:disabled { opacity: 0.35; cursor: default; }
+	[data-devbot] .devbot-send svg { width: 1.05rem; height: 1.05rem; }
+	[data-devbot] .devbot-foot-note { max-width: 48rem; margin: 0.45rem auto 0; font-size: 0.7rem; text-align: center; color: hsl(var(--bc) / 0.45); }
+
+	/* ── first screen, setup, and the model picker ─────────────────────── */
+	[data-devbot] .devbot-hero { text-align: center; padding: 2.2rem 0 0.4rem; }
+	[data-devbot] .devbot-hero h2 { font-size: 1.55rem; font-weight: 700; line-height: 1.3; }
+	[data-devbot] .devbot-hero p { font-size: 0.9rem; color: hsl(var(--bc) / 0.6); margin-top: 0.35rem; }
+	[data-devbot] .devbot-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; }
+	[data-devbot] .devbot-card { border: 1px solid hsl(var(--b3)); border-radius: 0.9rem; padding: 0.8rem 0.9rem 0.7rem; background: hsl(var(--b1)); }
+	[data-devbot] .devbot-card-head { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.45rem; }
+	[data-devbot] .devbot-card-head b { font-size: 0.85rem; flex: 1 1 auto; }
+	[data-devbot] .devbot-dot { width: 0.5rem; height: 0.5rem; border-radius: 9999px; flex: none; }
+	[data-devbot] .devbot-state { font-size: 0.7rem; font-weight: 600; }
+	[data-devbot] .devbot-example {
+		display: block;
+		width: 100%;
+		text-align: start;
+		font-size: 0.8rem;
+		line-height: 1.45;
+		border-radius: 0.5rem;
+		padding: 0.35rem 0.5rem;
+		color: hsl(var(--bc) / 0.8);
+		background: none;
+		border: 0;
+		cursor: pointer;
+	}
+	[data-devbot] .devbot-example:hover { background: hsl(var(--b2)); color: hsl(var(--bc)); }
+	[data-devbot] .devbot-example:disabled { cursor: default; opacity: 0.55; }
+	[data-devbot] .devbot-example:disabled:hover { background: none; }
+	[data-devbot] .devbot-trust {
+		font-size: 0.76rem;
+		line-height: 1.55;
+		color: hsl(var(--bc) / 0.65);
+		border: 1px dashed hsl(var(--b3));
+		border-radius: 0.8rem;
+		padding: 0.7rem 0.9rem;
+	}
+	[data-devbot] .devbot-panel {
+		max-width: 34rem;
+		margin: 2.5rem auto 0;
+		border: 1px solid hsl(var(--b3));
+		border-radius: 1rem;
+		padding: 1.4rem 1.5rem;
+		background: hsl(var(--b1));
+	}
+	[data-devbot] .devbot-panel h2 { font-size: 1.15rem; font-weight: 700; }
+	[data-devbot] .devbot-panel p { font-size: 0.85rem; color: hsl(var(--bc) / 0.7); line-height: 1.6; margin-top: 0.5rem; }
+	[data-devbot] .devbot-model { position: relative; }
+	[data-devbot] .devbot-model-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.45rem;
+		max-width: 22rem;
+		border: 1px solid hsl(var(--b3));
+		background: hsl(var(--b1));
+		border-radius: 9999px;
+		padding: 0.3rem 0.7rem 0.3rem 0.8rem;
+		font-size: 0.8rem;
+		font-weight: 600;
+		cursor: pointer;
+		color: hsl(var(--bc));
+	}
+	[data-devbot] .devbot-model-btn:disabled { opacity: 0.55; cursor: default; }
+	[data-devbot] .devbot-model-btn .devbot-model-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	[data-devbot] .devbot-model-btn svg { width: 0.8rem; height: 0.8rem; flex: none; }
+	[data-devbot] .devbot-model-menu {
+		position: absolute;
+		right: 0;
+		top: calc(100% + 0.4rem);
+		z-index: 40;
+		width: 23rem;
+		max-width: calc(100vw - 2rem);
+		max-height: 26rem;
+		overflow-y: auto;
+		background: hsl(var(--b1));
+		border: 1px solid hsl(var(--b3));
+		border-radius: 0.8rem;
+		box-shadow: 0 14px 34px rgba(15, 23, 42, 0.18);
+		padding: 0.35rem;
+		display: none;
+	}
+	[data-devbot] .devbot-model-menu[data-open] { display: block; }
+	[data-devbot] .devbot-model-item {
+		display: flex;
+		gap: 0.6rem;
+		align-items: flex-start;
+		width: 100%;
+		text-align: start;
+		border-radius: 0.55rem;
+		padding: 0.5rem 0.6rem;
+		cursor: pointer;
+		background: none;
+		border: 0;
+		color: inherit;
+	}
+	[data-devbot] .devbot-model-item:hover { background: hsl(var(--b2)); }
+	[data-devbot] .devbot-model-item[aria-selected="true"] { background: hsl(var(--p) / 0.1); }
+	[data-devbot] .devbot-model-item b { font-size: 0.84rem; display: block; }
+	[data-devbot] .devbot-model-item span.devbot-sub { font-size: 0.72rem; color: hsl(var(--bc) / 0.6); display: block; margin-top: 0.1rem; line-height: 1.45; }
+	[data-devbot] .devbot-badge {
+		font-size: 0.6rem;
+		font-weight: 700;
+		padding: 0.08rem 0.4rem;
+		border-radius: 9999px;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		white-space: nowrap;
+		background: hsl(var(--bc) / 0.08);
+		color: hsl(var(--bc) / 0.65);
+	}
+	[data-devbot] .devbot-badge[data-kind="live"] { background: hsl(var(--su) / 0.16); color: hsl(var(--su)); }
+	[data-devbot] .devbot-badge[data-kind="unknown"] { background: hsl(var(--wa) / 0.16); color: hsl(var(--wac, var(--bc)) / 0.8); }
+	[data-devbot] .devbot-side-toggle { display: none; }
+	[data-devbot] .devbot-usage { width: 100%; border-collapse: collapse; font-size: 0.8rem; margin-top: 0.4rem; }
+	[data-devbot] .devbot-usage th,
+	[data-devbot] .devbot-usage td { text-align: start; padding: 0.4rem 0.5rem; border-bottom: 1px solid hsl(var(--b3)); vertical-align: top; }
+	[data-devbot] .devbot-usage th { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: hsl(var(--bc) / 0.55); }
+	[data-devbot] .devbot-usage small { display: block; color: hsl(var(--bc) / 0.55); }
+
+	@media (max-width: 960px) {
+		[data-devbot] .devbot-side { display: none; }
+		[data-devbot] .devbot-side[data-open] {
+			display: flex;
+			position: absolute;
+			top: 0;
+			bottom: 0;
+			left: 0;
+			z-index: 30;
+			box-shadow: 8px 0 24px rgba(15, 23, 42, 0.18);
+		}
+		[data-devbot] .devbot-side-toggle { display: inline-flex; }
+		[data-devbot] .devbot-cards { grid-template-columns: minmax(0, 1fr); }
+		[data-devbot] .devbot-about-btn-label { display: none; }
+		[data-devbot] .devbot-header .page-subtitle { display: none; }
+	}
+</style>
+
+<div
+	class="page-shell"
+	data-devbot
+	data-enabled="{{ 'true' if devbot_enabled else 'false' }}"
+	data-user-name="{{ user.display_name if user else '' }}"
+>
+	<header class="page-header devbot-header">
+		<div class="devbot-head-title">
+			<button type="button" class="btn btn-ghost btn-sm btn-circle devbot-side-toggle" data-devbot-side-toggle aria-label="Conversations" title="Conversations">
+				<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg>
+			</button>
+			<div class="min-w-0">
+				<h1 class="page-title">DevBot AI</h1>
+				<p class="page-subtitle">
+					Ask about your pipelines, work items, code quality, artifacts and pages, answered
+					from the systems you have connected.
+				</p>
+			</div>
+		</div>
+		<div class="devbot-head-actions">
+			<div class="devbot-model" data-devbot-model>
+				<button type="button" class="devbot-model-btn" data-devbot-model-btn aria-haspopup="listbox" aria-expanded="false" disabled>
+					<span class="devbot-model-name" data-devbot-model-name>Model</span>
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+				</button>
+				<div class="devbot-model-menu" data-devbot-model-menu role="listbox" aria-label="Models your key may use"></div>
+			</div>
+			<button type="button" class="btn btn-sm rounded-full px-4" data-devbot-about title="What DevBot can do, and what it sends where">
+				<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+				<span class="devbot-about-btn-label">What can it do?</span>
+			</button>
+			<button type="button" class="btn btn-primary btn-sm rounded-full px-4" data-devbot-new>New chat</button>
+		</div>
+	</header>
+
+	<div class="devbot-body">
+		<aside class="devbot-side" data-devbot-side aria-label="Your conversations">
+			<div class="devbot-side-head">
+				<span class="devbot-kicker">Conversations</span>
+			</div>
+			<div class="devbot-side-list" data-devbot-list></div>
+			<div class="devbot-side-foot" data-devbot-foot></div>
+		</aside>
+
+		<section class="devbot-main">
+			<div class="devbot-scroll" data-devbot-scroll>
+				<div class="devbot-thread" data-devbot-thread aria-live="polite"></div>
+			</div>
+			<div class="devbot-composer-wrap">
+				<form class="devbot-composer" data-devbot-form autocomplete="off">
+					<textarea class="devbot-input" data-devbot-input rows="1" dir="auto" maxlength="8000" placeholder="Ask DevBot anything..." aria-label="Your question" disabled></textarea>
+					<button type="submit" class="devbot-send" data-devbot-send aria-label="Send" title="Send (Enter)" disabled></button>
+				</form>
+				<p class="devbot-foot-note">
+					DevBot reads your systems with your own tokens and never changes anything without
+					your confirmation. It can be wrong: check what matters.
+				</p>
+			</div>
+		</section>
+	</div>
+
+<dialog class="modal" data-devbot-usage-modal aria-labelledby="devbot-usage-title">
+	<div class="modal-box" style="max-width: 40rem; padding: 0; display: flex; flex-direction: column; max-height: calc(100vh - 5em); overflow: hidden">
+		<div class="flex items-start gap-3" style="padding: 1.1rem 1.25rem 0.75rem; border-bottom: 1px solid hsl(var(--bc) / 0.1)">
+			<h3 class="text-base font-bold flex-1" id="devbot-usage-title">Your DevBot usage</h3>
+			<form method="dialog"><button class="btn btn-sm btn-circle btn-ghost" aria-label="Close">&#10005;</button></form>
+		</div>
+		<div data-devbot-usage-body style="flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 1rem 1.25rem 1.25rem; font-size: 0.85rem; line-height: 1.6"></div>
+	</div>
+	<form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<dialog class="modal" data-devbot-about-modal aria-labelledby="devbot-about-title">
+	<div class="modal-box" style="max-width: 40rem; padding: 0; display: flex; flex-direction: column; max-height: calc(100vh - 5em); overflow: hidden">
+		<div class="flex items-start gap-3" style="padding: 1.1rem 1.25rem 0.75rem; border-bottom: 1px solid hsl(var(--bc) / 0.1)">
+			<h3 class="text-base font-bold flex-1" id="devbot-about-title">What DevBot can do</h3>
+			<form method="dialog"><button class="btn btn-sm btn-circle btn-ghost" aria-label="Close">&#10005;</button></form>
+		</div>
+		<div data-devbot-about-body style="flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 1rem 1.25rem 1.25rem; font-size: 0.85rem; line-height: 1.6"></div>
+	</div>
+	<form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+</div>
+
+<script>
+	(function () {
+		var root = document.querySelector("[data-devbot]");
+		if (!root) return;
+
+		var API = "/api/devbot/";
+		var ENABLED = root.getAttribute("data-enabled") === "true";
+		var FIRST_NAME = (root.getAttribute("data-user-name") || "").split(" ")[0];
+		var MODEL_PREF = "devbot-model";
+
+		var els = {
+			list: root.querySelector("[data-devbot-list]"),
+			foot: root.querySelector("[data-devbot-foot]"),
+			side: root.querySelector("[data-devbot-side]"),
+			sideToggle: root.querySelector("[data-devbot-side-toggle]"),
+			thread: root.querySelector("[data-devbot-thread]"),
+			scroll: root.querySelector("[data-devbot-scroll]"),
+			form: root.querySelector("[data-devbot-form]"),
+			input: root.querySelector("[data-devbot-input]"),
+			send: root.querySelector("[data-devbot-send]"),
+			modelBtn: root.querySelector("[data-devbot-model-btn]"),
+			modelName: root.querySelector("[data-devbot-model-name]"),
+			modelMenu: root.querySelector("[data-devbot-model-menu]"),
+			newBtn: root.querySelector("[data-devbot-new]"),
+			aboutBtn: root.querySelector("[data-devbot-about]"),
+			aboutModal: document.querySelector("[data-devbot-about-modal]"),
+			aboutBody: document.querySelector("[data-devbot-about-body]"),
+			usageModal: document.querySelector("[data-devbot-usage-modal]"),
+			usageBody: document.querySelector("[data-devbot-usage-body]"),
+		};
+
+		// What each system can be asked, shown on the first screen and in "What can it do?".
+		// Kept here, in one list, so the two can never describe different things.
+		var SYSTEMS = [
+			{
+				key: "azure",
+				label: "Azure DevOps",
+				can: "Pipelines, runs and their logs, test results, work items, pull requests and repositories -- and why a run or a test failed, with the fix from Confluence when there is one.",
+				examples: [
+					"What is the error on my latest failed pipeline run, and is there a fix in Confluence?",
+					"Why are the tests failing in my latest run? Are any of them new?",
+					"Is this pull request ready to merge, and what blocks it? PR ",
+					"What is going on with work item ",
+					"Which pull requests are waiting for my review?",
+				],
+			},
+			{
+				key: "sonarqube",
+				label: "SonarQube",
+				can: "Projects, quality gates, issues and measures such as coverage.",
+				examples: [
+					"Which SonarQube projects fail their quality gate?",
+					"What are the critical issues in the new code of ",
+				],
+			},
+			{
+				key: "artifactory",
+				label: "Artifactory",
+				can: "Repositories, artifacts, their details and Docker tags.",
+				examples: [
+					"Trace which run and work items built the Docker image ",
+					"What are the newest Docker tags of the image ",
+				],
+			},
+			{
+				key: "confluence",
+				label: "Confluence",
+				can: "Search pages, read a page, your recent pages and the spaces.",
+				examples: [
+					"Search Confluence for our deployment runbook.",
+					"Which Confluence pages did I look at recently?",
+				],
+			},
+		];
+		var SYSTEM_LABEL = {};
+		SYSTEMS.forEach(function (s) { SYSTEM_LABEL[s.key] = s.label; });
+
+		// How each system stands for this person (api/devbot status -> system_states).
+		var STATE = {
+			connected: { label: "Connected", color: "--su", usable: true },
+			public: { label: "Public projects only", color: "--in", usable: true },
+			missing: { label: "Not connected", color: "--wa", usable: false },
+			unavailable: { label: "Not set up on this Hub", color: "--bc", usable: false },
+		};
+		function stateOf(key) {
+			var systems = (state.status && state.status.systems) || {};
+			return STATE[systems[key]] || STATE.missing;
+		}
+
+		var state = {
+			status: null,
+			conversations: [],
+			current: "",
+			model: "",
+			streaming: null,
+			pendingDeletes: {},
+			stick: true,
+		};
+
+		// ── small helpers ─────────────────────────────────────────────────
+		function esc(v) {
+			return String(v == null ? "" : v).replace(/[&<>"']/g, function (c) {
+				return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+			});
+		}
+		function show(el, on) { if (el) el.style.display = on ? "" : "none"; }
+		function toast(kind, message, extra) {
+			if (window.portalToast) window.portalToast(Object.assign({ kind: kind, message: message }, extra || {}));
+		}
+		function tokens(n) {
+			n = Number(n) || 0;
+			if (n >= 100000) return Math.round(n / 1000) + "K";
+			if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, "") + "K";
+			return String(n);
+		}
+		function seconds(ms) {
+			ms = Number(ms) || 0;
+			return ms < 1000 ? ms + " ms" : (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + " s";
+		}
+		var ICON = {
+			bot: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z"/><path d="M19 14l.9 2.1L22 17l-2.1.9L19 20l-.9-2.1L16 17l2.1-.9z"/></svg>',
+			send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>',
+			stop: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>',
+			check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>',
+			cross: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
+			copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>',
+			link: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>',
+			chevron: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>',
+			pencil: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>',
+			trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>',
+		};
+
+		// ── Markdown ──────────────────────────────────────────────────────
+		// Escape first, format second: nothing the model writes can become markup of
+		// its own. Covers what answers actually use -- headings, lists, tables, code,
+		// links, emphasis -- and nothing that could run.
+		var TICK = String.fromCharCode(96);
+		var FENCE = new RegExp("^\\s*(" + TICK + "{3,}|~{3,})\\s*([\\w+#.-]*)\\s*$");
+		var LIST = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
+
+		function safeUrl(url) {
+			url = String(url || "").trim();
+			if (/^https?:\/\//i.test(url) || /^mailto:/i.test(url) || /^\/(?!\/)/.test(url)) return url;
+			return "";
+		}
+		function inline(text) {
+			var slots = [];
+			function keep(html) { slots.push(html); return "\u0000" + (slots.length - 1) + "\u0000"; }
+			var codeRe = new RegExp(TICK + "([^" + TICK + "\\n]+)" + TICK, "g");
+			var out = String(text).replace(codeRe, function (_, code) { return keep("<code>" + esc(code) + "</code>"); });
+			out = out.replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, function (all, label, url) {
+				var safe = safeUrl(url);
+				if (!safe) return all;
+				return keep('<a href="' + esc(safe) + '" target="_blank" rel="noopener noreferrer">' + esc(label) + "</a>");
+			});
+			out = out.replace(/\bhttps?:\/\/[^\s<>()"']+[^\s<>()"'.,;:!?]/g, function (url) {
+				return keep('<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(url) + "</a>");
+			});
+			out = esc(out);
+			out = out.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+			out = out.replace(/__([^_\n]+)__/g, "<strong>$1</strong>");
+			out = out.replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g, "$1<em>$2</em>");
+			out = out.replace(/~~([^~\n]+)~~/g, "<del>$1</del>");
+			return out.replace(/\u0000(\d+)\u0000/g, function (_, i) { return slots[Number(i)]; });
+		}
+		function isTable(lines, i) {
+			return /\|/.test(lines[i] || "") && /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(lines[i + 1] || "");
+		}
+		function cells(line) {
+			return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(function (c) { return c.trim(); });
+		}
+		function isBlockStart(lines, i) {
+			var line = lines[i];
+			return FENCE.test(line) || /^#{1,6}\s/.test(line) || LIST.test(line) || /^\s*>/.test(line) || isTable(lines, i);
+		}
+		function codeBlock(code, lang) {
+			return '<div class="devbot-code"><div class="devbot-code-head"><span>' + esc(lang || "code") + "</span>" +
+				'<button type="button" class="devbot-icon-btn devbot-copy" data-devbot-copy-code>' + ICON.copy + "Copy</button></div>" +
+				"<pre><code>" + esc(code) + "</code></pre></div>";
+		}
+		function list(lines, start) {
+			// Nested by indentation: each deeper indent opens a list inside the item above.
+			var html = "";
+			var stack = [];
+			var i = start;
+			while (i < lines.length) {
+				var m = lines[i].match(LIST);
+				if (!m) {
+					if (/^\s{2,}\S/.test(lines[i]) && stack.length) {
+						html += " " + inline(lines[i].trim());
+						i++;
+						continue;
+					}
+					break;
+				}
+				var depth = Math.floor(m[1].replace(/\t/g, "  ").length / 2);
+				var type = /\d/.test(m[2]) ? "ol" : "ul";
+				while (stack.length && stack[stack.length - 1].depth > depth) {
+					html += "</li></" + stack.pop().type + ">";
+				}
+				var top = stack[stack.length - 1];
+				if (!top || top.depth < depth) {
+					html += "<" + type + ">";
+					stack.push({ depth: depth, type: type });
+				} else {
+					html += "</li>";
+				}
+				html += '<li dir="auto">' + inline(m[3]);
+				i++;
+			}
+			while (stack.length) html += "</li></" + stack.pop().type + ">";
+			return { html: html, next: i };
+		}
+		function md(src) {
+			var lines = String(src || "").replace(/\r\n/g, "\n").split("\n");
+			var html = "";
+			var i = 0;
+			while (i < lines.length) {
+				var line = lines[i];
+				var m = line.match(FENCE);
+				if (m) {
+					var fence = m[1];
+					var buf = [];
+					i++;
+					while (i < lines.length && lines[i].trim().indexOf(fence) !== 0) { buf.push(lines[i]); i++; }
+					i++;
+					html += codeBlock(buf.join("\n"), m[2]);
+					continue;
+				}
+				if (!line.trim()) { i++; continue; }
+				m = line.match(/^(#{1,6})\s+(.*)$/);
+				if (m) {
+					var level = Math.min(5, m[1].length + 2);
+					html += "<h" + level + ' dir="auto">' + inline(m[2]) + "</h" + level + ">";
+					i++;
+					continue;
+				}
+				if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { html += "<hr>"; i++; continue; }
+				if (isTable(lines, i)) {
+					var head = cells(line);
+					var rows = [];
+					i += 2;
+					while (i < lines.length && /\|/.test(lines[i]) && lines[i].trim()) { rows.push(cells(lines[i])); i++; }
+					html += '<div class="devbot-table"><table><thead><tr>' +
+						head.map(function (c) { return '<th dir="auto">' + inline(c) + "</th>"; }).join("") + "</tr></thead><tbody>" +
+						rows.map(function (r) {
+							return "<tr>" + head.map(function (_, k) { return '<td dir="auto">' + inline(r[k] || "") + "</td>"; }).join("") + "</tr>";
+						}).join("") + "</tbody></table></div>";
+					continue;
+				}
+				if (/^\s*>/.test(line)) {
+					var quote = [];
+					while (i < lines.length && /^\s*>/.test(lines[i])) { quote.push(lines[i].replace(/^\s*>\s?/, "")); i++; }
+					html += "<blockquote>" + md(quote.join("\n")) + "</blockquote>";
+					continue;
+				}
+				if (LIST.test(line)) {
+					var built = list(lines, i);
+					html += built.html;
+					i = built.next;
+					continue;
+				}
+				var para = [line];
+				i++;
+				while (i < lines.length && lines[i].trim() && !isBlockStart(lines, i)) { para.push(lines[i]); i++; }
+				html += '<p dir="auto">' + para.map(inline).join("<br>") + "</p>";
+			}
+			return html;
+		}
+
+		// ── server calls ──────────────────────────────────────────────────
+		function api(method, path, body) {
+			var doFetch = window.portalFetch || fetch;
+			return doFetch(API + path, {
+				method: method,
+				credentials: "same-origin",
+				headers: body ? { "Content-Type": "application/json" } : {},
+				body: body ? JSON.stringify(body) : undefined,
+			}, 45000).then(function (res) {
+				return res.json().catch(function () { return {}; }).then(function (json) {
+					if (!res.ok) {
+						var err = new Error((json && typeof json.detail === "string" && json.detail) || "DevBot request failed (HTTP " + res.status + ").");
+						err.status = res.status;
+						throw err;
+					}
+					return json;
+				});
+			});
+		}
+
+		// ── status: set up? key? models? ──────────────────────────────────
+		function loadStatus() {
+			return api("GET", "status").then(function (json) {
+				state.status = json.data || {};
+				var ids = (state.status.models || []).map(function (m) { return m.id; });
+				var saved = "";
+				try { saved = localStorage.getItem(MODEL_PREF) || ""; } catch (_) {}
+				if (!state.model || ids.indexOf(state.model) < 0) {
+					state.model = ids.indexOf(saved) >= 0 ? saved : (state.status.default_model || ids[0] || "");
+				}
+				renderModelPicker();
+				renderFoot();
+				updateComposer();
+				return state.status;
+			}).catch(function (err) {
+				state.status = { enabled: ENABLED, error: err.message };
+				renderFoot();
+				updateComposer();
+				return state.status;
+			});
+		}
+
+		function ready() {
+			var s = state.status;
+			return !!(s && s.enabled && s.key_connected && !s.model_error && (s.models || []).length);
+		}
+
+		function currentModel() {
+			var models = (state.status && state.status.models) || [];
+			for (var i = 0; i < models.length; i++) if (models[i].id === state.model) return models[i];
+			return null;
+		}
+
+		function modelBadge(m) {
+			if (m.tools === true) return '<span class="devbot-badge" data-kind="live">Live data</span>';
+			if (m.tools === false) return '<span class="devbot-badge">Chat only</span>';
+			return '<span class="devbot-badge" data-kind="unknown">Not checked</span>';
+		}
+
+		function renderModelPicker() {
+			var models = (state.status && state.status.models) || [];
+			var m = currentModel();
+			els.modelBtn.disabled = !models.length;
+			els.modelName.innerHTML = m ? esc(m.label) + " " + modelBadge(m) : "Model";
+			els.modelMenu.innerHTML =
+				'<div class="devbot-kicker" style="padding: 0.4rem 0.6rem 0.3rem">Models your key may use</div>' +
+				models.map(function (item) {
+					var detail = item.tools === true
+						? "Reads your systems to answer."
+						: item.tools === false
+							? "Answers from general knowledge only: " + (item.tools_detail || "it cannot call tools.")
+							: "Not checked yet. Ask it something, or check now (one request).";
+					return '<button type="button" class="devbot-model-item" role="option" data-model="' + esc(item.id) + '" aria-selected="' + (item.id === state.model) + '">' +
+						'<div style="flex: 1 1 auto; min-width: 0"><b dir="auto">' + esc(item.label) + "</b>" +
+						'<span class="devbot-sub">' + esc(detail) + "</span>" +
+						'<span class="devbot-sub">' + tokens(item.context) + " tokens of context" + (item.context_known ? "" : " (assumed)") + "</span>" +
+						(item.tools == null ? '<span class="devbot-sub"><a href="#" data-devbot-check="' + esc(item.id) + '" style="color: hsl(var(--p)); font-weight: 600">Check now</a></span>' : "") +
+						"</div>" + modelBadge(item) + "</button>";
+				}).join("");
+		}
+
+		function openMenu(on) {
+			if (on) els.modelMenu.setAttribute("data-open", "");
+			else els.modelMenu.removeAttribute("data-open");
+			els.modelBtn.setAttribute("aria-expanded", on ? "true" : "false");
+		}
+
+		els.modelBtn.addEventListener("click", function (event) {
+			event.stopPropagation();
+			openMenu(!els.modelMenu.hasAttribute("data-open"));
+		});
+		document.addEventListener("click", function (event) {
+			if (!event.target.closest("[data-devbot-model]")) openMenu(false);
+		});
+		els.modelMenu.addEventListener("click", function (event) {
+			var check = event.target.closest("[data-devbot-check]");
+			if (check) {
+				event.preventDefault();
+				event.stopPropagation();
+				var id = check.getAttribute("data-devbot-check");
+				check.textContent = "Checking...";
+				api("POST", "models/check", { model: id }).then(function (json) {
+					var r = json.data || {};
+					(state.status.models || []).forEach(function (m) { if (m.id === id) { m.tools = r.tools; m.tools_detail = r.detail; } });
+					renderModelPicker();
+					openMenu(true);
+					toast(r.tools ? "success" : "info", (r.tools ? "Can read live data. " : "") + (r.detail || ""));
+				}).catch(function (err) {
+					check.textContent = "Check now";
+					toast("error", err.message);
+				});
+				return;
+			}
+			var item = event.target.closest("[data-model]");
+			if (!item) return;
+			state.model = item.getAttribute("data-model");
+			try { localStorage.setItem(MODEL_PREF, state.model); } catch (_) {}
+			renderModelPicker();
+			openMenu(false);
+			if (!state.current) renderEmpty();
+			els.input.focus();
+		});
+
+		function renderFoot() {
+			var s = state.status || {};
+			var html = "";
+			if (!s.enabled) {
+				html = "DevBot is not set up on this Hub yet.";
+			} else if (!s.key_connected) {
+				html = 'No AI key connected. <a href="/ui/connections" class="link link-primary">Connections</a>';
+			} else {
+				html = limitsHtml(s.limits || {}, s.key_info || {}) +
+					'<div class="flex items-center gap-3" style="margin-top: 0.55rem">' +
+					'<button type="button" class="link link-primary" data-devbot-usage>Usage</button>' +
+					'<a href="/ui/connections" class="link link-primary">Change your AI key</a></div>';
+			}
+			els.foot.innerHTML = html;
+		}
+
+		function bar(left, limit) {
+			var pct = Math.max(0, Math.min(100, Math.round((left / limit) * 100)));
+			return '<div class="devbot-bar"' + (pct < 20 ? " data-low" : "") + '><span style="width: ' + pct + '%"></span></div>';
+		}
+
+		function limitsHtml(limits, info) {
+			var rpm = limits.rpm || info.rpm;
+			var tpm = limits.tpm || info.tpm;
+			var fresh = limits.at && Date.now() / 1000 - limits.at < 60;
+			var html = '<div class="devbot-kicker">Your AI key</div>';
+			if (!rpm && !tpm) {
+				html += '<div class="devbot-limit-row"><span>Limits</span><span>not reported</span></div>';
+			}
+			if (rpm) {
+				html += '<div class="devbot-limit-row"><span>Requests / min</span><span>' +
+					(fresh && limits.rpm_left != null ? limits.rpm_left + " left of " : "") + rpm + "</span></div>" +
+					(fresh && limits.rpm_left != null ? bar(limits.rpm_left, rpm) : "");
+			}
+			if (tpm) {
+				html += '<div class="devbot-limit-row"><span>Tokens / min</span><span>' +
+					(fresh && limits.tpm_left != null ? tokens(limits.tpm_left) + " left of " : "") + tokens(tpm) + "</span></div>" +
+					(fresh && limits.tpm_left != null ? bar(limits.tpm_left, tpm) : "");
+			}
+			if (info.budget) {
+				html += '<div class="devbot-limit-row"><span>Budget used</span><span>' +
+					(Number(info.spend || 0)).toFixed(2) + " of " + Number(info.budget).toFixed(2) + "</span></div>" + bar(info.budget - (info.spend || 0), info.budget);
+			}
+			if (info.expires) {
+				html += '<div class="devbot-limit-row"><span>Expires</span><span>' + esc(String(info.expires).slice(0, 10)) + "</span></div>";
+			}
+			return html;
+		}
+
+		// ── conversations ─────────────────────────────────────────────────
+		function loadConversations() {
+			return api("GET", "conversations").then(function (json) {
+				state.conversations = (json.data || []).filter(function (c) { return !state.pendingDeletes[c.id]; });
+				renderList();
+			}).catch(function (err) {
+				els.list.innerHTML = '<div class="devbot-side-empty">Could not load your conversations: ' + esc(err.message) + "</div>";
+			});
+		}
+
+		function groupOf(iso) {
+			var then = new Date(iso);
+			var now = new Date();
+			var day = 86400000;
+			var startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+			if (then.getTime() >= startToday) return "Today";
+			if (then.getTime() >= startToday - day) return "Yesterday";
+			if (then.getTime() >= startToday - 7 * day) return "Previous 7 days";
+			return "Older";
+		}
+
+		function renderList() {
+			if (!state.conversations.length) {
+				var days = (state.status && state.status.history_days) || 30;
+				els.list.innerHTML = '<div class="devbot-side-empty">Your conversations appear here. Each one is kept for ' + days + " days after you last used it.</div>";
+				return;
+			}
+			var html = "";
+			var last = "";
+			state.conversations.forEach(function (c) {
+				var group = groupOf(c.updated_at || c.created_at);
+				if (group !== last) { html += '<div class="devbot-group">' + group + "</div>"; last = group; }
+				html += '<div class="devbot-conv" role="link" tabindex="0" data-conv="' + esc(c.id) + '" aria-current="' + (c.id === state.current) + '">' +
+					'<span class="devbot-conv-title" dir="auto" title="' + esc(c.title) + '">' + esc(c.title || "New conversation") + "</span>" +
+					'<button type="button" class="devbot-icon-btn devbot-conv-act" data-conv-rename title="Rename" aria-label="Rename">' + ICON.pencil + "</button>" +
+					'<button type="button" class="devbot-icon-btn devbot-conv-act" data-conv-delete title="Delete" aria-label="Delete">' + ICON.trash + "</button>" +
+					"</div>";
+			});
+			els.list.innerHTML = html;
+		}
+
+		els.list.addEventListener("click", function (event) {
+			var row = event.target.closest("[data-conv]");
+			if (!row) return;
+			var id = row.getAttribute("data-conv");
+			if (event.target.closest("[data-conv-delete]")) return removeConversation(id);
+			if (event.target.closest("[data-conv-rename]")) return renameConversation(row, id);
+			if (event.target.closest(".devbot-conv-edit")) return;
+			if (state.streaming) return toast("info", "Wait for the answer to finish, or press Stop.");
+			openConversation(id, true);
+			els.side.removeAttribute("data-open");
+		});
+		els.list.addEventListener("keydown", function (event) {
+			var row = event.target.closest("[data-conv]");
+			if (row && event.key === "Enter" && event.target === row) openConversation(row.getAttribute("data-conv"), true);
+		});
+
+		function renameConversation(row, id) {
+			var conv = state.conversations.filter(function (c) { return c.id === id; })[0];
+			if (!conv) return;
+			var title = row.querySelector(".devbot-conv-title");
+			var input = document.createElement("input");
+			input.className = "devbot-conv-edit";
+			input.value = conv.title || "";
+			input.maxLength = 200;
+			input.setAttribute("dir", "auto");
+			title.replaceWith(input);
+			input.focus();
+			input.select();
+			var done = false;
+			function finish(save) {
+				if (done) return;
+				done = true;
+				var value = input.value.trim();
+				if (!save || !value || value === conv.title) return renderList();
+				conv.title = value;
+				renderList();
+				api("PATCH", "conversations/" + encodeURIComponent(id), { title: value }).catch(function (err) { toast("error", err.message); loadConversations(); });
+			}
+			input.addEventListener("keydown", function (e) {
+				if (e.key === "Enter") { e.preventDefault(); finish(true); }
+				if (e.key === "Escape") { e.preventDefault(); finish(false); }
+			});
+			input.addEventListener("blur", function () { finish(true); });
+		}
+
+		// Deleting takes effect after the toast's Undo has had its chance: the row goes
+		// at once, the server is told eight seconds later unless Undo was pressed.
+		function removeConversation(id) {
+			var conv = state.conversations.filter(function (c) { return c.id === id; })[0];
+			if (!conv) return;
+			var timer = setTimeout(function () { commitDelete(id); }, 8000);
+			state.pendingDeletes[id] = timer;
+			state.conversations = state.conversations.filter(function (c) { return c.id !== id; });
+			renderList();
+			if (state.current === id) newChat(true);
+			toast("success", "Conversation deleted.", {
+				action: {
+					label: "Undo",
+					run: function () {
+						clearTimeout(state.pendingDeletes[id]);
+						delete state.pendingDeletes[id];
+						loadConversations();
+					},
+				},
+			});
+		}
+		function commitDelete(id) {
+			delete state.pendingDeletes[id];
+			api("DELETE", "conversations/" + encodeURIComponent(id)).catch(function (err) {
+				if (err.status !== 404) toast("error", "The conversation was not deleted: " + err.message);
+			});
+		}
+		window.addEventListener("pagehide", function () {
+			Object.keys(state.pendingDeletes).forEach(function (id) {
+				try {
+					fetch(API + "conversations/" + encodeURIComponent(id), { method: "DELETE", credentials: "same-origin", keepalive: true });
+				} catch (_) {}
+			});
+		});
+
+		function setUrl(id, push) {
+			try {
+				var url = new URL(window.location.href);
+				if (id) url.searchParams.set("c", id); else url.searchParams.delete("c");
+				if (push) history.pushState({ c: id }, "", url); else history.replaceState({ c: id }, "", url);
+			} catch (_) {}
+		}
+
+		function openConversation(id, push) {
+			state.current = id;
+			renderList();
+			setUrl(id, push);
+			els.thread.innerHTML = '<div class="devbot-working"><span class="loading loading-spinner loading-sm"></span>Loading the conversation...</div>';
+			return api("GET", "conversations/" + encodeURIComponent(id)).then(function (json) {
+				var conv = json.data || {};
+				var models = (state.status && state.status.models) || [];
+				if (conv.model && models.some(function (m) { return m.id === conv.model; })) {
+					state.model = conv.model;
+					renderModelPicker();
+				}
+				els.thread.innerHTML = "";
+				var question = "";
+				(conv.messages || []).forEach(function (msg) {
+					if (msg.role === "user") {
+						question = msg.content;
+						addUser(msg.content);
+					} else {
+						renderStored(msg, question);
+					}
+				});
+				if (!(conv.messages || []).length) renderEmpty();
+				state.stick = true;
+				scrollDown(true);
+			}).catch(function (err) {
+				els.thread.innerHTML = '<div class="devbot-error" dir="auto">' + esc(err.message) + "</div>";
+				if (err.status === 404) { state.current = ""; setUrl("", false); }
+			});
+		}
+
+		function newChat(silent) {
+			if (state.streaming) stop();
+			state.current = "";
+			renderList();
+			setUrl("", !silent);
+			renderEmpty();
+			els.input.value = "";
+			autosize();
+			if (!silent) els.input.focus();
+		}
+
+		els.newBtn.addEventListener("click", function () { newChat(false); });
+		els.sideToggle.addEventListener("click", function () {
+			if (els.side.hasAttribute("data-open")) els.side.removeAttribute("data-open");
+			else els.side.setAttribute("data-open", "");
+		});
+		window.addEventListener("popstate", function () {
+			var id = new URL(window.location.href).searchParams.get("c") || "";
+			if (state.streaming) return;
+			if (id) openConversation(id, false); else newChat(true);
+		});
+
+		// ── the first screen, and the setup states ────────────────────────
+		function renderEmpty() {
+			var s = state.status || {};
+			if (!s.enabled) {
+				els.thread.innerHTML = '<div class="devbot-panel"><h2>DevBot is not set up yet</h2>' +
+					"<p>DevBot needs the address of the AI model service before anyone can use it. A platform admin sets it " +
+					"as <code>DEVBOT_LLM_BASE_URL</code> in the Hub's pipeline variables; the page comes to life on the next deploy.</p></div>";
+				return;
+			}
+			if (s.error) {
+				els.thread.innerHTML = '<div class="devbot-panel"><h2>DevBot could not start</h2><p>' + esc(s.error) +
+					'</p><button type="button" class="btn btn-sm rounded-full px-4" style="margin-top: 0.9rem" data-devbot-retry>Try again</button></div>';
+				return;
+			}
+			if (!s.key_connected || s.model_error) {
+				renderKeyPanel(s.model_error ? s.model_error.message : "");
+				return;
+			}
+			var systems = s.systems || {};
+			var m = currentModel();
+			var live = m && m.tools !== false;
+			els.thread.innerHTML =
+				'<div class="devbot-hero"><h2 dir="auto">' + (FIRST_NAME ? "Hi " + esc(FIRST_NAME) + ", what" : "What") +
+				" can I find for you?</h2><p>" + (live
+					? "I read your systems with your own tokens, and I can look across several of them for one answer."
+					: "This model cannot read live data. Pick a model marked Live data to ask about your systems.") + "</p></div>" +
+				'<div class="devbot-cards">' + SYSTEMS.map(function (sys) {
+					var st = stateOf(sys.key);
+					var paint = st.color === "--bc" ? "hsl(var(--bc) / 0.4)" : "hsl(var(" + st.color + "))";
+					return '<div class="devbot-card"><div class="devbot-card-head"><b>' + esc(sys.label) + "</b>" +
+						'<span class="devbot-dot" style="background: ' + paint + '"></span>' +
+						'<span class="devbot-state" style="color: ' + paint + '">' + esc(st.label) + "</span></div>" +
+						sys.examples.map(function (ex) {
+							// An example ending in a space is one to finish: it shows an ellipsis
+							// and fills the box untrimmed, ready for the name.
+							return '<button type="button" class="devbot-example" data-devbot-example="' + esc(ex) + '" dir="auto"' +
+								(st.usable && live ? "" : " disabled") + ">" + esc(ex.trim()) + (/\s$/.test(ex) ? "…" : "") + "</button>";
+						}).join("") +
+						(st === STATE.missing || (st === STATE.public)
+							? '<a href="/ui/connections" class="link link-primary" style="font-size: 0.75rem; padding: 0 0.5rem">' +
+								(st === STATE.public ? "Connect a token for private projects" : "Connect " + esc(sys.label)) + "</a>"
+							: "") +
+						"</div>";
+				}).join("") + "</div>" +
+				'<div class="devbot-trust">DevBot answers with <b>your</b> access: it reads each system with the token you connected, ' +
+				"so it sees exactly what you can see. Your question, and what it reads to answer it, are sent to the AI model service " +
+				"with your AI key. It never changes anything without your confirmation, and each conversation is kept for " +
+				((s.history_days) || 30) + " days after you last use it.</div>";
+		}
+
+		function renderKeyPanel(problem) {
+			var s = state.status || {};
+			els.thread.innerHTML =
+				'<div class="devbot-panel"><h2>' + (problem ? "Your AI key needs attention" : "Connect your AI model key") + "</h2>" +
+				(problem ? '<p style="color: hsl(var(--er))" dir="auto">' + esc(problem) + "</p>" : "") +
+				"<p>DevBot talks to the AI models with <b>your own key</b>. The key decides which models you can use and how many " +
+				"questions a minute you can ask; DevBot shows both. It is stored encrypted and never leaves the Hub's server.</p>" +
+				'<div class="flex items-center gap-2" style="margin-top: 1rem">' +
+				'<input type="password" class="input input-bordered input-sm w-full" placeholder="Paste your AI key" data-devbot-key autocomplete="off">' +
+				'<button type="button" class="btn btn-primary btn-sm rounded-full px-5" data-devbot-key-save>Save</button>' +
+				'<button type="button" class="btn btn-ghost btn-sm btn-circle" data-pat-help="devbot" aria-label="How do I get a key?" title="How do I get a key?">?</button>' +
+				"</div>" +
+				'<p style="font-size: 0.75rem">You can also connect it, or disconnect it later, on the <a href="/ui/connections" class="link link-primary">Connections</a> page.' +
+				(s.key_help_url ? ' Keys are issued at <a class="link link-primary" target="_blank" rel="noopener noreferrer" href="' + esc(safeUrl(s.key_help_url)) + '">' + esc(s.key_help_url) + "</a>." : "") + "</p></div>";
+			var input = els.thread.querySelector("[data-devbot-key]");
+			if (input) input.focus();
+		}
+
+		els.thread.addEventListener("click", function (event) {
+			var example = event.target.closest("[data-devbot-example]");
+			if (example && !example.disabled) {
+				els.input.value = example.getAttribute("data-devbot-example").replace(/^\s+/, "");
+				autosize();
+				updateComposer();
+				els.input.focus();
+				return;
+			}
+			var review = event.target.closest("[data-action-review]");
+			if (review && !review.disabled) {
+				var found = findAction(review);
+				if (!found) return;
+				if (!window.portalAdo) { toast("error", "The review dialog did not load on this page. Reload it and try again."); return; }
+				openAction = found;
+				window.portalAdo.open(found.action.kind, found.action.target);
+				return;
+			}
+			var dismiss = event.target.closest("[data-action-dismiss]");
+			if (dismiss && !dismiss.disabled) {
+				var gone = findAction(dismiss);
+				if (gone) recordOutcome(gone.view, gone.action, "declined", "", "");
+				return;
+			}
+			if (event.target.closest("[data-devbot-retry]")) { boot(); return; }
+			var again = event.target.closest("[data-devbot-ask-again]");
+			if (again && !again.disabled) {
+				var failedView = again.closest("[data-devbot-answer]").devbotView;
+				if (state.streaming) { toast("info", "Wait for the answer to finish, or press Stop."); return; }
+				if (failedView && failedView.question && ready()) ask(failedView.question);
+				return;
+			}
+			if (event.target.closest("[data-devbot-newchat]")) { newChat(false); return; }
+			if (event.target.closest("[data-devbot-key-save]")) { saveKey(); return; }
+			var copyCode = event.target.closest("[data-devbot-copy-code]");
+			if (copyCode) {
+				var code = copyCode.closest(".devbot-code").querySelector("code");
+				copy(code ? code.textContent : "", copyCode);
+				return;
+			}
+			var copyAnswer = event.target.closest("[data-devbot-copy]");
+			if (copyAnswer) {
+				var holder = copyAnswer.closest("[data-devbot-answer]");
+				copy(holder ? holder.getAttribute("data-raw") || "" : "", copyAnswer);
+				return;
+			}
+			var sourcesBtn = event.target.closest("[data-devbot-sources-btn]");
+			if (sourcesBtn) {
+				var list = sourcesBtn.closest("[data-devbot-answer]").querySelector("[data-devbot-sources]");
+				if (list) show(list, list.style.display === "none");
+			}
+		});
+		els.thread.addEventListener("keydown", function (event) {
+			if (event.key === "Enter" && event.target.matches("[data-devbot-key]")) { event.preventDefault(); saveKey(); }
+		});
+
+		function saveKey() {
+			var input = els.thread.querySelector("[data-devbot-key]");
+			var btn = els.thread.querySelector("[data-devbot-key-save]");
+			var key = (input && input.value || "").trim();
+			if (!key) return;
+			btn.disabled = true;
+			btn.textContent = "Checking...";
+			(window.portalFetch || fetch)("/api/integrations/devbot/token", {
+				method: "POST",
+				credentials: "same-origin",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ token: key }),
+			}, 45000).then(function (res) {
+				if (res.ok) {
+					toast("success", "Your AI key is connected.");
+					return boot();
+				}
+				return res.json().catch(function () { return {}; }).then(function (json) {
+					throw new Error((json && json.detail) || "The key was not accepted.");
+				});
+			}).catch(function (err) {
+				toast("error", err.message);
+				btn.disabled = false;
+				btn.textContent = "Save";
+			});
+		}
+
+		function copy(text, btn) {
+			function done() {
+				var old = btn.innerHTML;
+				btn.innerHTML = ICON.check + "Copied";
+				setTimeout(function () { btn.innerHTML = old; }, 1400);
+			}
+			if (navigator.clipboard && window.isSecureContext) {
+				navigator.clipboard.writeText(text).then(done, function () { toast("error", "Could not copy."); });
+				return;
+			}
+			var area = document.createElement("textarea");
+			area.value = text;
+			area.style.position = "fixed";
+			area.style.opacity = "0";
+			document.body.appendChild(area);
+			area.select();
+			try { document.execCommand("copy"); done(); } catch (_) { toast("error", "Could not copy."); }
+			area.remove();
+		}
+
+		// ── the thread ────────────────────────────────────────────────────
+		function nearBottom() {
+			var s = els.scroll;
+			return s.scrollHeight - s.scrollTop - s.clientHeight < 90;
+		}
+		els.scroll.addEventListener("scroll", function () { state.stick = nearBottom(); });
+		function scrollDown(force) {
+			if (force || state.stick) els.scroll.scrollTop = els.scroll.scrollHeight;
+		}
+
+		function clearEmpty() {
+			var panel = els.thread.querySelector(".devbot-hero, .devbot-panel");
+			if (panel) els.thread.innerHTML = "";
+		}
+
+		function addUser(text) {
+			clearEmpty();
+			var el = document.createElement("div");
+			el.className = "devbot-user";
+			el.setAttribute("dir", "auto");
+			el.textContent = text;
+			els.thread.appendChild(el);
+			return el;
+		}
+
+		function stepHtml(step) {
+			var ico = step.status === "running" ? '<span class="devbot-spin"></span>' : step.status === "error" ? ICON.cross : ICON.check;
+			return '<div class="devbot-step" data-step="' + esc(step.id) + '" data-status="' + esc(step.status) + '">' +
+				'<span class="devbot-step-ico">' + ico + "</span>" +
+				'<div style="min-width: 0"><span class="devbot-sys" data-sys="' + esc(step.system) + '">' + esc(SYSTEM_LABEL[step.system] || step.system || "DevBot") + "</span> " +
+				"<span>" + esc(step.label || step.tool) + "</span>" +
+				(step.detail ? ' <span class="devbot-step-detail" dir="auto">— ' + esc(step.detail) + "</span>" : "") +
+				(step.not_connected ? ' <a href="/ui/connections" class="link link-primary">Connect</a>' : "") +
+				trailHtml(step.trail) +
+				"</div></div>";
+		}
+
+		// What an investigation did on its way, one line per system it touched.
+		function trailHtml(trail) {
+			if (!trail || !trail.length) return "";
+			return '<div class="devbot-trail" data-devbot-trail>' + trail.slice(-8).map(function (t) {
+				return '<span dir="auto">' + esc(t.text) + "</span>";
+			}).join("") + "</div>";
+		}
+
+		function metaHtml(meta) {
+			var usage = meta.usage || {};
+			var parts = [];
+			if (meta.model_label || meta.model) parts.push("<span>" + esc(meta.model_label || meta.model) + "</span>");
+			if (usage.prompt_tokens || usage.completion_tokens) {
+				parts.push('<span title="Tokens this answer used: sent to the model, and written by it">' +
+					tokens(usage.prompt_tokens) + " in · " + tokens(usage.completion_tokens) + " out</span>");
+			}
+			if (usage.requests) parts.push('<span title="Model requests this answer made against your key">' + usage.requests + " request" + (usage.requests === 1 ? "" : "s") + "</span>");
+			if (meta.duration_ms) parts.push("<span>" + seconds(meta.duration_ms) + "</span>");
+			var html = parts.join('<span aria-hidden="true">·</span>');
+			html += '<button type="button" class="devbot-icon-btn" data-devbot-copy title="Copy the answer">' + ICON.copy + "Copy</button>";
+			var sources = meta.sources || [];
+			if (sources.length) {
+				html += '<button type="button" class="devbot-icon-btn" data-devbot-sources-btn>' + ICON.link + sources.length + " source" + (sources.length === 1 ? "" : "s") + "</button>";
+			}
+			return html;
+		}
+
+		// ── proposed changes ──────────────────────────────────────────────
+		// DevBot never writes. A card opens the widgets' own dialog on DevBot's draft
+		// (window.portalAdo, from ado-actions.html); the person checks and confirms it
+		// there, as themselves, and the outcome is written back onto this answer.
+		var ACTION_STATE = { done: "Done", simulated: "Simulated only: Safe Mode is on", declined: "Declined" };
+		var openAction = null;
+
+		function actionHtml(a, ready) {
+			var status = a.status || "proposed";
+			var right;
+			if (status === "proposed") {
+				right = '<button type="button" class="btn btn-primary btn-xs rounded-full px-3" data-action-review' +
+					(ready ? "" : ' disabled title="Available once the answer is finished"') + ">Review</button>" +
+					'<button type="button" class="devbot-icon-btn" data-action-dismiss' + (ready ? "" : " disabled") + ">Dismiss</button>";
+			} else {
+				var url = safeUrl(a.url);
+				right = '<span class="devbot-action-state">' + (status === "done" ? ICON.check : "") + esc(ACTION_STATE[status] || status) + "</span>" +
+					(url ? '<a class="devbot-icon-btn" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + ICON.link + "Open</a>" : "");
+			}
+			return '<div class="devbot-action" data-action="' + esc(a.id) + '" data-status="' + esc(status) + '"' + (a.suggested ? " data-suggested" : "") + ">" +
+				'<span class="devbot-sys" data-sys="' + esc(a.system) + '">' + esc(SYSTEM_LABEL[a.system] || a.system) + "</span>" +
+				'<div class="devbot-action-text"><b dir="auto">' + esc(a.title) + '</b><span dir="auto">' +
+				esc(status === "proposed" ? a.summary : (a.result || a.summary)) + "</span></div>" + right + "</div>";
+		}
+
+		function renderActions(view) {
+			var box = view.body.querySelector("[data-devbot-actions]");
+			var list = view.actions || [];
+			var ready = !!view.messageId;
+			var asked = list.filter(function (a) { return !a.suggested; });
+			var offered = list.filter(function (a) { return a.suggested; });
+			box.innerHTML = list.length ? '<div class="devbot-actions">' +
+				asked.map(function (a) { return actionHtml(a, ready); }).join("") +
+				(offered.length ? '<div class="devbot-kicker" style="margin-top: 0.2rem">Next steps you can take</div>' +
+					offered.map(function (a) { return actionHtml(a, ready); }).join("") : "") +
+				"</div>" : "";
+		}
+
+		function findAction(button) {
+			var card = button.closest("[data-action]");
+			var body = card && card.closest("[data-devbot-answer]");
+			var view = body && body.devbotView;
+			if (!view) return null;
+			var id = card.getAttribute("data-action");
+			var action = (view.actions || []).filter(function (a) { return a.id === id; })[0];
+			return action ? { view: view, action: action } : null;
+		}
+
+		function recordOutcome(view, action, status, result, url) {
+			action.status = status;
+			action.result = result;
+			action.url = url;
+			renderActions(view);
+			api("POST", "conversations/" + encodeURIComponent(view.conversationId) + "/actions/" + encodeURIComponent(action.id),
+				{ message_id: view.messageId, status: status, result: result || "", url: url || "" })
+				.catch(function (err) { toast("error", "The outcome was not saved in the conversation: " + err.message); });
+		}
+
+		document.addEventListener("portal:action-done", function (event) {
+			var detail = event.detail || {};
+			if (!openAction || detail.kind !== openAction.action.kind) return;
+			var result = detail.result || {};
+			recordOutcome(openAction.view, openAction.action, result.simulated ? "simulated" : "done",
+				result.result || result.summary || "", result.url || "");
+			openAction = null;
+		});
+		document.addEventListener("portal:action-closed", function () { openAction = null; });
+
+		function sourcesHtml(sources) {
+			return sources.map(function (s) {
+				var url = safeUrl(s.url);
+				return '<div class="devbot-source"><span class="devbot-sys" data-sys="' + esc(s.system) + '">' + esc(SYSTEM_LABEL[s.system] || s.system || "Link") + "</span>" +
+					(url ? '<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer" dir="auto" title="' + esc(url) + '">' + esc(s.title || url) + "</a>" : "<span>" + esc(s.title) + "</span>") + "</div>";
+			}).join("");
+		}
+
+		// One answer on the page: built empty, filled as events arrive, or drawn at once
+		// from a stored message.
+		function botView() {
+			clearEmpty();
+			var el = document.createElement("div");
+			el.className = "devbot-bot";
+			el.innerHTML = '<div class="devbot-avatar">' + ICON.bot + "</div>" +
+				'<div class="devbot-bot-body" data-devbot-answer>' +
+				'<details class="devbot-fold" data-devbot-think style="display: none"><summary>' + ICON.chevron + '<span data-devbot-think-label>Thinking...</span></summary><div class="devbot-think-body" dir="auto"></div></details>' +
+				'<div class="devbot-steps" data-devbot-steps style="display: none"></div>' +
+				'<div data-devbot-interim></div>' +
+				'<div class="devbot-md" data-devbot-md></div>' +
+				'<div data-devbot-actions></div>' +
+				'<div data-devbot-notices></div>' +
+				'<div class="devbot-meta" data-devbot-meta style="display: none"></div>' +
+				'<div class="devbot-sources" data-devbot-sources style="display: none"></div>' +
+				"</div>";
+			els.thread.appendChild(el);
+			var body = el.querySelector("[data-devbot-answer]");
+			var view = {
+				el: el,
+				body: body,
+				text: "",
+				reasoning: "",
+				thinkStarted: 0,
+				steps: {},
+				trails: {},
+				actions: [],
+				messageId: 0,
+				conversationId: state.current,
+				frame: 0,
+				mdEl: body.querySelector("[data-devbot-md]"),
+				stepsEl: body.querySelector("[data-devbot-steps]"),
+				thinkEl: body.querySelector("[data-devbot-think]"),
+			};
+			body.devbotView = view;
+			return view;
+		}
+
+		function paint(view, streaming) {
+			view.frame = 0;
+			view.mdEl.innerHTML = md(view.text);
+			if (streaming) {
+				var lastBlock = view.mdEl.lastElementChild;
+				if (lastBlock && !lastBlock.classList.contains("devbot-code")) lastBlock.classList.add("devbot-caret");
+			}
+			scrollDown();
+		}
+		function schedulePaint(view) {
+			if (view.frame) return;
+			view.frame = requestAnimationFrame(function () { paint(view, true); });
+		}
+
+		function setWorking(view, label) {
+			if (view.text) return;
+			view.mdEl.innerHTML = label ? '<div class="devbot-working"><span class="devbot-spin"></span>' + esc(label) + "</div>" : "";
+		}
+
+		function addNotice(view, level, text) {
+			var box = view.body.querySelector("[data-devbot-notices]");
+			var n = document.createElement("div");
+			n.className = "devbot-notice";
+			n.setAttribute("data-level", level || "info");
+			n.setAttribute("dir", "auto");
+			n.textContent = text;
+			box.appendChild(n);
+		}
+
+		function finishThinking(view) {
+			if (!view.reasoning || !view.thinkStarted) return;
+			var took = Math.max(1, Math.round((Date.now() - view.thinkStarted) / 1000));
+			view.thinkEl.querySelector("[data-devbot-think-label]").textContent = "Thought for " + took + " s";
+			view.thinkStarted = 0;
+		}
+
+		function handle(event, view) {
+			switch (event.type) {
+				case "start":
+					if (!state.current || state.current !== event.conversation_id) {
+						var isNew = !state.conversations.some(function (c) { return c.id === event.conversation_id; });
+						state.current = event.conversation_id;
+						setUrl(state.current, false);
+						if (isNew) {
+							state.conversations.unshift({ id: event.conversation_id, title: event.title, updated_at: new Date().toISOString() });
+						}
+						renderList();
+					}
+					setWorking(view, "Thinking...");
+					break;
+				case "notice":
+					addNotice(view, event.level, event.text);
+					break;
+				case "reasoning":
+					if (!view.thinkStarted && !view.reasoning) view.thinkStarted = Date.now();
+					view.reasoning += event.text;
+					show(view.thinkEl, true);
+					view.thinkEl.querySelector(".devbot-think-body").textContent = view.reasoning;
+					break;
+				case "interim":
+					finishThinking(view);
+					var said = (event.text || view.text || "").trim();
+					if (said) {
+						var note = document.createElement("div");
+						note.className = "devbot-interim";
+						note.setAttribute("dir", "auto");
+						note.textContent = said;
+						view.body.querySelector("[data-devbot-interim]").appendChild(note);
+					}
+					view.text = "";
+					view.mdEl.innerHTML = "";
+					break;
+				case "step":
+					finishThinking(view);
+					show(view.stepsEl, true);
+					// A lookup means the model called a tool: it reads live data. The server
+					// has just recorded that; the picker says so without a reload.
+					var answering = currentModel();
+					if (answering && answering.tools !== true) {
+						answering.tools = true;
+						renderModelPicker();
+					}
+					var existing = view.stepsEl.querySelector('[data-step="' + (window.CSS && CSS.escape ? CSS.escape(event.id) : event.id) + '"]');
+					var html = stepHtml(Object.assign({ trail: view.trails[event.id] }, event));
+					if (existing) existing.outerHTML = html; else view.stepsEl.insertAdjacentHTML("beforeend", html);
+					setWorking(view, event.status === "running" ? event.label + "..." : "Reading the results...");
+					scrollDown();
+					break;
+				case "substep":
+					var holder = view.stepsEl.querySelector('[data-step="' + (window.CSS && CSS.escape ? CSS.escape(event.id) : event.id) + '"]');
+					if (holder) {
+						view.trails[event.id] = (view.trails[event.id] || []).concat([{ system: event.system, text: event.text }]);
+						var trail = holder.querySelector("[data-devbot-trail]");
+						var fresh = trailHtml(view.trails[event.id]);
+						if (trail) trail.outerHTML = fresh; else holder.lastElementChild.insertAdjacentHTML("beforeend", fresh);
+						setWorking(view, event.text + "...");
+						scrollDown();
+					}
+					break;
+				case "delta":
+					finishThinking(view);
+					view.text += event.text;
+					schedulePaint(view);
+					break;
+				case "action":
+					view.actions.push(event.action);
+					renderActions(view);
+					scrollDown();
+					break;
+				case "limits":
+					if (state.status) {
+						state.status.limits = Object.assign({}, state.status.limits || {}, event.limits || {}, { at: Date.now() / 1000 });
+						renderFoot();
+					}
+					break;
+				case "done":
+					finishThinking(view);
+					finalise(view, event.message || {});
+					break;
+				case "error":
+					finishThinking(view);
+					showError(view, event);
+					break;
+			}
+		}
+
+		function finalise(view, message) {
+			if (view.frame) { cancelAnimationFrame(view.frame); view.frame = 0; }
+			var meta = message.meta || {};
+			view.text = message.content || view.text;
+			view.body.setAttribute("data-raw", view.text);
+			paint(view, false);
+			// Saved now: the proposals have an answer to record their outcome on.
+			view.messageId = message.id || 0;
+			view.conversationId = state.current;
+			view.actions = meta.actions || view.actions;
+			renderActions(view);
+			var metaEl = view.body.querySelector("[data-devbot-meta]");
+			metaEl.innerHTML = metaHtml(meta);
+			show(metaEl, true);
+			var sourcesEl = view.body.querySelector("[data-devbot-sources]");
+			sourcesEl.innerHTML = sourcesHtml(meta.sources || []);
+			var steps = meta.steps || [];
+			if (steps.length) {
+				// Once the answer is there, the lookups fold away into one line.
+				var fold = document.createElement("details");
+				fold.className = "devbot-fold";
+				fold.innerHTML = "<summary>" + ICON.chevron + "<span>" + foldLabel(steps) + "</span></summary>";
+				view.stepsEl.parentNode.insertBefore(fold, view.stepsEl);
+				fold.appendChild(view.stepsEl);
+			}
+			scrollDown();
+		}
+
+		function foldLabel(steps) {
+			// Every system a lookup touched, including the ones an investigation read on its
+			// way (its trail): "in Azure DevOps" undersells a lookup that also searched
+			// Confluence and Artifactory.
+			var systems = {};
+			steps.forEach(function (s) {
+				if (s.system) systems[SYSTEM_LABEL[s.system] || s.system] = 1;
+				(s.trail || []).forEach(function (t) { if (t.system) systems[SYSTEM_LABEL[t.system] || t.system] = 1; });
+			});
+			var names = Object.keys(systems);
+			var failed = steps.filter(function (s) { return s.status === "error"; }).length;
+			return "Looked up " + steps.length + " thing" + (steps.length === 1 ? "" : "s") +
+				(names.length ? " in " + names.join(", ") : "") + (failed ? " · " + failed + " failed" : "");
+		}
+
+		function showError(view, event) {
+			if (view.frame) { cancelAnimationFrame(view.frame); view.frame = 0; }
+			if (!view.text) view.mdEl.innerHTML = "";
+			var box = document.createElement("div");
+			box.className = "devbot-error";
+			box.setAttribute("dir", "auto");
+			box.textContent = event.message || "Something went wrong.";
+			var kind = event.kind || "";
+			if (kind === "no_key" || kind === "key") {
+				box.insertAdjacentHTML("beforeend", ' <a href="/ui/connections" class="link link-primary">Connect a new key</a>');
+			}
+			if (kind === "model_denied" || kind === "model_missing" || kind === "tools") {
+				box.insertAdjacentHTML("beforeend", " Pick another model at the top of the page.");
+			}
+			// Failures that pass get a way to try again -- after the wait the gateway named,
+			// when it named one, since a click before then is a request spent on a refusal.
+			var passing = ["limit", "timeout", "server", "network", "busy", "empty_answer", "internal", "request"];
+			if (kind === "context") {
+				box.insertAdjacentHTML("beforeend", ' <button type="button" class="btn btn-xs rounded-full px-3" style="margin-inline-start: 0.4rem" data-devbot-newchat>Start a new chat</button>');
+			} else if (view.question && passing.indexOf(kind) >= 0) {
+				var wait = Number(event.retry_after) || 0;
+				box.insertAdjacentHTML("beforeend", ' <button type="button" class="btn btn-xs rounded-full px-3" style="margin-inline-start: 0.4rem" data-devbot-ask-again' +
+					(wait ? " disabled" : "") + ">" + (wait ? "Ask again in " + wait + " s" : "Ask again") + "</button>");
+				if (wait) countdown(box.querySelector("[data-devbot-ask-again]"), wait);
+			}
+			view.body.querySelector("[data-devbot-notices]").appendChild(box);
+			if (kind === "key" || kind === "model_denied" || kind === "model_missing") loadStatus();
+			scrollDown();
+		}
+
+		function countdown(button, seconds) {
+			var left = seconds;
+			var timer = setInterval(function () {
+				left -= 1;
+				if (!button.isConnected) { clearInterval(timer); return; }
+				if (left <= 0) {
+					clearInterval(timer);
+					button.disabled = false;
+					button.textContent = "Ask again";
+				} else {
+					button.textContent = "Ask again in " + left + " s";
+				}
+			}, 1000);
+		}
+
+		function renderStored(msg, question) {
+			var view = botView();
+			view.question = question || "";
+			var meta = msg.meta || {};
+			if (meta.error) {
+				// A question that failed: shown as it failed. The wait it named is long past.
+				(meta.notices || []).forEach(function (n) { addNotice(view, "info", n); });
+				showError(view, Object.assign({}, meta.error, { retry_after: 0 }));
+				return;
+			}
+			(meta.steps || []).forEach(function (s) { view.stepsEl.insertAdjacentHTML("beforeend", stepHtml(s)); });
+			if ((meta.steps || []).length) show(view.stepsEl, true);
+			(meta.notices || []).forEach(function (n) { addNotice(view, "info", n); });
+			finalise(view, msg);
+		}
+
+		// ── asking ────────────────────────────────────────────────────────
+		function updateComposer() {
+			var ok = ready();
+			els.input.disabled = !ok;
+			els.input.placeholder = ok ? "Ask DevBot anything..." : (state.status && state.status.enabled ? "Connect your AI key to start" : "DevBot is not set up yet");
+			if (state.streaming) {
+				els.send.disabled = false;
+				els.send.innerHTML = ICON.stop;
+				els.send.setAttribute("aria-label", "Stop");
+				els.send.title = "Stop";
+			} else {
+				els.send.disabled = !ok || !els.input.value.trim();
+				els.send.innerHTML = ICON.send;
+				els.send.setAttribute("aria-label", "Send");
+				els.send.title = "Send (Enter)";
+			}
+		}
+
+		function autosize() {
+			els.input.style.height = "auto";
+			els.input.style.height = Math.min(els.input.scrollHeight, 192) + "px";
+		}
+
+		els.input.addEventListener("input", function () { autosize(); updateComposer(); });
+		els.input.addEventListener("keydown", function (event) {
+			if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+				event.preventDefault();
+				if (!state.streaming) submit();
+			}
+		});
+		els.form.addEventListener("submit", function (event) {
+			event.preventDefault();
+			if (state.streaming) stop(); else submit();
+		});
+
+		function submit() {
+			var text = els.input.value.trim();
+			if (!text || !ready() || state.streaming) return;
+			els.input.value = "";
+			autosize();
+			ask(text);
+		}
+
+		function stop() {
+			if (state.streaming && state.streaming.controller) state.streaming.controller.abort();
+		}
+
+		function ask(text) {
+			addUser(text);
+			var view = botView();
+			view.question = text;
+			setWorking(view, "Thinking...");
+			state.stick = true;
+			scrollDown(true);
+			var controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+			state.streaming = { controller: controller, view: view };
+			updateComposer();
+			var finished = false;
+
+			fetch(API + "chat", {
+				method: "POST",
+				credentials: "same-origin",
+				headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+				body: JSON.stringify({ message: text, conversation_id: state.current || "", model: state.model || "" }),
+				signal: controller ? controller.signal : undefined,
+			}).then(function (res) {
+				if (!res.ok || !res.body) {
+					return res.json().catch(function () { return {}; }).then(function (json) {
+						var detail = json && json.detail;
+						handle({ type: "error", message: typeof detail === "string" ? detail : "DevBot could not answer (HTTP " + res.status + ")." }, view);
+						finished = true;
+					});
+				}
+				var reader = res.body.getReader();
+				var decoder = new TextDecoder();
+				var buffer = "";
+				function pump() {
+					return reader.read().then(function (chunk) {
+						if (chunk.done) return;
+						buffer += decoder.decode(chunk.value, { stream: true });
+						var at;
+						while ((at = buffer.indexOf("\n\n")) >= 0) {
+							var block = buffer.slice(0, at);
+							buffer = buffer.slice(at + 2);
+							var data = block.split("\n").filter(function (l) { return l.indexOf("data:") === 0; })
+								.map(function (l) { return l.slice(5).trim(); }).join("\n");
+							if (!data) continue;
+							var event;
+							try { event = JSON.parse(data); } catch (_) { continue; }
+							if (event.type === "done" || event.type === "error") finished = true;
+							handle(event, view);
+						}
+						return pump();
+					});
+				}
+				return pump();
+			}).catch(function (err) {
+				if (err && err.name === "AbortError") {
+					finished = true;
+					if (view.frame) { cancelAnimationFrame(view.frame); view.frame = 0; }
+					paint(view, false);
+					addNotice(view, "info", "Stopped. What was written so far is kept in the conversation.");
+					return;
+				}
+				handle({ type: "error", message: "The connection to DevBot was lost: " + (err && err.message || err) }, view);
+				finished = true;
+			}).then(function () {
+				if (!finished) handle({ type: "error", message: "The answer stopped before it was finished. Ask again." }, view);
+				state.streaming = null;
+				updateComposer();
+				loadConversations();
+			});
+		}
+
+		// ── "What can it do?" ─────────────────────────────────────────────
+		function renderAbout() {
+			var s = state.status || {};
+			var systems = s.systems || {};
+			var m = currentModel();
+			els.aboutBody.innerHTML =
+				"<p>Ask in your own words, in English or Hebrew. DevBot decides what to look up, reads it with your access, and answers " +
+				"with links to everything it used. Every answer shows which systems it read, which model wrote it and what it cost.</p>" +
+				'<div class="devbot-kicker" style="margin: 1rem 0 0.4rem">What it can read</div>' +
+				SYSTEMS.map(function (sys) {
+					var st = stateOf(sys.key);
+					var paint = st.color === "--bc" ? "hsl(var(--bc) / 0.4)" : "hsl(var(" + st.color + "))";
+					return '<div style="display: flex; gap: 0.6rem; align-items: flex-start; margin-bottom: 0.45rem">' +
+						'<span class="devbot-dot" style="margin-top: 0.45rem; background: ' + paint + '"></span>' +
+						"<div><b>" + esc(sys.label) + "</b> " + '<span style="color: hsl(var(--bc) / 0.55); font-size: 0.78rem">' + esc(st.label.toLowerCase()) + "</span><br>" +
+						esc(sys.can) + "</div></div>";
+				}).join("") +
+				'<div class="devbot-kicker" style="margin: 1rem 0 0.4rem">Across systems</div>' +
+				"<p>Ask why something failed, or what is going on, and DevBot follows it through every system at once. For a failed " +
+				"run it reads the log's error, looks for a Confluence page with the fix and quotes it (or says there is none and suggests " +
+				"its own, marked as such), checks for an open bug, and checks Artifactory or SonarQube when the error points there. For " +
+				"failed tests it tells new failures from ones that kept failing. It can say whether a pull request is ready to merge and " +
+				"what blocks it, sum up a work item with its pull requests, check a project's health, and trace an image back to the " +
+				"run and the work items that built it. You watch each step as it happens.</p>" +
+				'<div class="devbot-kicker" style="margin: 1rem 0 0.4rem">Models and your key</div>' +
+				"<p>The models you can pick are the ones <b>your AI key</b> may use. Those marked <b>Live data</b> can read your systems; " +
+				"<b>Chat only</b> ones answer from general knowledge. " + (m ? "You are using <b>" + esc(m.label) + "</b>. " : "") +
+				"Your key also has limits on requests and tokens a minute. DevBot keeps each question small to stay inside them, shows " +
+				"how much of them is left, and waits briefly when a limit is reached instead of failing.</p>" +
+				'<div class="devbot-kicker" style="margin: 1rem 0 0.4rem">What is sent where</div>' +
+				"<p>Your question, the earlier part of the conversation, and the data DevBot reads to answer are sent to the AI model " +
+				"service with your key. Your system tokens and your AI key never leave the Hub's server. DevBot changes nothing on its own: " +
+				"a change it prepares opens for you to check and confirm, and is made in your name. " +
+				"Conversations are kept for " + ((s.history_days) || 30) + " days after you last use them, and you can delete one at any time.</p>" +
+				'<button type="button" class="btn btn-sm rounded-full px-4" style="margin-top: 1rem" data-devbot-tour>Take the tour of this page</button>';
+		}
+		els.aboutBtn.addEventListener("click", function () {
+			renderAbout();
+			if (els.aboutModal && els.aboutModal.showModal) els.aboutModal.showModal();
+		});
+		els.aboutBody.addEventListener("click", function (event) {
+			if (!event.target.closest("[data-devbot-tour]")) return;
+			els.aboutModal.close();
+			if (window.portalTour) window.portalTour.start("devbot");
+		});
+
+		// ── usage ─────────────────────────────────────────────────────────
+		function renderUsage(data) {
+			var rows = data.models || [];
+			var labelOf = {};
+			((state.status && state.status.models) || []).forEach(function (m) { labelOf[m.id] = m.label; });
+			function cell(requests, tin, tout) {
+				if (!requests) return '<span style="color: hsl(var(--bc) / 0.45)">none</span>';
+				return requests + " request" + (requests === 1 ? "" : "s") + "<small>" + tokens(tin) + " in · " + tokens(tout) + " out</small>";
+			}
+			els.usageBody.innerHTML =
+				limitsHtml(data.limits || {}, data.key_info || {}) +
+				'<div class="devbot-kicker" style="margin-top: 1.1rem">Your questions to DevBot</div>' +
+				(rows.length ? '<table class="devbot-usage"><thead><tr><th>Model</th><th>Today</th><th>Last 30 days</th></tr></thead><tbody>' +
+					rows.map(function (r) {
+						return '<tr><td dir="auto">' + esc(labelOf[r.model] || String(r.model).split("/").pop()) + "<small>" + r.questions + " question" + (r.questions === 1 ? "" : "s") + "</small></td>" +
+							"<td>" + cell(r.today_requests, r.today_in, r.today_out) + "</td><td>" + cell(r.month_requests, r.month_in, r.month_out) + "</td></tr>";
+					}).join("") + "</tbody></table>"
+					: '<p style="margin-top: 0.4rem; color: hsl(var(--bc) / 0.6)">No questions in the last 30 days.</p>') +
+				'<p style="margin-top: 0.9rem; font-size: 0.78rem; color: hsl(var(--bc) / 0.65)">A question makes one model request when it needs no ' +
+				"lookup, and usually two when it does: one to decide what to look up and one to answer. A question that needs several " +
+				"systems runs them in one step, so it costs the same two.</p>" +
+				'<p style="margin-top: 0.5rem; font-size: 0.78rem; color: hsl(var(--bc) / 0.65)">These are the requests DevBot made with your key. ' +
+				"The AI service counts everything your key is used for, anywhere; the limits and the budget above are its figures.</p>";
+		}
+		els.foot.addEventListener("click", function (event) {
+			if (!event.target.closest("[data-devbot-usage]")) return;
+			els.usageBody.innerHTML = '<div class="devbot-working"><span class="devbot-spin"></span>Adding it up...</div>';
+			if (els.usageModal && els.usageModal.showModal) els.usageModal.showModal();
+			api("GET", "usage").then(function (json) { renderUsage(json.data || {}); }).catch(function (err) {
+				els.usageBody.innerHTML = '<div class="devbot-error" dir="auto">' + esc(err.message) + "</div>";
+			});
+		});
+
+		// ── start ─────────────────────────────────────────────────────────
+		function boot() {
+			return loadStatus().then(function () {
+				var id = "";
+				try { id = new URL(window.location.href).searchParams.get("c") || ""; } catch (_) {}
+				loadConversations();
+				if (id && ready()) return openConversation(id, false);
+				renderEmpty();
+				if (ready()) els.input.focus();
+			});
+		}
+		updateComposer();
+		boot();
+	})();
+</script>

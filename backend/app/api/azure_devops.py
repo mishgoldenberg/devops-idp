@@ -348,14 +348,39 @@ def _probe_pat_live(pat: str) -> Dict[str, Any]:
             # so a perfectly good PAT came back 401 here and this page called it
             # "expired or revoked" while every widget kept working. This is the call
             # the widgets themselves make, so the two can no longer disagree.
-            resp = client.get(f"{_get_ado_base()}/_apis/projects?$top=1&api-version=7.0")
-        if resp.status_code in (401, 403):
+            #
+            # EVERY COLLECTION, NOT JUST THE CONFIGURED ONE. That was the second half
+            # of the same bug: AZURE_DEVOPS_BASE_URL names ONE collection, the widgets
+            # crawl all of them (_discover_ado_bases), and a PAT whose owner has no
+            # access to the configured one is rejected here while every widget on the
+            # dashboard is happily reading the others. A token is expired when NOTHING
+            # accepts it -- one collection saying no is that collection's answer, not
+            # the token's.
+            try:
+                bases = _discover_ado_bases(client)
+            except Exception:
+                bases = []
+            bases = [b for b in bases if b] or [_get_ado_base()]
+
+            rejected_by: List[str] = []
+            other: Optional[int] = None
+            for base_url in bases:
+                resp = client.get(f"{base_url}/_apis/projects?$top=1&api-version=7.0")
+                if resp.status_code < 400:
+                    return {"healthy": True, "rejected": False, "detail": "Connected."}
+                if resp.status_code in (401, 403):
+                    rejected_by.append(_collection_name(base_url) or base_url)
+                    continue
+                other = resp.status_code
+
+        if rejected_by and len(rejected_by) == len(bases):
             return {"healthy": False, "rejected": True,
                     "detail": "PAT expired or revoked — reconnect."}
-        if resp.status_code >= 400:
+        if other is not None:
             return {"healthy": False, "rejected": False,
-                    "detail": f"Azure DevOps answered HTTP {resp.status_code}."}
-        return {"healthy": True, "rejected": False, "detail": "Connected."}
+                    "detail": f"Azure DevOps answered HTTP {other}."}
+        return {"healthy": False, "rejected": False,
+                "detail": "Azure DevOps did not accept the token anywhere."}
     except Exception as exc:
         # Unreachable is NOT rejected. A firewall or a restarting server must never
         # be reported to a user as "your token expired" — they would dutifully
@@ -1151,6 +1176,9 @@ def _fetch_work_items_live(
                     work_items.append(
                         {
                             "id": wi_id,
+                            # Work item ids are unique per COLLECTION, not per server: an
+                            # action on #42 has to say which collection's #42.
+                            "collection": _collection_name(base_url),
                             "title": fields.get("System.Title"),
                             "state": wi_state,
                             "state_category": state_category,
@@ -1378,9 +1406,11 @@ def _fetch_pull_requests_live(
                         is_creator = bool(_person_forms(pr.get("createdBy")) & mine_forms)
                         my_vote = 0
                         is_reviewer = False
+                        reviewer_id = ""
                         for rev in pr.get("reviewers", []) or []:
                             if _person_forms(rev) & mine_forms:
                                 is_reviewer = True
+                                reviewer_id = str(rev.get("id") or "")
                                 try:
                                     my_vote = int(rev.get("vote") or 0)
                                 except (TypeError, ValueError):
@@ -1414,6 +1444,11 @@ def _fetch_pull_requests_live(
                                 "is_creator": is_creator,
                                 "is_reviewer": is_reviewer,
                                 "my_vote": my_vote,
+                                # What a vote or a comment from the portal has to name
+                                # (api/ado_actions.py): the repository by id, and which
+                                # reviewer entry is this user's.
+                                "repository_id": str(repo.get("id") or ""),
+                                "reviewer_id": reviewer_id,
                                 "url": portal_url,
                             })
 
@@ -1817,6 +1852,9 @@ def get_pipelines(
                     build_id = build.get("id")
                     pipelines.append({
                         "id": build_id,
+                        # What "run it again" needs: the pipeline and the branch it ran on.
+                        "definition_id": (build.get("definition") or {}).get("id"),
+                        "source_branch": str(build.get("sourceBranch") or ""),
                         "name": (build.get("definition") or {}).get("name") or project_name,
                         "run_id": build.get("buildNumber") or build_id,
                         "status": _run_status(build),

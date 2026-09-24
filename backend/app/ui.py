@@ -28,6 +28,7 @@ from fastapi import APIRouter, Body, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 import audit
+import identity
 import login_guard
 # Imported, not restated: the local sign-in and the SSO callback must decide the auth
 # cookie's Secure flag the same way, or one of them silently ships it without Secure.
@@ -40,11 +41,13 @@ from api.azure_devops import probe_user_pat as _ado_probe_pat
 # The one definition of "I have already signed this off" — imported rather than
 # restated so the widget and the API can never disagree about it.
 from api.azure_devops import _VOTE_APPROVED as _ADO_VOTE_APPROVED
+from api.notifications import mark_section_seen as _mark_section_seen
 from api.dashboards import DashboardUpdateRequest
 from api.dashboards import get_default_dashboard as _dash_get_default
 from api.dashboards import update_dashboard as _dash_update
 from api.servicenow import get_tickets as _snow_get_tickets
 from db import query_one
+from devbot import config as devbot_config
 from secrets_manager import delete_user_azure_devops_pat, get_user_azure_devops_pat, store_user_azure_devops_pat
 from security import (
     AuthUser,
@@ -117,6 +120,15 @@ def _pick_greeting(seed: str) -> Tuple[str, str]:
     return _GREETINGS[index]
 
 
+def _stamp_visit(user: Dict[str, Any], section: str) -> None:
+    """Clear the sidebar's "something changed" dot for a page by opening it.
+
+    Stamped here, when the PAGE is served, rather than by a script on it: the dot
+    means "you have not been here since", and being here is exactly this request.
+    """
+    _mark_section_seen(str(user.get("email") or ""), section)
+
+
 def _is_portal_admin(request: Request) -> bool:
     """Admin flag resolved by the portal_admin_nav_context middleware."""
     return bool(getattr(request.state, "portal_is_admin", False))
@@ -147,16 +159,21 @@ def _get_ui_user(token: str) -> Dict[str, Any]:
     avatar_url: Optional[str] = None
     preferred_theme: Optional[str] = None
     preferred_density: Optional[str] = None
+    ticket_name = ""
 
     user_id = payload.get("id")
     if user_id:
         try:
             user_row = query_one(
-                "SELECT full_name, avatar_url, preferred_theme, preferred_density "
+                "SELECT full_name, avatar_url, preferred_theme, preferred_density, "
+                "sso_name, username, email "
                 "FROM users WHERE id = %s",
                 [user_id],
             )
             if user_row:
+                # What a ticket will carry: the identity provider's name, shown in
+                # the ticket forms' read-only "Full name" so nobody is surprised.
+                ticket_name = identity.name_from_row(user_row, email=str(payload.get("email") or ""))
                 if user_row.get("full_name"):
                     display_name = str(user_row["full_name"])
                 if user_row.get("avatar_url"):
@@ -173,6 +190,7 @@ def _get_ui_user(token: str) -> Dict[str, Any]:
     return {
         "username": username,
         "display_name": display_name,
+        "ticket_name": ticket_name or display_name,
         "avatar_url": avatar_url,
         "preferred_theme": preferred_theme,
         "preferred_density": preferred_density,
@@ -400,12 +418,40 @@ def ui_connections_page(request: Request):
             "now": datetime.utcnow().isoformat() + "Z",
             # Only offer to connect systems the portal still shows data from. Once an
             # admin hides every widget belonging to a system, asking for a token to it
-            # is asking for setup work with no visible result anywhere.
+            # is asking for setup work with no visible result anywhere. DevBot has no
+            # widget: its key is offered whenever DevBot itself is set up.
             "connectable_systems": sorted(
                 widget_registry.systems_with_visible_widgets(
                     is_admin=_is_portal_admin(request)
                 )
+                | ({"devbot"} if devbot_config.enabled() else set())
             ),
+        },
+    )
+
+
+@ui_router.get("/ui/devbot", response_class=HTMLResponse)
+def ui_devbot_page(request: Request):
+    """DevBot, the chat assistant. The page loads everything it shows from /api/devbot
+    with its own script, so this only renders the shell."""
+    token = request.cookies.get("auth_token")
+    if not token:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+
+    try:
+        user = _get_ui_user(token)
+    except HTTPException:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+
+    templates = _get_templates(request)
+    return templates.TemplateResponse(
+        "devbot.html",
+        {
+            "request": request,
+            "user": user,
+            "current_page": "devbot",
+            "now": datetime.utcnow().isoformat() + "Z",
+            "devbot_enabled": devbot_config.enabled(),
         },
     )
 
@@ -500,6 +546,7 @@ def ui_support_page(request: Request):
     except HTTPException:
         return RedirectResponse(url="/ui/auth", status_code=303)
 
+    _stamp_visit(user, "support")
     templates = _get_templates(request)
     return templates.TemplateResponse(
         "support.html",
@@ -531,78 +578,6 @@ def ui_confluence_page(request: Request):
             "request": request,
             "user": user,
             "current_page": "confluence",
-            "now": datetime.utcnow().isoformat() + "Z",
-        },
-    )
-
-
-@ui_router.get("/ui/openshift", response_class=HTMLResponse)
-def ui_openshift_page(request: Request):
-    """Render the OpenShift tab page."""
-    token = request.cookies.get("auth_token")
-    if not token:
-        return RedirectResponse(url="/ui/auth", status_code=303)
-
-    try:
-        user = _get_ui_user(token)
-    except HTTPException:
-        return RedirectResponse(url="/ui/auth", status_code=303)
-
-    templates = _get_templates(request)
-    return templates.TemplateResponse(
-        "openshift.html",
-        {
-            "request": request,
-            "user": user,
-            "current_page": "openshift",
-            "now": datetime.utcnow().isoformat() + "Z",
-        },
-    )
-
-
-@ui_router.get("/ui/internal-aws", response_class=HTMLResponse)
-def ui_internal_aws_page(request: Request):
-    """Render the Internal AWS tab page."""
-    token = request.cookies.get("auth_token")
-    if not token:
-        return RedirectResponse(url="/ui/auth", status_code=303)
-
-    try:
-        user = _get_ui_user(token)
-    except HTTPException:
-        return RedirectResponse(url="/ui/auth", status_code=303)
-
-    templates = _get_templates(request)
-    return templates.TemplateResponse(
-        "internal-aws.html",
-        {
-            "request": request,
-            "user": user,
-            "current_page": "internal-aws",
-            "now": datetime.utcnow().isoformat() + "Z",
-        },
-    )
-
-
-@ui_router.get("/ui/grafana", response_class=HTMLResponse)
-def ui_grafana_page(request: Request):
-    """Render the Grafana tab page."""
-    token = request.cookies.get("auth_token")
-    if not token:
-        return RedirectResponse(url="/ui/auth", status_code=303)
-
-    try:
-        user = _get_ui_user(token)
-    except HTTPException:
-        return RedirectResponse(url="/ui/auth", status_code=303)
-
-    templates = _get_templates(request)
-    return templates.TemplateResponse(
-        "grafana.html",
-        {
-            "request": request,
-            "user": user,
-            "current_page": "grafana",
             "now": datetime.utcnow().isoformat() + "Z",
         },
     )
@@ -650,6 +625,7 @@ def ui_suggestions_page(request: Request):
     except HTTPException:
         return RedirectResponse(url="/ui/auth", status_code=303)
 
+    _stamp_visit(user, "suggestions")
     templates = _get_templates(request)
     return templates.TemplateResponse(
         "suggestions.html",
@@ -723,6 +699,7 @@ def ui_my_requests_page(request: Request):
     # Approvals page so we don't drift from the backend authorization.
     is_admin = has_effective_admin_access_live(AuthUser(payload))
 
+    _stamp_visit(user, "my-requests")
     templates = _get_templates(request)
     return templates.TemplateResponse(
         "my-requests.html",
@@ -811,6 +788,32 @@ def ui_platform_managing_page(request: Request):
             "request": request,
             "user": user,
             "current_page": "platform-managing",
+            "now": datetime.utcnow().isoformat() + "Z",
+        },
+    )
+
+
+@ui_router.get("/ui/users", response_class=HTMLResponse)
+def ui_users_page(request: Request):
+    """Admin-only: every account, its role, and how much it uses the portal."""
+    token = request.cookies.get("auth_token")
+    if not token:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+    try:
+        user = _get_ui_user(token)
+        payload = decode_access_token(token)
+    except HTTPException:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+    if not has_effective_admin_access_live(AuthUser(payload)):
+        return RedirectResponse(url="/ui/", status_code=303)
+
+    templates = _get_templates(request)
+    return templates.TemplateResponse(
+        "users.html",
+        {
+            "request": request,
+            "user": user,
+            "current_page": "users",
             "now": datetime.utcnow().isoformat() + "Z",
         },
     )
@@ -919,6 +922,19 @@ _HOME_WIDGETS_COOKIE_MAX_AGE = 365 * 24 * 3600  # 1 year
 # user, who then reports it as missing rather than as off.
 _WIDGETS_ADDED_IN_V2 = ["needs_you"]
 
+# The SonarQube set, added once the firewall to SonarQube was opened. Same
+# reasoning as V2 and the same trap: without this every existing user keeps a v2
+# cookie that predates these keys, so five new widgets would ship switched off
+# for everyone who has ever opened the Customize drawer -- and be reported as
+# missing rather than as off.
+_WIDGETS_ADDED_IN_V3 = [
+	"sonar_quality_gates",
+	"sonar_new_code",
+	"sonar_hotspots",
+	"sonar_my_issues",
+	"sonar_pr_gates",
+]
+
 
 def _get_home_widget_prefs_from_cookie(request: Request) -> list:
     """
@@ -938,15 +954,23 @@ def _get_home_widget_prefs_from_cookie(request: Request) -> list:
     try:
         prefs = _json.loads(raw)
         if isinstance(prefs, dict):
-            keys = prefs.get("keys") if int(prefs.get("v") or 0) >= 2 else None
+            version = int(prefs.get("v") or 0)
+            keys = prefs.get("keys") if version >= 2 else None
             if isinstance(keys, list):
-                return [k for k in keys if k in HOME_WIDGET_KEYS]
+                saved = [k for k in keys if k in HOME_WIDGET_KEYS]
+                if version < 3:
+                    # Written before the SonarQube widgets existed, so their absence
+                    # says nothing about what this user wants. Migrate once; the next
+                    # save writes v3 and a switch-off then sticks.
+                    saved = saved + [k for k in _WIDGETS_ADDED_IN_V3 if k not in saved]
+                return saved
             return []
         if isinstance(prefs, list):
             saved = [k for k in prefs if k in HOME_WIDGET_KEYS]
             if not saved:
                 return []
-            return saved + [k for k in _WIDGETS_ADDED_IN_V2 if k not in saved]
+            added = _WIDGETS_ADDED_IN_V2 + _WIDGETS_ADDED_IN_V3
+            return saved + [k for k in added if k not in saved]
     except Exception:
         pass
     return []
@@ -996,7 +1020,7 @@ def ui_dashboard_preferences_save(
         # v2: an explicit list, taken literally on read. Writing the version is what
         # lets the reader tell "switched this off" apart from "wrote this before the
         # widget existed" — see _get_home_widget_prefs_from_cookie.
-        _json.dumps({"v": 2, "keys": enabled_keys}),
+        _json.dumps({"v": 3, "keys": enabled_keys}),
         max_age=_HOME_WIDGETS_COOKIE_MAX_AGE,
         httponly=False,
         samesite="lax",
@@ -1430,14 +1454,66 @@ def ui_pipelines_component(request: Request):
     )
 
 
+def _sonar_web_base() -> str:
+	"""SonarQube's own URL, for links out of the widgets, or "".
+
+	Empty is a real state: an installation that has not configured SonarQube has
+	nowhere to send anybody, and the widgets render the project name WITHOUT a link
+	rather than one that 404s. A link to something that does not exist teaches
+	people to stop checking whether links work.
+	"""
+	return (os.getenv("SONARQUBE_BASE_URL") or "").strip().rstrip("/")
+
+
+def _sonar_widget(request: Request, mode: str):
+	"""Every SonarQube widget is one partial, scoped by a root attribute.
+
+	Six widgets that each carried their own row, marker and controls offered six
+	different sets of things to do. One partial means one search, one filter, one
+	pin and one expanding card everywhere; the modes differ only in configuration.
+	See partials/components/sonarqube-widget.html.
+	"""
+	templates = _get_templates(request)
+	return templates.TemplateResponse(
+		"partials/components/sonarqube-widget.html",
+		{"request": request, "mode": mode, "sonar_base": _sonar_web_base()},
+	)
+
+
 @ui_router.get("/ui/components/sonarqube-projects", response_class=HTMLResponse)
 def ui_sonarqube_projects_component(request: Request):
-    """Render the SonarQube project list widget; details load client-side."""
-    templates = _get_templates(request)
-    return templates.TemplateResponse(
-        "partials/components/sonarqube-projects.html",
-        {"request": request},
-    )
+	"""SonarQube Projects -- every project, its gate and its numbers."""
+	return _sonar_widget(request, "projects")
+
+
+@ui_router.get("/ui/components/sonarqube-gates", response_class=HTMLResponse)
+def ui_sonarqube_gates_component(request: Request):
+	"""Quality Gates -- projects by gate result, failing first."""
+	return _sonar_widget(request, "gates")
+
+
+@ui_router.get("/ui/components/sonarqube-new-code", response_class=HTMLResponse)
+def ui_sonarqube_new_code_component(request: Request):
+	"""New Code -- what landed in the current period."""
+	return _sonar_widget(request, "newcode")
+
+
+@ui_router.get("/ui/components/sonarqube-hotspots", response_class=HTMLResponse)
+def ui_sonarqube_hotspots_component(request: Request):
+	"""Security Hotspots -- projects with reviews outstanding."""
+	return _sonar_widget(request, "hotspots")
+
+
+@ui_router.get("/ui/components/sonarqube-my-issues", response_class=HTMLResponse)
+def ui_sonarqube_my_issues_component(request: Request):
+	"""Issues on lines this user last touched."""
+	return _sonar_widget(request, "issues")
+
+
+@ui_router.get("/ui/components/sonarqube-pr-gates", response_class=HTMLResponse)
+def ui_sonarqube_pr_gates_component(request: Request):
+	"""The SonarQube gate on this user's open pull requests."""
+	return _sonar_widget(request, "prs")
 
 
 @ui_router.get("/ui/components/artifactory-storage", response_class=HTMLResponse)

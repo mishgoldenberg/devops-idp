@@ -1,0 +1,496 @@
+{#
+	The one dialog every action on another system goes through: review or comment on a
+	pull request, run a pipeline again, create, move, describe, comment on or assign a
+	work item (api/ado_actions.py), and create or add to a Confluence page
+	(api/confluence_actions.py).
+
+	A kind may name its own system and API; Azure DevOps is the default. A target may
+	carry a DRAFT -- the text, the state, the vote DevBot proposed -- which fills the
+	form, and the person can change any of it before anything is checked or sent.
+	When an action completes it dispatches "portal:action-done" with the result (and, when
+	something really changed, "portal:ado-changed", which the widgets refresh on); a dialog
+	closed without completing dispatches "portal:action-closed". So whatever opened it --
+	a widget, DevBot -- knows how it ended.
+
+	THREE STEPS, ALWAYS
+	  1. Compose  -- choose the vote, the state, the words.
+	  2. Check    -- Azure DevOps is asked first (dry_run): is the pull request still
+	                 open, has the run finished, would the move be accepted. The person
+	                 reads exactly what will happen, in their name, and confirms.
+	  3. Result   -- what Azure DevOps shows NOW, read back, with a link to it.
+
+	Included once, from banner.html, so every page that shows a widget has it:
+	window.portalAdo.open(kind, target).
+#}
+<style>
+	[data-ado-act] .ado-act-box {
+		max-width: 34rem;
+		width: calc(100vw - 2rem);
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		max-height: calc(100vh - 5em);
+		overflow: hidden;
+	}
+	[data-ado-act] .ado-act-head {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.75rem;
+		padding: 1.1rem 1.25rem 0.75rem;
+		border-bottom: 1px solid hsl(var(--bc) / 0.1);
+	}
+	[data-ado-act] .ado-act-kicker {
+		font-size: 0.68rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: hsl(var(--bc) / 0.5);
+	}
+	[data-ado-act] .ado-act-title { font-size: 1rem; font-weight: 700; line-height: 1.35; }
+	[data-ado-act] .ado-act-sub { font-size: 0.78rem; color: hsl(var(--bc) / 0.6); margin-top: 0.1rem; overflow-wrap: anywhere; }
+	/* The body scrolls; the head and the buttons do not. */
+	[data-ado-act] .ado-act-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 1rem 1.25rem; }
+	[data-ado-act] .ado-act-foot {
+		display: flex;
+		justify-content: flex-end;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.75rem 1.25rem 1rem;
+		border-top: 1px solid hsl(var(--bc) / 0.1);
+	}
+	[data-ado-act] .ado-act-foot .ado-act-hint { margin-right: auto; font-size: 0.72rem; color: hsl(var(--bc) / 0.5); }
+	[data-ado-act] .ado-act-label {
+		display: block;
+		font-size: 0.68rem;
+		font-weight: 600;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: hsl(var(--bc) / 0.55);
+		margin: 0.9rem 0 0.35rem;
+	}
+	[data-ado-act] .ado-act-label:first-child { margin-top: 0; }
+	[data-ado-act] .ado-act-options { display: flex; flex-direction: column; gap: 0.35rem; }
+	[data-ado-act] .ado-act-option {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.6rem;
+		padding: 0.55rem 0.7rem;
+		border: 1px solid hsl(var(--bc) / 0.12);
+		border-radius: 0.6rem;
+		cursor: pointer;
+	}
+	[data-ado-act] .ado-act-option:hover { border-color: hsl(var(--bc) / 0.3); }
+	[data-ado-act] .ado-act-option:has(input:checked) { border-color: hsl(var(--p) / 0.6); background: hsl(var(--p) / 0.06); }
+	[data-ado-act] .ado-act-option input { margin-top: 0.2rem; }
+	/* Native radios in the theme's colour: DaisyUI's radio sizes are not compiled. */
+	[data-ado-act] .ado-act-radio { accent-color: hsl(var(--p)); width: 1rem; height: 1rem; flex: none; }
+	[data-ado-act] .ado-act-option b { font-size: 0.85rem; }
+	[data-ado-act] .ado-act-option span { display: block; font-size: 0.75rem; color: hsl(var(--bc) / 0.6); }
+	[data-ado-act] .ado-act-text { width: 100%; min-height: 5.5rem; font-size: 0.85rem; }
+	[data-ado-act] .ado-act-quote {
+		font-size: 0.78rem;
+		color: hsl(var(--bc) / 0.7);
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+		max-height: 7rem;
+		overflow-y: auto;
+		border-left: 3px solid hsl(var(--bc) / 0.15);
+		padding: 0.25rem 0.6rem;
+	}
+	[data-ado-act] .ado-act-summary { font-size: 0.95rem; font-weight: 600; line-height: 1.45; overflow-wrap: anywhere; }
+	[data-ado-act] .ado-act-checks { display: flex; flex-direction: column; gap: 0.3rem; margin-top: 0.75rem; font-size: 0.8rem; }
+	[data-ado-act] .ado-act-checks li { display: flex; gap: 0.45rem; align-items: flex-start; }
+	[data-ado-act] .ado-act-checks svg { width: 1rem; height: 1rem; flex: none; margin-top: 0.1rem; color: hsl(var(--su)); }
+	[data-ado-act] .ado-act-note {
+		margin-top: 0.9rem;
+		font-size: 0.75rem;
+		color: hsl(var(--bc) / 0.6);
+		border-top: 1px dashed hsl(var(--bc) / 0.15);
+		padding-top: 0.6rem;
+	}
+	[data-ado-act] .ado-act-outcome { display: flex; gap: 0.7rem; align-items: flex-start; }
+	[data-ado-act] .ado-act-outcome svg { width: 1.6rem; height: 1.6rem; flex: none; }
+	[data-ado-act] .ado-act-outcome[data-tone="ok"] svg { color: hsl(var(--su)); }
+	[data-ado-act] .ado-act-outcome[data-tone="warn"] svg { color: hsl(var(--wa)); }
+	[data-ado-act] .ado-act-outcome[data-tone="bad"] svg { color: hsl(var(--er)); }
+	[data-ado-act] .ado-act-outcome p { font-size: 0.85rem; overflow-wrap: anywhere; }
+	[data-ado-act] .ado-act-link { font-size: 0.8rem; font-weight: 600; color: hsl(var(--p)); }
+	[data-ado-act] .ado-act-link:hover { text-decoration: underline; }
+</style>
+
+<dialog class="modal" data-ado-act aria-labelledby="ado-act-title">
+	<div class="modal-box ado-act-box">
+		<div class="ado-act-head">
+			<div class="min-w-0 flex-1">
+				<div class="ado-act-kicker" data-ado-act-kicker>Azure DevOps</div>
+				<div class="ado-act-title" id="ado-act-title" data-ado-act-title dir="auto"></div>
+				<div class="ado-act-sub" data-ado-act-sub dir="auto"></div>
+			</div>
+			<form method="dialog"><button class="btn btn-sm btn-circle btn-ghost" aria-label="Close">&#10005;</button></form>
+		</div>
+		<div class="ado-act-body" data-ado-act-body></div>
+		<div class="ado-act-foot" data-ado-act-foot></div>
+	</div>
+	<form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<script>
+	(function () {
+		if (window.portalAdo) return;
+		const modal = document.querySelector("[data-ado-act]");
+		if (!modal) return;
+		const kickerEl = modal.querySelector("[data-ado-act-kicker]");
+		const titleEl = modal.querySelector("[data-ado-act-title]");
+		const subEl = modal.querySelector("[data-ado-act-sub]");
+		const bodyEl = modal.querySelector("[data-ado-act-body]");
+		const footEl = modal.querySelector("[data-ado-act-foot]");
+		const API = "/api/azure-devops/actions/";
+
+		const TICK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
+		const OK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="16 9 10.5 15 8 12.5"/></svg>';
+		const BAD = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
+
+		const VOTES = [
+			{ value: 10, label: "Approve", hint: "The change is good to go." },
+			{ value: 5, label: "Approve with suggestions", hint: "Good to go; your comments are optional to act on." },
+			{ value: -5, label: "Wait for the author", hint: "Not yet: the author has changes to make." },
+			{ value: -10, label: "Reject", hint: "This change should not go in." },
+			{ value: 0, label: "Reset my vote", hint: "Take back a vote you gave." },
+		];
+
+		let current = null; // { kind, target, compose(): body, endpoint, verb, tone }
+
+		function esc(v) {
+			return String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+		}
+		function foot(html) { footEl.innerHTML = html; }
+		function busy(label) {
+			bodyEl.innerHTML = '<div class="flex items-center gap-2 text-sm text-base-content/60"><span class="loading loading-spinner loading-sm"></span>' + esc(label) + "</div>";
+			foot("");
+		}
+		function systemName() { return (current && current.spec.system) || "Azure DevOps"; }
+		async function call(method, path, body) {
+			const res = await (window.portalFetch || fetch)(((current && current.spec.api) || API) + path, {
+				method: method,
+				credentials: "same-origin",
+				headers: body ? { "Content-Type": "application/json" } : {},
+				body: body ? JSON.stringify(body) : undefined,
+			}, 30000);
+			const json = await res.json().catch(() => ({}));
+			if (!res.ok) {
+				const err = new Error((json && typeof json.detail === "string" && json.detail) || systemName() + " request failed (HTTP " + res.status + ").");
+				err.status = res.status;
+				throw err;
+			}
+			return json;
+		}
+
+		// ── compose views ───────────────────────────────────────────────
+		const KINDS = {
+			vote: {
+				title: (t) => "Review pull request #" + t.id,
+				endpoint: "pr-vote",
+				view(t) {
+					// A draft's vote wins over the vote already given; "no vote" is only
+					// preselected when a draft asks for it.
+					const drafted = t.vote != null && t.vote !== "";
+					const pre = drafted ? Number(t.vote) : Number(t.my_vote);
+					return '<span class="ado-act-label">Your vote</span><div class="ado-act-options" role="radiogroup">' +
+						VOTES.map((v) =>
+							'<label class="ado-act-option"><input type="radio" name="ado-vote" class="ado-act-radio" value="' + v.value + '"' +
+							(pre === v.value && (drafted || v.value !== 0) ? " checked" : "") + '><div><b>' + esc(v.label) + "</b><span>" + esc(v.hint) + "</span></div></label>"
+						).join("") + "</div>" +
+						'<span class="ado-act-label">Comment <span style="text-transform:none;letter-spacing:normal;font-weight:400">(optional)</span></span>' +
+						'<textarea class="textarea textarea-bordered ado-act-text" data-ado-text dir="auto" maxlength="4000" placeholder="Why, or what to change">' + esc(t.comment || "") + "</textarea>";
+				},
+				body(t) {
+					const picked = bodyEl.querySelector('input[name="ado-vote"]:checked');
+					if (!picked) return null;
+					return { collection: t.collection, project: t.project, repository_id: t.repository_id, pull_request_id: Number(t.id),
+						vote: Number(picked.value), comment: (bodyEl.querySelector("[data-ado-text]").value || "").trim() };
+				},
+				verb: (b) => (VOTES.find((v) => v.value === b.vote) || {}).label || "Vote",
+				danger: (b) => b.vote === -10,
+			},
+			"pr-comment": {
+				title: (t) => "Comment on pull request #" + t.id,
+				endpoint: "pr-comment",
+				view: (t) => '<span class="ado-act-label">Your comment</span><textarea class="textarea textarea-bordered ado-act-text" data-ado-text dir="auto" maxlength="4000">' + esc(t.text || "") + "</textarea>",
+				body(t) {
+					const text = (bodyEl.querySelector("[data-ado-text]").value || "").trim();
+					return text ? { collection: t.collection, project: t.project, repository_id: t.repository_id, pull_request_id: Number(t.id), text: text } : null;
+				},
+				verb: () => "Post comment",
+			},
+			rerun: {
+				title: (t) => "Run " + (t.name || "the pipeline") + " again",
+				endpoint: "pipeline-rerun",
+				view: (t) => '<p class="text-sm">A new run of <b dir="auto">' + esc(t.name || "this pipeline") + "</b> on <b dir=\"auto\">" +
+					esc(String(t.source_branch || "").replace(/^refs\/heads\//, "") || "its branch") + "</b>, with the same parameters as run #" + esc(t.run_id || t.id) + ".</p>" +
+					'<p class="text-xs text-base-content/60 mt-2">It starts from the branch\'s latest commit.</p>',
+				body: (t) => ({ collection: t.collection, project: t.project, build_id: Number(t.id) }),
+				verb: () => "Run again",
+			},
+			"wi-state": {
+				title: (t) => "Move #" + t.id,
+				endpoint: "work-item-state",
+				needsItem: true,
+				view(t, wi) {
+					const options = (wi.states || []).filter((s) => s !== wi.state);
+					return '<p class="text-sm">Now: <b>' + esc(wi.state) + "</b></p>" +
+						'<span class="ado-act-label">Move to</span><div class="ado-act-options" role="radiogroup">' +
+						options.map((s) => '<label class="ado-act-option"><input type="radio" name="ado-state" class="ado-act-radio" value="' + esc(s) + '"' +
+							(t.state && String(t.state).toLowerCase() === String(s).toLowerCase() ? " checked" : "") + '><div><b>' + esc(s) + "</b></div></label>").join("") +
+						"</div>" + (options.length ? "" : '<p class="text-xs text-base-content/60">Azure DevOps lists no other state for this type.</p>');
+				},
+				body(t) {
+					const picked = bodyEl.querySelector('input[name="ado-state"]:checked');
+					return picked ? { collection: t.collection, id: Number(t.id), state: picked.value } : null;
+				},
+				verb: (b) => "Move to " + b.state,
+			},
+			"wi-description": {
+				title: (t) => "Add to #" + t.id,
+				endpoint: "work-item-description",
+				needsItem: true,
+				view: (t, wi) =>
+					'<span class="ado-act-label">' + esc(wi.text_field || "Description") + " now</span>" +
+					'<div class="ado-act-quote" dir="auto">' + (wi.description_text ? esc(wi.description_text) : '<i class="text-base-content/50">Empty</i>') + "</div>" +
+					'<span class="ado-act-label">Add a paragraph</span><textarea class="textarea textarea-bordered ado-act-text" data-ado-text dir="auto" maxlength="4000">' + esc(t.text || "") + "</textarea>" +
+					'<p class="text-xs text-base-content/50 mt-1">Added at the end. What is there now stays exactly as it is.</p>',
+				body(t) {
+					const text = (bodyEl.querySelector("[data-ado-text]").value || "").trim();
+					return text ? { collection: t.collection, id: Number(t.id), text: text } : null;
+				},
+				verb: () => "Add it",
+			},
+			"wi-comment": {
+				title: (t) => "Comment on #" + t.id,
+				endpoint: "work-item-comment",
+				view: (t) => '<span class="ado-act-label">Your comment</span><textarea class="textarea textarea-bordered ado-act-text" data-ado-text dir="auto" maxlength="4000">' + esc(t.text || "") + "</textarea>",
+				body(t) {
+					const text = (bodyEl.querySelector("[data-ado-text]").value || "").trim();
+					return text ? { collection: t.collection, id: Number(t.id), text: text } : null;
+				},
+				verb: () => "Post comment",
+			},
+			"wi-assign": {
+				title: (t) => "Assign #" + t.id,
+				endpoint: "work-item-assign",
+				needsItem: true,
+				view(t, wi) {
+					const now = wi.assigned_to && (wi.assigned_to.display || wi.assigned_to.unique);
+					const other = t.assignee && String(t.assignee).toLowerCase() !== "me" ? String(t.assignee) : "";
+					return '<p class="text-sm">Now assigned to: <b dir="auto">' + esc(now || "nobody") + "</b></p>" +
+						'<span class="ado-act-label">Assign to</span><div class="ado-act-options" role="radiogroup">' +
+						'<label class="ado-act-option"><input type="radio" name="ado-who" class="ado-act-radio" value="me"' + (other ? "" : " checked") + '><div><b>Me</b><span>' + esc(wi.me && (wi.me.display || wi.me.unique) || "Your Azure DevOps account") + "</span></div></label>" +
+						'<label class="ado-act-option"><input type="radio" name="ado-who" class="ado-act-radio" value="other"' + (other ? " checked" : "") + '><div><b>Someone else</b>' +
+						'<input type="text" class="input input-bordered input-sm w-full mt-1" data-ado-person list="ado-act-people" dir="auto" placeholder="Name or DOMAIN\\user" autocomplete="off" value="' + esc(other) + '">' +
+						'<datalist id="ado-act-people" data-ado-people></datalist></div></label></div>';
+				},
+				body(t) {
+					const who = bodyEl.querySelector('input[name="ado-who"]:checked');
+					const typed = (bodyEl.querySelector("[data-ado-person]").value || "").trim();
+					if (!who) return null;
+					if (who.value === "other" && !typed) return null;
+					return { collection: t.collection, id: Number(t.id), assignee: who.value === "me" ? "" : typed };
+				},
+				verb: (b) => (b.assignee ? "Assign to " + b.assignee : "Assign to me"),
+				after(t, wi) {
+					// Suggestions from the project's team; a typed name still works, and
+					// Azure DevOps checks it before anything is saved.
+					const input = bodyEl.querySelector("[data-ado-person]");
+					input?.addEventListener("focus", () => {
+						const radio = bodyEl.querySelector('input[name="ado-who"][value="other"]');
+						if (radio) radio.checked = true;
+						refresh();
+					});
+					input?.addEventListener("input", refresh);
+					call("GET", "people?" + new URLSearchParams({ collection: t.collection || "", project: wi.project || t.project || "" }))
+						.then((json) => {
+							const list = bodyEl.querySelector("[data-ado-people]");
+							if (list) list.innerHTML = (json.data || []).map((p) => '<option value="' + esc(p.unique || p.display) + '">' + esc(p.display) + "</option>").join("");
+						}).catch(() => {});
+				},
+			},
+			"wi-create": {
+				title: (t) => "Create a " + (t.type || "work item") + " in " + (t.project || "Azure DevOps"),
+				endpoint: "work-item-create",
+				view: (t) =>
+					'<span class="ado-act-label">Type</span>' +
+					'<input type="text" class="input input-bordered input-sm w-full" data-ado-field="type" dir="auto" maxlength="128" value="' + esc(t.type || "Bug") + '">' +
+					'<span class="ado-act-label">Title</span>' +
+					'<input type="text" class="input input-bordered input-sm w-full" data-ado-field="title" dir="auto" maxlength="255" value="' + esc(t.title || "") + '">' +
+					'<span class="ado-act-label">Description</span>' +
+					'<textarea class="textarea textarea-bordered ado-act-text" data-ado-field="description" dir="auto" maxlength="8000" style="min-height: 9rem">' + esc(t.description || "") + "</textarea>" +
+					(t.parent_id ? '<p class="text-xs text-base-content/60 mt-2">It goes under #' + esc(t.parent_id) + ".</p>" : ""),
+				body(t) {
+					const get = (name) => (bodyEl.querySelector('[data-ado-field="' + name + '"]').value || "").trim();
+					if (!get("type") || !get("title")) return null;
+					return { collection: t.collection, project: t.project, type: get("type"), title: get("title"),
+						description: get("description"), parent_id: t.parent_id ? Number(t.parent_id) : null };
+				},
+				verb: (b) => "Create " + b.type,
+			},
+			"conf-create": {
+				system: "Confluence",
+				api: "/api/confluence/actions/",
+				help: "confluence",
+				title: () => "Create a Confluence page",
+				endpoint: "page-create",
+				view: (t) =>
+					'<span class="ado-act-label">Space key</span>' +
+					'<input type="text" class="input input-bordered input-sm w-full" data-ado-field="space" maxlength="255" value="' + esc(t.space || "") + '">' +
+					'<span class="ado-act-label">Title</span>' +
+					'<input type="text" class="input input-bordered input-sm w-full" data-ado-field="title" dir="auto" maxlength="255" value="' + esc(t.title || "") + '">' +
+					'<span class="ado-act-label">Content</span>' +
+					'<textarea class="textarea textarea-bordered ado-act-text" data-ado-field="content" dir="auto" maxlength="60000" style="min-height: 12rem; font-family: ui-monospace, Consolas, monospace; font-size: 0.78rem">' + esc(t.content || "") + "</textarea>" +
+					'<p class="text-xs text-base-content/50 mt-1">Headings, lists, links and code blocks written in Markdown become Confluence formatting.</p>',
+				body(t) {
+					const get = (name) => (bodyEl.querySelector('[data-ado-field="' + name + '"]').value || "").trim();
+					if (!get("space") || !get("title") || !get("content")) return null;
+					return { space: get("space"), title: get("title"), content: get("content"), parent_id: t.parent_id ? String(t.parent_id) : "" };
+				},
+				verb: () => "Create page",
+			},
+			"conf-append": {
+				system: "Confluence",
+				api: "/api/confluence/actions/",
+				help: "confluence",
+				title: (t) => "Add to “" + (t.title || "the page") + "”",
+				endpoint: "page-append",
+				view: (t) =>
+					'<span class="ado-act-label">Section heading <span style="text-transform:none;letter-spacing:normal;font-weight:400">(optional)</span></span>' +
+					'<input type="text" class="input input-bordered input-sm w-full" data-ado-field="heading" dir="auto" maxlength="255" value="' + esc(t.heading || "") + '">' +
+					'<span class="ado-act-label">Content</span>' +
+					'<textarea class="textarea textarea-bordered ado-act-text" data-ado-field="content" dir="auto" maxlength="60000" style="min-height: 12rem; font-family: ui-monospace, Consolas, monospace; font-size: 0.78rem">' + esc(t.content || "") + "</textarea>" +
+					'<p class="text-xs text-base-content/50 mt-1">Added at the end. What is on the page now stays as it is.</p>',
+				body(t) {
+					const get = (name) => (bodyEl.querySelector('[data-ado-field="' + name + '"]').value || "").trim();
+					if (!get("content")) return null;
+					return { page_id: String(t.page_id), heading: get("heading"), content: get("content") };
+				},
+				verb: () => "Add section",
+			},
+		};
+
+		let workItem = null;
+
+		function refresh() {
+			const check = footEl.querySelector("[data-ado-check]");
+			if (check) check.disabled = !current.spec.body(current.target);
+		}
+
+		async function compose() {
+			const spec = current.spec;
+			const t = current.target;
+			kickerEl.textContent = systemName() + " · step 1 of 2";
+			if (spec.needsItem && !workItem) {
+				busy("Reading it from Azure DevOps…");
+				try {
+					workItem = (await call("GET", "work-item?" + new URLSearchParams({ collection: t.collection || "", id: String(t.id) }))).data;
+					subEl.textContent = [workItem.type, workItem.title].filter(Boolean).join(" · ");
+				} catch (err) {
+					return failed(err);
+				}
+			}
+			bodyEl.innerHTML = spec.view(t, workItem || {});
+			foot('<span class="ado-act-hint">Nothing is sent until you confirm.</span>' +
+				'<button type="button" class="btn btn-ghost btn-sm" data-ado-cancel>Cancel</button>' +
+				'<button type="button" class="btn btn-primary btn-sm" data-ado-check disabled>Check</button>');
+			if (spec.after) spec.after(t, workItem || {});
+			refresh();
+			const first = bodyEl.querySelector("textarea, input:checked, input");
+			first?.focus();
+		}
+
+		async function check() {
+			const payload = current.spec.body(current.target);
+			if (!payload) return;
+			current.payload = payload;
+			kickerEl.textContent = systemName() + " · step 2 of 2";
+			busy("Checking with " + systemName() + "…");
+			let json;
+			try {
+				json = await call("POST", current.spec.endpoint, Object.assign({}, payload, { dry_run: true }));
+			} catch (err) {
+				return failed(err, true);
+			}
+			const danger = current.spec.danger && current.spec.danger(payload);
+			bodyEl.innerHTML =
+				'<p class="ado-act-summary" dir="auto">' + esc(json.summary) + "</p>" +
+				'<ul class="ado-act-checks">' + (json.checks || []).map((c) => "<li>" + TICK + '<span dir="auto">' + esc(c) + "</span></li>").join("") + "</ul>" +
+				'<p class="ado-act-note">' + esc(systemName()) + ' will record this under your name, with your permissions.</p>';
+			foot('<button type="button" class="btn btn-ghost btn-sm" data-ado-back>Back</button>' +
+				'<button type="button" class="btn btn-sm ' + (danger ? "btn-error" : "btn-primary") + '" data-ado-confirm>' + esc(current.spec.verb(payload)) + "</button>");
+			footEl.querySelector("[data-ado-confirm]")?.focus();
+		}
+
+		async function confirm() {
+			busy("Sending to " + systemName() + "…");
+			let json;
+			try {
+				json = await call("POST", current.spec.endpoint, Object.assign({}, current.payload, { dry_run: false }));
+			} catch (err) {
+				return failed(err, true);
+			}
+			kickerEl.textContent = systemName() + " · done";
+			const tone = json.simulated ? "warn" : "ok";
+			bodyEl.innerHTML =
+				'<div class="ado-act-outcome" data-tone="' + tone + '">' + OK + "<div>" +
+				'<p class="font-semibold" dir="auto">' + esc(json.summary) + "</p>" +
+				'<p class="mt-1" dir="auto">' + esc(json.result || "Done.") + "</p>" +
+				(json.url ? '<a class="ado-act-link inline-block mt-2" href="' + esc(json.url) + '" target="_blank" rel="noopener noreferrer">Open in ' + esc(systemName()) + '</a>' : "") +
+				"</div></div>";
+			foot('<button type="button" class="btn btn-primary btn-sm" data-ado-close>Close</button>');
+			current.done = true;
+			// Every completed action, Safe Mode's simulated ones included, for whoever
+			// asked for it (DevBot records the outcome in the conversation).
+			document.dispatchEvent(new CustomEvent("portal:action-done", { detail: { kind: current.kind, target: current.target, result: json } }));
+			if (!json.simulated) {
+				document.dispatchEvent(new CustomEvent("portal:ado-changed", { detail: { kind: current.kind, target: current.target, result: json } }));
+			}
+		}
+
+		function failed(err, canGoBack) {
+			const token = err && (err.status === 401 || err.status === 403);
+			bodyEl.innerHTML =
+				'<div class="ado-act-outcome" data-tone="bad">' + BAD + '<div><p dir="auto">' + esc((err && err.message) || "Something went wrong.") + "</p>" +
+				(token ? '<button type="button" class="btn btn-outline btn-xs mt-2" data-pat-help="' + esc((current && current.spec.help) || "azure") + '">How to create a token with the right scopes</button>' : "") +
+				"</div></div>";
+			foot((canGoBack ? '<button type="button" class="btn btn-ghost btn-sm" data-ado-back>Back</button>' : "") +
+				'<button type="button" class="btn btn-sm" data-ado-close>Close</button>');
+		}
+
+		// Once, not per compose: Back redraws the body, and listeners would pile up.
+		bodyEl.addEventListener("change", () => current && refresh());
+		bodyEl.addEventListener("input", () => current && refresh());
+
+		footEl.addEventListener("click", (event) => {
+			if (event.target.closest("[data-ado-cancel], [data-ado-close]")) { modal.close(); return; }
+			if (event.target.closest("[data-ado-check]")) { check(); return; }
+			if (event.target.closest("[data-ado-back]")) { compose(); return; }
+			if (event.target.closest("[data-ado-confirm]")) { confirm(); }
+		});
+
+		function open(kind, target) {
+			const spec = KINDS[kind];
+			if (!spec || !target) return;
+			current = { kind: kind, spec: spec, target: target };
+			workItem = null;
+			titleEl.textContent = spec.title(target);
+			subEl.textContent = target.title || "";
+			modal.showModal();
+			compose();
+		}
+
+		// Closed without completing: whoever opened it may be waiting to hear.
+		modal.addEventListener("close", () => {
+			if (current && !current.done) {
+				document.dispatchEvent(new CustomEvent("portal:action-closed", { detail: { kind: current.kind, target: current.target } }));
+			}
+		});
+
+		window.portalAdo = { open: open };
+	})();
+</script>

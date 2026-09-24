@@ -262,3 +262,63 @@
 
 .ann-dismiss:hover,
 .ann-dismiss:focus-visible { opacity: 1; background: hsl(var(--bc) / 0.1); }
+
+/* ── Text a USER typed wraps, however they typed it ─────────────────────────
+   A 200-character string with no spaces in it is a legitimate thing for someone
+   to paste into a suggestion, a comment or a ticket, and without this it runs
+   straight out of its card and off the page.
+
+   This hangs off dir="auto" on purpose. The portal already carries that attribute
+   on every element holding text a user wrote -- it is there so Hebrew reads
+   right-to-left beside its label -- which makes it the one reliable marker in the
+   whole codebase for "this string was not written by us". Fixing it here fixes it
+   for every form, every comment and every widget at once, including the ones
+   nobody has noticed yet.
+
+   `break-word`, not `anywhere`: both break the long word, but `anywhere` also
+   feeds into min-content sizing and can quietly shrink flex and grid children
+   that were laid out correctly. */
+[dir="auto"] {
+	overflow-wrap: break-word;
+}
+
+/* ── Status badges, quieted ─────────────────────────────────────────────────
+   DaisyUI's .badge is a solid block of fully saturated colour. Next to one row
+   it reads as emphasis; down a list of forty it is forty competing shouts, and
+   the thing you actually came to read — the project name, the request title —
+   stops being the loudest thing on its own row.
+
+   Restyled here rather than at the ~40 call sites across approvals, my requests,
+   profile and platform managing: the markup is already correct everywhere, it is
+   the paint that was wrong, and one rule cannot drift out of step with itself.
+   Tinted ground, coloured text, hairline border - same information, same colour
+   coding, without the shouting.
+
+   Anything that wants the old solid fill can still ask for it with an inline
+   style; nothing currently does. */
+.badge {
+	font-weight: 500;
+	border-width: 1px;
+	background-color: hsl(var(--bc) / 0.06);
+	border-color: hsl(var(--bc) / 0.18);
+	color: hsl(var(--bc) / 0.75);
+}
+
+.badge-error   { background-color: hsl(var(--er) / 0.10); border-color: hsl(var(--er) / 0.35); color: hsl(var(--er)); }
+.badge-warning { background-color: hsl(var(--wa) / 0.12); border-color: hsl(var(--wa) / 0.35); color: hsl(var(--wa)); }
+.badge-success { background-color: hsl(var(--su) / 0.12); border-color: hsl(var(--su) / 0.35); color: hsl(var(--su)); }
+.badge-info    { background-color: hsl(var(--in) / 0.10); border-color: hsl(var(--in) / 0.35); color: hsl(var(--in)); }
+.badge-primary { background-color: hsl(var(--p) / 0.10);  border-color: hsl(var(--p) / 0.35);  color: hsl(var(--p)); }
+.badge-secondary { background-color: hsl(var(--s) / 0.10); border-color: hsl(var(--s) / 0.35); color: hsl(var(--s)); }
+.badge-ghost   { background-color: hsl(var(--bc) / 0.06); border-color: hsl(var(--bc) / 0.15); color: hsl(var(--bc) / 0.6); }
+
+/* ── Widget search box ───────────────────────────────────────────────────────
+   The one search box every list widget uses, level with the select-xs controls
+   beside it. `input-xs` is not compiled into output.css, so this is its size. */
+.portal-widget-search {
+	height: 1.5rem;
+	min-height: 1.5rem;
+	font-size: 0.75rem;
+	padding-inline: 0.5rem;
+	width: 100%;
+}

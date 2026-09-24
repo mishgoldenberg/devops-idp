@@ -129,23 +129,25 @@ def body(doc, text: str, bold: bool = False) -> None:
 
 # -- the round ---------------------------------------------------------------
 
-ROUND = "117"
-
-SUMMARY = ("The image the Artifactory cleaner's CronJob runs, and the console its objects "
-           "live in, move out of the source and into the variable group -- they describe "
-           "this installation rather than the product, and the repository is public")
-
+ROUND = "129"
+SUMMARY = ("DevBot AI, part 5 of 5: a Usage view (tokens and requests per model, today and over 30 days, "
+           "beside the key's limits, budget and expiry), a first-visit tour of the DevBot page, DevBot in the "
+           "portal tour (only the new stop for people who took it already), a short rate limit waited out and "
+           "a long one counted down to Ask again, and a failed question kept with its reason and never "
+           "replayed twice; DevBot's SQL now runs in tests against a real Postgres")
 DELETES = []
-
 FILES = [
-    "backend/app/artifactory_cleaner.py",
-    "frontend/templates/partials/components/approvals-container.html",
-    "azure-pipelines.yml",
-    "deployment/charts/backend/templates/secrets.yaml",
-    "deployment/charts/backend/templates/deployment.yaml",
+    "CLAUDE.md",
+    "backend/app/api/devbot.py",
     "backend/app/changelog.py",
+    "backend/app/devbot/orchestrator.py",
+    "backend/app/devbot/store.py",
+    "backend/tests/test_devbot.py",
+    "backend/tests/test_devbot_store.py",
+    "docs/API_REFERENCE.md",
+    "frontend/templates/partials/components/devbot-container.html",
+    "frontend/templates/partials/components/tour.html",
 ]
-
 PREAMBLE = ""
 
 

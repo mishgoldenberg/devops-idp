@@ -56,6 +56,12 @@ def test_app_builds(app):
         "/api/dashboard/snow-items",
         "/ui/search",
         "/ui/connections",
+        "/ui/devbot",
+        "/api/devbot/status",
+        "/api/devbot/chat",
+        "/api/devbot/conversations",
+        "/api/devbot/conversations/{conversation_id}",
+        "/api/devbot/models/check",
     ],
 )
 def test_route_exists(paths, path):

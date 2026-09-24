@@ -14,18 +14,19 @@
 	Icons live in one <svg> sprite at the bottom. Stroke-drawn and fill-drawn icons carry
 	their own attributes inside the symbol, so <use> renders each correctly.
 
-	SonarQube is deliberately absent from Systems while it is unreachable from the
-	cluster — a navigation entry that always lands on an error is worse than no entry.
-	The page, the route and the `nav-sonarqube` icon in the sprite below all still
-	exist, so restoring it is one line here once the firewall is open. The note lives
-	up here rather than beside the list because `sections` below is a Jinja expression,
-	and a Jinja comment cannot be placed inside one.
+	`news` marks an entry that can carry a "something changed since you were last
+	here" dot: a request decided, a ticket answered, a suggestion voted on. The dot is
+	filled in by the script at the bottom from /api/notifications/sections, and the
+	page itself clears it when it is opened. The note lives up here rather than beside
+	the list because `sections` below is a Jinja expression, and a Jinja comment cannot
+	be placed inside one.
 #}
 {% set sections = [
 	{
 		"title": None,
 		"items": [
 			{"key": "home", "label": "Home", "href": "/ui/", "icon": "nav-home"},
+			{"key": "devbot", "label": "DevBot AI", "href": "/ui/devbot", "icon": "nav-devbot"},
 		],
 	},
 	{
@@ -33,6 +34,7 @@
 		"items": [
 			{"key": "azure-devops", "label": "Azure DevOps", "href": "/ui/azure-devops", "icon": "nav-azure-devops"},
 			{"key": "artifactory", "label": "Artifactory", "href": "/ui/artifactory", "icon": "nav-artifactory"},
+			{"key": "sonarqube", "label": "SonarQube", "href": "/ui/sonarqube", "icon": "nav-sonarqube"},
 		],
 	},
 	{
@@ -41,9 +43,9 @@
 			{"key": "search", "label": "Search", "href": "/ui/search", "icon": "nav-search"},
 			{"key": "connections", "label": "Connections", "href": "/ui/connections", "icon": "nav-connections"},
 			{"key": "automations", "label": "Requests", "href": "/ui/automations", "icon": "nav-automations"},
-			{"key": "my-requests", "label": "My Requests", "href": "/ui/my-requests", "icon": "nav-requests"},
-			{"key": "support", "label": "Support", "href": "/ui/support", "icon": "nav-support"},
-			{"key": "suggestions", "label": "Suggestions", "href": "/ui/suggestions", "icon": "nav-suggestions"},
+			{"key": "my-requests", "label": "My Requests", "href": "/ui/my-requests", "icon": "nav-requests", "news": true},
+			{"key": "support", "label": "Support", "href": "/ui/support", "icon": "nav-support", "news": true},
+			{"key": "suggestions", "label": "Suggestions", "href": "/ui/suggestions", "icon": "nav-suggestions", "news": true},
 			{"key": "changelog", "label": "What's New", "href": "/ui/changelog", "icon": "nav-changelog", "unread": true},
 		],
 	},
@@ -52,6 +54,7 @@
 	"title": "Admin",
 	"items": [
 		{"key": "observability", "label": "Observability", "href": "/ui/observability", "icon": "nav-observability"},
+		{"key": "users", "label": "Users", "href": "/ui/users", "icon": "nav-users"},
 		{"key": "platform-managing", "label": "Platform Managing", "href": "/ui/platform-managing", "icon": "nav-platform"},
 		{"key": "approvals", "label": "Approvals", "href": "/ui/approvals", "icon": "nav-approvals"},
 		{"key": "audit-logs", "label": "Logs", "href": "/ui/audit-logs", "icon": "nav-logs"},
@@ -79,6 +82,9 @@
 			#}
 			{% if item.unread %}
 				<span class="portal-nav-dot" data-portal-unread style="display:none"></span>
+			{% endif %}
+			{% if item.news and not active %}
+				<span class="portal-nav-dot" data-portal-news="{{ item.key }}" style="display:none" title="Something changed since your last visit"></span>
 			{% endif %}
 		</a>
 	</li>
@@ -184,6 +190,12 @@
 	<symbol id="nav-sonarqube" viewBox="0 0 24 24">
 		<path fill="currentColor" d="M15.685.386l-.465.766c3.477 2.112 6.305 5.27 7.966 8.89L24 9.67C22.266 5.887 19.313 2.59 15.685.386zM8.462.91l-.305 1.075c6.89 1.976 12.384 7.64 13.997 14.421l1.085-.258C21.535 8.977 15.735 2.997 8.462.909zM0 2.667v1.342c10.963 0 19.883 8.795 19.883 19.605h1.342c0-11.55-9.522-20.947-21.225-20.947z" />
 	</symbol>
+	<symbol id="nav-devbot" viewBox="0 0 24 24">
+		<g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+			<path d="M21 12a8 8 0 01-11.6 7.1L4 20.5l1.4-4.8A8 8 0 1121 12z" />
+			<path d="M12 8.2l.9 2 2 .9-2 .9-.9 2-.9-2-2-.9 2-.9z" />
+		</g>
+	</symbol>
 	<symbol id="nav-search" viewBox="0 0 24 24">
 		<g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 			<circle cx="11" cy="11" r="7" />
@@ -222,6 +234,13 @@
 			<path d="M9 18h6" />
 			<path d="M10 22h4" />
 			<path d="M12 2a7 7 0 00-4 12.7V17h8v-2.3A7 7 0 0012 2z" />
+		</g>
+	</symbol>
+	<symbol id="nav-users" viewBox="0 0 24 24">
+		<g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+			<path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2" />
+			<circle cx="9" cy="7" r="4" />
+			<path d="M22 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" />
 		</g>
 	</symbol>
 	<symbol id="nav-observability" viewBox="0 0 24 24">
@@ -290,5 +309,38 @@
 			// failure than a release nobody hears about.
 		}
 		if (seen !== running) dot.style.display = "";
+	})();
+
+	(function () {
+		"use strict";
+		// "Something changed since you were last here" -- a request decided, a ticket
+		// answered, a suggestion voted on or answered. The same events ring the bell;
+		// the dot says WHERE, and survives the bell being cleared, because reading a
+		// notification is not the same as having looked at the page it points to.
+		// Opening the page clears its dot (the server stamps the visit).
+		var dots = document.querySelectorAll("[data-portal-news]");
+		if (!dots.length) return;
+		function refresh() {
+			fetch("/api/notifications/sections", { credentials: "same-origin" })
+				.then(function (res) { return res.ok ? res.json() : null; })
+				.then(function (body) {
+					var data = (body && body.data) || {};
+					dots.forEach(function (dot) {
+						var entry = data[dot.getAttribute("data-portal-news")] || {};
+						var n = Number(entry.count || 0);
+						dot.style.display = n > 0 ? "" : "none";
+						dot.title = n > 0 ? (n === 1 ? "1 update" : n + " updates") + " since your last visit" : "";
+					});
+				})
+				.catch(function () { /* a missing dot is better than a wrong one */ });
+		}
+		refresh();
+		// Same cadence and the same background-tab rule as the bell.
+		setInterval(function () {
+			if (document.visibilityState === "visible") refresh();
+		}, 60000);
+		document.addEventListener("visibilitychange", function () {
+			if (document.visibilityState === "visible") refresh();
+		});
 	})();
 </script>

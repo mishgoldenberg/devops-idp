@@ -62,6 +62,7 @@ BENIGN_READ_STATUSES = {428}
 #     fires them automatically on every dashboard mount, one per widget. Ten rows
 #     every time anyone presses F5, saying nothing except "the dashboard rendered".
 #     They are telemetry about the portal, and they already have their own tables.
+#   * The usage beat is the same kind of thing, once a minute from every open page.
 #
 # The rule this encodes: the log records what a PERSON did, not what their browser
 # did on their behalf. Everything that fails still gets through — the 4xx/5xx path
@@ -72,7 +73,14 @@ SKIP_PREFIXES = (
     "/api/health",
     "/api/observability/widget",
     "/api/dashboard/widgets/sync",
+    "/api/usage/heartbeat",
 )
+
+# A READ that took longer than this is recorded even though it succeeded. Nobody
+# reports "the dashboard feels slow" with a route attached, and a widget that takes
+# eight seconds is a problem long before it is a failure. Once per route per
+# _REPEAT_WINDOW_S, carrying how many times it happened in between.
+SLOW_READ_MS = 3000
 
 # Bodies are never stored. Some of these routes carry a password or a PAT, and a log
 # that quietly accumulates credentials is a breach waiting for someone to read it.
@@ -131,6 +139,14 @@ FRIENDLY: Dict[tuple, str] = {
     ("POST", "/ui/azure-devops/pat"): "Connected Azure DevOps",
     ("DELETE", "/ui/azure-devops/pat"): "Disconnected Azure DevOps",
     ("POST", "/ui/profile"): "Updated their profile",
+    ("POST", "/api/azure-devops/actions/pr-vote"): "Voted on a pull request",
+    ("POST", "/api/azure-devops/actions/pr-comment"): "Commented on a pull request",
+    ("POST", "/api/azure-devops/actions/pipeline-rerun"): "Ran a pipeline again",
+    ("POST", "/api/azure-devops/actions/work-item-state"): "Moved a work item",
+    ("POST", "/api/azure-devops/actions/work-item-description"): "Added to a work item's description",
+    ("POST", "/api/azure-devops/actions/work-item-comment"): "Commented on a work item",
+    ("POST", "/api/azure-devops/actions/work-item-assign"): "Assigned a work item",
+    ("POST", "/api/approvals/requests/{request_id}/rating"): "Rated a request",
     ("POST", "/ui/dashboard/preferences"): "Changed their dashboard layout",
 }
 
@@ -148,6 +164,8 @@ LOW_VALUE_ROUTES = {
     # is the single most frequent write there is. Recorded, but out of the way at DEBUG.
     ("POST", "/api/suggestions/{suggestion_id}/vote"),
     ("DELETE", "/api/suggestions/{suggestion_id}/vote"),
+    # Closing the weekend-bonus message on the streak flame.
+    ("POST", "/api/streaks/me/notice-seen"),
 }
 
 # GET is here so a FAILED read (the only kind that gets logged) reads as a sentence
@@ -286,15 +304,24 @@ class AuditMiddleware(BaseHTTPMiddleware):
 
         if interesting:
             await self._record(request, status_code, duration_ms)
+        elif not quiet and request.method == "GET" and duration_ms >= SLOW_READ_MS:
+            await self._record(request, status_code, duration_ms, slow=True)
         return response
 
-    async def _record(self, request: Request, status_code: int, duration_ms: int) -> None:
+    async def _record(self, request: Request, status_code: int, duration_ms: int, slow: bool = False) -> None:
         route = _route_of(request)
         method = request.method
         user = _user_email_of(request)
 
         suppressed = 0
-        if status_code >= 400 and method not in MUTATING_METHODS:
+        if slow:
+            # Per ROUTE, not per person: "this widget is slow" is one fact however many
+            # people waited for it, and the count says how many times.
+            decision = _repeat_decision(("slow", method, route), time.monotonic())
+            if decision is None:
+                return
+            suppressed = decision
+        elif status_code >= 400 and method not in MUTATING_METHODS:
             decision = _repeat_decision((user or "-", method, route, status_code), time.monotonic())
             if decision is None:
                 return
@@ -327,6 +354,10 @@ class AuditMiddleware(BaseHTTPMiddleware):
         # only applies while things are working.
         if level == audit.Level.INFO and (method, route) in LOW_VALUE_ROUTES:
             level = audit.Level.DEBUG
+        if slow:
+            metadata["what"] = f"Slow to load ({duration_ms / 1000:.1f}s): {metadata['what']}"
+            metadata["slow"] = True
+            level = audit.Level.WARNING
 
         # psycopg2 is synchronous. Called straight from this coroutine it would stall
         # the event loop — every write in the portal, once per request — so the insert

@@ -20,6 +20,12 @@ data:
   # in the Azure DevOps variable group makes it available to the pipeline, not to the
   # running pod — which is why setting it there alone had no effect.
   ARTIFACTORY_DISK_TOTAL: {{ .Values.global.artifactoryDiskTotal | default "" | quote }}
+  # DevBot: runtime values, so they belong here and not only in the pipeline's
+  # variable group, which the running pod never sees. See global.devbot* in values.yaml.
+  DEVBOT_LLM_BASE_URL: {{ .Values.global.devbotLlmBaseUrl | default "" | quote }}
+  DEVBOT_DEFAULT_MODEL: {{ .Values.global.devbotDefaultModel | default "" | quote }}
+  DEVBOT_KEY_HELP_URL: {{ .Values.global.devbotKeyHelpUrl | default "" | quote }}
+  DEVBOT_STREAM: {{ .Values.global.devbotStream | default "true" | quote }}
   # Trust the OpenShift router's X-Forwarded-Proto so request.url.scheme is
   # https — required for the SSO redirect_uri to match the registered value.
   FORWARDED_ALLOW_IPS: "*"

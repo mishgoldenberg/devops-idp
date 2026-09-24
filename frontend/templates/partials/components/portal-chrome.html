@@ -107,37 +107,22 @@
 	}
 
 	/*
-	   The width transition is back, by request — the instant toggle was correct about
-	   the cost and wrong about the feel.
+	   Open/close does NOT animate the sidebar's width. It did, and every frame of that
+	   animation gave the page beside it a new width: the browser laid out every widget
+	   again and repainted the whole window, sixty times a second. Measured on a full
+	   dashboard without a GPU, that was about a fifth of a second of work per toggle,
+	   which is the stutter people saw.
 
-	   Animating width does re-run layout for the page each frame, so it is kept cheap
-	   rather than removed: 160ms (short enough that a dropped frame is not readable as
-	   a stutter), and `contain: layout paint` on the sidebar so its own subtree is not
-	   re-laid-out as part of every frame. The transition is scoped to `width` alone —
-	   never `all` — so nothing else animates by accident.
+	   Instead the sidebar takes its new width at once (one layout), and the PAGE slides
+	   from where it was to where it now is on a transform, which the compositor moves
+	   without laying out or painting anything (slidePane, below). Opening, the page
+	   slides off the labels; closing, it slides over to meet the rail.
 
-	   The collapsed labels stay `display: none` rather than fading: they have to stop
-	   taking horizontal space for the rail to be a rail, and an element cannot both
-	   fade and stop occupying width. The width animation is the part that reads as
-	   smooth anyway.
+	   The collapsed labels stay `display: none`: they have to stop taking horizontal
+	   space for the rail to be a rail.
 	*/
 	[data-portal-sidebar] {
 		contain: layout paint;
-		transition: width 160ms cubic-bezier(0.4, 0, 0.2, 1);
-	}
-
-	/* Dragging the sidebar wider must track the pointer exactly — a transition there
-	   would make the edge lag behind the cursor. `data-portal-dragging` is what the
-	   resize handle already sets on <body> for the duration of a drag. */
-	body[data-portal-dragging] [data-portal-sidebar] {
-		transition: none;
-	}
-
-	/* Anyone who has asked their OS for less motion gets the instant toggle back. */
-	@media (prefers-reduced-motion: reduce) {
-		[data-portal-sidebar] {
-			transition: none;
-		}
 	}
 
 	/* ─────────────────────────────────────────────────────────────────────
@@ -147,7 +132,7 @@
 	   spinners are the one piece of motion that carries information ("this is
 	   still working"), they are tiny in area, and freezing them makes a widget
 	   look hung rather than calm. What this kills is the expensive category —
-	   the sidebar's width animation, the widget reflow, panel and toast
+	   the sidebar's slide, the widget reflow, panel and toast
 	   transitions — all of which move large areas and, without a GPU, are
 	   composited by the CPU one frame at a time.
 	   ───────────────────────────────────────────────────────────────────── */
@@ -1127,10 +1112,46 @@
 		}
 		paintSidebarToggle();
 
+		// Open/close is a SLIDE, not a width animation. See the sidebar section of the
+		// styles above for the measurements behind it.
+		let slideTimer = null;
+		function slidePane(apply) {
+			const aside = document.querySelector("[data-portal-sidebar]");
+			// The page is the next sibling that is a real box. Between the two sit
+			// sidebar.html's <script> and its zero-size icon sprite (<svg>).
+			let pane = aside && aside.nextElementSibling;
+			while (pane && (!(pane instanceof HTMLElement) || /^(SCRIPT|STYLE|TEMPLATE|LINK)$/.test(pane.tagName))) {
+				pane = pane.nextElementSibling;
+			}
+			const still = root.getAttribute("data-motion") === "reduced" ||
+				(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+			if (!pane || still) { apply(); return; }
+			const before = aside.getBoundingClientRect().width;
+			apply();
+			// The one layout: the page takes its final width and place at once.
+			const delta = before - aside.getBoundingClientRect().width;
+			if (!delta) return;
+			clearTimeout(slideTimer);
+			// Drawn where it WAS, then slid to where it is, by the compositor alone.
+			// Above the sidebar while it moves, so opening reveals the labels from under
+			// the page's edge instead of the page jumping away from them.
+			pane.style.transition = "none";
+			pane.style.position = "relative";
+			pane.style.zIndex = "5";
+			pane.style.willChange = "transform";
+			pane.style.transform = "translateX(" + delta + "px)";
+			void getComputedStyle(pane).transform;
+			pane.style.transition = "transform 180ms cubic-bezier(0.4, 0, 0.2, 1)";
+			pane.style.transform = "";
+			slideTimer = setTimeout(() => {
+				["transition", "position", "zIndex", "willChange", "transform"].forEach((p) => { pane.style[p] = ""; });
+			}, 260);
+		}
+
 		function toggleSidebar() {
 			const next =
 				root.getAttribute("data-sidebar") === "collapsed" ? "expanded" : "collapsed";
-			root.setAttribute("data-sidebar", next);
+			slidePane(() => root.setAttribute("data-sidebar", next));
 			LS.set(SIDEBAR_STATE_KEY, next);
 			paintSidebarToggle();
 		}
@@ -1378,6 +1399,10 @@
 		// hits everything, and it restarts the clock.
 		document.addEventListener("click", (event) => {
 			if (!event.target.closest("#refresh-btn")) return;
+			// When somebody last ASKED. A widget redrawn by the timer and one redrawn by
+			// this button look identical from inside; a widget that keeps a server-side
+			// cache reads this to decide whether to go past it (sonarqube-widget.html).
+			window.__portalRefreshAskedAt = Date.now();
 			targets().forEach((el) => {
 				el.removeAttribute("data-refresh-quiet");
 				lastRefreshed.set(el, Date.now());
@@ -1636,5 +1661,78 @@
 				}
 			} catch (_) {}
 		});
+	})();
+</script>
+
+<script>
+	// ── Usage beat ─────────────────────────────────────────────────────────
+	// How long people actually use the portal, for the admin Users page. A second
+	// counts only while this tab is VISIBLE and somebody has touched the mouse or
+	// keyboard in the last two minutes: an open tab is not a person using it. The
+	// server clamps every beat to real elapsed time as well (usage_tracking.py), so
+	// several open tabs cannot add up to more than the clock allows.
+	(function () {
+		if (window.__portalUsageBeat) return;
+		window.__portalUsageBeat = true;
+		// "Signed in" is read once the page has PARSED. This script is in the banner,
+		// which comes before the sidebar, so an immediate check always found no sidebar
+		// and returned -- the beat never ran, and every figure on the Users page stayed
+		// at zero from the day it shipped.
+		if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);
+		else start();
+
+		function start() {
+		if (!document.querySelector("[data-portal-sidebar]")) return; // not signed in
+
+		const PAGE = {{ (current_page | default('', true)) | tojson }} || "other";
+		const IDLE_MS = 120000;
+		const TICK_MS = 15000;
+		const BEAT_MS = 60000;
+		let lastInput = Date.now();
+		let lastTick = Date.now();
+		let pending = 0;
+		let viewSent = false;
+
+		function touched() { lastInput = Date.now(); }
+		["pointerdown", "pointermove", "keydown", "wheel", "touchstart", "scroll"].forEach(function (name) {
+			window.addEventListener(name, touched, { passive: true, capture: true });
+		});
+
+		function tick() {
+			const now = Date.now();
+			const elapsed = Math.min(now - lastTick, TICK_MS * 2) / 1000;
+			lastTick = now;
+			if (document.visibilityState === "visible" && now - lastInput < IDLE_MS) pending += elapsed;
+		}
+
+		function beat() {
+			tick();
+			const seconds = Math.round(pending);
+			if (!seconds && viewSent) return;
+			pending = 0;
+			const body = JSON.stringify({ page: PAGE, active_seconds: seconds, view: !viewSent });
+			viewSent = true;
+			try {
+				// keepalive, so the last beat still arrives when the tab is closing.
+				fetch("/api/usage/heartbeat", {
+					method: "POST",
+					credentials: "same-origin",
+					keepalive: true,
+					headers: { "Content-Type": "application/json" },
+					body: body,
+				}).catch(function () {});
+			} catch (_) {}
+		}
+
+		setInterval(tick, TICK_MS);
+		setInterval(function () { if (document.visibilityState === "visible") beat(); }, BEAT_MS);
+		document.addEventListener("visibilitychange", function () {
+			if (document.visibilityState === "hidden") beat();
+			else { lastTick = Date.now(); touched(); }
+		});
+		window.addEventListener("pagehide", beat);
+		// The page view, straight away: a visit that lasts ten seconds is still a visit.
+		beat();
+		}
 	})();
 </script>
