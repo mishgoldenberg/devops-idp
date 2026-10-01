@@ -21,7 +21,16 @@ from typing import Any, Dict, List, Optional
 SYSTEM_OF_KIND = {
     "rerun": "azure", "vote": "azure", "pr-comment": "azure", "wi-state": "azure", "wi-comment": "azure",
     "wi-assign": "azure", "wi-description": "azure", "wi-create": "azure",
+    "pipeline-run": "azure", "pipeline-cancel": "azure",
     "conf-create": "confluence", "conf-append": "confluence",
+    # A support ticket drafted into the Support form, and a reply on one of the person's own.
+    "support-ticket": "servicenow", "ticket-reply": "servicenow",
+    # A self-service request drafted into its form (tools/selfservice.py).
+    "catalog-request": "requests",
+    # AdminBot's: confirmed in the big confirmation and performed by tools.hub.run_action.
+    "request-approve": "hub", "request-reject": "hub", "requests-approve": "hub", "requests-reject": "hub",
+    "user-active": "hub", "user-role": "hub", "announcement-post": "hub", "announcement-end": "hub",
+    "index-build": "hub", "index-stop": "hub", "fix-hide": "hub", "fix-show": "hub", "fix-review": "hub",
 }
 
 

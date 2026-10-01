@@ -79,6 +79,19 @@ _POOL_MAX = int(os.getenv("DB_POOL_MAX", "20"))
 # open connections, which leaks a handful of connections on every cold start.
 _pool_lock = threading.Lock()
 
+# A request WAITS for a free connection instead of failing. psycopg2's pool raises
+# "connection pool exhausted" the moment one more thread asks than it has connections:
+# with a pool of 8 and a hundred request threads, a busy minute turned into 500s on
+# whichever pages happened to ask ninth. Queries are milliseconds, so a short wait is
+# what a busy pod should do; DB_POOL_WAIT bounds it, after which the request fails
+# with the reason.
+_POOL_WAIT = float(os.getenv("DB_POOL_WAIT", "10"))
+_pool_slots = threading.BoundedSemaphore(_POOL_MAX)
+
+
+class DatabaseBusy(psycopg2.OperationalError):
+    """Every connection of this pod's pool stayed in use for DB_POOL_WAIT seconds."""
+
 
 # How long a single connection attempt may take. Without this, libpq waits for the
 # OS TCP timeout — minutes — whenever the DB host silently drops packets, which is
@@ -129,6 +142,27 @@ _pool_failed_at = 0.0
 _POOL_RETRY_COOLDOWN = float(os.getenv("DB_POOL_RETRY_COOLDOWN", "5"))
 
 
+class _KeepingPool(psycopg2.pool.ThreadedConnectionPool):
+    """A ThreadedConnectionPool that KEEPS the connections it is handed back.
+
+    psycopg2's pool keeps only ``minconn`` idle connections and closes every other one
+    as it is returned -- so with DB_POOL_MIN=2, any third request at the same moment
+    opened a brand-new connection to Postgres (TCP, authentication, session setup) and
+    closed it again a few milliseconds later. Under load that was a third of the
+    backend's time. Here a returned connection is kept as long as fewer than
+    ``maxconn`` are idle; ``minconn`` still decides how many are opened at start.
+    Runs under the pool's own lock (putconn), so the swap below is not visible to
+    another thread."""
+
+    def _putconn(self, conn, key=None, close=False):
+        keep = self.minconn
+        self.minconn = self.maxconn
+        try:
+            super()._putconn(conn, key, close)
+        finally:
+            self.minconn = keep
+
+
 class DatabaseUnavailable(psycopg2.OperationalError):
     """Raised instead of queueing behind a connection attempt that is failing."""
 
@@ -147,7 +181,7 @@ def _get_pool() -> "psycopg2.pool.ThreadedConnectionPool":
         if _db_pool is None:
             settings = get_settings()
             try:
-                _db_pool = psycopg2.pool.ThreadedConnectionPool(
+                _db_pool = _KeepingPool(
                     _POOL_MIN, _POOL_MAX, _dsn_with_timeouts(settings.database_url)
                 )
                 _pool_failed_at = 0.0
@@ -160,17 +194,23 @@ def _get_pool() -> "psycopg2.pool.ThreadedConnectionPool":
 
 @contextmanager
 def get_connection():
-    """Context manager yielding a PostgreSQL connection from the pool."""
+    """Context manager yielding a PostgreSQL connection from the pool, waiting up to
+    DB_POOL_WAIT seconds for one to be free."""
     pool = _get_pool()
-    conn = pool.getconn()
+    if not _pool_slots.acquire(timeout=_POOL_WAIT):
+        raise DatabaseBusy(f"all {_POOL_MAX} database connections stayed busy for {_POOL_WAIT:g} s")
     try:
-        yield conn
-        conn.commit()
-    except Exception as e:
-        conn.rollback()
-        raise e
+        conn = pool.getconn()
+        try:
+            yield conn
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            pool.putconn(conn)
     finally:
-        pool.putconn(conn)
+        _pool_slots.release()
 
 def query_all(sql: str, params: Optional[Sequence[Any]] = None) -> List[Dict[str, Any]]:
     """Run a SELECT query and return all rows as dictionaries."""
@@ -535,11 +575,15 @@ def ensure_tables() -> None:
     from streaks import ensure_tables as ensure_streak_tables
     from usage_tracking import ensure_usage_tables
     from devbot.store import ensure_tables as ensure_devbot_tables
+    from devbot.knowledge import ensure_tables as ensure_devbot_index_tables
+    from devbot.monitor import ensure_tables as ensure_devbot_monitor_tables
 
     ensure_release_notes_table()
     ensure_usage_tables()
     ensure_streak_tables()
     ensure_devbot_tables()
+    ensure_devbot_index_tables()
+    ensure_devbot_monitor_tables()
 
 
 def ensure_approval_request_types() -> None:

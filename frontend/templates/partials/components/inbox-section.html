@@ -343,7 +343,10 @@
 		// Refresh means refresh: bypass the server-side cache rather than re-reading
 		// the same 45-second-old answer the user just decided to doubt.
 		document.getElementById("inbox-refresh")?.addEventListener("click", () => load(true));
-		window.addEventListener("portal:refreshed", () => load(true));
+		// The page refreshed: the timer's refresh reads the server's short cache; only a
+		// Refresh the person pressed in the last minute goes past it.
+		window.addEventListener("portal:refreshed", () =>
+			load(Date.now() - (window.__portalRefreshAskedAt || 0) < 60000));
 		document.addEventListener("portal:ado-changed", () => load(true));
 		load();
 	})();

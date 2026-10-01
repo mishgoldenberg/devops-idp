@@ -45,6 +45,10 @@ def ensure_tables() -> None:
         "CREATE INDEX IF NOT EXISTS idx_devbot_conversations_user "
         "ON devbot_conversations (user_id, updated_at DESC)"
     )
+    # Which assistant a conversation belongs to: DevBot, or AdminBot for admins. Every
+    # read below is scoped to one, so an AdminBot conversation is never reachable
+    # through DevBot's API -- by someone who has since stopped being an admin, say.
+    execute("ALTER TABLE devbot_conversations ADD COLUMN IF NOT EXISTS bot TEXT NOT NULL DEFAULT 'devbot'")
     execute(
         """
         CREATE TABLE IF NOT EXISTS devbot_messages (
@@ -97,55 +101,55 @@ def _row(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
 
 # ── conversations ────────────────────────────────────────────────────────────
 
-def create_conversation(user_id: str, title: str, model: str) -> Dict[str, Any]:
+def create_conversation(user_id: str, title: str, model: str, bot: str = "devbot") -> Dict[str, Any]:
     rows = execute_returning(
-        "INSERT INTO devbot_conversations (user_id, title, model) VALUES (%s, %s, %s) "
+        "INSERT INTO devbot_conversations (user_id, title, model, bot) VALUES (%s, %s, %s, %s) "
         "RETURNING id, title, model, created_at, updated_at",
-        [user_id, title[:200], model[:200]],
+        [user_id, title[:200], model[:200], bot],
     )
     if not rows:
         raise RuntimeError("The new conversation was not saved.")
     return _row(rows[0]) or {}
 
 
-def get_conversation(user_id: str, conversation_id: str) -> Optional[Dict[str, Any]]:
+def get_conversation(user_id: str, conversation_id: str, bot: str = "devbot") -> Optional[Dict[str, Any]]:
     return _row(query_one(
         "SELECT id, title, model, created_at, updated_at FROM devbot_conversations "
-        "WHERE id::text = %s AND user_id = %s",
-        [conversation_id, user_id],
+        "WHERE id::text = %s AND user_id = %s AND bot = %s",
+        [conversation_id, user_id, bot],
     ))
 
 
-def list_conversations(user_id: str, limit: int = 100) -> List[Dict[str, Any]]:
+def list_conversations(user_id: str, limit: int = 100, bot: str = "devbot") -> List[Dict[str, Any]]:
     rows = query_all(
         "SELECT id, title, model, created_at, updated_at FROM devbot_conversations "
-        "WHERE user_id = %s ORDER BY updated_at DESC LIMIT %s",
-        [user_id, limit],
+        "WHERE user_id = %s AND bot = %s ORDER BY updated_at DESC LIMIT %s",
+        [user_id, bot, limit],
     )
     return [r for r in (_row(x) for x in rows) if r]
 
 
-def rename_conversation(user_id: str, conversation_id: str, title: str) -> bool:
+def rename_conversation(user_id: str, conversation_id: str, title: str, bot: str = "devbot") -> bool:
     rows = execute_returning(
-        "UPDATE devbot_conversations SET title = %s WHERE id::text = %s AND user_id = %s RETURNING id",
-        [title[:200], conversation_id, user_id],
+        "UPDATE devbot_conversations SET title = %s WHERE id::text = %s AND user_id = %s AND bot = %s RETURNING id",
+        [title[:200], conversation_id, user_id, bot],
     )
     return bool(rows)
 
 
-def delete_conversation(user_id: str, conversation_id: str) -> bool:
+def delete_conversation(user_id: str, conversation_id: str, bot: str = "devbot") -> bool:
     rows = execute_returning(
-        "DELETE FROM devbot_conversations WHERE id::text = %s AND user_id = %s RETURNING id",
-        [conversation_id, user_id],
+        "DELETE FROM devbot_conversations WHERE id::text = %s AND user_id = %s AND bot = %s RETURNING id",
+        [conversation_id, user_id, bot],
     )
     return bool(rows)
 
 
-def touch_conversation(user_id: str, conversation_id: str, model: str) -> None:
+def touch_conversation(user_id: str, conversation_id: str, model: str, bot: str = "devbot") -> None:
     execute(
         "UPDATE devbot_conversations SET updated_at = CURRENT_TIMESTAMP, model = %s "
-        "WHERE id::text = %s AND user_id = %s",
-        [model[:200], conversation_id, user_id],
+        "WHERE id::text = %s AND user_id = %s AND bot = %s",
+        [model[:200], conversation_id, user_id, bot],
     )
 
 
@@ -161,18 +165,18 @@ def add_message(conversation_id: str, role: str, content: str, meta: Optional[Di
     return int(rows[0]["id"])
 
 
-def messages(user_id: str, conversation_id: str, limit: int = 400) -> List[Dict[str, Any]]:
+def messages(user_id: str, conversation_id: str, limit: int = 400, bot: str = "devbot") -> List[Dict[str, Any]]:
     """The newest ``limit`` messages, oldest first, owner-checked."""
     rows = query_all(
         """
         SELECT m.id, m.role, m.content, m.meta, m.created_at
           FROM devbot_messages m
           JOIN devbot_conversations c ON c.id = m.conversation_id
-         WHERE c.id::text = %s AND c.user_id = %s
+         WHERE c.id::text = %s AND c.user_id = %s AND c.bot = %s
          ORDER BY m.id DESC
          LIMIT %s
         """,
-        [conversation_id, user_id, limit],
+        [conversation_id, user_id, bot, limit],
     )
     out = [r for r in (_row(x) for x in reversed(rows)) if r]
     # A cut that lands mid-turn would hand the model a tool result without the call
@@ -182,22 +186,41 @@ def messages(user_id: str, conversation_id: str, limit: int = 400) -> List[Dict[
     return out
 
 
-def update_meta(user_id: str, conversation_id: str, message_id: int, patch: Dict[str, Any]) -> bool:
+def update_meta(user_id: str, conversation_id: str, message_id: int, patch: Dict[str, Any],
+                bot: str = "devbot") -> bool:
     rows = execute_returning(
         """
         UPDATE devbot_messages m SET meta = m.meta || %s
           FROM devbot_conversations c
          WHERE m.id = %s AND m.conversation_id = c.id
-           AND c.id::text = %s AND c.user_id = %s
+           AND c.id::text = %s AND c.user_id = %s AND c.bot = %s
         RETURNING m.id
         """,
-        [Json(patch), message_id, conversation_id, user_id],
+        [Json(patch), message_id, conversation_id, user_id, bot],
     )
     return bool(rows)
 
 
+def find_action(user_id: str, conversation_id: str, message_id: int, action_id: str,
+                bot: str = "devbot") -> Optional[Dict[str, Any]]:
+    """One proposed change as it was STORED on its answer: what a confirmation runs,
+    rather than whatever the page sends back."""
+    row = query_one(
+        """
+        SELECT m.meta FROM devbot_messages m
+          JOIN devbot_conversations c ON c.id = m.conversation_id
+         WHERE m.id = %s AND c.id::text = %s AND c.user_id = %s AND c.bot = %s AND m.role = 'assistant'
+        """,
+        [message_id, conversation_id, user_id, bot],
+    )
+    if not row:
+        return None
+    meta = row["meta"] if isinstance(row["meta"], dict) else json.loads(row["meta"] or "{}")
+    return next((a for a in meta.get("actions") or [] if a.get("id") == action_id), None)
+
+
 def update_action(user_id: str, conversation_id: str, message_id: int, action_id: str,
-                  patch: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+                  patch: Dict[str, Any], bot: str = "devbot") -> Optional[Dict[str, Any]]:
     """Record how a proposed change ended, on the answer that proposed it.
 
     The whole list is rewritten: the proposals of one answer are a handful of small
@@ -208,9 +231,9 @@ def update_action(user_id: str, conversation_id: str, message_id: int, action_id
         """
         SELECT m.meta FROM devbot_messages m
           JOIN devbot_conversations c ON c.id = m.conversation_id
-         WHERE m.id = %s AND c.id::text = %s AND c.user_id = %s AND m.role = 'assistant'
+         WHERE m.id = %s AND c.id::text = %s AND c.user_id = %s AND c.bot = %s AND m.role = 'assistant'
         """,
-        [message_id, conversation_id, user_id],
+        [message_id, conversation_id, user_id, bot],
     )
     if not row:
         return None
@@ -223,7 +246,7 @@ def update_action(user_id: str, conversation_id: str, message_id: int, action_id
             found = item
     if found is None:
         return None
-    update_meta(user_id, conversation_id, message_id, {"actions": actions})
+    update_meta(user_id, conversation_id, message_id, {"actions": actions}, bot)
     return found
 
 

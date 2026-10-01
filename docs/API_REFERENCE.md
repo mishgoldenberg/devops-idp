@@ -2,7 +2,7 @@
 
 <!-- GENERATED:API — do not edit by hand; run scripts/gen_docs.py -->
 
-237 endpoints across 31 groups, generated from the running application's OpenAPI schema.
+263 endpoints across 31 groups, generated from the running application's OpenAPI schema.
 
 Everything under `/api/…` returns JSON. Everything under `/ui/…` returns HTML fragments for HTMX and is not part of this reference — those are not an API, they are the pages.
 
@@ -81,7 +81,9 @@ Authentication is the `auth_token` cookie (HS256 JWT) on every route except `/ap
 | Method | Path | What it does |
 | --- | --- | --- |
 | `GET` | `/api/azure-devops/actions/people` | People |
+| `POST` | `/api/azure-devops/actions/pipeline-cancel` | Pipeline Cancel |
 | `POST` | `/api/azure-devops/actions/pipeline-rerun` | Pipeline Rerun |
+| `POST` | `/api/azure-devops/actions/pipeline-run` | Pipeline Run |
 | `POST` | `/api/azure-devops/actions/pr-comment` | Pr Comment |
 | `POST` | `/api/azure-devops/actions/pr-vote` | Pr Vote |
 | `GET` | `/api/azure-devops/actions/work-item` | Work Item |
@@ -155,12 +157,33 @@ Authentication is the `auth_token` cookie (HS256 JWT) on every route except `/ap
 
 | Method | Path | What it does |
 | --- | --- | --- |
+| `POST` | `/api/adminbot/chat` | Chat |
+| `GET` | `/api/adminbot/conversations` | Conversations |
+| `DELETE` | `/api/adminbot/conversations/{conversation_id}` | Delete |
+| `GET` | `/api/adminbot/conversations/{conversation_id}` | Conversation |
+| `PATCH` | `/api/adminbot/conversations/{conversation_id}` | Rename |
+| `POST` | `/api/adminbot/conversations/{conversation_id}/actions/{action_id}` | Action Outcome |
+| `POST` | `/api/adminbot/conversations/{conversation_id}/actions/{action_id}/run` | Run Action |
+| `POST` | `/api/adminbot/models/check` | Check Model |
+| `GET` | `/api/adminbot/status` | Bot Status |
+| `GET` | `/api/devbot/admin/feedback` | Feedback |
+| `GET` | `/api/devbot/admin/overview` | Overview |
+| `GET` | `/api/devbot/admin/people` | People |
 | `POST` | `/api/devbot/chat` | Chat |
 | `GET` | `/api/devbot/conversations` | Conversations |
 | `DELETE` | `/api/devbot/conversations/{conversation_id}` | Delete |
 | `GET` | `/api/devbot/conversations/{conversation_id}` | Conversation |
 | `PATCH` | `/api/devbot/conversations/{conversation_id}` | Rename |
 | `POST` | `/api/devbot/conversations/{conversation_id}/actions/{action_id}` | Action Outcome |
+| `POST` | `/api/devbot/conversations/{conversation_id}/messages/{message_id}/feedback` | Feedback |
+| `GET` | `/api/devbot/index` | Index Status |
+| `POST` | `/api/devbot/index/build` | Build Now |
+| `GET` | `/api/devbot/index/fixes` | Past Fixes |
+| `POST` | `/api/devbot/index/fixes/hide` | Hide Fix |
+| `POST` | `/api/devbot/index/fixes/review` | Review Fix Again |
+| `POST` | `/api/devbot/index/models` | Embedding Models |
+| `PUT` | `/api/devbot/index/settings` | Save Settings |
+| `POST` | `/api/devbot/index/stop` | Stop Build |
 | `POST` | `/api/devbot/models/check` | Check Model |
 | `GET` | `/api/devbot/status` | Status |
 | `GET` | `/api/devbot/usage` | Usage |
@@ -229,6 +252,7 @@ Authentication is the `auth_token` cookie (HS256 JWT) on every route except `/ap
 | `GET` | `/api/notifications` | List Notifications |
 | `POST` | `/api/notifications/read-all` | Mark All Read |
 | `GET` | `/api/notifications/sections` | Section News |
+| `POST` | `/api/notifications/sections/{section}/seen` | Section Seen |
 | `GET` | `/api/notifications/unread-count` | Unread Count |
 | `POST` | `/api/notifications/{notification_id}/read` | Mark Read |
 
@@ -331,6 +355,7 @@ Authentication is the `auth_token` cookie (HS256 JWT) on every route except `/ap
 | Method | Path | What it does |
 | --- | --- | --- |
 | `GET` | `/ui/` | Ui Index |
+| `GET` | `/ui/adminbot` | Ui Adminbot Page |
 | `GET` | `/ui/approvals` | Ui Approvals Page |
 | `GET` | `/ui/artifactory` | Ui Artifactory Page |
 | `GET` | `/ui/audit-logs` | Ui Audit Logs Page |
@@ -367,6 +392,7 @@ Authentication is the `auth_token` cookie (HS256 JWT) on every route except `/ap
 | `GET` | `/ui/dashboard/preferences` | Ui Dashboard Preferences |
 | `POST` | `/ui/dashboard/preferences` | Ui Dashboard Preferences Save |
 | `GET` | `/ui/devbot` | Ui Devbot Page |
+| `GET` | `/ui/devbot-monitor` | Ui Devbot Monitor Page |
 | `GET` | `/ui/my-requests` | Ui My Requests Page |
 | `GET` | `/ui/observability` | Ui Observability Page |
 | `GET` | `/ui/platform-managing` | Ui Platform Managing Page |

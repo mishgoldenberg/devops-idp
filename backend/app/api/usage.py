@@ -32,6 +32,8 @@ class BeatBody(BaseModel):
     page: str = Field("", max_length=256)
     active_seconds: int = Field(0, ge=0, le=3600)
     view: bool = False
+    # A person touched the page (pointer, key, wheel, touch) since it loaded.
+    human: bool = False
 
 
 def _now_iso() -> str:
@@ -59,8 +61,10 @@ def heartbeat(body: BeatBody, current_user: AuthUser = Depends(get_current_user)
         usage_tracking.record_beat(email, body.page, body.active_seconds, body.view)
     except Exception as exc:
         log.warning("usage: beat not recorded for %s: %s: %s", email, type(exc).__name__, exc)
-    # A day in the Hub counts toward the streak (streaks.py). Never raises.
-    streaks.record_visit(email)
+    # A day in the Hub counts toward the streak (streaks.py) -- only when a person was
+    # here: a restored tab or a page reloading itself beats too. Never raises.
+    if body.human:
+        streaks.record_visit(email)
     return None
 
 

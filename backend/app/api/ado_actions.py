@@ -4,6 +4,8 @@ Azure DevOps actions the portal performs on the signed-in person's behalf.
   POST /api/azure-devops/actions/pr-vote              review a pull request (any vote, optional comment)
   POST /api/azure-devops/actions/pr-comment           comment on a pull request
   POST /api/azure-devops/actions/pipeline-rerun       run a finished pipeline run again
+  POST /api/azure-devops/actions/pipeline-run         run a pipeline on a branch, with parameters
+  POST /api/azure-devops/actions/pipeline-cancel      cancel a run that has not finished
   GET  /api/azure-devops/actions/work-item            what the work-item dialog needs to know
   POST /api/azure-devops/actions/work-item-state      move a work item to another state
   POST /api/azure-devops/actions/work-item-description add a paragraph to its description
@@ -108,6 +110,20 @@ class PrCommentBody(_PullRequest):
 
 
 class RerunBody(_Target):
+    project: str = Field(..., min_length=1, max_length=256)
+    build_id: int = Field(..., ge=1)
+
+
+class PipelineRunBody(_Target):
+    project: str = Field(..., min_length=1, max_length=256)
+    definition_id: int = Field(..., ge=1)
+    # Empty: the pipeline's default branch.
+    branch: str = Field("", max_length=400)
+    # Runtime parameters (the YAML's `parameters:`), by name.
+    parameters: Dict[str, str] = Field(default_factory=dict)
+
+
+class CancelBody(_Target):
     project: str = Field(..., min_length=1, max_length=256)
     build_id: int = Field(..., ge=1)
 
@@ -431,6 +447,112 @@ def pipeline_rerun(body: RerunBody, current_user: AuthUser = Depends(get_current
         "result": f"Queued as run {new.get('buildNumber') or new_id}.",
         "url": url,
     }
+
+
+def _full_branch(branch: str) -> str:
+    branch = str(branch or "").strip()
+    if not branch or branch.startswith("refs/"):
+        return branch
+    return "refs/heads/" + branch
+
+
+@router.post("/pipeline-run")
+def pipeline_run(body: PipelineRunBody, current_user: AuthUser = Depends(get_current_user)):
+    """A NEW run of a pipeline, on the branch and with the parameters asked for. The check
+    reads the pipeline, that it accepts runs, and that the branch exists in its repository;
+    Azure DevOps itself validates the parameters when the run is queued."""
+    if len(body.parameters) > 40:
+        raise HTTPException(status_code=400, detail="At most 40 parameters.")
+    pat = _get_pat_for_user(current_user)
+    project = quote(body.project, safe="")
+    with _client(pat) as client:
+        base = _base(client, body.collection)
+        r = client.get(f"{base}/{project}/_apis/build/definitions/{body.definition_id}", params=API)
+        if r.status_code != 200:
+            raise _fail(r, "read pipelines", "Build (Read)")
+        definition = _json(r)
+        name = str(definition.get("name") or "the pipeline")
+        if str(definition.get("queueStatus") or "enabled").lower() != "enabled":
+            raise HTTPException(status_code=409, detail=f"{name} does not accept new runs now "
+                                                        f"(it is {definition.get('queueStatus')}).")
+        repo = definition.get("repository") or {}
+        branch = _full_branch(body.branch) or str(repo.get("defaultBranch") or "")
+        checks = [f"{name} accepts new runs."]
+        if branch and str(repo.get("type") or "").lower() == "tfsgit" and repo.get("id"):
+            refs = client.get(f"{base}/{project}/_apis/git/repositories/{quote(str(repo['id']), safe='')}/refs",
+                              params={**API, "filter": branch[len("refs/"):]})
+            if refs.status_code == 200:
+                names = [str(x.get("name") or "") for x in (_json(refs).get("value") or [])]
+                if branch not in names:
+                    raise HTTPException(status_code=409, detail=f"There is no branch {_short_branch(branch)} in "
+                                                                f"{repo.get('name') or 'its repository'}.")
+                checks.append(f"The branch {_short_branch(branch)} exists in {repo.get('name') or 'the repository'}.")
+        params = {str(k).strip(): str(v) for k, v in body.parameters.items() if str(k).strip()}
+        summary = f"Run {name} on {_short_branch(branch) or 'its default branch'}"
+        if params:
+            summary += " with " + ", ".join(f"{k}={v}" for k, v in list(params.items())[:6])
+            checks.append("Azure DevOps checks the parameters when the run is queued, and refuses unknown ones.")
+        checks.append("The run starts from the branch's latest commit.")
+        if body.dry_run:
+            return _dry(summary, checks)
+        if safe_mode.is_enabled():
+            return _simulated(summary)
+        queue: Dict[str, Any] = {"definition": {"id": body.definition_id}}
+        if branch:
+            queue["sourceBranch"] = branch
+        if params:
+            queue["templateParameters"] = params
+        q = client.post(f"{base}/{project}/_apis/build/builds", params=API, json=queue)
+        if q.status_code >= 300:
+            raise _fail(q, "run pipelines", "Build (Read & execute)")
+        new = _json(q)
+        new_id = new.get("id")
+        back = client.get(f"{base}/{project}/_apis/build/builds/{new_id}", params=API) if new_id else None
+        if not new_id or back is None or back.status_code != 200:
+            raise HTTPException(status_code=502, detail="Azure DevOps accepted the run but it cannot be found. Check the pipeline there.")
+    _done(current_user, None)
+    return {"success": True, "summary": summary, "result": f"Queued as run {new.get('buildNumber') or new_id}.",
+            "url": f"{base}/{project}/_build/results?buildId={new_id}"}
+
+
+@router.post("/pipeline-cancel")
+def pipeline_cancel(body: CancelBody, current_user: AuthUser = Depends(get_current_user)):
+    """Cancel a run that has not finished. Read back: Azure DevOps answers a cancel with
+    "cancelling", and the run is only stopped once its agent lets go."""
+    pat = _get_pat_for_user(current_user)
+    project = quote(body.project, safe="")
+    with _client(pat) as client:
+        base = _base(client, body.collection)
+        url = f"{base}/{project}/_apis/build/builds/{body.build_id}"
+        r = client.get(url, params=API)
+        if r.status_code != 200:
+            raise _fail(r, "read pipeline runs", "Build (Read)")
+        run = _json(r)
+        name = str((run.get("definition") or {}).get("name") or "the pipeline")
+        number = run.get("buildNumber") or body.build_id
+        state = str(run.get("status") or "").lower()
+        if state in ("completed", "cancelling"):
+            raise HTTPException(status_code=409, detail=f"Run {number} of {name} is already {state}.")
+        summary = f"Cancel run {number} of {name}"
+        doing = {"inprogress": "running", "notstarted": "waiting to start", "postponed": "waiting to start"}.get(state, state)
+        checks = [f"It is {doing or 'running'} now, on {_short_branch(run.get('sourceBranch')) or 'its branch'}.",
+                  "What it has done so far stays; the steps not yet run are skipped."]
+        if body.dry_run:
+            return _dry(summary, checks)
+        if safe_mode.is_enabled():
+            return _simulated(summary)
+        p = client.patch(url, params=API, json={"status": "cancelling"})
+        if p.status_code >= 300:
+            raise _fail(p, "stop pipeline runs", "Build (Read & execute)")
+        back = client.get(url, params=API)
+        now = str(_json(back).get("status") or "").lower() if back.status_code == 200 else ""
+        if now not in ("cancelling", "completed"):
+            raise HTTPException(status_code=502, detail=f"Azure DevOps accepted the cancel but the run is still "
+                                                        f"{now or 'in an unknown state'}. Check it there.")
+    _done(current_user, None)
+    return {"success": True, "summary": summary,
+            "result": "Cancelled." if now == "completed" else "Cancelling: it stops once its agent lets go.",
+            "url": f"{base}/{project}/_build/results?buildId={body.build_id}"}
 
 
 # ── work items ───────────────────────────────────────────────────────────────

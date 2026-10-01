@@ -187,6 +187,14 @@
 			listEl.classList.add("hidden");
 		}
 
+		function runQuestion(run) {
+			const which = "run " + (run.run_id || run.id) + " of the pipeline " + (run.name || "") +
+				(run.project ? " (project " + run.project + (run.collection ? ", collection " + run.collection : "") + ")" : "");
+			return run.status === "failed" || run.status === "partial"
+				? "Why did " + which + " fail, and is there a known fix?"
+				: "What is the status of " + which + ", and what changed in it?";
+		}
+
 		function escapeHtml(str) {
 			return String(str == null ? "" : str)
 				.replace(/&/g, "&amp;")
@@ -236,8 +244,11 @@
 				? '<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer" class="text-sm font-medium text-base-content hover:text-primary truncate">' + name + "</a>"
 				: '<span class="text-sm font-medium text-base-content truncate">' + name + "</span>";
 
+			// The hover chip's question (devbot-hover.html): why a failed run failed; for
+			// any other run, where it stands.
+			const askAttr = window.portalDevbot && window.portalDevbot.attr ? window.portalDevbot.attr(runQuestion(run)) : "";
 			return (
-				'<li class="flex items-center gap-3 rounded-lg bg-base-200/60 border border-base-300 px-3 py-2.5">' +
+				'<li class="flex items-center gap-3 rounded-lg bg-base-200/60 border border-base-300 px-3 py-2.5"' + askAttr + ">" +
 					'<span class="h-2.5 w-2.5 shrink-0 rounded-full ' + (state.dot || "") + '" style="' + (state.style || "") + '"></span>' +
 					'<div class="flex flex-col flex-1 min-w-0">' +
 						title +
@@ -252,6 +263,9 @@
 					// DevOps first and asks you to confirm.
 					(FINISHED.has(run.status) && run.definition_id && window.portalAdo
 						? '<button type="button" class="btn btn-ghost btn-xs text-primary shrink-0" data-pipe-rerun="' + escapeHtml(run.id) + '" title="Run this pipeline again on the same branch">Run again…</button>'
+						: "") +
+					((run.status === "failed" || run.status === "partial") && window.portalDevbot && window.portalDevbot.enabled
+						? '<button type="button" class="btn btn-ghost btn-xs text-primary shrink-0" data-pipe-explain="' + escapeHtml(run.id) + '" title="Ask DevBot why it failed and whether there is a known fix">Explain</button>'
 						: "") +
 				"</li>"
 			);
@@ -398,6 +412,15 @@
 		}
 
 		listEl?.addEventListener("click", (event) => {
+			const explain = event.target.closest("[data-pipe-explain]");
+			if (explain) {
+				event.preventDefault();
+				const failed = loaded.runs.find((r) => String(r.id) === explain.getAttribute("data-pipe-explain"));
+				if (failed && window.portalDevbot) {
+					window.portalDevbot.ask(runQuestion(failed));
+				}
+				return;
+			}
 			const btn = event.target.closest("[data-pipe-rerun]");
 			if (!btn) return;
 			event.preventDefault();

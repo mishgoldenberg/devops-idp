@@ -33,6 +33,10 @@ SYSTEM_LABELS = {
     "sonarqube": "SonarQube",
     "artifactory": "Artifactory",
     "confluence": "Confluence",
+    "servicenow": "Support tickets",
+    # The Hub's own self-service forms (tools/selfservice.py): no token needed.
+    "requests": "Self-service",
+    "hub": "DevOps Hub",
 }
 
 
@@ -61,6 +65,10 @@ class Tool:
     # Systems besides its own that an investigation reads; it is offered only when its
     # own system is connected, and it reads the others if they are.
     also: List[str] = field(default_factory=list)
+    # Words that make this tool the one a question is about. Where more tools qualify
+    # than can be offered, these go first: "what are the comments?" must reach the
+    # comments tool even when its system has a dozen others.
+    words: List[str] = field(default_factory=list)
 
     def spec(self) -> Dict[str, Any]:
         return {
@@ -91,12 +99,15 @@ class ToolContext:
     """
 
     def __init__(self, user: AuthUser, systems: Optional[Dict[str, bool]] = None,
-                 progress: Optional[Callable[[str, str], None]] = None) -> None:
+                 progress: Optional[Callable[[str, str], None]] = None, *, admin: bool = False) -> None:
         self.user = user
         self.user_id = str(user.get("id") or "")
         self.systems = dict(systems or {})
         self._memo: Dict[str, Any] = {}
         self._progress = progress
+        # An AdminBot conversation. The Hub's own records (tools of system "hub") run
+        # only here, and each one re-checks that the person is still an admin.
+        self.admin = admin
 
     def child(self, progress: Callable[[str, str], None]) -> "ToolContext":
         """The same person and the same remembered lookups, reporting to its own step.
@@ -223,7 +234,10 @@ def run(ctx: ToolContext, name: str, raw_args: Any) -> Dict[str, Any]:
     label = SYSTEM_LABELS.get(tool.system, tool.system) if tool else "DevBot"
     result: Dict[str, Any]
     try:
-        if tool is None:
+        if tool is None or (tool.system == "hub") != bool(getattr(ctx, "admin", False)):
+            # AdminBot's tools exist for AdminBot only, and DevBot's for DevBot: a model
+            # that names a tool it was not offered gets the same answer as for one that
+            # does not exist.
             raise ToolFailure(f"There is no tool called {name}.")
         if isinstance(raw_args, str):
             try:
@@ -315,6 +329,25 @@ _WORDS: Dict[str, Iterable[str]] = {
         "confluence", "wiki", "page", "doc", "runbook", "how to", "how do", "guide", "solution", "known issue",
         "קונפלואנס", "ויקי", "דף", "תיעוד", "מדריך", "איך", "פתרון",
     ),
+    "servicenow": (
+        "ticket", "incident", "support", "inc0", "servicenow", "snow ",
+        "טיקט", "קריאה", "קריאות", "תמיכה",
+    ),
+    "requests": (
+        "request", "quota", "more storage", "more space", "cleaner", "clean up", "cleanup", "new pipeline",
+        "characterization", "self-service", "self service",
+        "בקשה", "מכסה", "אחסון", "ניקוי", "פייפליין חדש",
+    ),
+}
+# A system called by its NAME. When the cap cuts, the systems a person named outright go
+# first: "Search Confluence: the build agent ..." is a Confluence question that happens to
+# mention a build, and must not lose its Confluence tools to a dozen Azure DevOps ones.
+_NAMED: Dict[str, Iterable[str]] = {
+    "azure": ("azure devops", " ado ", "tfs"),
+    "sonarqube": ("sonar", "סונאר"),
+    "artifactory": ("artifactory", "jfrog", "ארטיפקטורי"),
+    "confluence": ("confluence", "wiki", "קונפלואנס", "ויקי"),
+    "servicenow": ("servicenow", "support ticket", "my ticket", "טיקט"),
 }
 _INVESTIGATE = (
     "why", "error", "fail", "broken", "crash", "exception", "problem", "issue", "wrong", "fix", "solution",
@@ -324,7 +357,10 @@ _INVESTIGATE = (
 _WRITE = (
     "create", "open a", "open new", "add ", "comment", "assign", "move ", "rerun", "re-run", "run again", "retry",
     "trigger", "approve", "reject", "vote", "update", "write", "document ", "log a bug", "file a bug",
+    "cancel", "stop the", "abort", "queue", "run the", "run it", "start the", "reply", "respond", "request",
+    "i need", "we need", "enlarge", "increase", "schedule", "raise a", "escalate",
     "צור", "פתח", "הוסף", "תגובה", "הגב", "שייך", "העבר", "הרץ", "אשר", "דחה", "עדכן", "כתוב", "תעד",
+    "בטל", "עצור", "השב", "תענה", "בקש", "צריך", "הגדל",
 )
 MAX_OFFERED = 12
 
@@ -358,6 +394,9 @@ def specs_for(question: str, systems: Dict[str, bool], recent: Iterable[str] = (
             chosen.append(tool)
         elif tool.kind == "write" and wants_write and tool.system in mentioned:
             chosen.append(tool)
+        elif tool.kind == "read" and _hits(text, tool.words):
+            # A question about what this tool is FOR needs it, whichever system it names.
+            chosen.append(tool)
 
     if not chosen:
         # Nothing named a system: offer the broad starting points, one per system.
@@ -366,8 +405,14 @@ def specs_for(question: str, systems: Dict[str, bool], recent: Iterable[str] = (
         chosen = [REGISTRY[n] for n in starters if n in REGISTRY and REGISTRY[n].system in usable]
 
     order = {"investigate": 0, "read": 1, "write": 2}
-    chosen.sort(key=lambda t: order.get(t.kind, 3))
+    named = {system for system, words in _NAMED.items() if _hits(text, words)}
+    chosen.sort(key=lambda t: (not _hits(text, t.words), t.system not in named, order.get(t.kind, 3)))
     return [t.spec() for t in chosen[:MAX_OFFERED]]
+
+
+def hub_specs() -> List[Dict[str, Any]]:
+    """AdminBot's tools: every one of system "hub". Few enough to offer them all."""
+    return [t.spec() for t in REGISTRY.values() if t.system == "hub"]
 
 
 def system_of(name: str) -> str:

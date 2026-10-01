@@ -12,6 +12,10 @@
 	  * which systems each answer read, and a link to every source;
 	  * that DevBot works with THEIR tokens and never changes anything unconfirmed.
 
+	The same page is AdminBot (/ui/adminbot, bot="admin" from the route): the Hub's own
+	records for admins, answered with the Hub's AI key from /api/adminbot. What differs
+	is decided once, at the top of the script (ADMIN), and in the few Jinja lines below.
+
 	The answer arrives as server-sent events over a POST (fetch + a stream reader), so
 	it is drawn as it is written. The page never builds HTML from model output without
 	escaping it first: the Markdown renderer below escapes, then formats, and only lets
@@ -86,6 +90,7 @@
 	[data-devbot] .devbot-side-empty { font-size: 0.78rem; color: hsl(var(--bc) / 0.5); padding: 0.75rem 0.6rem; line-height: 1.5; }
 	[data-devbot] .devbot-side-foot { border-top: 1px solid hsl(var(--b3)); padding: 0.75rem 0.9rem 0.85rem; font-size: 0.72rem; color: hsl(var(--bc) / 0.65); }
 	[data-devbot] .devbot-limit-row { display: flex; justify-content: space-between; gap: 0.5rem; margin-top: 0.35rem; }
+	[data-devbot] .devbot-limit-note { margin-top: 0.2rem; font-size: 0.68rem; color: hsl(var(--bc) / 0.5); }
 	[data-devbot] .devbot-bar { height: 4px; border-radius: 9999px; background: hsl(var(--bc) / 0.1); overflow: hidden; margin-top: 0.2rem; }
 	[data-devbot] .devbot-bar > span { display: block; height: 100%; background: hsl(var(--p)); border-radius: 9999px; min-width: 2px; }
 	[data-devbot] .devbot-bar[data-low] > span { background: hsl(var(--wa)); }
@@ -222,6 +227,10 @@
 	[data-devbot] .devbot-sys[data-sys="sonarqube"] { background: hsl(200 80% 45% / 0.14); color: hsl(200 70% 38%); }
 	[data-devbot] .devbot-sys[data-sys="artifactory"] { background: hsl(140 55% 40% / 0.15); color: hsl(140 55% 32%); }
 	[data-devbot] .devbot-sys[data-sys="confluence"] { background: hsl(222 75% 55% / 0.14); color: hsl(222 60% 45%); }
+	[data-devbot] .devbot-sys[data-sys="servicenow"] { background: hsl(160 60% 38% / 0.14); color: hsl(160 60% 30%); }
+	[data-devbot] .devbot-sys[data-sys="requests"] { background: hsl(30 90% 50% / 0.15); color: hsl(28 80% 38%); }
+	[data-devbot] .devbot-sys[data-sys="hub"] { background: hsl(var(--p) / 0.14); color: hsl(var(--p)); }
+	[data-devbot] .devbot-sys[data-sys="knowledge"] { background: hsl(280 60% 55% / 0.14); color: hsl(280 50% 45%); }
 	[data-devbot] details.devbot-fold { margin-bottom: 0.7rem; font-size: 0.8rem; color: hsl(var(--bc) / 0.6); }
 	[data-devbot] details.devbot-fold > summary { cursor: pointer; list-style: none; display: inline-flex; align-items: center; gap: 0.35rem; user-select: none; }
 	[data-devbot] details.devbot-fold > summary::-webkit-details-marker { display: none; }
@@ -272,6 +281,10 @@
 	}
 	[data-devbot] .devbot-icon-btn:hover { background: hsl(var(--bc) / 0.08); color: hsl(var(--bc)); }
 	[data-devbot] .devbot-icon-btn svg { width: 0.9rem; height: 0.9rem; }
+	[data-devbot] .devbot-icon-btn[data-devbot-rate][aria-pressed="true"] { color: hsl(var(--p)); background: hsl(var(--p) / 0.1); }
+	[data-devbot] .devbot-feedback-form { margin-top: 0.5rem; padding: 0.7rem 0.8rem; border: 1px solid hsl(var(--bc) / 0.12); border-radius: 0.75rem; background: hsl(var(--b2) / 0.5); }
+	[data-devbot] .devbot-feedback-form textarea { width: 100%; min-height: 4.2rem; resize: vertical; font-size: 0.85rem; border-radius: 0.5rem; padding: 0.45rem 0.6rem; background: hsl(var(--b1)); border: 1px solid hsl(var(--bc) / 0.15); }
+	[data-devbot] .devbot-feedback-form p { font-size: 0.72rem; color: hsl(var(--bc) / 0.6); margin: 0.35rem 0 0.5rem; }
 	[data-devbot] .devbot-sources { display: flex; flex-direction: column; gap: 0.3rem; margin-top: 0.5rem; font-size: 0.8rem; }
 	[data-devbot] .devbot-source { display: flex; align-items: center; gap: 0.45rem; min-width: 0; }
 	[data-devbot] .devbot-source a { color: hsl(var(--p)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
@@ -350,6 +363,7 @@
 	[data-devbot] .devbot-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; }
 	[data-devbot] .devbot-card { border: 1px solid hsl(var(--b3)); border-radius: 0.9rem; padding: 0.8rem 0.9rem 0.7rem; background: hsl(var(--b1)); }
 	[data-devbot] .devbot-card-head { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.45rem; }
+	[data-devbot] .devbot-card-note { font-size: 0.74rem; line-height: 1.45; color: hsl(var(--bc) / 0.6); margin: -0.15rem 0.5rem 0.4rem; }
 	[data-devbot] .devbot-card-head b { font-size: 0.85rem; flex: 1 1 auto; }
 	[data-devbot] .devbot-dot { width: 0.5rem; height: 0.5rem; border-radius: 9999px; flex: none; }
 	[data-devbot] .devbot-state { font-size: 0.7rem; font-weight: 600; }
@@ -477,9 +491,11 @@
 	}
 </style>
 
+{% set admin_bot = (bot | default('devbot')) == 'admin' %}
 <div
 	class="page-shell"
 	data-devbot
+	data-bot="{{ 'admin' if admin_bot else 'devbot' }}"
 	data-enabled="{{ 'true' if devbot_enabled else 'false' }}"
 	data-user-name="{{ user.display_name if user else '' }}"
 >
@@ -489,11 +505,18 @@
 				<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg>
 			</button>
 			<div class="min-w-0">
+				{% if admin_bot %}
+				<h1 class="page-title">AdminBot AI</h1>
+				<p class="page-subtitle">
+					Ask about the Hub itself: its users, requests, logs, usage and DevBot. For admins only.
+				</p>
+				{% else %}
 				<h1 class="page-title">DevBot AI</h1>
 				<p class="page-subtitle">
-					Ask about your pipelines, work items, code quality, artifacts and pages, answered
-					from the systems you have connected.
+					Ask about your pipelines, work items, code quality, artifacts, pages and support tickets,
+					answered from the systems you have connected.
 				</p>
+				{% endif %}
 			</div>
 		</div>
 		<div class="devbot-head-actions">
@@ -504,7 +527,7 @@
 				</button>
 				<div class="devbot-model-menu" data-devbot-model-menu role="listbox" aria-label="Models your key may use"></div>
 			</div>
-			<button type="button" class="btn btn-sm rounded-full px-4" data-devbot-about title="What DevBot can do, and what it sends where">
+			<button type="button" class="btn btn-sm rounded-full px-4" data-devbot-about title="What {{ 'AdminBot' if admin_bot else 'DevBot' }} can do, and what it sends where">
 				<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
 				<span class="devbot-about-btn-label">What can it do?</span>
 			</button>
@@ -531,8 +554,13 @@
 					<button type="submit" class="devbot-send" data-devbot-send aria-label="Send" title="Send (Enter)" disabled></button>
 				</form>
 				<p class="devbot-foot-note">
+					{% if admin_bot %}
+					AdminBot reads the Hub's records as an admin and changes nothing without your
+					confirmation. It can be wrong: check what matters.
+					{% else %}
 					DevBot reads your systems with your own tokens and never changes anything without
 					your confirmation. It can be wrong: check what matters.
+					{% endif %}
 				</p>
 			</div>
 		</section>
@@ -552,13 +580,17 @@
 <dialog class="modal" data-devbot-about-modal aria-labelledby="devbot-about-title">
 	<div class="modal-box" style="max-width: 40rem; padding: 0; display: flex; flex-direction: column; max-height: calc(100vh - 5em); overflow: hidden">
 		<div class="flex items-start gap-3" style="padding: 1.1rem 1.25rem 0.75rem; border-bottom: 1px solid hsl(var(--bc) / 0.1)">
-			<h3 class="text-base font-bold flex-1" id="devbot-about-title">What DevBot can do</h3>
+			<h3 class="text-base font-bold flex-1" id="devbot-about-title">What {{ 'AdminBot' if admin_bot else 'DevBot' }} can do</h3>
 			<form method="dialog"><button class="btn btn-sm btn-circle btn-ghost" aria-label="Close">&#10005;</button></form>
 		</div>
 		<div data-devbot-about-body style="flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 1rem 1.25rem 1.25rem; font-size: 0.85rem; line-height: 1.6"></div>
 	</div>
 	<form method="dialog" class="modal-backdrop"><button>close</button></form>
 </dialog>
+{% if not admin_bot %}
+{# DevBot's drafts of a support ticket or a self-service request open the Hub's own form, filled in. #}
+{% include "partials/components/catalog-form.html" %}
+{% endif %}
 </div>
 
 <script>
@@ -566,10 +598,13 @@
 		var root = document.querySelector("[data-devbot]");
 		if (!root) return;
 
-		var API = "/api/devbot/";
+		// AdminBot is this page with the Hub's records, the Hub's key and its own API.
+		var ADMIN = root.getAttribute("data-bot") === "admin";
+		var BOT_NAME = ADMIN ? "AdminBot" : "DevBot";
+		var API = ADMIN ? "/api/adminbot/" : "/api/devbot/";
 		var ENABLED = root.getAttribute("data-enabled") === "true";
 		var FIRST_NAME = (root.getAttribute("data-user-name") || "").split(" ")[0];
-		var MODEL_PREF = "devbot-model";
+		var MODEL_PREF = ADMIN ? "adminbot-model" : "devbot-model";
 
 		var els = {
 			list: root.querySelector("[data-devbot-list]"),
@@ -605,6 +640,7 @@
 					"Is this pull request ready to merge, and what blocks it? PR ",
 					"What is going on with work item ",
 					"Which pull requests are waiting for my review?",
+					"Has this error been fixed before? ",
 				],
 			},
 			{
@@ -634,8 +670,49 @@
 					"Which Confluence pages did I look at recently?",
 				],
 			},
+			{
+				key: "servicenow",
+				label: "Support tickets",
+				can: "Your own support tickets, as the Support page shows them: where each one stands, who has it and what was said last. It can draft a new ticket from the conversation, or a reply on one of yours, for you to send.",
+				examples: [
+					"What is the status of my open support tickets?",
+					"What was the last update on my ticket ",
+					"Open a support ticket about this for me.",
+				],
+			},
 		];
-		var SYSTEM_LABEL = {};
+		if (ADMIN) {
+			SYSTEMS = [
+				{
+					key: "hub",
+					label: "DevOps Hub",
+					can: "Users (profile, role, activity, connections, streak, DevBot use), self-service requests, the log, usage, DevBot's figures, the announcements, the search index's past fixes and the Hub's health. It can prepare approving or rejecting requests (one or many at once), activating or deactivating an account, changing a role, posting or taking down an announcement, starting or stopping the search index build, and hiding, showing or re-reviewing a past fix, for you to confirm.",
+					examples: [
+						"Is anything wrong with the Hub right now?",
+						"Which requests are waiting, and which failed this week?",
+						"Tell me everything about ",
+						"Why is the streak of ",
+						"What errors were in the log in the last 24 hours?",
+						"How is DevBot doing this month, and what did people rate down?",
+						"Approve all the pending quota requests from this week.",
+						"Post an announcement: Artifactory maintenance on Sunday 06:00-08:00.",
+					],
+				},
+			];
+		}
+		// Meaning search over the spaces the Hub indexes (api/devbot status -> page_search).
+		function meaningNote(system) {
+			var ps = (state.status && state.status.page_search) || {};
+			if (!ps.ready) return "";
+			if (system === "azure") {
+				return ps.past_fixes ? "Finds the same problem fixed before, in closed work items, by meaning: any wording, English or Hebrew." : "";
+			}
+			if (!(ps.spaces || []).length) return "";
+			return "Finds pages by meaning in " + (ps.spaces || []).join(", ") +
+				": any wording, English or Hebrew. You only ever see pages you can open yourself.";
+		}
+
+		var SYSTEM_LABEL = { knowledge: "Hub knowledge", requests: "Self-service", hub: "DevOps Hub" };
 		SYSTEMS.forEach(function (s) { SYSTEM_LABEL[s.key] = s.label; });
 
 		// How each system stands for this person (api/devbot status -> system_states).
@@ -681,6 +758,8 @@
 			return ms < 1000 ? ms + " ms" : (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + " s";
 		}
 		var ICON = {
+			up: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 10v11H4a1 1 0 01-1-1v-9a1 1 0 011-1h3zm0 0l4-7a2 2 0 012 2v4h5.5a2 2 0 012 2.3l-1.3 7A2 2 0 0117.2 21H7"/></svg>',
+			down: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 14V3h3a1 1 0 011 1v9a1 1 0 01-1 1h-3zm0 0l-4 7a2 2 0 01-2-2v-4H5.5a2 2 0 01-2-2.3l1.3-7A2 2 0 016.8 3H17"/></svg>',
 			bot: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z"/><path d="M19 14l.9 2.1L22 17l-2.1.9L19 20l-.9-2.1L16 17l2.1-.9z"/></svg>',
 			send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>',
 			stop: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>',
@@ -949,6 +1028,7 @@
 			state.model = item.getAttribute("data-model");
 			try { localStorage.setItem(MODEL_PREF, state.model); } catch (_) {}
 			renderModelPicker();
+			renderFoot();
 			openMenu(false);
 			if (!state.current) renderEmpty();
 			els.input.focus();
@@ -960,7 +1040,13 @@
 			if (!s.enabled) {
 				html = "DevBot is not set up on this Hub yet.";
 			} else if (!s.key_connected) {
-				html = 'No AI key connected. <a href="/ui/connections" class="link link-primary">Connections</a>';
+				html = ADMIN
+					? 'The Hub\'s AI key is not set. <a href="/ui/platform-managing" class="link link-primary">Platform Managing</a>'
+					: 'No AI key connected. <a href="/ui/connections" class="link link-primary">Connections</a>';
+			} else if (ADMIN) {
+				html = limitsHtml(s.limits || {}, s.key_info || {}) +
+					'<div class="flex items-center gap-3" style="margin-top: 0.55rem">' +
+					'<a href="/ui/platform-managing" class="link link-primary">The Hub\'s AI key</a></div>';
 			} else {
 				html = limitsHtml(s.limits || {}, s.key_info || {}) +
 					'<div class="flex items-center gap-3" style="margin-top: 0.55rem">' +
@@ -975,13 +1061,26 @@
 			return '<div class="devbot-bar"' + (pct < 20 ? " data-low" : "") + '><span style="width: ' + pct + '%"></span></div>';
 		}
 
+		// Where a limit the gateway described comes from, in words: a key with none of
+		// its own obeys its team's or its budget's, and saying so is what stops people
+		// asking why a key "without limits" gets refused.
+		var LIMIT_SOURCE = { team: "set on your team", user: "set on your account", budget: "set by your key's budget" };
+
 		function limitsHtml(limits, info) {
-			var rpm = limits.rpm || info.rpm;
-			var tpm = limits.tpm || info.tpm;
+			var perModel = function (name) {
+				var map = info["model_" + name];
+				return map && state.model && map[state.model] ? map[state.model] : 0;
+			};
+			var rpm = limits.rpm || perModel("rpm") || info.rpm;
+			var tpm = limits.tpm || perModel("tpm") || info.tpm;
 			var fresh = limits.at && Date.now() / 1000 - limits.at < 60;
-			var html = '<div class="devbot-kicker">Your AI key</div>';
+			var html = '<div class="devbot-kicker">' + (ADMIN ? "The Hub's AI key" : "Your AI key") + "</div>";
 			if (!rpm && !tpm) {
-				html += '<div class="devbot-limit-row"><span>Limits</span><span>not reported</span></div>';
+				html += '<div class="devbot-limit-row"><span>Limits</span><span title="' +
+					(info.described
+						? "The AI service describes your key and sets no per-minute limit on it, its team or its budget."
+						: "The AI service did not say. It may still enforce limits; DevBot then learns them from the first answer that reports them.") +
+					'">' + (info.described ? "none set" : "not reported") + "</span></div>";
 			}
 			if (rpm) {
 				html += '<div class="devbot-limit-row"><span>Requests / min</span><span>' +
@@ -993,6 +1092,13 @@
 					(fresh && limits.tpm_left != null ? tokens(limits.tpm_left) + " left of " : "") + tokens(tpm) + "</span></div>" +
 					(fresh && limits.tpm_left != null ? bar(limits.tpm_left, tpm) : "");
 			}
+			// Say where a described limit comes from; live figures need no footnote.
+			var notes = [];
+			if (!limits.rpm && perModel("rpm")) notes.push("requests: your key's limit for this model");
+			if (((!limits.rpm && !perModel("rpm") && info.rpm) || (!limits.tpm && !perModel("tpm") && info.tpm)) && LIMIT_SOURCE[info.source]) {
+				notes.push(LIMIT_SOURCE[info.source]);
+			}
+			if (notes.length) html += '<div class="devbot-limit-note">' + esc(notes.join("; ")) + "</div>";
 			if (info.budget) {
 				html += '<div class="devbot-limit-row"><span>Budget used</span><span>' +
 					(Number(info.spend || 0)).toFixed(2) + " of " + Number(info.budget).toFixed(2) + "</span></div>" + bar(info.budget - (info.spend || 0), info.budget);
@@ -1199,6 +1305,14 @@
 					'</p><button type="button" class="btn btn-sm rounded-full px-4" style="margin-top: 0.9rem" data-devbot-retry>Try again</button></div>';
 				return;
 			}
+			if (ADMIN && (!s.key_connected || s.model_error)) {
+				els.thread.innerHTML = '<div class="devbot-panel"><h2>' + (s.model_error ? "The Hub's AI key needs attention" : "AdminBot needs the Hub's AI key") + "</h2>" +
+					(s.model_error ? '<p style="color: hsl(var(--er))" dir="auto">' + esc(s.model_error.message) + "</p>" : "") +
+					"<p>AdminBot answers with the Hub's own AI key, the one DevBot's search index is built with, so no admin needs a key of " +
+					"their own. Set it on Platform Managing, under DevBot search index.</p>" +
+					'<a href="/ui/platform-managing" class="btn btn-primary btn-sm rounded-full px-5" style="margin-top: 1rem">Platform Managing</a></div>';
+				return;
+			}
 			if (!s.key_connected || s.model_error) {
 				renderKeyPanel(s.model_error ? s.model_error.message : "");
 				return;
@@ -1208,15 +1322,17 @@
 			var live = m && m.tools !== false;
 			els.thread.innerHTML =
 				'<div class="devbot-hero"><h2 dir="auto">' + (FIRST_NAME ? "Hi " + esc(FIRST_NAME) + ", what" : "What") +
-				" can I find for you?</h2><p>" + (live
-					? "I read your systems with your own tokens, and I can look across several of them for one answer."
-					: "This model cannot read live data. Pick a model marked Live data to ask about your systems.") + "</p></div>" +
+				(ADMIN ? " do you want to know about the Hub?" : " can I find for you?") + "</h2><p>" + (live
+					? (ADMIN ? "I read the Hub's own records as an admin: people, requests, the log, usage and DevBot."
+						: "I read your systems with your own tokens, and I can look across several of them for one answer.")
+					: "This model cannot read live data. Pick a model marked Live data to ask about " + (ADMIN ? "the Hub." : "your systems.")) + "</p></div>" +
 				'<div class="devbot-cards">' + SYSTEMS.map(function (sys) {
 					var st = stateOf(sys.key);
 					var paint = st.color === "--bc" ? "hsl(var(--bc) / 0.4)" : "hsl(var(" + st.color + "))";
 					return '<div class="devbot-card"><div class="devbot-card-head"><b>' + esc(sys.label) + "</b>" +
 						'<span class="devbot-dot" style="background: ' + paint + '"></span>' +
 						'<span class="devbot-state" style="color: ' + paint + '">' + esc(st.label) + "</span></div>" +
+						(meaningNote(sys.key) ? '<div class="devbot-card-note">' + esc(meaningNote(sys.key)) + "</div>" : "") +
 						sys.examples.map(function (ex) {
 							// An example ending in a space is one to finish: it shows an ellipsis
 							// and fills the box untrimmed, ready for the name.
@@ -1229,10 +1345,16 @@
 							: "") +
 						"</div>";
 				}).join("") + "</div>" +
-				'<div class="devbot-trust">DevBot answers with <b>your</b> access: it reads each system with the token you connected, ' +
-				"so it sees exactly what you can see. Your question, and what it reads to answer it, are sent to the AI model service " +
-				"with your AI key. It never changes anything without your confirmation, and each conversation is kept for " +
-				((s.history_days) || 30) + " days after you last use it.</div>";
+				(ADMIN
+					? '<div class="devbot-trust">AdminBot reads the Hub\'s own records, checking each time that you are still an admin. ' +
+						"Your question, and what it reads to answer it, are sent to the AI model service with the Hub's AI key. It changes " +
+						"nothing on its own: every change it prepares happens only when you confirm it in the confirmation, in your " +
+						"name, through the same checks as the admin pages. Each conversation is kept for " + ((s.history_days) || 30) +
+						" days after you last use it, and only you can see it.</div>"
+					: '<div class="devbot-trust">DevBot answers with <b>your</b> access: it reads each system with the token you connected, ' +
+						"so it sees exactly what you can see. Your question, and what it reads to answer it, are sent to the AI model service " +
+						"with your AI key. It never changes anything without your confirmation, and each conversation is kept for " +
+						((s.history_days) || 30) + " days after you last use it.</div>");
 		}
 
 		function renderKeyPanel(problem) {
@@ -1266,9 +1388,14 @@
 			if (review && !review.disabled) {
 				var found = findAction(review);
 				if (!found) return;
-				if (!window.portalAdo) { toast("error", "The review dialog did not load on this page. Reload it and try again."); return; }
+				if (found.action.system === "hub") { openAdminConfirm(found); return; }
+				if (FORM_KINDS[found.action.kind]) { openDraftForm(found); return; }
+				if (!window.portalAdo || !window.portalAdo.has(found.action.kind)) {
+					toast("error", "The review dialog did not load on this page. Reload it and try again.");
+					return;
+				}
 				openAction = found;
-				window.portalAdo.open(found.action.kind, found.action.target);
+				window.portalAdo.open(found.action.kind, found.action.target, { drafted: "DevBot" });
 				return;
 			}
 			var dismiss = event.target.closest("[data-action-dismiss]");
@@ -1297,6 +1424,27 @@
 			if (copyAnswer) {
 				var holder = copyAnswer.closest("[data-devbot-answer]");
 				copy(holder ? holder.getAttribute("data-raw") || "" : "", copyAnswer);
+				return;
+			}
+			var rate = event.target.closest("[data-devbot-rate]");
+			if (rate) {
+				var rateView = rate.closest("[data-devbot-answer]") && rate.closest("[data-devbot-answer]").devbotView;
+				if (!rateView || !rateView.messageId) return;
+				if (rate.getAttribute("aria-pressed") === "true") { sendFeedback(rateView, "", ""); return; }
+				if (rate.getAttribute("data-devbot-rate") === "up") sendFeedback(rateView, "up", "");
+				else openFeedbackForm(rateView);
+				return;
+			}
+			var fbSend = event.target.closest("[data-devbot-fb-send]");
+			if (fbSend) {
+				var sendView = fbSend.closest("[data-devbot-answer]").devbotView;
+				var note = fbSend.closest(".devbot-feedback-form").querySelector("textarea").value;
+				sendFeedback(sendView, "down", note);
+				return;
+			}
+			if (event.target.closest("[data-devbot-fb-cancel]")) {
+				var form = event.target.closest(".devbot-feedback-form");
+				if (form) form.remove();
 				return;
 			}
 			var sourcesBtn = event.target.closest("[data-devbot-sources-btn]");
@@ -1401,6 +1549,34 @@
 			}).join("") + "</div>";
 		}
 
+		function openFeedbackForm(view) {
+			var existing = view.body.querySelector(".devbot-feedback-form");
+			if (existing) { existing.querySelector("textarea").focus(); return; }
+			var form = document.createElement("div");
+			form.className = "devbot-feedback-form";
+			form.innerHTML = '<textarea dir="auto" maxlength="1000" placeholder="What was wrong or missing? (optional)"></textarea>' +
+				"<p>Sending shares this question and DevBot's answer with the Hub's admins, so they can see what to fix.</p>" +
+				'<div class="flex items-center gap-2"><button type="button" class="btn btn-primary btn-xs rounded-full px-3" data-devbot-fb-send>Send</button>' +
+				'<button type="button" class="devbot-icon-btn" data-devbot-fb-cancel>Cancel</button></div>';
+			var metaEl = view.body.querySelector("[data-devbot-meta]");
+			metaEl.parentNode.insertBefore(form, metaEl.nextSibling);
+			form.querySelector("textarea").focus();
+		}
+
+		function sendFeedback(view, rating, note) {
+			api("POST", "conversations/" + encodeURIComponent(view.conversationId) + "/messages/" + view.messageId + "/feedback",
+				{ rating: rating, note: (note || "").trim() }).then(function () {
+				view.body.querySelectorAll("[data-devbot-rate]").forEach(function (b) {
+					b.setAttribute("aria-pressed", b.getAttribute("data-devbot-rate") === rating ? "true" : "false");
+				});
+				var form = view.body.querySelector(".devbot-feedback-form");
+				if (form) form.remove();
+				if (rating) toast("success", rating === "up" ? "Thanks. The admins will see this answer worked." : "Thanks. The admins will see what went wrong.");
+			}).catch(function (err) {
+				toast("error", err.message);
+			});
+		}
+
 		function metaHtml(meta) {
 			var usage = meta.usage || {};
 			var parts = [];
@@ -1409,10 +1585,18 @@
 				parts.push('<span title="Tokens this answer used: sent to the model, and written by it">' +
 					tokens(usage.prompt_tokens) + " in · " + tokens(usage.completion_tokens) + " out</span>");
 			}
-			if (usage.requests) parts.push('<span title="Model requests this answer made against your key">' + usage.requests + " request" + (usage.requests === 1 ? "" : "s") + "</span>");
+			if (usage.requests) parts.push('<span title="Model requests this answer made against ' + (ADMIN ? "the Hub's key" : "your key") + '">' + usage.requests + " request" + (usage.requests === 1 ? "" : "s") + "</span>");
 			if (meta.duration_ms) parts.push("<span>" + seconds(meta.duration_ms) + "</span>");
 			var html = parts.join('<span aria-hidden="true">·</span>');
 			html += '<button type="button" class="devbot-icon-btn" data-devbot-copy title="Copy the answer">' + ICON.copy + "Copy</button>";
+			// Feedback goes to the Hub's admins WITH the question and the answer: the
+			// titles say so before anybody clicks, and the note form says it again.
+			var rated = (meta.feedback && meta.feedback.rating) || "";
+			// AdminBot's answers are for admins already: there is nobody to send a rating to.
+			if (!ADMIN) html += '<button type="button" class="devbot-icon-btn" data-devbot-rate="up" aria-pressed="' + (rated === "up") +
+				'" aria-label="Good answer" title="Good answer. Sends this question and answer to the Hub\'s admins.">' + ICON.up + "</button>" +
+				'<button type="button" class="devbot-icon-btn" data-devbot-rate="down" aria-pressed="' + (rated === "down") +
+				'" aria-label="Bad answer" title="Bad answer. Sends this question and answer to the Hub\'s admins, with a note if you add one.">' + ICON.down + "</button>";
 			var sources = meta.sources || [];
 			if (sources.length) {
 				html += '<button type="button" class="devbot-icon-btn" data-devbot-sources-btn>' + ICON.link + sources.length + " source" + (sources.length === 1 ? "" : "s") + "</button>";
@@ -1487,6 +1671,78 @@
 			openAction = null;
 		});
 		document.addEventListener("portal:action-closed", function () { openAction = null; });
+
+		// A support ticket or a self-service request DevBot drafted: the Hub's own form
+		// (catalog-form.html) opens filled in; the person completes it and submits it, and
+		// the big confirmation comes before anything is sent. The outcome is recorded here.
+		var FORM_KINDS = { "support-ticket": "Support", "catalog-request": "DevOps Hub" };
+		function openDraftForm(found) {
+			if (!window.portalCatalogForm) { toast("error", "The form did not load on this page. Reload it and try again."); return; }
+			var t = found.action.target || {};
+			var ticket = found.action.kind === "support-ticket";
+			window.portalCatalogForm.open(t.form, {
+				values: t.values || {},
+				submitUrl: ticket ? "/api/support/tickets/create-flow" : "",
+				confirm: { system: FORM_KINDS[found.action.kind], drafted: "DevBot", lines: t.lines || [] },
+				onDone: function (json) {
+					var data = (json && json.data) || {};
+					var number = data.number || (data.data && data.data.number) || "";
+					var result, url;
+					if (ticket) {
+						result = number ? "Opened " + number + "." : "The ticket was opened.";
+						url = data.sys_id ? "/ui/support?ticket=" + encodeURIComponent(data.sys_id) : "/ui/support";
+					} else {
+						result = json && json.kind === "approval" ? "Sent for approval." : (number ? "Sent as " + number + "." : "Sent.");
+						url = "/ui/my-requests";
+					}
+					recordOutcome(found.view, found.action, data.safe_mode ? "simulated" : "done", result, url);
+				},
+			});
+		}
+
+		// AdminBot's proposals: the big confirmation, and then the server performs the
+		// proposal as it STORED it (api/adminbot.py .../run). The only thing the admin can
+		// change here is the note to the requester; a failure is shown in the confirmation.
+		var FACT_LABEL = { title: "Request", requester: "Requested by", type: "Type", email: "Account", name: "Name",
+			role: "New role", was: "Role now", kind: "Kind", starts_at: "Starts", ends_at: "Ends", body: "Text",
+			link_url: "Link", ref: "From" };
+		var HARSH = { "request-reject": 1, "requests-reject": 1, "fix-hide": 1, "index-stop": 1 };
+		function openAdminConfirm(found) {
+			if (!window.portalConfirm) { toast("error", "The confirmation did not load on this page. Reload it and try again."); return; }
+			var a = found.action;
+			var t = a.target || {};
+			var decides = /^requests?-/.test(a.kind);
+			var facts = Object.keys(FACT_LABEL).filter(function (k) { return t[k] && k !== "comment"; })
+				.map(function (k) {
+					var label = k === "title" && !decides ? "Title" : FACT_LABEL[k];
+					return [label, String(t[k]).length > 240 ? String(t[k]).slice(0, 240) + "…" : t[k]];
+				});
+			window.portalConfirm.ask({
+				title: a.title,
+				system: "DevOps Hub",
+				lines: [a.summary],
+				facts: a.kind.indexOf("requests-") === 0 ? [] : facts,
+				items: (t.items || []).map(function (i) { return i.title + " · " + i.requester + " · " + i.type; }),
+				verb: a.title,
+				danger: !!HARSH[a.kind] || (a.kind === "user-active" && !t.active),
+				drafted: "AdminBot",
+				admin: true,
+				note: decides ? { label: "Note to the requester" + (t.items ? "s" : "") + " (optional)", value: t.comment || "" } : null,
+				run: function (note) {
+					var body = { message_id: found.view.messageId };
+					if (decides) body.comment = note;
+					return api("POST", "conversations/" + encodeURIComponent(found.view.conversationId) + "/actions/" + encodeURIComponent(a.id) + "/run", body);
+				},
+			}).then(function (answer) {
+				if (!answer.ok) return;
+				var done = (answer.result && answer.result.data) || {};
+				a.status = "done";
+				a.result = done.result || "Done.";
+				a.url = done.url || "";
+				renderActions(found.view);
+				toast("success", a.result);
+			});
+		}
 
 		function sourcesHtml(sources) {
 			return sources.map(function (s) {
@@ -1713,7 +1969,9 @@
 			box.textContent = event.message || "Something went wrong.";
 			var kind = event.kind || "";
 			if (kind === "no_key" || kind === "key") {
-				box.insertAdjacentHTML("beforeend", ' <a href="/ui/connections" class="link link-primary">Connect a new key</a>');
+				box.insertAdjacentHTML("beforeend", ADMIN
+					? ' <a href="/ui/platform-managing" class="link link-primary">Platform Managing</a>'
+					: ' <a href="/ui/connections" class="link link-primary">Connect a new key</a>');
 			}
 			if (kind === "model_denied" || kind === "model_missing" || kind === "tools") {
 				box.insertAdjacentHTML("beforeend", " Pick another model at the top of the page.");
@@ -1769,7 +2027,8 @@
 		function updateComposer() {
 			var ok = ready();
 			els.input.disabled = !ok;
-			els.input.placeholder = ok ? "Ask DevBot anything..." : (state.status && state.status.enabled ? "Connect your AI key to start" : "DevBot is not set up yet");
+			els.input.placeholder = ok ? "Ask " + BOT_NAME + " anything..."
+				: (state.status && state.status.enabled ? (ADMIN ? "The Hub's AI key is not set" : "Connect your AI key to start") : "DevBot is not set up yet");
 			if (state.streaming) {
 				els.send.disabled = false;
 				els.send.innerHTML = ICON.stop;
@@ -1834,7 +2093,7 @@
 				if (!res.ok || !res.body) {
 					return res.json().catch(function () { return {}; }).then(function (json) {
 						var detail = json && json.detail;
-						handle({ type: "error", message: typeof detail === "string" ? detail : "DevBot could not answer (HTTP " + res.status + ")." }, view);
+						handle({ type: "error", message: typeof detail === "string" ? detail : BOT_NAME + " could not answer (HTTP " + res.status + ")." }, view);
 						finished = true;
 					});
 				}
@@ -1880,7 +2139,27 @@
 		}
 
 		// ── "What can it do?" ─────────────────────────────────────────────
+		function renderAdminAbout() {
+			els.aboutBody.innerHTML =
+				"<p>Ask in your own words, in English or Hebrew, about the Hub itself. AdminBot looks it up in the Hub's own records " +
+				"and answers with what it found, and with links to the admin page each answer comes from.</p>" +
+				'<div class="devbot-kicker" style="margin: 1rem 0 0.4rem">What it can read</div>' +
+				"<p>" + esc(SYSTEMS[0].can) + "</p>" +
+				'<div class="devbot-kicker" style="margin: 1rem 0 0.4rem">What it can change</div>' +
+				"<p>Nothing on its own. It can prepare approving or rejecting requests (several at once, each decided on its own), " +
+				"activating or deactivating an account, changing a role, posting or taking down an announcement, starting or stopping " +
+				"the search index build, and hiding, showing or re-reviewing a past fix. Each one opens in a confirmation that says " +
+				"exactly what will happen and asks you to tick that you checked it; it is then made in your name through the same " +
+				"checks as the admin pages: the last admin cannot be removed, and a request that someone else already decided cannot " +
+				"be decided again. At most 5 changes are prepared in one answer.</p>" +
+				'<div class="devbot-kicker" style="margin: 1rem 0 0.4rem">What is sent where</div>' +
+				"<p>Your question and what AdminBot reads to answer it are sent to the AI model service with the Hub's AI key (set on " +
+				"Platform Managing). No token or password is ever read or sent. Conversations are yours alone, and are kept for " +
+				(((state.status || {}).history_days) || 30) + " days after you last use them.</p>";
+		}
+
 		function renderAbout() {
+			if (ADMIN) return renderAdminAbout();
 			var s = state.status || {};
 			var systems = s.systems || {};
 			var m = currentModel();
@@ -1894,7 +2173,7 @@
 					return '<div style="display: flex; gap: 0.6rem; align-items: flex-start; margin-bottom: 0.45rem">' +
 						'<span class="devbot-dot" style="margin-top: 0.45rem; background: ' + paint + '"></span>' +
 						"<div><b>" + esc(sys.label) + "</b> " + '<span style="color: hsl(var(--bc) / 0.55); font-size: 0.78rem">' + esc(st.label.toLowerCase()) + "</span><br>" +
-						esc(sys.can) + "</div></div>";
+						esc(sys.can) + (meaningNote(sys.key) ? " " + esc(meaningNote(sys.key)) : "") + "</div></div>";
 				}).join("") +
 				'<div class="devbot-kicker" style="margin: 1rem 0 0.4rem">Across systems</div>' +
 				"<p>Ask why something failed, or what is going on, and DevBot follows it through every system at once. For a failed " +
@@ -1903,6 +2182,13 @@
 				"failed tests it tells new failures from ones that kept failing. It can say whether a pull request is ready to merge and " +
 				"what blocks it, sum up a work item with its pull requests, check a project's health, and trace an image back to the " +
 				"run and the work items that built it. You watch each step as it happens.</p>" +
+				'<div class="devbot-kicker" style="margin: 1rem 0 0.4rem">What it can prepare for you</div>' +
+				"<p>DevBot never changes anything itself. When you ask, it prepares the change as a card: re-run a pipeline, or run one " +
+				"on a branch with parameters, cancel a run, vote or comment on a pull request, create, move, assign or comment on a work " +
+				"item, create or add to a Confluence page, a support ticket or a reply on one of yours, and a self-service request " +
+				"(Artifactory quota or cleaner, a new pipeline) filled in from the conversation. You review each one, change what you " +
+				"want, and confirm it in a confirmation that says exactly what will happen. It is made in your name, with your own " +
+				"permissions; a request still waits for an admin's approval. At most 5 changes are prepared in one answer.</p>" +
 				'<div class="devbot-kicker" style="margin: 1rem 0 0.4rem">Models and your key</div>' +
 				"<p>The models you can pick are the ones <b>your AI key</b> may use. Those marked <b>Live data</b> can read your systems; " +
 				"<b>Chat only</b> ones answer from general knowledge. " + (m ? "You are using <b>" + esc(m.label) + "</b>. " : "") +
@@ -1959,13 +2245,41 @@
 		});
 
 		// ── start ─────────────────────────────────────────────────────────
+		// A widget's "Ask DevBot" arrives as ?ask=<question>. It is taken out of the
+		// address at once, so a reload or a Back does not ask it a second time.
+		function takeAsked() {
+			try {
+				var url = new URL(window.location.href);
+				var asked = (url.searchParams.get("ask") || "").trim().slice(0, 2000);
+				if (asked) {
+					url.searchParams.delete("ask");
+					history.replaceState(history.state, "", url.pathname + url.search + url.hash);
+				}
+				return asked;
+			} catch (_) {
+				return "";
+			}
+		}
+
 		function boot() {
+			var asked = takeAsked();
 			return loadStatus().then(function () {
 				var id = "";
 				try { id = new URL(window.location.href).searchParams.get("c") || ""; } catch (_) {}
 				loadConversations();
-				if (id && ready()) return openConversation(id, false);
+				if (id && ready() && !asked) return openConversation(id, false);
 				renderEmpty();
+				if (asked) {
+					els.input.value = asked;
+					autosize();
+					updateComposer();
+					var m = currentModel();
+					// Sent at once when DevBot can answer it; otherwise left in the box, so
+					// connecting a key or picking a Live data model is all that is left to do.
+					if (ready() && (!m || m.tools !== false)) submit();
+					else els.input.focus();
+					return;
+				}
 				if (ready()) els.input.focus();
 			});
 		}

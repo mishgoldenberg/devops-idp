@@ -19,8 +19,13 @@
 	                 reads exactly what will happen, in their name, and confirms.
 	  3. Result   -- what Azure DevOps shows NOW, read back, with a link to it.
 
+	A DRAFT (opened with {drafted: "DevBot"}) adds one step after the check: the big
+	confirmation (action-confirm.html), which says an AI wrote it and whose decision it is,
+	and takes a tick before it will send anything. A widget's own action does not need it:
+	the person composed it themselves a moment ago.
+
 	Included once, from banner.html, so every page that shows a widget has it:
-	window.portalAdo.open(kind, target).
+	window.portalAdo.open(kind, target, {drafted}).
 #}
 <style>
 	[data-ado-act] .ado-act-box {
@@ -170,11 +175,20 @@
 		}
 		function systemName() { return (current && current.spec.system) || "Azure DevOps"; }
 		async function call(method, path, body) {
+			// A kind whose endpoint takes a form (a ticket reply) is sent as one.
+			const asForm = !!(body && current && current.spec.form);
+			let payload;
+			if (asForm) {
+				payload = new FormData();
+				Object.keys(body).forEach((k) => payload.append(k, body[k] == null ? "" : String(body[k])));
+			} else if (body) {
+				payload = JSON.stringify(body);
+			}
 			const res = await (window.portalFetch || fetch)(((current && current.spec.api) || API) + path, {
 				method: method,
 				credentials: "same-origin",
-				headers: body ? { "Content-Type": "application/json" } : {},
-				body: body ? JSON.stringify(body) : undefined,
+				headers: body && !asForm ? { "Content-Type": "application/json" } : {},
+				body: payload,
 			}, 30000);
 			const json = await res.json().catch(() => ({}));
 			if (!res.ok) {
@@ -230,6 +244,57 @@
 					'<p class="text-xs text-base-content/60 mt-2">It starts from the branch\'s latest commit.</p>',
 				body: (t) => ({ collection: t.collection, project: t.project, build_id: Number(t.id) }),
 				verb: () => "Run again",
+			},
+			"pipeline-run": {
+				title: (t) => "Run " + (t.name || "the pipeline"),
+				endpoint: "pipeline-run",
+				view(t) {
+					const params = t.parameters || {};
+					return '<span class="ado-act-label">Branch</span>' +
+						'<input type="text" class="input input-bordered input-sm w-full" data-ado-field="branch" dir="auto" maxlength="400" placeholder="Its default branch" value="' + esc(t.branch || "") + '">' +
+						'<span class="ado-act-label">Parameters <span style="text-transform:none;letter-spacing:normal;font-weight:400">(one per line: name=value)</span></span>' +
+						'<textarea class="textarea textarea-bordered ado-act-text" data-ado-field="parameters" dir="ltr" maxlength="4000" style="font-family: ui-monospace, Consolas, monospace; font-size: 0.8rem">' +
+						esc(Object.keys(params).map((k) => k + "=" + params[k]).join("\n")) + "</textarea>" +
+						'<p class="text-xs text-base-content/50 mt-1">Leave it empty to use the pipeline\'s defaults.</p>';
+				},
+				body(t) {
+					const text = bodyEl.querySelector('[data-ado-field="parameters"]').value || "";
+					const parameters = {};
+					for (const line of text.split("\n")) {
+						const at = line.indexOf("=");
+						if (!line.trim()) continue;
+						if (at < 1) return null;
+						parameters[line.slice(0, at).trim()] = line.slice(at + 1).trim();
+					}
+					return { collection: t.collection, project: t.project, definition_id: Number(t.definition_id),
+						branch: (bodyEl.querySelector('[data-ado-field="branch"]').value || "").trim(), parameters: parameters };
+				},
+				verb: () => "Run pipeline",
+			},
+			"pipeline-cancel": {
+				title: (t) => "Cancel run " + (t.run_id || t.id),
+				endpoint: "pipeline-cancel",
+				view: (t) => '<p class="text-sm">Cancel run <b dir="auto">' + esc(t.run_id || t.id) + "</b> of <b dir=\"auto\">" + esc(t.name || "the pipeline") +
+					"</b> on <b dir=\"auto\">" + esc(t.branch || "its branch") + "</b>.</p>" +
+					'<p class="text-xs text-base-content/60 mt-2">What it has done so far stays; the steps not yet run are skipped.</p>',
+				body: (t) => ({ collection: t.collection, project: t.project, build_id: Number(t.id) }),
+				verb: () => "Cancel the run",
+				danger: () => true,
+			},
+			"ticket-reply": {
+				system: "Support",
+				api: "/api/support/",
+				form: true,
+				help: false,
+				title: (t) => "Reply on " + (t.number || "your ticket"),
+				endpoint: "tickets/reply",
+				view: (t) => '<span class="ado-act-label">Your reply</span><textarea class="textarea textarea-bordered ado-act-text" data-ado-text dir="auto" maxlength="4000" style="min-height: 8rem">' + esc(t.text || "") + "</textarea>" +
+					'<p class="text-xs text-base-content/50 mt-1">The support team sees it on the ticket, under your name.</p>',
+				body(t) {
+					const text = (bodyEl.querySelector("[data-ado-text]").value || "").trim();
+					return text ? { sys_id: t.sys_id, message: text } : null;
+				},
+				verb: () => "Send reply",
 			},
 			"wi-state": {
 				title: (t) => "Move #" + t.id,
@@ -417,13 +482,34 @@
 				return failed(err, true);
 			}
 			const danger = current.spec.danger && current.spec.danger(payload);
+			current.checked = { summary: json.summary, checks: json.checks || [], danger: !!danger };
 			bodyEl.innerHTML =
 				'<p class="ado-act-summary" dir="auto">' + esc(json.summary) + "</p>" +
 				'<ul class="ado-act-checks">' + (json.checks || []).map((c) => "<li>" + TICK + '<span dir="auto">' + esc(c) + "</span></li>").join("") + "</ul>" +
 				'<p class="ado-act-note">' + esc(systemName()) + ' will record this under your name, with your permissions.</p>';
 			foot('<button type="button" class="btn btn-ghost btn-sm" data-ado-back>Back</button>' +
-				'<button type="button" class="btn btn-sm ' + (danger ? "btn-error" : "btn-primary") + '" data-ado-confirm>' + esc(current.spec.verb(payload)) + "</button>");
+				'<button type="button" class="btn btn-sm ' + (danger ? "btn-error" : "btn-primary") + '" data-ado-confirm>' +
+				esc(drafted() ? "Continue to confirm" : current.spec.verb(payload)) + "</button>");
 			footEl.querySelector("[data-ado-confirm]")?.focus();
+		}
+
+		function drafted() {
+			return !!(current && current.options && current.options.drafted && window.portalConfirm);
+		}
+
+		// A draft: the big confirmation, then the send. Cancelled there, the dialog stays
+		// on the check so the person can go Back and change it.
+		async function confirmDraft() {
+			const c = current.checked || {};
+			const answer = await window.portalConfirm.ask({
+				title: c.summary || titleEl.textContent,
+				system: systemName(),
+				lines: c.checks,
+				verb: current.spec.verb(current.payload),
+				danger: c.danger,
+				drafted: current.options.drafted,
+			});
+			if (answer.ok && current) confirm();
 		}
 
 		async function confirm() {
@@ -453,7 +539,8 @@
 		}
 
 		function failed(err, canGoBack) {
-			const token = err && (err.status === 401 || err.status === 403);
+			// No token guide for a kind that uses no token of the person's (a ticket reply).
+			const token = err && (err.status === 401 || err.status === 403) && !(current && current.spec.help === false);
 			bodyEl.innerHTML =
 				'<div class="ado-act-outcome" data-tone="bad">' + BAD + '<div><p dir="auto">' + esc((err && err.message) || "Something went wrong.") + "</p>" +
 				(token ? '<button type="button" class="btn btn-outline btn-xs mt-2" data-pat-help="' + esc((current && current.spec.help) || "azure") + '">How to create a token with the right scopes</button>' : "") +
@@ -470,18 +557,19 @@
 			if (event.target.closest("[data-ado-cancel], [data-ado-close]")) { modal.close(); return; }
 			if (event.target.closest("[data-ado-check]")) { check(); return; }
 			if (event.target.closest("[data-ado-back]")) { compose(); return; }
-			if (event.target.closest("[data-ado-confirm]")) { confirm(); }
+			if (event.target.closest("[data-ado-confirm]")) { if (drafted()) confirmDraft(); else confirm(); }
 		});
 
-		function open(kind, target) {
+		function open(kind, target, options) {
 			const spec = KINDS[kind];
-			if (!spec || !target) return;
-			current = { kind: kind, spec: spec, target: target };
+			if (!spec || !target) return false;
+			current = { kind: kind, spec: spec, target: target, options: options || {} };
 			workItem = null;
 			titleEl.textContent = spec.title(target);
 			subEl.textContent = target.title || "";
 			modal.showModal();
 			compose();
+			return true;
 		}
 
 		// Closed without completing: whoever opened it may be waiting to hear.
@@ -491,6 +579,6 @@
 			}
 		});
 
-		window.portalAdo = { open: open };
+		window.portalAdo = { open: open, has: (kind) => !!KINDS[kind] };
 	})();
 </script>

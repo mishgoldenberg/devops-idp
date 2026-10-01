@@ -108,9 +108,16 @@ To hit a real dev org:
 - Open `/ui/support` and create a ticket — it should land in the dev
   instance's Incidents table.
 
-### SonarQube / Artifactory
+### SonarQube / Artifactory / Confluence
 
-Still mock-only in code — there's nothing to configure.
+Set `SONARQUBE_BASE_URL`, `ARTIFACTORY_BASE_URL` and `CONFLUENCE_BASE_URL`, then connect
+your own token for each on the Connections page. SonarQube's public projects show even
+without a token.
+
+### DevBot
+
+Set `DEVBOT_LLM_BASE_URL` (an OpenAI-compatible `/v1`) and `DEVBOT_DEFAULT_MODEL`, then
+connect your AI key on the DevBot page. See [devbot.md](./devbot.md).
 
 ---
 
@@ -237,6 +244,7 @@ This is the "I want to be dangerous" task.
 ## 8. Where to go next
 
 - [`docs/architecture.md`](./architecture.md) — the big picture.
+- [`docs/devbot.md`](./devbot.md) — the AI assistant and its search index.
 - [`docs/self-service-flow.md`](./self-service-flow.md) — the canonical
   flow.
 - [`docs/services/`](./services/) — one doc per backend module.

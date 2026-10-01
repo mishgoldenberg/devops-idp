@@ -300,7 +300,7 @@ portal_flags   — standalone, used by safe_mode module.
 
 <!-- GENERATED:TABLES — do not edit by hand; run scripts/gen_docs.py -->
 
-38 tables, created idempotently at startup by `ensure_tables()` and friends. There is no migration Job in the cluster — this DDL *is* the schema mechanism, and it must stay additive: a `DROP` on this path runs on every pod start.
+44 tables, created idempotently at startup by `ensure_tables()` and friends. There is no migration Job in the cluster — this DDL *is* the schema mechanism, and it must stay additive: a `DROP` on this path runs on every pod start.
 
 | Table | Created in |
 | --- | --- |
@@ -313,6 +313,12 @@ portal_flags   — standalone, used by safe_mode module.
 | `backup_runs` | `backend/app/db.py` |
 | `catalog_submissions` | `backend/app/db.py` |
 | `devbot_conversations` | `backend/app/devbot/store.py` |
+| `devbot_events` | `backend/app/devbot/monitor.py` |
+| `devbot_feedback` | `backend/app/devbot/monitor.py` |
+| `devbot_index_chunks` | `backend/app/devbot/knowledge.py` |
+| `devbot_index_pages` | `backend/app/devbot/knowledge.py` |
+| `devbot_index_runs` | `backend/app/devbot/knowledge.py` |
+| `devbot_index_settings` | `backend/app/devbot/knowledge.py` |
 | `devbot_messages` | `backend/app/devbot/store.py` |
 | `devbot_usage` | `backend/app/devbot/store.py` |
 | `favorites` | `backend/app/db.py` |

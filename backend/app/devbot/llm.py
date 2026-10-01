@@ -18,8 +18,8 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any, AsyncIterator, Dict, List, Optional
-from urllib.parse import urlsplit
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
+from urllib.parse import quote, urlsplit
 
 import httpx
 
@@ -52,12 +52,14 @@ def wrote_tool_call_as_text(text: str, tool_names: List[str]) -> bool:
     found = re.match(r'^\{\s*"(?:name|function)"\s*:\s*"([\w.-]+)"\s*,\s*"(?:arguments|parameters)"', stripped)
     return bool(found and found.group(1) in tool_names)
 
-_LIMIT_HEADERS = {
-    "x-ratelimit-limit-requests": "rpm",
-    "x-ratelimit-remaining-requests": "rpm_left",
-    "x-ratelimit-limit-tokens": "tpm",
-    "x-ratelimit-remaining-tokens": "tpm_left",
-}
+# LiteLLM names its limit headers after the SCOPE that set the limit once more than one
+# can apply (x-ratelimit-api_key-remaining-requests, ...-model_per_key-..., ...-team-...),
+# and older versions and plain OpenAI servers use the bare x-ratelimit-remaining-requests.
+# A proxy may also forward the model server's own as llm_provider-x-ratelimit-*.
+_LIMIT_HEADER = re.compile(
+    r"^(?:llm_provider-)?x-ratelimit-(?:(?P<scope>[a-z_]+)-)?(?P<what>limit|remaining)-(?P<unit>requests|tokens)$")
+# LiteLLM also states the key's own limits on every answer, without what is left.
+_KEY_LIMIT_HEADER = re.compile(r"^x-litellm-key-(?P<unit>rpm|tpm)-limit$")
 
 _EMBEDDING_NAME = re.compile(r"embed|(^|[/_-])e5([-_]|$)|bge|rerank|whisper|tts|clip|colbert", re.I)
 
@@ -77,6 +79,8 @@ class LLMError(Exception):
         self.status = status
         self.retry_after = retry_after
         self.raw = raw
+        # For kind "context": the model's real window, when its refusal states it.
+        self.context_tokens: Optional[int] = None
 
 
 # ── plumbing ─────────────────────────────────────────────────────────────────
@@ -101,15 +105,44 @@ def _timeout(read: float) -> httpx.Timeout:
     return httpx.Timeout(read, connect=10.0)
 
 
-def read_limits(headers: Any) -> Dict[str, int]:
-    """The key's limits as the gateway reported them on this answer."""
-    out: Dict[str, int] = {}
-    for header, name in _LIMIT_HEADERS.items():
-        raw = str(headers.get(header) or "").strip()
+def read_limits(headers: Any) -> Dict[str, Any]:
+    """The key's limits as the gateway reported them on this answer.
+
+    Where several scopes limit the same thing (the key, the key on this model, the team),
+    the one with the least left is the one that will stop the next request, so that is
+    the one reported, with its scope.
+    """
+    found: Dict[tuple, Dict[str, int]] = {}
+    try:
+        items = list(headers.items())
+    except AttributeError:
+        return {}
+    for name, value in items:
+        name = str(name).strip().lower()
+        match = _LIMIT_HEADER.match(name)
+        own = _KEY_LIMIT_HEADER.match(name)
+        if not match and not own:
+            continue
         try:
-            out[name] = int(float(raw))
+            number = int(float(str(value).strip()))
         except ValueError:
             continue
+        if own:
+            unit = "requests" if own.group("unit") == "rpm" else "tokens"
+            found.setdefault((unit, "key"), {}).setdefault("limit", number)
+            continue
+        slot = found.setdefault((match.group("unit"), match.group("scope") or "key"), {})
+        slot[match.group("what")] = number
+    out: Dict[str, Any] = {}
+    for unit, short in (("requests", "rpm"), ("tokens", "tpm")):
+        scopes = [(scope, v) for (u, scope), v in found.items() if u == unit and v.get("limit", 0) > 0]
+        if not scopes:
+            continue
+        scope, v = min(scopes, key=lambda sv: (sv[1].get("remaining", sv[1]["limit"]), sv[1]["limit"]))
+        out[short] = v["limit"]
+        if "remaining" in v:
+            out[short + "_left"] = max(0, v["remaining"])
+        out[short + "_scope"] = scope
     return out
 
 
@@ -175,7 +208,10 @@ def classify(status: int, text: str, headers: Any, model: str = "") -> LLMError:
             return LLMError("tools", f"{model or 'This model'} cannot read live data: its server is not set up "
                             "for tool calling.", status=status, raw=said)
         if re.search(r"context length|maximum context|too many tokens|prompt is too long|max_tokens|input length", low):
-            return LLMError("context", "The conversation is too long for this model.", status=status, raw=said)
+            err = LLMError("context", "The conversation is too long for this model.", status=status, raw=said)
+            stated = re.search(r"maximum (?:context length|input length|model length) is (\d+)", low)
+            err.context_tokens = int(stated.group(1)) if stated else None
+            return err
         return LLMError("request", f"The AI service refused the request: {said}", status=status, raw=said)
     if status >= 500:
         return LLMError("server", f"The AI service failed to answer ({status}): {said or 'no details'}",
@@ -197,12 +233,15 @@ def is_embedding(model_id: str, mode: str = "") -> bool:
 
 # ── what the key may use ─────────────────────────────────────────────────────
 
-def list_models(key: str) -> List[Dict[str, Any]]:
+def list_models(key: str, embedding: bool = False) -> List[Dict[str, Any]]:
     """The models this key may use, described as far as the gateway describes them.
 
     /models is the list; LiteLLM's /model/info adds the mode (chat or embedding) and the
     context window. The second is best-effort: not every gateway exposes it, and a model
     it does not describe gets the configured default window.
+
+    Chat models by default; embedding=True gives the embedding models instead, which is
+    what the page search index is built with.
     """
     base = base_url()
     try:
@@ -238,7 +277,7 @@ def list_models(key: str) -> List[Dict[str, Any]]:
     for model_id in ids:
         details = info.get(model_id) or {}
         mode = str(details.get("mode") or "")
-        if is_embedding(model_id, mode):
+        if is_embedding(model_id, mode) != embedding:
             continue
 
         def number(*names: str) -> Optional[int]:
@@ -259,43 +298,188 @@ def list_models(key: str) -> List[Dict[str, Any]]:
     return models
 
 
+def embed(key: str, model: str, texts: List[str], timeout: float = 60.0) -> Tuple[List[List[float]], Dict[str, Any]]:
+    """Vectors for ``texts``, in order, and the limits the gateway reported on the answer.
+
+    Raises LLMError, classified like a chat failure: a 429 carries its retry_after, so a
+    long indexing run can wait for the minute to turn instead of giving up.
+    """
+    base = base_url()
+    try:
+        with httpx.Client(verify=tls_verify(), timeout=_timeout(timeout), headers=_headers(key)) as client:
+            resp = client.post(f"{base}/embeddings", json={"model": model, "input": texts})
+    except httpx.HTTPError as exc:
+        raise _network_error(exc) from exc
+    if resp.status_code != 200:
+        raise classify(resp.status_code, resp.text, resp.headers, model)
+    try:
+        rows = resp.json().get("data") or []
+    except ValueError:
+        raise LLMError("request", "The AI service answered the embeddings request with something that is not JSON.")
+    ordered = sorted((r for r in rows if isinstance(r, dict)), key=lambda r: int(r.get("index") or 0))
+    vectors = [[float(x) for x in (r.get("embedding") or [])] for r in ordered]
+    if len(vectors) != len(texts) or any(not v for v in vectors):
+        raise LLMError("request", f"The AI service returned {len(vectors)} vectors for {len(texts)} passages.")
+    return vectors, read_limits(resp.headers)
+
+
+_THINK = re.compile(r"<think>.*?(</think>|$)", re.S)
+
+
+def complete(key: str, model: str, messages: List[Dict[str, Any]], max_tokens: int = 800,
+             timeout: float = 120.0) -> Tuple[str, Dict[str, Any]]:
+    """One answer, whole, outside any conversation: for work the Hub does in the
+    background (reviewing a fix before the index keeps it). Returns the answer's text,
+    without any thinking the model wrote into it, and the limits the gateway reported.
+    Raises LLMError, classified like a chat failure."""
+    base = base_url()
+    body = {"model": model, "messages": messages, "max_tokens": max_tokens, "temperature": 0.1}
+    try:
+        with httpx.Client(verify=tls_verify(), timeout=_timeout(timeout), headers=_headers(key)) as client:
+            resp = client.post(f"{base}/chat/completions", json=body)
+    except httpx.HTTPError as exc:
+        raise _network_error(exc) from exc
+    if resp.status_code != 200:
+        raise classify(resp.status_code, resp.text, resp.headers, model)
+    try:
+        choice = (resp.json().get("choices") or [{}])[0]
+    except ValueError:
+        raise LLMError("request", "The AI service answered with something that is not JSON.")
+    text = str((choice.get("message") or {}).get("content") or "")
+    return _THINK.sub("", text).strip(), read_limits(resp.headers)
+
+
+def _num(value: Any) -> Optional[float]:
+    try:
+        return float(value) if value is not None and value != "" else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _prefix(base: str) -> str:
+    """The gateway's root, keeping any path it is mounted under: /key/info lives beside
+    /v1, not inside it, and not necessarily at the host's root."""
+    path = urlsplit(base).path.rstrip("/")
+    if path.endswith("/v1"):
+        path = path[:-3]
+    return _origin(base) + path
+
+
+def _get_json(client: httpx.Client, urls: List[str]) -> Optional[Dict[str, Any]]:
+    for url in urls:
+        try:
+            resp = client.get(url)
+        except httpx.HTTPError:
+            continue
+        if resp.status_code == 200 and "json" in (resp.headers.get("content-type") or ""):
+            try:
+                body = resp.json()
+            except ValueError:
+                continue
+            if isinstance(body, dict):
+                return body
+    return None
+
+
+def _limits_of(row: Any) -> Dict[str, float]:
+    """rpm / tpm / budget from one LiteLLM record: a key, its budget table, a team, a user."""
+    if not isinstance(row, dict):
+        return {}
+    out = {"rpm": _num(row.get("rpm_limit")), "tpm": _num(row.get("tpm_limit")),
+           "budget": _num(row.get("max_budget"))}
+    return {k: v for k, v in out.items() if v}
+
+
+def _per_model(row: Dict[str, Any], name: str) -> Dict[str, int]:
+    """model_rpm_limit / model_tpm_limit: {model: n}, on the key or in its metadata."""
+    out: Dict[str, int] = {}
+    metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+    for source in (row, metadata):
+        value = source.get(name)
+        if isinstance(value, dict):
+            for model, n in value.items():
+                number = _num(n)
+                if number:
+                    out[str(model)] = int(number)
+    return out
+
+
 def key_info(key: str) -> Dict[str, Any]:
     """What the gateway says about this key: its limits, budget and expiry.
 
-    LiteLLM answers /key/info for the key that asks. Anything else answers nothing
-    useful, and that is fine: the limits also arrive on every chat answer's headers.
+    LiteLLM answers /key/info for the key that asks. A limit need not sit on the key
+    itself: it can be per model on the key, in a budget the key is linked to, or on the
+    key's team or user, and a key with none of its own obeys those. They are read in
+    that order and the first that sets a limit is reported, with where it came from.
+
+    `described` says the gateway answered at all, which is what separates "this key has
+    no limits" from "the gateway did not say".
     """
     try:
-        base = base_url()
+        root = _prefix(base_url())
+    except LLMError:
+        return {}
+    roots = [root] if root == _origin(root) else [root, _origin(root)]
+    try:
         with httpx.Client(verify=tls_verify(), timeout=_timeout(10.0), headers=_headers(key)) as client:
-            resp = client.get(f"{_origin(base)}/key/info")
-        if resp.status_code != 200 or "json" not in (resp.headers.get("content-type") or ""):
-            return {}
-        info = resp.json().get("info") or {}
-    except (LLMError, httpx.HTTPError, ValueError):
-        return {}
-    if not isinstance(info, dict):
+            body = _get_json(client, [r + "/key/info" for r in roots])
+            info = (body or {}).get("info")
+            if not isinstance(info, dict):
+                return {}
+            limits = _limits_of(info)
+            source = "key" if limits.get("rpm") or limits.get("tpm") else ""
+            if not source:
+                table = _limits_of(info.get("litellm_budget_table"))
+                if table.get("rpm") or table.get("tpm"):
+                    limits, source = {**limits, **table}, "budget"
+            if not source and info.get("team_id"):
+                team = _get_json(client, [f"{r}/team/info?team_id={quote(str(info['team_id']), safe='')}" for r in roots])
+                found = _limits_of((team or {}).get("team_info") or team)
+                if found.get("rpm") or found.get("tpm"):
+                    limits, source = {**found, **limits}, "team"
+            if not source and info.get("user_id"):
+                user = _get_json(client, [r + "/user/info" for r in roots])
+                found = _limits_of((user or {}).get("user_info"))
+                if found.get("rpm") or found.get("tpm"):
+                    limits, source = {**found, **limits}, "user"
+    except httpx.HTTPError:
         return {}
 
-    def num(name: str) -> Optional[float]:
-        try:
-            value = info.get(name)
-            return float(value) if value is not None else None
-        except (TypeError, ValueError):
-            return None
-
-    out = {
-        "rpm": num("rpm_limit"),
-        "tpm": num("tpm_limit"),
-        "parallel": num("max_parallel_requests"),
-        "budget": num("max_budget"),
-        "spend": num("spend"),
+    out: Dict[str, Any] = {"described": True}
+    for name in ("rpm", "tpm"):
+        if limits.get(name):
+            out[name] = int(limits[name])
+    if source:
+        out["source"] = source
+    model_rpm, model_tpm = _per_model(info, "model_rpm_limit"), _per_model(info, "model_tpm_limit")
+    if model_rpm:
+        out["model_rpm"] = model_rpm
+    if model_tpm:
+        out["model_tpm"] = model_tpm
+    extra = {
+        "parallel": _num(info.get("max_parallel_requests")),
+        "budget": _num(info.get("max_budget")) or limits.get("budget"),
+        "spend": _num(info.get("spend")),
         "budget_resets": str(info.get("budget_reset_at") or ""),
         "expires": str(info.get("expires") or ""),
         "name": str(info.get("key_alias") or info.get("key_name") or ""),
     }
-    return {k: (int(v) if isinstance(v, float) and k in ("rpm", "tpm", "parallel") else v)
-            for k, v in out.items() if v not in (None, "")}
+    for k, v in extra.items():
+        if v in (None, ""):
+            continue
+        out[k] = int(v) if k == "parallel" else v
+    return out
+
+
+def limits_for(info: Dict[str, Any], model_id: str) -> Dict[str, int]:
+    """The rpm / tpm that apply to one model: a per-model limit beats the key's own."""
+    out: Dict[str, int] = {}
+    for name in ("rpm", "tpm"):
+        per_model = info.get("model_" + name)
+        value = per_model.get(model_id) if isinstance(per_model, dict) else None
+        if value or info.get(name):
+            out[name] = int(value or info[name])
+    return out
 
 
 def validate_key(key: str) -> int:

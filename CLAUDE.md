@@ -14,7 +14,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Properties of THIS deployment, not advice. Each cost real time to discover; check here
 before designing against an assumption.
 
-- **Azure DevOps Graph API is not routed** (`_apis/graph/*` → 404, `_apis/resourceAreas` empty). Do identity reads and group writes through the legacy `/_api/_identity/` endpoints the web UI uses — `ReadScopedApplicationGroupsJson`, `ReadGroupMembers`, `AddIdentities` (`newUsersJson`/`existingUsersJson`/`groupsToJoinJson`, retry once with a scraped `__RequestVerificationToken`) — and write ACLs via `_apis/accesscontrollists` with an `acesDictionary`, not `_apis/accesscontrolentries`. Check any other ADO endpoint is routed before building on it.
+- **Azure DevOps Graph API is not routed** (`_apis/graph/*` → 404). Use the web UI's `/_api/_identity/` endpoints (`ReadScopedApplicationGroupsJson`, `ReadGroupMembers`, `AddIdentities` with `newUsersJson`/`existingUsersJson`/`groupsToJoinJson`, retried once with a scraped `__RequestVerificationToken`) and write ACLs via `_apis/accesscontrollists` + `acesDictionary`. Check any other endpoint is routed before building on it.
 - **`AddIdentities` is the whole grant**: it resolves `DOMAIN\user` against AD, binds the account into the collection and joins the group in one call. Existing in AD is not existing in the collection.
 - **Project Administrator ≠ process Administer.** Editing an inherited process needs an ACL on `$PROCESS:<typeId>:`, never the bare `$PROCESS` root. ADO also auto-adds a project's creator to its Project Administrators group, so the admin PAT's owner always looks provisioned.
 - **`output.css` ships precompiled and is never rebuilt.** A class not already in it does nothing. Change the palette by redeclaring DaisyUI's HSL properties in `theme.css` (loaded after it). `menu-compact`, `checkbox-sm`, `kbd-sm`, `file-input-sm` are not compiled in.
@@ -24,10 +24,12 @@ before designing against an assumption.
 - **htmx 1.9 rescans with the selector `[hx-trigger='revealed']`**, so `revealed` in a compound trigger never fires again — use `intersect once`.
 - **The portal scrolls `.page-content`**, so `window.scrollY` is permanently 0. `.btn` carries an unconditional `animation: button-pop`; `.card-body` gives every `<p>` inside it `flex-grow: 1`. `--nc` is LIGHT in the light themes.
 - **One catalogue per list:** widgets in `widget_registry.py`, self-service forms in `catalog_forms.py`. Import them; never copy.
-- **Artifactory cleaners run on a DIFFERENT OpenShift cluster** behind a firewall; their CronJob/ConfigMap exist only after the pipeline's FIRST BUILD, so the merge queues one (`ado_pipeline.run`). A merged removal leaves the CronJob (`<slug>-cleaner`) and ConfigMap (`<slug>-cleaner-spec`) running in `devops-monitor`: hand over console links (`OPENSHIFT_CONSOLE_URL`) and an admin confirmation, never a pipeline that deletes across the firewall.
-- **The changelog is `backend/app/changelog.py`**, written by hand. CI stamps `build_info.json` (branch/build/commit) and tags images `<version>-test` / `<version>-prod`; the backend records only WHEN a version reached an environment.
-- **DevBot's gateway is LiteLLM over vLLM**, one key per person (`user_integrations.system='devbot'`): `/v1/models` includes embedding models, tool calls need vLLM's `--enable-auto-tool-choice` and `--tool-call-parser`, limits come as `x-ratelimit-*` headers (`scripts/check_llm_endpoint.py`).
-- **`scripts/apply_docx.py`** applies a round, runs the checks, commits with `git add -A` and pushes (`--no-commit`/`--no-push`/`--no-verify` opt out); a failing check refuses the commit and a re-run commits the applied tree. `*.docx` stays in `.gitignore`, or every round pushes its own document.
+- **Artifactory cleaners run on another OpenShift cluster** behind a firewall and exist only after the pipeline's FIRST BUILD (the merge queues one). A merged removal leaves `<slug>-cleaner` / `<slug>-cleaner-spec` in `devops-monitor`: hand over console links (`OPENSHIFT_CONSOLE_URL`) and an admin confirmation, never a cross-firewall delete.
+- **The changelog is `backend/app/changelog.py`**, by hand; CI stamps `build_info.json` and tags images `<version>-test`/`-prod`.
+- **DevBot's gateway is LiteLLM over vLLM**, one key per person: `/v1/models` lists embedding models too, tool calls need vLLM's `--enable-auto-tool-choice`/`--tool-call-parser`, limits arrive as `x-ratelimit-*` headers (`scripts/check_llm_endpoint.py`).
+- **Postgres here has no pgvector**: DevBot's search keeps int8 vectors in BYTEA and ranks them in Python per pod (`devbot/knowledge.py`).
+- **Past fixes** live in a work item field named "Solution" (a `Custom.<GUID>`; found by display name, scoped by collection/project/type) and in ServiceNow `close_notes` (some rude), and are shown to everyone only as the Hub key's review of them (`knowledge.review_fix`).
+- **`scripts/apply_docx.py`** applies a round, runs the checks, commits (`git add -A`) and pushes (`--no-commit`/`--no-push`/`--no-verify` opt out); a failing check refuses the commit. `*.docx` stays gitignored.
 
 ## Code rules
 
@@ -45,8 +47,8 @@ before designing against an assumption.
 - Give an operator a read-only UI diagnostic for anything whose failure is invisible, bounded by age AND by whether the failing code path still exists; an unbounded one keeps accusing after the fix.
 - Recognise a failure by a signature only the failure produces, never by a substring a success can contain, since a false "cannot" that is cached for everyone disables the feature for all of them until it expires.
 - Treat "already exists" from a create as the answer, not a failure -- then confirm the thing that exists is the one you wanted before adopting it.
-- Classify an outbound failure before showing it (`resilient_http.explain_integration_failure`) and put the HTTP status and the account in the message, never the exception class: refused, DNS, TLS, 401, 403, 404 and timeout are different people's jobs, and `HTTPStatusError` names none of them.
-- Add a new value to the `approval_request_type` ENUM in `db.py` from `request_types.py` before the application can emit it; a gate that says supported while Postgres rejects the value is a 500 with nothing pointing at the schema.
+- Classify an outbound failure (`resilient_http.explain_integration_failure`) and show the HTTP status and the account, never the exception class, since refused, DNS, TLS, 401, 403, 404 and timeout are different people's jobs.
+- Add a new `approval_request_type` ENUM value in `db.py` (from `request_types.py`) before the app can emit it, or Postgres rejects it as a 500 that points nowhere.
 - Keep any list two layers must agree on (request types, widget catalogue) in one module both import.
 - Send a PASSWORD only as Basic; only a token or API key may climb the bearer/API-key ladder.
 - Prefer the credential that reaches the MOST services when several are configured, or the advice to add one changes nothing.
@@ -66,13 +68,12 @@ before designing against an assumption.
 - Define every name before referencing it — a bare global as much as a `module.Class.CONSTANT`; `check_imports.py` resolves both, and a missing one raises where it is USED, after the work it names is done.
 - When a rewrite replaces a mechanism, carry over every name the old one DEFINED, not only the lines that read them: a surviving reader with a deleted definer imports, starts and serves everything else.
 - A guard that reads a file as TEXT has not checked that it PARSES; compile every artefact the runtime compiles.
-- Prove a feature through the path production takes (a real page's request, a real sign-in against a fake provider), never by calling the endpoint or helper it ends in: a working helper says nothing about the path meant to reach it.
-- Render a UI change headlessly and look at it before calling it fixed — after the LAST edit to it, not after the last interesting one — and drive scroll and animation over CDP with real input and a real clock, since virtual time delivers no scroll or IntersectionObserver callbacks.
+- Prove a feature through the path production takes (a real page's request, a real sign-in against a fake provider), never by calling the helper it ends in.
+- Render a UI change headlessly and look at it after the LAST edit, driving scroll and animation over CDP with real input and a real clock, since virtual time delivers no scroll or IntersectionObserver callbacks.
 - Create the pipeline that executes a merged YAML file AT the merge, and record the name and path to build by hand when it cannot be created.
 
 ### Identity and provisioning
-- Match ADO identities via normalised account forms, never raw string equality.
-- Try every form of a principal (`DOMAIN\user`, UPN, bare account) against every filter, and pick by exact account — never `rows[0]`.
+- Match identities by normalised account forms, trying every form of a principal (`DOMAIN\user`, UPN, bare account) against every filter and picking by exact account, never raw equality or `rows[0]`.
 - Skip status 400 alongside 401/403/404 in a per-collection probe.
 - Discover a security token by reading existing ACL tokens and substituting your object's GUID; never hardcode one.
 - Provision into the ONE target the request names, and validate that target at submission, not only in the executor.
@@ -83,6 +84,9 @@ before designing against an assumption.
 - Enforce account state where the token is READ, not where it is issued.
 - Fail open on an unreachable database, closed on a definite negative answer.
 - Filter restricted rows in the endpoint, never in the template or browser, and authenticate any endpoint that becomes able to return them.
+- Check that the record belongs to the caller in every endpoint that takes its id and reaches it with a service account, since that account can open any record and the id is then the only thing in the way.
+- Answer with a shared record's content rather than a link to it, and add the link only for someone whose own token opens it, since a link a person cannot open is an answer they cannot read.
+- Pass free text written for insiders through a review that rewrites it before anyone else reads it, and store only the rewrite, since the original carries typos and remarks never meant for the person asking.
 - Decide reviewer-only data by the ROLE THE PAGE IS IN (scope=all), not by whether the account is an admin.
 - Re-check every side-effect guard (Safe Mode, authorization) inside the function that performs the effect.
 - Keep privilege levels equal to the number the code tests; delete any permission store nothing reads.
@@ -94,10 +98,12 @@ before designing against an assumption.
 - Write CI intermediate secret files 0600 and delete them via `trap ... EXIT`.
 - Detect an expired session centrally (401, or a fetch that landed on the sign-in page); never on 403.
 - Share a pooled HTTP client between users only with a cookie jar that refuses everything, since a cookie answered to one user would otherwise ride on the next user's request.
-- Have every layer consume a resolved identity/ownership decision through ONE helper, including every save handler and whatever first set the value, and normalise its case there — a key written lowercased and read mixed-case is a row that exists and cannot be found.
+- Resolve an identity/ownership decision in ONE helper every layer and save handler uses, normalising case there, since a key written lowercased and read mixed-case is a row that cannot be found.
 - Put the identity provider's name, set server-side, on anything raised in a person's name outside the portal (`identity.trusted_name`), falling back to the login and never the display name, which is theirs to change.
 - Capture a value that arrives only at sign-in for sessions that predate the code too, by ending such a session once on a claim the new sign-in stamps, since a live session otherwise keeps showing the old behaviour.
-- Identify a field in another system by what it POINTS AT before what it is called; a name matcher finds nothing against labels written in another language.
+- Identify a field in another system by what it POINTS AT before what it is called, and match its display NAME as well as its reference name; a name matcher finds nothing against labels in another language, and a custom field's reference is a GUID.
+- Give an assistant what the product already knows on EVERY question, not only behind trigger words, since people do not know which words unlock it and ask about the problem instead.
+- End every change an assistant drafted in one loud confirmation that says an AI wrote it, whose decision it is, and needs a tick before it acts, and cap how many it may draft, since a small Confirm under a draft is pressed unread and a looping model can fill a page with them.
 
 ### Proxy, hostnames, TLS
 - Decide a cookie's `Secure` flag from `X-Forwarded-Proto`, never `request.url.scheme`, via one shared helper.
@@ -126,11 +132,13 @@ before designing against an assumption.
 - Never do dependency work in a startup hook; bootstrap in a background thread and let readiness report the pending state.
 - Keep liveness dependency-free; put dependency checks behind readiness, cached with a short TTL and skipped when one is in flight.
 - Set an explicit connect timeout AND retry policy on every client — a 2s socket timeout measured 25s under default retries.
+- Keep the connections a pool is handed back and make a full pool WAIT, since psycopg2 closes every one beyond `minconn` and raises "exhausted" at once, which turns load into a connection per query and into 500s.
+- Run per-request work only on the requests that use it, and profile under concurrent load before tuning, since a step on every static file and API call is invisible one request at a time.
 - After a failed pool construction, fail fast for a cooldown rather than queueing behind the next attempt.
 - Give every container a `startupProbe`, and pair `readOnlyRootFilesystem` with a writable `/tmp` emptyDir.
 - Cap every cache's memory, set an eviction policy, and turn persistence off.
 - Cache a slow external crawl per item against the item's own change marker and answer from the last result while refreshing behind it, since a short TTL over the whole crawl makes every expiry a full wait.
-- Never cache a FAILED external read, and let an explicit Refresh bypass the cache while a timed poll keeps it: a Refresh answered from cache is a button that does nothing, and a cached failure makes it the one thing that cannot help.
+- Never cache a FAILED external read, and let an explicit Refresh bypass the cache while a timed poll keeps it, since a Refresh answered from cache does nothing.
 - Fall back to a direct single read for a row the batched listing did not answer for; absent and unreadable both freeze a state otherwise.
 - Bound every layer that can stall — `htmx.config.timeout` AND a fetch deadline — and render an error for a failed shell request.
 - Never let `text=True` pick a subprocess's encoding: pass `encoding="utf-8", errors="replace"` and give children `PYTHONIOENCODING=utf-8`; treat captured streams as possibly `None`.
@@ -145,16 +153,20 @@ before designing against an assumption.
 - Resolve a named time zone against the database once and fall back to a written-out POSIX rule, since a Postgres without tzdata rejects every zone name.
 - Never compare a Python-rendered value with a Postgres-rendered one (`str(datetime)` ends `+00:00`, `::text` ends `+00`); compute both sides in SQL.
 - Namespace ids when one endpoint merges two tables — two SERIALs collide at 1.
+- Mint your own unique id for anything you store and replay by id (tool calls), since a server that numbers them afresh in every answer pairs a later result with an earlier call.
+- Rank a capped candidate list by what the request NAMED first, and admit a named candidate its filter would drop, since a cap on a kind-sorted list silently drops the one thing asked for.
 - Give a personal copy of a shared feature its own table, never a nullable owner column.
 - Default a new visibility/permission column to the PERMISSIVE value.
 - Version a stored user preference before adding an item to the list it records, or when a field it stores changes type or allowed values.
 - Stash a failure's reason on `request.state` so the audit row says why, not just "502".
 - Collapse repeated identical failures from a polling client into one row per window with a count.
-- Bound every list a page or widget draws: filter, fixed-height scroll container, and a window that keeps only the pages near the viewport in the DOM, since a cap that only grows ends with every row drawn and the page frozen again.
+- Bound every list a page draws (filter, fixed-height scroller, a window keeping only rows near the viewport in the DOM), since a cap that only grows ends with every row drawn.
 
 ### Backups and scheduled jobs
 - Enable a scheduled job from the presence of its credential, never a standalone flag, and refuse to render it when settings are blank.
 - Give a scheduled job a row written at START and updated at exit under a trap, so "never ran", "running" and "died" stay distinguishable.
+- Give a cross-pod lock a short TTL that its holder renews with a heartbeat, and treat a lock with no live heartbeat as abandoned, since a long TTL outlives a killed pod and blocks every other run until it expires.
+- Check a stop request inside every long loop and every wait of the job, never only between work items, since a job spends most of its time listing or waiting and a Stop it never reads does nothing.
 - Record a backup's checksum and a salted fingerprint of the secret that decrypts it — never the secret — and prove the pairing before restoring.
 - Verify restores on a schedule into a scratch database, guarding its name three ways because the job runs DROP DATABASE.
 - Never restate an automated job as an operator procedure: derive it from the job, ship a script rather than prose, and EXECUTE the generated block before shipping it.
@@ -175,19 +187,18 @@ before designing against an assumption.
 - Apply declared defaults on the SERVER before validating or storing.
 - Reproduce a replaced form's REQUEST BODY exactly — every field, hidden ones included, unset as `""` — or the endpoint's mandatory-field autofill supplies its own defaults.
 - Never send a file field's name as a scalar; a parameter typed as an upload gets a file or nothing.
-- Keep client-side validation no stricter than the backend contract.
+- Keep client-side validation no stricter than the backend contract, and declare in the form spec every field the endpoint requires, conditions and formats included, since a wizard that lets a person through every step is refused only at the end; a field whose condition names a hidden field is hidden too, or a stale answer keeps requiring it.
 - Check a precondition while the form is being filled, not after approval.
 - Apply a relative change to the value read at EXECUTION time, never the snapshot from when the form was filled.
 - Order a ServiceNow catalog item through `order_now` (a REQ with a RITM), never `submit_producer` (an INC), and refuse a result whose table is `incident`.
-- Check an external system's MANDATORY fields before sending: fill what the item itself can answer (its default, its first choice), log every value filled, and refuse only what names another record.
-- Match a ServiceNow variable by name, by label, by the `u_`-stripped name AND by its WORDS, and give the operator an env-var map for what is left — a Hebrew label matches nothing and an apostrophe is one character between `pipeline_purpose` and `Pipeline's Purpose`.
-- Say who a record is FOR when the integration account raises it, AT INSERT — the item's own reference variable, or `sysparm_requested_for` on the submit — never by a later update, and report the field as not set rather than correcting it afterwards.
-- Treat an update as an EVENT the far system reacts to, not a way to set a value: where a rule fires on update, one PATCH costs the record its state and its assignee no matter how little it wrote.
-- Restore a field a rule moved to the literal value READ before the write, never to a name resolved from a choice list — this account cannot read `sys_choice.value`, and the pre-write read already holds the code.
+- Check a far system's MANDATORY fields before sending, the way it tests them per type (an unticked mandatory checkbox is empty and no default), fill a blank one from its own declared default or with something that reads as an answer -- never `true`, `""` or the first option where it decides ownership, state or severity -- convert words to its choice codes, log what was filled and refuse only what names another record, since a numeric field silently keeps its default and reads as the user's answer.
+- Send the payload that respects the user's answers first and one that merely satisfies the far system only after a refusal, since anything extra arrives as content and is acted on.
+- Match a ServiceNow variable by name, label, `u_`-stripped name AND its words, with an env-var map for the rest, since a Hebrew label matches nothing and `Pipeline's Purpose` is not `pipeline_purpose`.
+- Say who a record is FOR at INSERT when the integration account raises it (the item's reference variable or `sysparm_requested_for`), never by a later update, and report it as not set rather than correcting it.
+- Treat an update as an EVENT the far system reacts to, not a way to set a value, and restore a field a rule moved to the literal value read before the write, since one PATCH costs a record its state and assignee and this account cannot read `sys_choice.value`.
 - Let a form declare where its own result lives and what that place is called; a result screen that infers its wording from the response shape hands one form another form's outcome.
 - Never forward a payload as "scalars only": the nested dict you drop is the requester's details, and they are what the item makes mandatory.
-- Show a requester only their own scope and an approver the aggregate; each quota looks reasonable alone and the sum is what overruns.
-- Split an over-limit warning into ALREADY over and THIS ONE crosses it, and show real usage beside the promise; blaming a 10 GB request for a 5 TB overage argues for rejecting the wrong thing.
+- Show a requester only their own scope and an approver the aggregate, and split an over-limit warning into ALREADY over and THIS ONE crosses it with real usage beside it, since each quota looks reasonable alone and blaming a 10 GB request for a 5 TB overage rejects the wrong thing.
 - Never put a LOGICAL size and a PHYSICAL one on one axis: Artifactory de-duplicates, so summed repository usage legitimately exceeds the disk (`fileStoreSummary` is the physical number).
 - Never render a picker with nothing in it: fall back to the whole list with the reason, show the typing box, and let the key be typed.
 - Copy an existing section field for field -- keys, labels, order, widgets -- and add a guard that fails when the two copies drift.
@@ -198,21 +209,14 @@ before designing against an assumption.
 - Undo a side effect in BOTH directions: if approving a removal deletes something, abandoning that removal has to put it back.
 - Decide add-versus-edit from that state, not from the form.
 
-- Refuse a delete rule set that selects everything: require at least one of age, name, type or keep-newest-N.
-- Express keep-the-newest-N as the file spec's `sortBy`/`sortOrder`/`offset`, never as an AQL condition.
-- Keep the slug that names generated files in the stored record; never recompute it from an editable name.
+- Refuse a cleaner rule set that selects everything, express keep-newest-N as the file spec's `sortBy`/`sortOrder`/`offset` (not AQL), and keep the slug naming generated files in the record, never recomputed from an editable name.
 - Raise the external ticket where the outcome is known, not at submission, so it carries the result instead of the request.
-- Send the payload that respects the user's answers FIRST, and one that merely satisfies the far system only after a refusal: anything extra arrives as CONTENT and is acted on, a field the form ASKS about is answered even when blank, and a system enforcing a rule its own UI hides leaves no payload that is both.
-- Answer a required question nobody answered from the far system's own declared default, then with something that reads as an answer to whoever opens the record — never `true`, an empty string, or the first option off a list when the answer decides ownership, state or severity.
-- Test "is this filled in" the way the far system tests it, per type, and trust a declared default only where the form would have SUBMITTED it: an unticked mandatory checkbox has a value, is empty, and is not a default.
-- When an integration refuses, produce what the user asked for by a worse route rather than handing back an error, and log the full inventory of what was sent.
-- When a far system allows only two of three things the user wants, pick two, say which you gave up and why, and put the switch and the far-system fix in one comment rather than re-deciding it each round.
-- Restore the last version that WORKED before designing a replacement: read its payload out of git and suspect what was added since, not the mechanism it was added to.
-- Verify the code DOES the thing before telling somebody to change another system for it; a helper that identifies what it would use is not one that uses it, and the log line reads the same either way.
-- Convert a word to the foreign system's own choice code before sending it; a numeric field silently keeps its default and that reads as the user's answer.
-- Check which permission a foreign system's LISTING endpoint needs, not only its read ones, and prefer the one ordinary users can reach; a list that needs Administer answers 403 to everybody the widget is for, and the portal reports it as a bad token.
-- Personalise from a field the far system POPULATES ITSELF (the author its analysis recorded), never one a human must fill in, since a widget filtered on a field nobody sets stays empty and teaches people to ignore it.
+- When an integration refuses, produce what the user asked for by a worse route and log what was sent; when it allows only two of three wanted things, pick two and record which was given up, the switch and the far-system fix in one comment, since otherwise each round re-decides it.
+- Restore the last version that WORKED from git before designing a replacement, and verify the code does the thing before asking another system to change, since what was added since is the suspect and a helper that only identifies what it would use logs the same as one that uses it.
+- Check which permission a far system's LISTING endpoint needs and prefer one ordinary users have, since a list that needs Administer answers 403 to everybody and reads as a bad token.
+- Personalise from a field the far system POPULATES ITSELF, never one a human must fill in, since a widget filtered on a field nobody sets stays empty.
 - Read a period / new-code measure from its period, never its `value`: the two are different fields, and the wrong one renders a clean zero for a project full of problems.
+- Read a limit from every place the far system sets it (scoped headers, key, model, team, budget) and say which, since one fixed name reports an inherited limit as none.
 
 ### Templates and CSS
 - Apply `| default(...)` BEFORE any Jinja filter that throws on `Undefined` (`tojson`, `length`, arithmetic).
@@ -225,7 +229,7 @@ before designing against an assumption.
 ### Front-end behaviour
 - Never write a backtick inside markup inside a JS template literal; run `node --check` on the extracted block after editing it.
 - Match a keyboard shortcut on the physical key (`event.code`) as well as the character; `event.key` is whatever the layout produced, so every shortcut silently stops existing in Hebrew.
-- Defer any DOM-dependent decision to `DOMContentLoaded`, since the banner's scripts run before the sidebar exists, and bump the "already seen" key when fixing a first-run feature.
+- Defer any DOM-dependent decision to `DOMContentLoaded`, since the banner's scripts run before the sidebar exists and a page's script runs before any component included below it, and bump the "already seen" key when fixing a first-run feature.
 - Never let a CSS fade be the only thing making an element visible; pair rAF with a `setTimeout` fallback.
 - Paint a selected tab from the state, never hardcode it in the markup, and give two filter strips that do the same job the same classes.
 - Include the component a page's buttons call: `window.x?.open()` turns a missing component into a button that does nothing and says nothing.
@@ -233,31 +237,28 @@ before designing against an assumption.
 - Hide an element with `display`, never the `hidden` attribute or utility: a class that sets `display` in a later sheet beats both.
 - Position a popover against its own `offsetParent` and re-run positioning after paint; use `position: fixed` on `<body>` when the trigger sits in a scrolling or overflow-hidden container.
 - Open a detail panel from an explicit button rendering inline beneath its row, never on hover.
-- Re-measure a highlight with a ResizeObserver on its target, not only on scroll and resize.
-- Never animate a highlight that also tracks scroll.
+- Point a walkthrough highlight at the element it describes (skip a vanished one), re-measure it with a ResizeObserver, scroll ITS container only when it is not visible (top-aligning anything taller than the viewport), and never animate a highlight that tracks scroll.
 - Animate a size change as a transform over the final layout, never by animating width or height, since every frame of a size animation re-lays out and repaints everything beside it.
-- Scroll a highlight into view by scrolling ITS container, skip it when already visible, and top-align anything taller than the viewport.
-- Point a walkthrough step at the element it describes, and skip a step whose target has vanished.
 - Make one Refresh reload every list on the page, including lists owned by other script blocks.
+- Fire a page-wide event once per thing it announces, never per request, since every listener runs once per request and one that skips a cache turns a page load into dozens of uncached reads.
+- Version a static file's link by its content and let the browser keep it, and let a page that may have come from a prefetch report its own visit, since the server never sees that request.
 - Skip off-screen work: `content-visibility:auto` with `contain-intrinsic-size`, and `intersect once` for a first fetch — lifted only while dragging.
 - Express widget resizing as a `grid-column` span plus an explicit px height with `grid-auto-flow: dense`; never grow up or left.
 - Pin a scrollable widget list with `absolute inset-0` in a `relative` parent, never `h-full`.
 
 ### Interface details
-- Render a count as a fixed-size circle with a capped label, never a DaisyUI `badge`; use a coloured dot plus a word for a two-state setting.
+- Render a count as a fixed-size circle with a capped label (never a DaisyUI `badge`) that aggregates exactly like the list it summarises, and a two-state setting as a coloured dot plus a word.
 - Give a status filter an All tab: the named tabs partition today's statuses, not tomorrow's.
 - Scale a bar against the LARGER of the limit and the total, mark the limit, and give a non-zero segment a `min-width`.
 - Label a payload key before showing it and hide the machine-only ones (`*_bytes`, snapshots); a raw key dump is not a UI.
 - Give every user-entered value `dir="auto"` inside a shrink-wrapped `inline-block`, so Hebrew reads right-to-left beside its label instead of at the far edge.
-- Make a count badge aggregate exactly like the list it summarises, and have one dismissal clear every row it collapsed.
 - Group an inline tag with its action button in one `items-center` flex on the title line.
 - Measure the padding chain before touching `justify-content` — centring cannot fix an element wider than its parent.
-- Centre a glyph as an SVG; a text node centres by its line box.
-- Dim an overlay with a fixed dark rgba, never a theme colour.
+- Dim an overlay with a fixed dark rgba, never a theme colour, and centre a glyph as an SVG, since a text node centres by its line box.
 - Suppress only `transition` when making a theme swap atomic, never `animation`.
 - Make a three-state control show the CURRENT state, and store a "follow the system" preference as the preference.
 - Stamp a dismissal with the item's changed-date so it returns when the item is touched again.
-- Give a destructive action an Undo in its toast rather than a confirm dialog, implemented as the same function with the flag flipped; an external write, which no Undo can reach, is checked with that system first and confirmed instead.
+- Give a destructive action an Undo in its toast (the same function, flag flipped) rather than a confirm dialog; an external write no Undo can reach is checked with that system and confirmed.
 - Keep a list's own controls (done, hide) apart from actions on the thing listed, since one habitual click must never write to another system.
 - Put shareable list state in the URL with `replaceState` and read it back on `popstate`.
 - Have a palette read its navigation from the rendered sidebar, never a second hardcoded list.
@@ -266,7 +267,7 @@ before designing against an assumption.
 - Generate every documentation inventory from the code with `scripts/gen_docs.py`.
 - Add a `backend/app/changelog.py` entry in EVERY round and choose the bump: major relearns something, minor adds a capability, patch is everything else.
 - Write a changelog line as the user's half of the sentence — the symptom they saw, never a file, a function or an HTTP status; `scripts/check_changelog.py` rejects the rest.
-- Put a change in the changelog only if a regular user can SEE it or is AFFECTED by it; Admin-only work (approvals, logs, users, roles, backups, secrets, deploys) stays out, and an admin-side fix that changes what a requester gets is written from the requester's side.
+- Put a change in the changelog only if a regular user can SEE or is AFFECTED by it; admin-only work stays out, and an admin fix that changes what a requester gets is written from their side.
 - Never name a system users have no account on: ServiceNow is admins-only here, so tickets, callers, the Support wizard and every word about them stay off the What's New page.
 - Summarise admin-side work as one generic line (`changelog.GENERIC`) rather than dropping it, since a hole in the version numbers reads as a broken page, and collapse every such release into ONE card at the end.
 - Never derive a changelog from commit subjects: they are addressed to whoever reviews the diff.
@@ -277,75 +278,39 @@ before designing against an assumption.
 
 ## What This Project Is
 
-A "single pane of glass" DevOps portal — a FastAPI backend serving HTMX-driven Jinja2 templates. The browser never talks directly to external systems (Azure DevOps, ServiceNow, SonarQube, Artifactory, Confluence); all integration calls go through the backend, which caches responses in Redis.
+A "single pane of glass" DevOps portal: a FastAPI backend serving HTMX-driven Jinja2 templates. The browser never talks to external systems (Azure DevOps, ServiceNow, SonarQube, Artifactory, Confluence); every call goes through the backend, which caches in Redis.
 
 ## Commands
 
-### Running
-
-`docker compose up -d` (Postgres 16, Redis 7, backend, nginx; UI at http://localhost:8000/ui/), or without Docker: in `backend/app`, `pip install -r requirements.txt`, set the env vars from `env.example`, then `uvicorn main:app --reload --port 8000`.
-
-### Frontend CSS
-
-No JS build step (see Environment facts). Regenerate `output.css` locally only for a genuinely new Tailwind class, and commit it: `cd frontend && npm run build:css`. `scripts/check_css_classes.py` fails CI on any class not compiled into it.
-
-### Database
-
-`npm run migrate|seed|db:reset` are local-only. In the cluster there is no migration Job. Schema is created and repaired by `ensure_tables()` / `ensure_observability_tables()` at backend startup, and the seed SQL under `deployment/charts/infrastructure/database/` runs only when Postgres initialises an empty data directory.
+- Run: `docker compose up -d` (UI at http://localhost:8000/ui/), or in `backend/app`: `pip install -r requirements.txt`, the env vars from `env.example`, `uvicorn main:app --reload --port 8000`.
+- CSS: no JS build step; rebuild `output.css` (`cd frontend && npm run build:css`) only for a genuinely new class, and commit it.
+- Schema: created and repaired by `ensure_tables()` at startup (the only mechanism in the cluster; never a `DROP` there); the seed SQL under `deployment/charts/infrastructure/database/` runs only on an empty data directory.
 
 ## Architecture
 
-### Key modules
-
 | File | Role |
 |---|---|
-| `backend/app/main.py` | App factory, startup hooks, `ensure_tables()` |
-| `backend/app/config.py` | All settings loaded from environment |
-| `backend/app/db.py` | psycopg2 connection pool + DDL helpers |
-| `backend/app/cache.py` | `get_cached(key, ttl, producer)`; Redis errors are swallowed, so a degraded cache falls through |
-| `backend/app/integrations_cache.py` | External reads under `ext:<integration>:<owner>:<key>`; `cached_external_swr` answers stale and refreshes behind |
-| `backend/app/resilient_http.py` | Resiliency helpers for all outbound integration calls |
-| `backend/app/security.py` | JWT auth (`auth_token` cookie, HS256) |
-| `backend/app/sso_config.py` | Admin-managed OIDC config; client secret encrypted at rest |
-| `backend/app/secrets_manager.py` | Runtime integration credentials stored in the DB |
-| `backend/app/safe_mode.py` | Admin toggle: turns every self-service action into a simulated success |
-| `backend/app/request_audit.py` | Writes, failed or slow reads and WARNING+ records, for the Logs page |
-| `backend/app/ui.py` | Every HTML route |
-| `backend/app/api/` | Domain routers, one file per integration/feature, mounted in `api/__init__.py` |
-| `backend/app/api/announcements.py` | Admin billboard on every dashboard; dismissals stamped with the announcement's version |
+| `backend/app/main.py` | App factory, middleware, static files, startup hooks |
+| `backend/app/db.py` | Connection pool (kept, waited for) + DDL helpers |
+| `backend/app/cache.py`, `integrations_cache.py` | Redis caches; errors fall through; `cached_external_swr` answers stale and refreshes behind |
+| `backend/app/resilient_http.py` | Outbound call helpers and failure wording |
+| `backend/app/security.py` | JWT (`auth_token` cookie), active/admin checks |
+| `backend/app/secrets_manager.py`, `sso_config.py` | Stored credentials and OIDC config, encrypted at rest |
+| `backend/app/safe_mode.py` | Admin toggle: self-service actions become simulated successes |
+| `backend/app/request_audit.py` | The Logs page's records (`audit_events`, 7 days) |
+| `backend/app/ui.py`, `api/` | Every HTML route; one router per integration/feature |
 | `backend/app/widget_registry.py` | The one dashboard widget catalogue |
-| `backend/app/devbot/` | DevBot chat assistant: gateway client, budgets, orchestrator, tools (`/api/devbot`, `/ui/devbot`) |
-| `scripts/gen_docs.py` | Regenerates the endpoint/env/table inventories in `docs/` from the code |
-| `docs/RUNBOOK.md` | What to do when it breaks; backup, restore, rollback, PVC resize |
-| `docs/RED_TEAM_BRIEF.md` | Security review brief, kept on this machine only (gitignored); `[CONFIRM]` marks facts only the owner knows |
-| `frontend/templates/` | Pages; `partials/components/` holds the HTMX fragments |
+| `backend/app/devbot/` | DevBot and AdminBot (`docs/devbot.md`, keep it in step) |
+| `scripts/gen_docs.py` | Regenerates the inventories in `docs/` |
+| `docs/RUNBOOK.md` | What to do when it breaks |
+| `docs/RED_TEAM_BRIEF.md` | Security brief, local only (gitignored) |
 
-### Auth
-
-OIDC (RedHat SSO compatible) configured by admin at runtime, plus internal JWT stored as `auth_token` cookie. JWT secret comes from `JWT_SECRET` env var; it also derives the key that encrypts the stored OIDC client secret.
-
-### Self-service (Azure DevOps project provisioning)
-
-Project creation is **REST-only** (`_create_project_in_collection` / the orchestrator in `azure_devops.py`): the backend creates the project in the one collection the request names via the REST API with the admin PAT (no Terraform, Job or tfstate). Safe Mode simulates actions without side effects.
-
-### Database schema management
-
-Tables are created idempotently at startup by `ensure_tables()`, the only schema mechanism in the cluster (the Node helpers in `scripts/` are local-only). Never put a `DROP` in a startup or deploy-time DDL path: one emptied `widget_usage` on every pod start.
-
-### Audit logging
-
-What `request_audit.py` records lands in `audit_events`, purged after 7 days.
+Auth is admin-configured OIDC plus the internal JWT; `JWT_SECRET` also derives the key that encrypts the stored OIDC secret. Azure DevOps project creation is REST-only, into the one collection the request names.
 
 ## Deployment
 
-Helm umbrella chart at `deployment/`. Backend and frontend are **separate images**: the backend serves the rendered UI, and the frontend image is a thin nginx proxy to `backend-service`.
-
-Charts: `backend/` and `frontend/` (Deployment, Service, Ingress each), `infrastructure/` (Postgres, Redis, backup CronJobs, app-config, secrets); `values.yaml` holds the global overrides.
-
-CI/CD (`azure-pipelines.yml`) builds and pushes both images to Artifactory, prunes old image tags (`scripts/artifactory_image_retention.py`, keep last 5), then deploys with `helm template ./deployment | oc apply` to OpenShift. Secrets are assembled into a `helm-secrets-values.json` file and rendered into the `all-secrets` Kubernetes Secret; an Artifactory image-pull secret is created separately.
+Helm umbrella chart at `deployment/` (`backend/`, `frontend/` = a thin nginx proxy, `infrastructure/` = Postgres, Redis, backups, config, secrets). `azure-pipelines.yml` builds and pushes both images to Artifactory, prunes old tags, and deploys with `helm template ./deployment | oc apply`; secrets go through `helm-secrets-values.json` into the `all-secrets` Secret.
 
 ## Environment variables
 
-See `env.example` (and the generated `docs/env.md`). Required: `DATABASE_URL`, `REDIS_HOST`, `REDIS_PORT`, `JWT_SECRET`, `HUB_ADMIN_USERNAME`, `HUB_ADMIN_PASSWORD`.
-
-Service credentials (the ADO admin PAT, the ServiceNow account) are env vars from the pipeline's variable group via the `all-secrets` Secret; each user's own tokens are entered on the Connections page and stored encrypted.
+See `env.example` and `docs/env.md`. Required: `DATABASE_URL`, `REDIS_HOST`, `REDIS_PORT`, `JWT_SECRET`, `HUB_ADMIN_USERNAME`, `HUB_ADMIN_PASSWORD`. Service credentials come from the pipeline's variable group; each user's tokens are stored encrypted from the Connections page.

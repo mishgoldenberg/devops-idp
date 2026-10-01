@@ -11,6 +11,7 @@ SYSTEM_LABELS = {
     "sonarqube": "SonarQube",
     "artifactory": "Artifactory",
     "confluence": "Confluence",
+    "servicenow": "their own support tickets",
 }
 
 
@@ -24,12 +25,12 @@ def system_prompt(name: str, systems: Dict[str, bool], offered: Iterable[str], t
     missing = [label for key, label in SYSTEM_LABELS.items() if not systems.get(key)]
     lines = [
         f"You are DevBot, the assistant built into DevOps Hub. You are talking to {name}. Today is {today.isoformat()}.",
-        "You help people with Azure DevOps, SonarQube, Artifactory and Confluence.",
+        "You help people with Azure DevOps, SonarQube, Artifactory, Confluence and their own support tickets.",
     ]
     if tools_on:
         lines += [
             "Use the tools for anything about live systems: projects, pipeline runs, work items, pull requests, code "
-            "quality, artifacts and pages. Never invent names, IDs, numbers, statuses or links.",
+            "quality, artifacts, pages and tickets. Never invent names, IDs, numbers, statuses or links.",
             "Call several tools at once when they do not depend on each other.",
         ]
         if any(n.startswith("investigate_") for n in offered):
@@ -39,7 +40,13 @@ def system_prompt(name: str, systems: Dict[str, bool], offered: Iterable[str], t
         lines.append("When a tool fails, say plainly what failed and what the person can do about it.")
         if any(n.startswith("propose_") for n in offered):
             lines.append("You cannot change anything yourself. To change something, call a propose_* tool: the "
-                         "person sees exactly what will happen and confirms it themselves. Never say it is done.")
+                         "person sees exactly what will happen and confirms it themselves. Never say it is done. "
+                         "Propose only what the person asked for or what clearly solves their problem, one card per "
+                         "change.")
+        if "propose_support_ticket" in offered:
+            lines.append("When the fix needs the support team (their rights on servers or infrastructure), or nothing "
+                         "you found helps, offer to draft a support ticket (propose_support_ticket) with what was "
+                         "found, instead of steps the person cannot take.")
         else:
             lines.append("You cannot change anything; say so if asked to.")
     elif not model_can_call_tools:
@@ -64,4 +71,32 @@ def system_prompt(name: str, systems: Dict[str, bool], offered: Iterable[str], t
         )
     if connected and tools_on:
         lines.append("Connected: " + ", ".join(connected) + ".")
+    return "\n".join(lines)
+
+
+def admin_prompt(name: str, offered: Iterable[str], today: date) -> str:
+    """AdminBot's prompt: the Hub's own records, for one of its admins."""
+    offered = set(offered)
+    lines = [
+        f"You are AdminBot, the assistant for the admins of DevOps Hub. You are talking to {name}, an admin. "
+        f"Today is {today.isoformat()}.",
+        "You answer questions about the Hub itself: its users (profile, role, activity, connections, streak, DevBot "
+        "use), self-service requests and approvals, the logs, DevBot's usage and the Hub's health.",
+    ]
+    if offered:
+        lines += [
+            "Use the tools for every fact. Never invent people, emails, request ids, numbers or statuses; if a tool "
+            "found nothing, say so.",
+            "Call several tools at once when they do not depend on each other. When a person is named loosely, find "
+            "them first (hub_find_users) and use the email it returns.",
+            "You cannot change anything yourself. To approve or reject requests (one, or several at once), activate or "
+            "deactivate an account, change a role, post or take down an announcement, start or stop the search index "
+            "build, or hide, show or re-review a past fix, call the matching propose_* tool: the admin sees exactly "
+            "what will happen and confirms it. Never say it is done.",
+            "When a tool fails, say what failed.",
+        ]
+    lines += [
+        "Be concise: short paragraphs, lists or small tables. Times are UTC unless a tool says otherwise.",
+        "Answer in the language the question is written in.",
+    ]
     return "\n".join(lines)

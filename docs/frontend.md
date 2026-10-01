@@ -74,6 +74,9 @@ the context, and return an `HTMLResponse`.
 | `/ui/platform-managing` | `platform-managing.html`  | Admin: Safe Mode toggle etc.                     |
 | `/ui/settings`          | `settings.html`           | User preferences (ADO PAT, theme)               |
 | `/ui/profile`           | `profile.html`            | User profile summary                             |
+| `/ui/devbot`            | `devbot.html`             | DevBot AI chat (see [devbot.md](devbot.md))      |
+| `/ui/adminbot`          | `adminbot.html`           | Admin: AdminBot AI — the same page, `bot="admin"` |
+| `/ui/devbot-monitor`    | `devbot-monitor.html`     | Admin: how DevBot is used, failures, feedback    |
 
 Admin-only pages are also hidden from the sidebar for non-admins (see
 `sidebar.html`).
@@ -87,7 +90,11 @@ Admin-only pages are also hidden from the sidebar for non-admins (see
 - The banner (`partials/components/banner.html`) on top — includes the
   notifications bell, the user menu, and the **global JS error boundary**
   (a small `window.addEventListener("error", …)` + HTMX error hooks that
-  shows one throttled toast instead of letting the UI die).
+  shows one throttled toast instead of letting the UI die), the widgets' action
+  dialog (`ado-actions.html`, `window.portalAdo.open(kind, target, {drafted})`) and
+  **the big confirmation** (`action-confirm.html`, `window.portalConfirm.ask({...})`)
+  that every change DevBot or AdminBot drafted ends in: what will happen, "drafted by
+  AI", whose decision it is, and a tick before the button works.
 - A `{% block content %}` where each page slots its content.
 
 Page templates typically extend `base.html` and fill in `content` with a
@@ -178,6 +185,60 @@ npm run build:css    # regenerates static/css/output.css
 ```
 
 The CI pipeline runs the same command inside the frontend image build.
+
+## DevBot in the widgets
+
+Three ways into DevBot from a widget, all ending in `window.portalDevbot.ask(question)`
+(defined in `banner.html`), which opens `/ui/devbot?ask=…` and asks at once:
+
+- **Explain** on a failed run (`pipelines.html`) and **Ask DevBot** on an open work
+  item (`azure-devops-tasks.html`): explicit buttons, which also work on touch and
+  from the keyboard.
+- **Ask DevBot on hover** (`partials/components/devbot-hover.html`): rest the pointer
+  on a row for 0.6 s and the row is outlined with a chip on its top edge; Tab onto a
+  row and Alt+A asks from the keyboard. The engine knows no
+  widget; a row takes part by carrying its question, written with
+  `window.portalDevbot.attr(question)` (escaped, and empty where DevBot is not set
+  up). Rows that carry one today: work items, pipeline runs, both pull request
+  widgets, tickets, every SonarQube widget, Artifactory repositories and Confluence
+  pages. Settings → "Ask DevBot on hover" switches it off (`portal-devbot-hover` in
+  localStorage).
+
+## Sidebar
+
+`sidebar.html` holds the navigation as data. An item can stand for several pages
+(`match`): **Monitoring** is current on Usage, Users, DevBot and Logs, which share the
+tab strip `monitoring-tabs.html`. Rows are kept compact (`portal-chrome.html`) so the
+whole list, admin section included, fits a laptop screen without scrolling; add a page
+to an existing entry's tabs before adding a row. Search is the box in the banner.
+
+## Fast pages
+
+What makes a page switch quick, and where it lives. Measure before changing any of it.
+
+- **Files the browser keeps.** Pages link the stylesheet, the theme and htmx as
+  `?v={{ asset_v }}`, a fingerprint of their contents taken at startup (`main.py`), and
+  those are cached for a year; other `/static` files for an hour, refreshed in the
+  background. A deploy that changes one changes the link.
+- **Fetched before the click.** `banner.html` carries speculation rules: resting on a
+  link to another `/ui/` page fetches it, and the click shows it at once. The server
+  leaves "seen" marks alone for such a fetch (`Sec-Purpose: prefetch`, `ui._stamp_visit`),
+  and a dotted page that arrived from one says it was opened
+  (`/api/notifications/sections/{section}/seen`).
+- **A crossfade, not a cut.** `theme.css` turns on cross-document view transitions;
+  the banner and the sidebar hold still (named only while a transition runs, so their
+  menus are never trapped under the page). Off for "reduce motion".
+- **The dashboard.** Widgets below the fold load once the page has settled
+  (`portal-chrome.html: prefetchBelowTheFold`, through their own `intersect` event so
+  they never load twice); identical `/api/` reads in flight together share one answer
+  for four seconds (any write, Refresh, or the timer's refresh forgets them);
+  `portal:refreshed` fires once per refresh, not per request; sizes are applied
+  only when a widget box changes. New widget content fades in (Web Animations, so a
+  skipped animation still shows it).
+- **Placeholders that cost nothing.** The skeleton shimmer is a transform (moved by
+  the compositor), and a hidden placeholder does not shimmer.
+- **Back and forward** restore from the browser's back/forward cache: do not add an
+  `unload` listener, which turns it off for the page.
 
 ## Client-side JS
 

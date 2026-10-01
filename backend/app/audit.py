@@ -99,6 +99,10 @@ class Action:
     # Safe Mode
     SAFE_MODE_ENABLED = "admin.safe_mode_enabled"
     SAFE_MODE_DISABLED = "admin.safe_mode_disabled"
+    # A change an admin confirmed in AdminBot. The change also writes its own event
+    # (request approved, and so on); this one says it came through AdminBot, with what
+    # was proposed, so "who approved that, and how" has an answer.
+    ADMINBOT_ACTION = "admin.adminbot_action"
 
     # Authentication. A portal with no record of who signed in — and of who TRIED
     # and failed — is missing the first thing anyone asks for after an incident.

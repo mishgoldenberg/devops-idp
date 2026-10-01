@@ -110,7 +110,7 @@ default behavior and whether they are required.
 
 <!-- GENERATED:ENV — do not edit by hand; run scripts/gen_docs.py -->
 
-86 variables the backend actually reads, found by parsing every `os.getenv` in `backend/app/`. A variable that is not here is not read by anything, whatever the deployment sets.
+93 variables the backend actually reads, found by parsing every `os.getenv` in `backend/app/`. A variable that is not here is not read by anything, whatever the deployment sets.
 
 | Variable | Default | Read by |
 | --- | --- | --- |
@@ -151,11 +151,16 @@ default behavior and whether they are required.
 | `DB_POOL_MAX` | `20` | `db.py` |
 | `DB_POOL_MIN` | `2` | `db.py` |
 | `DB_POOL_RETRY_COOLDOWN` | `5` | `db.py` |
+| `DB_POOL_WAIT` | `10` | `db.py` |
 | `DB_SIZE_WARN_MB` | `600` | `audit.py` |
 | `DB_VOLUME_MB` | `1024` | `audit.py` |
 | `DEVBOT_CONTEXT_TOKENS` | `16384` | `config.py` |
 | `DEVBOT_DEFAULT_MODEL` | _(none)_ | `config.py` |
+| `DEVBOT_EMBED_MODEL` | _(none)_ | `config.py` |
 | `DEVBOT_HISTORY_DAYS` | `30` | `config.py` |
+| `DEVBOT_INDEX_INTERVAL_HOURS` | `12` | `config.py` |
+| `DEVBOT_INDEX_MAX_CHUNKS` | `40000` | `config.py` |
+| `DEVBOT_INDEX_MIN_SCORE` | `80` | `config.py` |
 | `DEVBOT_KEY_HELP_URL` | _(none)_ | `config.py` |
 | `DEVBOT_LLM_BASE_URL` | _(none)_ | `config.py` |
 | `DEVBOT_MAX_ANSWER_TOKENS` | `2000` | `config.py` |
@@ -196,9 +201,11 @@ default behavior and whether they are required.
 | `SNOW_SUPPORT_GROUP_VAR` | `choose_a_support_group` | `servicenow.py` |
 | `SONARQUBE_BASE_URL` | _(none)_ | `integrations.py`, `config.py`, `ui.py` |
 | `STREAK_TIMEZONE` | _(none)_ | `streaks.py` |
+| `TEMPLATES_AUTO_RELOAD` | _(none)_ | `main.py` |
 | `USE_VAULT` | `false` | `secrets_manager.py` |
 | `VAULT_ADDR` | _(none)_ | `secrets_manager.py` |
 | `VAULT_PATH` | `secret/devops-control-center` | `secrets_manager.py` |
 | `VAULT_TOKEN` | _(secret — must be set)_ | `secrets_manager.py` |
+| `WORKER_THREADS` | `100` | `main.py` |
 
 <!-- /GENERATED:ENV -->

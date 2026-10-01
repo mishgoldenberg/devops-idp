@@ -4,16 +4,12 @@
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<title>My Requests - DevOps Hub</title>
-		<link rel="stylesheet" href="../static/css/output.css" />
+		<link rel="stylesheet" href="/static/css/output.css?v={{ asset_v }}" />
 		<!-- Palette override. MUST stay after output.css: both declare the same
 		     DaisyUI custom properties, so this one wins on source order alone. -->
-		<link rel="stylesheet" href="../static/css/theme.css" />
-		<script src="/static/js/htmx.min.js"></script>
-		<link
-			rel="shortcut icon"
-			href="../static/images/devopshub-favicon.png"
-			type="image/png"
-		/>
+		<link rel="stylesheet" href="/static/css/theme.css?v={{ asset_v }}" />
+		<script src="/static/js/htmx.min.js?v={{ asset_v }}"></script>
+		{% include "partials/favicon.html" %}
 	</head>
 
 	<body class="h-screen bg-base-200 flex flex-col">

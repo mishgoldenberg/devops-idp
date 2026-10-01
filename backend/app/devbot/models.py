@@ -32,7 +32,9 @@ log = logging.getLogger(__name__)
 
 _CAP_TTL = 7 * 24 * 3600
 _CAP_PREFIX = "devbot:cap:"
+_CTX_PREFIX = "devbot:ctx:"
 _MODELS_TTL = 600
+_KEY_INFO_TTL = 300
 
 # Beside Redis, not instead of it: a pod whose Redis is down still remembers what it
 # learned itself, rather than asking the model again on every question.
@@ -66,14 +68,41 @@ def available(key: str) -> List[Dict[str, Any]]:
         out.append({
             "id": model_id,
             "label": label(model_id),
-            "context": int(row.get("context") or config.context_tokens()),
-            "context_known": bool(row.get("context")),
+            "context": int(row.get("context") or learned_context(model_id) or config.context_tokens()),
+            "context_known": bool(row.get("context") or learned_context(model_id)),
             "max_output": row.get("max_output"),
             "tools": cap.get("tools"),
             "tools_detail": cap.get("detail") or "",
         })
     out.sort(key=lambda m: m["label"].lower())
     return out
+
+
+def key_info(key: str, fetch: bool = True) -> Dict[str, Any]:
+    """The key's limits and budget (llm.key_info), cached only when the gateway actually
+    answered: an empty answer is "could not tell", and caching it would hide the limits
+    for the whole TTL after one slow moment.
+
+    fetch=False answers from the cache alone, for a question on its way to the model:
+    the page asked when it loaded, and a gateway slow to describe keys must not make
+    every question wait for it.
+    """
+    cache_key = f"devbot:keyinfo:{key_fingerprint(key)}"
+    try:
+        raw = get_redis().get(cache_key)
+        if raw:
+            return json.loads(raw)
+    except Exception:
+        pass
+    if not fetch:
+        return {}
+    info = llm.key_info(key)
+    if info:
+        try:
+            get_redis().setex(cache_key, _KEY_INFO_TTL, json.dumps(info))
+        except Exception:
+            pass
+    return info
 
 
 def forget_models(key: str) -> None:
@@ -110,6 +139,26 @@ def capability(model_id: str) -> Dict[str, Any]:
         pass
     with _local_lock:
         return dict(_local_caps.get(model_id) or {"tools": None})
+
+
+def learned_context(model_id: str) -> int:
+    """A context window the model stated itself when it refused a request as too long."""
+    try:
+        return int(get_redis().get(_CTX_PREFIX + model_id) or 0)
+    except Exception:
+        return 0
+
+
+def learn_context(model_id: str, tokens: int) -> None:
+    """Remember a window the gateway never described, so every later question plans
+    against the real size instead of the assumed one and is not refused first."""
+    if tokens <= 0:
+        return
+    try:
+        get_redis().setex(_CTX_PREFIX + model_id, _CAP_TTL, str(int(tokens)))
+    except Exception:
+        pass
+    log.info("devbot: model %s has a context window of %d tokens", model_id, tokens)
 
 
 def remember(model_id: str, tools: Optional[bool], detail: str = "") -> None:

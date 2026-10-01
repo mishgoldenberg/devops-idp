@@ -129,24 +129,26 @@ def body(doc, text: str, bold: bool = False) -> None:
 
 # -- the round ---------------------------------------------------------------
 
-ROUND = "129"
-SUMMARY = ("DevBot AI, part 5 of 5: a Usage view (tokens and requests per model, today and over 30 days, "
-           "beside the key's limits, budget and expiry), a first-visit tour of the DevBot page, DevBot in the "
-           "portal tour (only the new stop for people who took it already), a short rate limit waited out and "
-           "a long one counted down to Ask again, and a failed question kept with its reason and never "
-           "replayed twice; DevBot's SQL now runs in tests against a real Postgres")
+ROUND = "140"
+SUMMARY = ("Monitoring: Usage, Users, DevBot and Logs under one sidebar entry with tabs; Search leaves the sidebar (the banner box); compact sidebar rows that fit a laptop screen; breadcrumbs say Monitoring; no mention of a closed network")
 DELETES = []
 FILES = [
-    "CLAUDE.md",
-    "backend/app/api/devbot.py",
+    ".gitignore",
     "backend/app/changelog.py",
-    "backend/app/devbot/orchestrator.py",
-    "backend/app/devbot/store.py",
-    "backend/tests/test_devbot.py",
-    "backend/tests/test_devbot_store.py",
-    "docs/API_REFERENCE.md",
-    "frontend/templates/partials/components/devbot-container.html",
-    "frontend/templates/partials/components/tour.html",
+    "backend/app/devbot/knowledge.py",
+    "docs/devbot.md",
+    "docs/frontend.md",
+    "docs/observability.md",
+    "frontend/templates/observability.html",
+    "frontend/templates/partials/components/audit-logs-container.html",
+    "frontend/templates/partials/components/breadcrumbs.html",
+    "frontend/templates/partials/components/command-palette.html",
+    "frontend/templates/partials/components/devbot-monitor-container.html",
+    "frontend/templates/partials/components/monitoring-tabs.html",
+    "frontend/templates/partials/components/observability-container.html",
+    "frontend/templates/partials/components/portal-chrome.html",
+    "frontend/templates/partials/components/sidebar.html",
+    "frontend/templates/partials/components/users-container.html",
 ]
 PREAMBLE = ""
 

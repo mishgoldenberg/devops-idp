@@ -165,6 +165,27 @@ def describe_server(client, api, models):
         say("", "key limits: requests/min %s, tokens/min %s, parallel %s, budget %s (spent %s), expires %s" % (
             details.get("rpm_limit"), details.get("tpm_limit"), details.get("max_parallel_requests"),
             details.get("max_budget"), details.get("spend"), details.get("expires")))
+        meta = details.get("metadata") if isinstance(details.get("metadata"), dict) else {}
+        for field in ("model_rpm_limit", "model_tpm_limit"):
+            value = details.get(field) or meta.get(field)
+            if value:
+                say("", "key %s (per model): %s" % (field, json.dumps(value)))
+        table = details.get("litellm_budget_table")
+        if isinstance(table, dict):
+            say("", "key budget table: requests/min %s, tokens/min %s, budget %s" % (
+                table.get("rpm_limit"), table.get("tpm_limit"), table.get("max_budget")))
+        say("", "key fields present: " + ", ".join(sorted(k for k in details if "token" not in k.lower())))
+        if details.get("team_id"):
+            team = get_json(client, origin + "/team/info?team_id=" + str(details["team_id"]))
+            row = (team or {}).get("team_info") or team or {}
+            say("", "team %s: requests/min %s, tokens/min %s, budget %s" % (
+                details["team_id"], row.get("rpm_limit"), row.get("tpm_limit"), row.get("max_budget"))
+                if team else "team %s: /team/info refused for this key" % details["team_id"])
+        user = get_json(client, origin + "/user/info")
+        row = (user or {}).get("user_info") or {}
+        if row:
+            say("", "user: requests/min %s, tokens/min %s, budget %s" % (
+                row.get("rpm_limit"), row.get("tpm_limit"), row.get("max_budget")))
     else:
         say("", "key limits: the gateway did not describe this key (/key/info)")
     return info
@@ -264,6 +285,43 @@ def tool_test(client, api, model):
     return "PARTIAL", f"called get_weather({args}), but the final answer ignores the result: {snippet(answer)}"
 
 
+def limit_headers(client, api, model):
+    """The headers of one small real answer that say anything about limits. DevBot reads
+    its per-minute limits from these; which names this gateway uses is what matters."""
+    body = {"model": model, "messages": [{"role": "user", "content": "Say OK."}], "max_tokens": 5}
+    try:
+        r = client.post(api + "/chat/completions", json=body)
+    except httpx.HTTPError as exc:
+        say("", "limit headers: request failed: %s" % exc)
+        return
+    names = sorted(k for k in r.headers.keys()
+                   if "ratelimit" in k.lower() or k.lower().startswith("x-litellm-key") or k.lower() == "retry-after")
+    if not names:
+        say("", "limit headers: none on this answer (HTTP %d) -> the key has no per-minute limit the gateway enforces" % r.status_code)
+    for k in names:
+        say("", "limit header %s: %s" % (k, r.headers.get(k)))
+
+
+def embedding_test(client, api, model):
+    """One query and one Hebrew passage through /embeddings, the way DevBot's page
+    search will send them (e5 wants the query: / passage: prefixes)."""
+    body = {"model": model, "input": ["query: nuget restore fails NU1101",
+                                      "passage: \u05e4\u05ea\u05e8\u05d5\u05df \u05dc\u05e9\u05d2\u05d9\u05d0\u05ea NU1101"]}
+    started = time.monotonic()
+    try:
+        r = client.post(api + "/embeddings", json=body)
+    except httpx.HTTPError as exc:
+        return "FAIL", "request failed: %s: %s" % (type(exc).__name__, exc)
+    took = "%.1fs" % (time.monotonic() - started)
+    if r.status_code != 200:
+        return "FAIL", "HTTP %d: %s" % (r.status_code, snippet(r.text, 300))
+    rows = (r.json().get("data") or []) if "json" in r.headers.get("content-type", "") else []
+    dims = [len(row.get("embedding") or []) for row in rows if isinstance(row, dict)]
+    if len(dims) != 2 or not dims[0]:
+        return "FAIL", "answered without two vectors: %s" % snippet(r.text, 200)
+    return "EMBED OK", "%d vectors of %d numbers in %s" % (len(dims), dims[0], took)
+
+
 def main():
     if len(sys.argv) < 2:
         print("usage: python - <base_url> [model_id]    (API key in env LLM_API_KEY)")
@@ -293,13 +351,16 @@ def main():
         info = describe_server(client, api, models)
 
         ids = [only] if only else [m.get("id") for m in models if m.get("id")][:MAX_MODELS]
-        print("[5] Tool calling (a dummy tool, the result sent back, then the same call streamed)", flush=True)
+        print("[5] Tool calling (a dummy tool, the result sent back, then the same call streamed);"
+              " embedding models get one embeddings call instead", flush=True)
         results = []
+        headers_shown = False
         for model in ids:
             print(f"    {model}", flush=True)
-            if is_embedding(model, info) and not only:
-                say("SKIP", "an embedding model: it cannot chat, so DevBot never offers it")
-                results.append((model, "SKIP"))
+            if is_embedding(model, info):
+                verdict, detail = embedding_test(client, api, model)
+                say(verdict, detail + " (an embedding model: DevBot never chats with it)")
+                results.append((model, verdict))
                 continue
             verdict, detail = tool_test(client, api, model)
             streamed = ""
@@ -308,6 +369,9 @@ def main():
                 detail += "; " + streamed
             say(verdict, detail)
             results.append((model, verdict + ("  (" + streamed.split(" (")[0] + ")" if streamed else "")))
+            if verdict == "PASS" and not headers_shown:
+                limit_headers(client, api, model)
+                headers_shown = True
 
     print("\nSummary", flush=True)
     for model, verdict in results:

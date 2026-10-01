@@ -232,6 +232,12 @@
 			return Math.floor(months / 12) + "y ago";
 		}
 
+		// What DevBot is asked about a work item, from its button and from the hover chip.
+		function workItemQuestion(it) {
+			return "What is going on with work item #" + it.id + " (" + (it.title || "") + ")? " +
+				"What blocks it, and is there a known fix for it?";
+		}
+
 		function statusColor(category, state) {
 			const c = (category || "").toLowerCase();
 			const s = (state || "").toLowerCase();
@@ -296,6 +302,8 @@
 			listEl.innerHTML = visible
 				.map((it) => {
 					const idStr = escapeHtml(it.id);
+					// The hover chip's question (devbot-hover.html), the same as Ask DevBot's.
+					const askAttr = window.portalDevbot && window.portalDevbot.attr ? window.portalDevbot.attr(workItemQuestion(it)) : "";
 					const idDisplay = escapeHtml((it.meta && it.meta.id_display) || ("#" + it.id));
 					const type = escapeHtml((it.meta && it.meta.type) || "");
 					const title = escapeHtml(it.title || "");
@@ -310,7 +318,7 @@
 					const pinnedCls = it.pinned ? "bg-warning/5 border-warning/30" : "bg-base-200/60 border-base-300";
 					const isOpen = String(expandedId) === idStr;
 					return (
-						'<li class="rounded-lg border ' + pinnedCls + ' px-3 py-2 transition hover:border-primary/50 hover:bg-base-200" data-id="' + idStr + '" data-ado-hover-id="' + idStr + '">' +
+						'<li class="rounded-lg border ' + pinnedCls + ' px-3 py-2 transition hover:border-primary/50 hover:bg-base-200" data-id="' + idStr + '"' + askAttr + ">" +
 							'<div class="flex items-center gap-2">' +
 							'<div class="flex-1 min-w-0">' +
 								'<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer" class="block text-sm font-medium text-base-content hover:text-primary truncate" data-ado-open>' +
@@ -355,6 +363,9 @@
 		function actionsBar() {
 			return '<div class="flex flex-wrap items-center gap-1 mb-2">' +
 				WI_ACTIONS.map((a) => '<button type="button" class="btn btn-ghost btn-xs text-primary" data-wi-act="' + a[0] + '">' + a[1] + "</button>").join("") +
+				(window.portalDevbot && window.portalDevbot.enabled
+					? '<button type="button" class="btn btn-ghost btn-xs text-primary" data-wi-devbot title="What is going on with it, what blocks it, and any known fix">Ask DevBot</button>'
+					: "") +
 				"</div>";
 		}
 
@@ -647,6 +658,16 @@
 					return;
 				}
 				window.portalAdo.open(act.dataset.wiAct, { collection: m.collection || "", project: m.project || "", id: item.id, title: item.title });
+				return;
+			}
+			const askBtn = e.target.closest("[data-wi-devbot]");
+			if (askBtn && window.portalDevbot) {
+				e.preventDefault();
+				const askRow = askBtn.closest("li[data-id]");
+				const asked = askRow && items.find((x) => String(x.id) === String(askRow.dataset.id));
+				if (asked) {
+					window.portalDevbot.ask(workItemQuestion(asked));
+				}
 				return;
 			}
 			const pinBtn = e.target.closest("[data-ado-pin]");

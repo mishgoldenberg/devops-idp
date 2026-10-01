@@ -10,8 +10,8 @@ All code lives in `backend/app/api/approvals.py`. Supporting modules:
 - `backend/app/audit.py` — writes rows to `audit_events`
 - `backend/app/api/notifications.py` — creates bell notifications
 - `backend/app/safe_mode.py` — global simulate-only toggle
-- `backend/app/terraform_runner.py` — **legacy**. Nothing in the live path calls it;
-  projects are created by direct REST calls in `azure_devops.py`.
+- Projects are created by direct REST calls in `azure_devops.py`; the old Terraform
+  runner has been removed.
 - `backend/app/api/azure_devops.py` — pre-flight (custom process creation) for ADO project requests
 
 ## Supported request types
@@ -116,8 +116,7 @@ raises. `_execute_approved_request` then dispatches. Its checks, in order:
      project via the ADO REST API under the admin PAT, polls the returned
      operation to completion, and best-effort-adds the requested administrator
      to the project's Project Administrators group. There is **no Terraform, no
-     Kubernetes Job and no tfstate** — that legacy path (`terraform_runner.py`)
-     is retained but not used here. A per-collection failure is recorded and
+     Kubernetes Job and no tfstate** — that earlier path has been removed. A per-collection failure is recorded and
      does not undo the others; the executor raises only if *every* collection
      failed, otherwise it returns a `partial` result.
 4. `_finish_completed` / `_finish_failed` write the terminal status, emit the

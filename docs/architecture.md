@@ -21,7 +21,8 @@ and what happens end-to-end when a user performs a typical action.
 │                              sonarqube, artifactory,               │
 │                              observability, notifications,         │
 │                              audit_logs, safe_mode, admin,         │
-│                              pins, metrics, health                 │
+│                              pins, metrics, health, devbot*,       │
+│                              adminbot                              │
 │                                                                    │
 │   Cross-cutting helpers:                                           │
 │   ─ security.py                 JWT create/decode, cookie check    │
@@ -33,7 +34,7 @@ and what happens end-to-end when a user performs a typical action.
 │   ─ request_audit.py            Middleware + log mirror into audit │
 │   ─ widget_registry.py          The ONE dashboard widget catalogue │
 │   ─ safe_mode.py                Global "simulate only" toggle      │
-│   ─ terraform_runner.py         LEGACY, not the live path (§7)     │
+│   ─ devbot/                     DevBot / AdminBot engine (§9)      │
 └──────────┬──────────────────────────────────┬──────────────────────┘
            │                                  │
            ▼                                  ▼
@@ -44,23 +45,21 @@ and what happens end-to-end when a user performs a typical action.
 
 External systems (always called from the backend, never from the browser):
 
-   ┌────────────────┐  ┌──────────────┐  ┌────────────┐  ┌───────────────┐
-   │  Azure DevOps  │  │  ServiceNow  │  │ SonarQube  │  │  Artifactory  │
-   │  (REST + PAT)  │  │ (Table API   │  │  (mocked   │  │   (mocked     │
-   │                │  │  + basic     │  │  in code)  │  │   in code)    │
-   │                │  │  auth)       │  │            │  │               │
-   └────────────────┘  └──────────────┘  └────────────┘  └───────────────┘
+   ┌──────────────┐ ┌──────────────┐ ┌────────────┐ ┌─────────────┐ ┌────────────┐
+   │ Azure DevOps │ │  ServiceNow  │ │ SonarQube  │ │ Artifactory │ │ Confluence │
+   │ (REST + PAT) │ │ (Table API + │ │ (Web API + │ │ (REST +     │ │ (REST +    │
+   │              │ │  basic auth) │ │  token)    │ │  token)     │ │  token)    │
+   └──────────────┘ └──────────────┘ └────────────┘ └─────────────┘ └────────────┘
 
-Self-service execution lives in its own runtime:
-
-   ┌────────────────────────────────────────────────────────────┐
-   │   Kubernetes cluster                                       │
-   │                                                            │
-   │   backend Deployment ──►  BatchV1 Job (hashicorp/terraform)│
-   │                           reads a ConfigMap with the plan, │
-   │                           writes state to GCS              │
-   └────────────────────────────────────────────────────────────┘
+   ┌──────────────────────────────────────┐
+   │ AI gateway (OpenAI-compatible /v1,   │  DevBot and AdminBot only (§9)
+   │ e.g. LiteLLM over vLLM)              │
+   └──────────────────────────────────────┘
 ```
+
+Self-service runs inside the backend: an approved request is executed by a background
+thread calling the target system's REST API (§6). There is no Terraform and no
+Kubernetes Job.
 
 ## 2. Where code lives and why
 
@@ -75,6 +74,7 @@ Self-service execution lives in its own runtime:
 | Provisioning                 | `backend/app/api/azure_devops.py` | REST calls with the admin PAT; no Terraform, no K8s Job    |
 | Widget catalogue             | `backend/app/widget_registry.py`  | One list; a second copy always drifts                      |
 | Dashboard announcements      | `backend/app/api/announcements.py`| Admin → everyone, dismissed per person and per version     |
+| AI assistant                 | `backend/app/devbot/`             | Gateway client, orchestrator, tools, search index (§9)     |
 
 ## 3. Authentication flow
 
@@ -102,79 +102,79 @@ Self-service execution lives in its own runtime:
 
 ## 5. External integrations
 
-All four external systems share the same pattern:
+All five external systems share the same pattern:
 
-1. A router under `backend/app/api/<name>.py`.
-2. `USE_MOCK_<NAME>` environment variable defaults to `true` so developers
-   can run without credentials.
-3. Real mode uses `httpx` with a **fixed timeout** (5–30 s per endpoint).
+1. A router under `backend/app/api/<name>.py` (SonarQube, Artifactory and
+   Confluence share `api/integrations.py`).
+2. Each person's own token, entered on the Connections page and stored
+   encrypted; service accounts (the Azure DevOps admin PAT, the ServiceNow
+   account) come from the environment.
+3. Outbound calls use `httpx` with an explicit connect and read timeout, and a
+   failure is classified in words (`resilient_http.explain_integration_failure`).
 4. Read endpoints are wrapped with the 60-second cache in
    `integrations_cache.py` when they're hit by more than one widget or
    page at once (e.g. ADO work items, ADO pull requests, SNOW tickets).
 5. Write paths invalidate the owner's cache so the next read reflects the
    change immediately (`integrations_cache.invalidate_owner(...)`).
 
-SonarQube and Artifactory routers currently only have mock payloads — there
-are no outbound HTTP clients to harden.
-
 ## 6. Request lifecycle: self-service "create ADO project"
 
 This is the canonical end-to-end flow that exercises most of the system.
 
 ```
-Browser                  Backend                    Kubernetes         Azure DevOps
-   │                        │                          │                    │
-   │ POST /api/approvals/   │                          │                    │
-   │   requests             │                          │                    │
-   │   {request_type:       │                          │                    │
-   │    ADO_PROJECT_CREATE} │                          │                    │
-   ├───────────────────────►│                          │                    │
-   │                        │  validate payload        │                    │
-   │                        │  check for duplicate     │                    │
-   │                        │  INSERT approval_requests│                    │
-   │                        │    status=PENDING        │                    │
-   │                        │  audit.log()             │                    │
-   │                        │  create_notification()   │                    │
-   │◄───────────────────────┤  {"id":...}              │                    │
-   │                        │                          │                    │
-   │ (Admin opens Approvals) │                         │                    │
-   │ POST /requests/:id/    │                          │                    │
-   │   approve              │                          │                    │
-   ├───────────────────────►│                          │                    │
-   │                        │  UPDATE status=APPROVED  │                    │
-   │                        │  audit.log()             │                    │
-   │                        │  spawn _execute_request  │                    │
-   │                        │    _worker (thread)      │                    │
-   │◄───────────────────────┤                          │                    │
-   │                        │                          │                    │
-   │              [Worker]  │                          │                    │
-   │              ───────── │                          │                    │
-   │              if SAFE_MODE: fake success, return   │                    │
-   │              else:     │                          │                    │
-   │                        │  azure_devops.ensure_    │                    │
-   │                        │    custom_ado_process()──┼────────────────────► (process create)
-   │                        │  _create_project_in_     │                    │
-   │                        │    collection()  ────────┼────────────────────► POST _apis/projects
-   │                        │  (REST, admin PAT, ONE   │                    │   (the collection
-   │                        │   collection - the one   │                    │    the request named)
-   │                        │   the request named)     │                    │
+Browser                  Backend                                       Azure DevOps
+   │                        │                                               │
+   │ POST /api/approvals/   │                                               │
+   │   requests             │                                               │
+   │   {request_type:       │                                               │
+   │    ADO_PROJECT_CREATE} │                                               │
+   ├───────────────────────►│                                               │
+   │                        │  validate payload                             │
+   │                        │  check for duplicate                          │
+   │                        │  INSERT approval_requests                     │
+   │                        │    status=PENDING                             │
+   │                        │  audit.log()                                  │
+   │                        │  create_notification()                        │
+   │◄───────────────────────┤  {"id":...}                                   │
+   │                        │                                               │
+   │ (Admin opens Approvals) │                                              │
+   │ POST /requests/:id/    │                                               │
+   │   approve              │                                               │
+   ├───────────────────────►│                                               │
+   │                        │  UPDATE status=APPROVED                       │
+   │                        │  audit.log()                                  │
+   │                        │  spawn _execute_request                       │
+   │                        │    _worker (thread)                           │
+   │◄───────────────────────┤                                               │
+   │                        │                                               │
+   │              [Worker]  │                                               │
+   │              ───────── │                                               │
+   │              if SAFE_MODE: fake success, return                        │
+   │              else:     │                                               │
+   │                        │  azure_devops.ensure_                         │
+   │                        │    custom_ado_process()───────────────────────► (process create)
+   │                        │  _create_project_in_                          │
+   │                        │    collection()  ─────────────────────────────► POST _apis/projects
+   │                        │  (REST, admin PAT, ONE                        │   (the collection
+   │                        │   collection - the one                        │    the request named)
+   │                        │   the request named)                          │
    │                        │  UPDATE status=IN_PROGRESS                    │
-   │                        │                          │                    │
-   │                        │  poll operation status   │                    │
-   │                        │  UPDATE status=COMPLETED │                    │
-   │                        │  audit.log()             │                    │
-   │                        │  create_notification()   │                    │
-   │                        │  observability_tracking. │                    │
-   │                        │    record_…              │                    │
-   │                        │                          │                    │
-   │ (user sees bell update via /api/notifications)    │                    │
+   │                        │                                               │
+   │                        │  poll operation status                        │
+   │                        │  UPDATE status=COMPLETED                      │
+   │                        │  audit.log()                                  │
+   │                        │  create_notification()                        │
+   │                        │  observability_tracking.                      │
+   │                        │    record_…                                   │
+   │                        │                                               │
+   │ (user sees bell update via /api/notifications)                         │
 ```
 
 Key things to notice:
 
-- **Nothing about the Terraform run blocks the HTTP request**: approval
+- **Nothing about the execution blocks the HTTP request**: approval
   returns immediately, execution happens in a background worker that polls
-  the K8s Job.
+  Azure DevOps for the operation's result.
 - **Status transitions are strictly one-way**
   (`PENDING → APPROVED | REJECTED`, `APPROVED → IN_PROGRESS → COMPLETED |
   FAILED`) so the UI can reason about progress without race conditions.
@@ -199,6 +199,26 @@ widget). The backend handles that load by:
    renders `partials/components/widget-skeleton.html` so the page layout is
    stable.
 
+### Under load (500 people)
+
+One backend process answers about 120 requests a second on a developer machine with
+everything else on it too; production runs at least two and scales to ten
+(`charts/backend` HPA). What keeps it there:
+
+- **Connections are kept and waited for** (`db.py`). psycopg2's pool closes every
+  connection it gets back beyond `minconn`, so under load nearly every query opened a
+  new one; `_KeepingPool` keeps up to `DB_POOL_MAX`. A request that finds them all in
+  use waits up to `DB_POOL_WAIT` seconds instead of failing with "pool exhausted".
+- **100 request threads** (`WORKER_THREADS`): most requests wait on another system,
+  and with Starlette's 40 a slow Azure DevOps held up everybody's page render.
+- **Per-request work only where it is used**: the sidebar's admin check and system
+  links run for pages, not for `/static` and `/api`; the live admin answer is cached
+  for 30 s like the active-account check; Jinja does not look at template files on
+  disk per render (`TEMPLATES_AUTO_RELOAD`); gzip runs at level 2.
+- **One request where there were many**: the dashboard reports which widgets were
+  drawn in one post, rewrites the widget list in one transaction and only when it
+  changed, and the notification list is read when the bell is about to be opened.
+
 ## 8. Failure-mode design
 
 - Every outbound HTTP call has a **timeout** (see `resilient_http.py` for
@@ -220,3 +240,23 @@ widget). The backend handles that load by:
     blip would wedge every pod into `NotReady`.
   - `GET /api/health` — 503 if either Postgres or Redis is down (used by
     external monitoring, not by K8s probes).
+
+## 9. The AI assistant (DevBot and AdminBot)
+
+`backend/app/devbot/` answers questions in chat on `/ui/devbot` (and `/ui/adminbot`
+for admins). A question streams back over one POST as server-sent events. The
+orchestrator plans it to fit the AI key's per-minute limits and the model's context,
+offers the model only the tools the question needs, runs the lookups it asks for with
+the person's own tokens (the same integration code the widgets use), and makes the
+last round without tools so every question ends in an answer. Changes are only ever
+proposed: the person reviews them in the widgets' own dialog or the Hub's own form and
+confirms them in one loud confirmation (`action-confirm.html`) that says an AI drafted
+it and whose decision it is; at most 5 are proposed in an answer, 30 in a conversation.
+
+Search by meaning over Confluence pages and past fixes (closed work items, ticket
+resolution notes) uses an index the Hub builds in the background with its own AI key:
+int8 vectors in ordinary Postgres tables, ranked in Python in each pod, no vector
+database. Past fixes are rewritten by the model before they are kept.
+
+The full design, including every step of the index build and who is shown what:
+[devbot.md](devbot.md).

@@ -463,26 +463,29 @@ FORMS: Dict[str, Dict[str, Any]] = {
                     # Only when the answer above is Azure DevOps. Asking a SonarQube
                     # ticket which collection it is about is how a form teaches people
                     # that most of its questions do not apply to them.
+                    # Required when shown, as create_ticket_flow requires them for an Azure
+                    # DevOps ticket: left optional here, the wizard let a person through all
+                    # four steps and the server refused the ticket at the end.
                     {"key": "azure_devops_support_type",
-                     "label": "Azure DevOps Support Type (סוג תמיכה)", "type": "select",
+                     "label": "Azure DevOps Support Type (סוג תמיכה)", "type": "select", "required": True,
                      "visible_when": {"field": "devops_services", "equals": "azure devops"},
                      "options": [{"value": v, "label": v} for v in
                                  ("pipelines", "repository", "permissions", "others")]},
                     {"key": "azure_devops_collection",
-                     "label": "Azure DevOps Collection (אוסף)", "type": "select",
+                     "label": "Azure DevOps Collection (אוסף)", "type": "select", "required": True,
                      "visible_when": {"field": "devops_services", "equals": "azure devops"},
                      "options": [{"value": v, "label": v} for v in
                                  ("devcollection-inheritance", "devcollection",
                                   "devcollection17", "tikshuvcollection-inheritance",
                                   "tikshuvcollection")]},
                     {"key": "azure_devops_project", "label": "Azure DevOps Project (פרויקט)",
-                     "type": "select", "searchable": True, "allow_custom": True,
+                     "type": "select", "searchable": True, "allow_custom": True, "required": True,
                      "options_source": "azure_devops_projects",
                      "depends_on": "azure_devops_collection",
                      "visible_when": {"field": "devops_services", "equals": "azure devops"},
                      "custom_placeholder": "MyProject"},
                     {"key": "pipeline_url", "label": "Pipeline URL (קישור Pipeline)",
-                     "type": "text", "wide": True,
+                     "type": "text", "wide": True, "required": True,
                      "visible_when": {"field": "azure_devops_support_type", "equals": "pipelines"}},
                     {"key": "reason", "label": "Reason (סיבת פתיחת הקריאה)",
                      "type": "select", "required": True,
@@ -628,7 +631,8 @@ def section_visible(section: Dict[str, Any], answers: Dict[str, Any]) -> bool:
     return _rule_holds(section.get("visible_when"), answers)
 
 
-def field_visible(field: Dict[str, Any], answers: Dict[str, Any]) -> bool:
+def field_visible(field: Dict[str, Any], answers: Dict[str, Any],
+                  spec: Optional[Dict[str, Any]] = None) -> bool:
     """Same rule, one level down.
 
     A ticket about SonarQube is not asked which Azure DevOps collection it concerns.
@@ -636,8 +640,20 @@ def field_visible(field: Dict[str, Any], answers: Dict[str, Any]) -> bool:
     already had: hidden means not shown, not required, and not submitted -- on the
     server as well as in the browser, because a required field nobody can see is a
     form that cannot be sent and does not say why.
+
+    With ``spec``, a field whose rule names a field that is itself hidden is hidden
+    too: the pipeline URL belongs to an Azure DevOps ticket, and an answer left behind
+    by switching the service away must not keep asking for it.
     """
-    return _rule_holds(field.get("visible_when"), answers)
+    rule = field.get("visible_when")
+    if not _rule_holds(rule, answers):
+        return False
+    if spec and rule:
+        parent = next((f for s in spec.get("sections") or [] for f in s.get("fields") or []
+                       if f.get("key") == rule.get("field")), None)
+        if parent is not None and parent is not field:
+            return field_visible(parent, answers, spec)
+    return True
 
 
 def _rule_holds(rule: Optional[Dict[str, Any]], answers: Dict[str, Any]) -> bool:
@@ -663,7 +679,7 @@ def validate_answers(spec: Dict[str, Any], answers: Dict[str, Any]) -> Dict[str,
         if not section_visible(section, answers):
             continue
         for field in section.get("fields") or []:
-            if not field_visible(field, answers):
+            if not field_visible(field, answers, spec):
                 continue
             if field.get("type") == "toggle":
                 continue  # a toggle always holds a value, and False is one

@@ -1118,6 +1118,22 @@
 
 		function pinKey(item) { return PIN_PREFIX + String(item.id || item.key || ""); }
 
+		// The hover chip's question (devbot-hover.html), by what this widget lists.
+		function sonarQuestion(item) {
+			const project = displayName(item) + (item.key && item.key !== displayName(item) ? " (" + item.key + ")" : "");
+			if (MODE === "issues") {
+				return "Explain this SonarQube issue in " + (item.project || "my project") + ", " + (item.file || "") +
+					(item.line ? " line " + item.line : "") + ": " + (item.message || "") + ". How do I fix it?";
+			}
+			if (MODE === "hotspots") return "Which security hotspots does the SonarQube project " + project + " have, and which should I look at first?";
+			if (MODE === "newcode") return "What is wrong in the new code of the SonarQube project " + project + ", and what should I fix first?";
+			if (MODE === "prs") {
+				return "What does SonarQube say about pull request " + (item.id || "") + " (" + (item.title || "") + ") in " +
+					(item.repository || "") + ", and what must I fix for its quality gate?";
+			}
+			return "How is the SonarQube project " + project + " doing? If its quality gate fails, why, and what should I fix first?";
+		}
+
 		function rowHtml(item, page) {
 			const id = String(item.id || item.key || "");
 			const on = pins.has(pinKey(item));
@@ -1130,7 +1146,8 @@
 				: '<span class="sq-name" dir="auto" title="' + esc(name) + '">' + esc(name) + "</span>";
 			const meta = [needsKey(item) ? item.key : "", r.meta].filter(Boolean).join(" · ");
 			return '<li class="sq-row' + (on ? " is-pinned" : "") + (isOpen ? " is-open" : "") + '" data-sq-id="' + esc(id) + '"' +
-				(page === undefined ? "" : ' data-sq-page="' + page + '"') + ">" +
+				(page === undefined ? "" : ' data-sq-page="' + page + '"') +
+				(window.portalDevbot && window.portalDevbot.attr ? window.portalDevbot.attr(sonarQuestion(item)) : "") + ">" +
 				'<div class="flex items-center gap-2">' +
 				'<div class="min-w-0 flex-1">' +
 				(r.kicker ? '<div class="sq-kicker">' + esc(r.kicker) + "</div>" : "") +

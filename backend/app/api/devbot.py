@@ -9,6 +9,7 @@ DevBot: the chat assistant's API. The page is /ui/devbot.
   PATCH  /api/devbot/conversations/{id}        rename it
   DELETE /api/devbot/conversations/{id}        delete it
   POST   /api/devbot/conversations/{id}/actions/{action}  how a proposed change ended
+  POST   /api/devbot/conversations/{id}/messages/{m}/feedback  thumbs up or down on one answer
   POST   /api/devbot/chat                      ask; the answer streams back as events
 
 The person's model key is stored like every other token, in user_integrations under
@@ -18,7 +19,6 @@ the same /api/integrations/devbot/token endpoint. It never leaves the backend.
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any, Dict, List
 
@@ -26,15 +26,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from redis_client import get_redis
 from security import AuthUser, get_current_user
 
-from devbot import config, llm, models, orchestrator, store
+from devbot import config, knowledge, llm, models, monitor, orchestrator, store
 
 log = logging.getLogger(__name__)
 router = APIRouter()
 
-_KEY_INFO_TTL = 300
 
 
 class ChatBody(BaseModel):
@@ -89,9 +87,14 @@ def status(current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]
         "key_info": {},
         "key_help_url": config.key_help_url(),
         "history_days": config.history_days(),
+        "page_search": {"ready": False},
     }
     if not out["enabled"]:
         return {"success": True, "data": out}
+    try:
+        out["page_search"] = knowledge.public_status()
+    except Exception:
+        log.warning("devbot: the page search status could not be read", exc_info=True)
     key = orchestrator.model_key(uid)
     out["key_connected"] = bool(key)
     if not key:
@@ -103,28 +106,8 @@ def status(current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]
         out["default_model"] = chosen["id"] if chosen else ""
     except llm.LLMError as exc:
         out["model_error"] = {"kind": exc.kind, "message": exc.message}
-    out["key_info"] = _key_info(key)
+    out["key_info"] = models.key_info(key)
     return {"success": True, "data": out}
-
-
-def _key_info(key: str) -> Dict[str, Any]:
-    """The key's limits and budget, cached only when the gateway actually said: an
-    empty answer is "could not tell", and caching it would hide the limits for the
-    whole TTL after one slow moment."""
-    cache_key = f"devbot:keyinfo:{models.key_fingerprint(key)}"
-    try:
-        raw = get_redis().get(cache_key)
-        if raw:
-            return json.loads(raw)
-    except Exception:
-        pass
-    info = llm.key_info(key)
-    if info:
-        try:
-            get_redis().setex(cache_key, _KEY_INFO_TTL, json.dumps(info))
-        except Exception:
-            pass
-    return info
 
 
 @router.get("/usage")
@@ -143,7 +126,7 @@ def usage(current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]:
     return {"success": True, "data": {
         **summary,
         "limits": orchestrator.last_limits(uid),
-        "key_info": _key_info(key) if key else {},
+        "key_info": models.key_info(key) if key else {},
         "key_connected": bool(key),
     }}
 
@@ -215,6 +198,37 @@ def action_outcome(conversation_id: str, action_id: str, body: OutcomeBody, requ
     if not updated:
         raise _fail(request, 404, "That proposal does not exist in this conversation.")
     return {"success": True, "data": updated}
+
+
+class FeedbackBody(BaseModel):
+    rating: str = Field("", pattern="^(up|down|)$")
+    note: str = Field("", max_length=1000)
+
+
+@router.post("/conversations/{conversation_id}/messages/{message_id}/feedback")
+def feedback(conversation_id: str, message_id: int, body: FeedbackBody, request: Request,
+             current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]:
+    """A thumbs up or down on one answer, with an optional note. Sent with the question
+    and the answer it is about, which is what makes it useful to whoever reads it: the
+    page says so before the person sends it. An empty rating takes it back."""
+    uid = _uid(current_user)
+    rows = store.messages(uid, conversation_id)
+    index = next((i for i, m in enumerate(rows) if int(m["id"]) == message_id and m["role"] == "assistant"), None)
+    if index is None:
+        raise _fail(request, 404, "That answer does not exist in this conversation.")
+    answer = rows[index]
+    question = next((m["content"] for m in reversed(rows[:index]) if m["role"] == "user"), "")
+    try:
+        monitor.set_feedback(uid, conversation_id, message_id, body.rating, body.note.strip(), question,
+                             answer.get("content") or "", answer.get("meta") or {})
+        store.update_meta(uid, conversation_id, message_id,
+                          {"feedback": {"rating": body.rating, "note": body.note.strip()} if body.rating else None})
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log.warning("devbot: feedback was not saved", exc_info=True)
+        raise _fail(request, 503, f"Your feedback was not saved: {type(exc).__name__}")
+    return {"success": True, "data": {"rating": body.rating}}
 
 
 @router.post("/chat")

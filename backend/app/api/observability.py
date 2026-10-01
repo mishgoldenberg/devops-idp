@@ -184,11 +184,17 @@ def record_widget_event(
     One row per render event; aggregation happens at read time.
     Errors are swallowed so a tracking failure never breaks the dashboard.
     """
-    widget_key = str((payload or {}).get("widget_key") or "").strip()
+    # One key, or every widget the dashboard just drew in one request (widget_keys):
+    # sixteen separate posts per dashboard visit was sixteen requests and commits.
+    raw_keys = (payload or {}).get("widget_keys")
+    if not isinstance(raw_keys, list):
+        raw_keys = [(payload or {}).get("widget_key")]
+    keys = list(dict.fromkeys(str(k or "").strip() for k in raw_keys[:50]))
     session_id = (payload or {}).get("session_id")
     session_id = str(session_id).strip()[:128] if session_id else None
 
-    if not widget_key or widget_key not in _ALLOWED_WIDGET_KEYS:
+    keys = [k for k in keys if k in _ALLOWED_WIDGET_KEYS]
+    if not keys:
         raise HTTPException(status_code=400, detail="Invalid widget_key")
 
     user_id = str(
@@ -202,9 +208,9 @@ def record_widget_event(
         db.execute(
             """
             INSERT INTO widget_usage (user_id, widget_key, event_type, session_id, created_at)
-            VALUES (%s, %s, %s, %s, NOW())
+            SELECT %s, k, %s, %s, NOW() FROM unnest(%s::text[]) AS k
             """,
-            [user_id[:255], widget_key[:255], "widget_view", session_id],
+            [user_id[:255], "widget_view", session_id, [k[:255] for k in keys]],
         )
     except Exception:
         # Silent-fail per spec: tracking must never break widget rendering.

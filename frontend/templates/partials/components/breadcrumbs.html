@@ -16,6 +16,9 @@
 {% set _bc_labels = {
 	"home": "Home",
 	"devbot": "DevBot AI",
+	"devbot-monitor": "DevBot",
+	"users": "Users",
+	"adminbot": "AdminBot AI",
 	"azure-devops": "Azure DevOps",
 	"artifactory": "Artifactory",
 	"sonarqube": "SonarQube",
@@ -25,7 +28,7 @@
 	"automations": "Requests",
 	"my-requests": "My Requests",
 	"approvals": "Approvals",
-	"observability": "Observability",
+	"observability": "Usage",
 	"platform-managing": "Platform Managing",
 	"audit-logs": "Logs",
 	"suggestions": "Suggestions",
@@ -43,9 +46,12 @@
 	"my-requests": "Platform",
 	"support": "Platform",
 	"approvals": "Admin",
-	"observability": "Admin",
 	"platform-managing": "Admin",
-	"audit-logs": "Admin"
+	"adminbot": "Admin",
+	"observability": "Monitoring",
+	"users": "Monitoring",
+	"devbot-monitor": "Monitoring",
+	"audit-logs": "Monitoring"
 } %}
 {% set _page = current_page | default('') %}
 {% if _page and _page != 'home' %}

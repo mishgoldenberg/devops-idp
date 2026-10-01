@@ -53,16 +53,22 @@ security_scheme = HTTPBearer(auto_error=False)
 # hot path is real; 30 seconds is short enough that "deactivate" means what it says.
 _ACTIVE_TTL_S = int(os.getenv("AUTH_ACTIVE_CHECK_TTL", "30"))
 _active_cache: Dict[str, Tuple[float, bool]] = {}
+# The live admin answer for a token that does not say admin (has_effective_admin_access_live),
+# behind the same TTL: it ran a query for every request an ordinary user made.
+_admin_cache: Dict[str, Tuple[float, bool]] = {}
 _active_lock = threading.Lock()
 
 
 def invalidate_active_cache(user_id: Optional[str] = None) -> None:
-    """Drop a cached active-flag so a deactivation takes effect on this pod at once."""
+    """Drop a cached active-flag and admin answer so a deactivation or a role change takes
+    effect on this pod at once."""
     with _active_lock:
         if user_id is None:
             _active_cache.clear()
+            _admin_cache.clear()
         else:
             _active_cache.pop(str(user_id), None)
+            _admin_cache.pop(str(user_id), None)
 
 
 def user_is_active(user_id: str) -> bool:
@@ -306,6 +312,20 @@ def has_effective_admin_access_live(user: AuthUser) -> bool:
     user_id = user.get("id")
     if not user_id:
         return False
+    key = str(user_id)
+    with _active_lock:
+        hit = _admin_cache.get(key)
+        if hit and time.monotonic() - hit[0] < _ACTIVE_TTL_S:
+            return hit[1]
+    answer = _admin_from_db(key)
+    if answer is None:
+        return False  # the database did not answer: say no now, and ask again next time
+    with _active_lock:
+        _admin_cache[key] = (time.monotonic(), answer)
+    return answer
+
+
+def _admin_from_db(user_id: str) -> Optional[bool]:
     try:
         from db import query_one
 
@@ -325,7 +345,7 @@ def has_effective_admin_access_live(user: AuthUser) -> bool:
         if (row.get("role_name") or "").strip().lower() == "platform admin":
             return True
     except Exception:
-        pass
+        return None
     return False
 
 

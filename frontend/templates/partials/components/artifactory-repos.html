@@ -155,11 +155,16 @@
 		// the browser skips laying out and painting rows scrolled out of view.
 		function repoRowHtml(repo) {
 			const isOpen = expandedRepo === repo.name;
+			// The hover chip's question (devbot-hover.html).
+			const ask = window.portalDevbot && window.portalDevbot.attr
+				? window.portalDevbot.attr("What is in the Artifactory repository " + repo.name + " (" + (repo.type || "") +
+					"): what was published there lately, and how big is it?")
+				: "";
 			return `
 				<li
 					class="rounded-lg border ${repo.pinned ? "border-warning/30 bg-warning/5" : "border-base-300 bg-base-200/60"} px-3 py-2.5 mb-2 transition hover:border-info/50 hover:bg-base-200"
 					style="${isOpen ? "" : "content-visibility:auto;contain-intrinsic-size:0 72px;"}"
-					data-repo-name="${escapeHtml(repo.name)}"
+					data-repo-name="${escapeHtml(repo.name)}"${ask}
 				>
 					<a href="${escapeHtml(repo.url || "#")}" target="_blank" rel="noopener noreferrer" class="flex items-center justify-between gap-2 hover:text-info">
 						<span class="text-sm font-semibold truncate">${escapeHtml(repo.name)}</span>

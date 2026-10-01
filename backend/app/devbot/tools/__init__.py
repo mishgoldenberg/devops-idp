@@ -14,14 +14,18 @@ would spend a thousand tokens saying nothing.
 
 from __future__ import annotations
 
-from .base import REGISTRY, Tool, ToolContext, run, specs_for  # noqa: F401
+from .base import REGISTRY, Tool, ToolContext, hub_specs, run, specs_for  # noqa: F401
 
 # Each module registers its tools when imported. One line per system, so a system
 # DevBot can read is a system listed here.
-from . import ado, artifactory, confluence, sonar  # noqa: F401,E402
+from . import ado, artifactory, confluence, sonar, support  # noqa: F401,E402
 
 # The investigations read across the systems above; registered after them.
 from . import investigate  # noqa: F401,E402
 
 # Changes the person reviews and confirms in the widgets' dialog; never made by DevBot.
-from . import actions  # noqa: F401,E402
+from . import actions, selfservice  # noqa: F401,E402
+
+# AdminBot's tools (system "hub"): the Hub's own records, for admins only. Never offered
+# to DevBot, and refused by run() outside an admin conversation.
+from . import hub  # noqa: F401,E402

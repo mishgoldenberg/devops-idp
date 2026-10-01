@@ -347,6 +347,7 @@
 		let busy = false;
 		let submitUrl = "";   // set when editing something that already exists
 		let onDone = null;    // set by a caller that has to act on what came back
+		let confirmWith = null; // set for a DRAFT: the big confirmation comes before sending
 
 		function esc(value) {
 			return String(value === null || value === undefined ? "" : value)
@@ -377,8 +378,13 @@
 		// A field can be conditional too, not just a section: a ticket about SonarQube
 		// is not asked which Azure DevOps collection it concerns. Hidden means not
 		// rendered, not validated and not sent -- the same three things the server means.
-		function fieldVisible(field) {
-			return ruleHolds(field.visible_when);
+		// A field inside a hidden field is hidden too (catalog_forms.field_visible): an
+		// answer left behind by switching the service away must not keep asking.
+		function fieldVisible(field, depth) {
+			if (!ruleHolds(field.visible_when)) return false;
+			const parentKey = field.visible_when && field.visible_when.field;
+			const parent = parentKey && spec ? allFields().find((f) => f.key === parentKey) : null;
+			return parent && parent !== field && (depth || 0) < 5 ? fieldVisible(parent, (depth || 0) + 1) : true;
 		}
 
 		function ruleHolds(rule) {
@@ -399,6 +405,11 @@
 			const value = answers[field.key];
 			if (value === null || value === undefined || !String(value).trim()) {
 				return field.label + " is required.";
+			}
+			// The server refuses anything else (catalog_forms.validate_answers and the
+			// ticket endpoint). Said on this step, not after the last one.
+			if (field.digits && !/^[0-9]+$/.test(String(value).trim())) {
+				return field.label + " takes digits only.";
 			}
 			return "";
 		}
@@ -1079,7 +1090,7 @@
 					if (!bad && fieldError(field)) bad = field;
 				});
 				if (bad) {
-					showError("Some answers on this step are missing.");
+					showError("Some answers on this step need fixing: see the fields marked in red.");
 					const wrap = formEl.querySelector('[data-cf-field="' + bad.key + '"]');
 					if (wrap) {
 						wrap.scrollIntoView({ block: "center" });
@@ -1258,9 +1269,35 @@
 			return body;
 		}
 
+		// What the person is about to send, for the big confirmation: every visible answer
+		// outside the remembered "who you are" section, as label and value.
+		function answerFacts() {
+			const out = [];
+			(spec.sections || []).forEach((section) => {
+				if (section.remember || !sectionVisible(section)) return;
+				(section.fields || []).forEach((f) => {
+					if (!fieldVisible(f) || f.type === "file") return;
+					const v = answers[f.key];
+					if (v === null || v === undefined || String(v).trim() === "") return;
+					const text = typeof v === "boolean" ? (v ? "Yes" : "No") : String(v);
+					out.push([String(f.label || f.key).replace(/\s*\(.*\)\s*$/, ""), text.length > 220 ? text.slice(0, 220) + "…" : text]);
+				});
+			});
+			return out;
+		}
+
 		async function submit() {
 			if (busy) return;
 			if (!validate()) return;
+			if (confirmWith && window.portalConfirm) {
+				const answer = await window.portalConfirm.ask(Object.assign({
+					title: spec.title || "Send this",
+					verb: spec.submit_label || "Send it",
+					facts: answerFacts(),
+				}, confirmWith));
+				// Cancelled: back to the form, everything still filled in.
+				if (!answer.ok) return;
+			}
 			busy = true;
 			submitBtn.disabled = true;
 			submitBtn.textContent = "Sending...";
@@ -1455,7 +1492,7 @@
 			render();
 		}
 
-		// options: {values, submitUrl, title, submitLabel}. Editing an existing thing is
+		// options: {values, submitUrl, title, submitLabel, onDone, confirm}. Editing an existing thing is
 		// the same form with the same validation -- a second "edit" form would be a
 		// second set of rules to keep in step with this one.
 		async function open(key, options) {
@@ -1464,6 +1501,8 @@
 			// What the caller wants done with the answer. Support opens the ticket it
 			// just created; the catalog forms have nothing to do afterwards.
 			onDone = typeof options.onDone === "function" ? options.onDone : null;
+			// {system, lines, drafted}: a draft someone else wrote ends in the big confirmation.
+			confirmWith = options.confirm || null;
 			const res = await fetch("/api/catalog/forms/" + encodeURIComponent(key), { credentials: "same-origin" });
 			const json = await res.json().catch(() => ({}));
 			if (!res.ok || !json.data) {

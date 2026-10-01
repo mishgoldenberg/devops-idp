@@ -57,6 +57,186 @@ GENERIC = "General fixes and improvements you would not see directly."
 # Newest first. See the module docstring before adding one.
 RELEASES: List[Dict[str, Any]] = [
     {
+        "version": "1.20.3",
+        "date": "2026-10-01",
+        "headline": "A tidier sidebar.",
+        "features": [],
+        "fixes": [GENERIC],
+        "improvements": [
+            "The sidebar is more compact and fits on the screen without scrolling. Search stays where it is, in the "
+            "box at the top of every page.",
+        ],
+    },
+    {
+        "version": "1.20.2",
+        "date": "2026-10-01",
+        "headline": "A faster, smoother Hub.",
+        "features": [],
+        "fixes": [
+            "The streak no longer counts a day you were away: a page that reloaded by itself, or a pipeline a "
+            "schedule started in your name, used to save it.",
+            "The logo in the top bar is sharp again.",
+            GENERIC,
+        ],
+        "improvements": [
+            "Moving between pages is a short fade instead of a flash, and a page you point at loads before you click it.",
+            "The whole dashboard is ready in a few seconds: the widgets further down used to wait 15 seconds before "
+            "loading.",
+            "Pages, the dashboard and the notifications ask the server for less, so everything answers faster when "
+            "many people use the Hub at once.",
+        ],
+    },
+    {
+        "version": "1.20.1",
+        "date": "2026-10-01",
+        "headline": "Clearer forms and clearer DevBot steps.",
+        "features": [],
+        "fixes": [
+            "A request form now tells you on the first step that a phone number takes digits only, instead of "
+            "refusing the request after the last step.",
+            "A question that is only asked for one answer (for example a pipeline link) is no longer required after "
+            "you change that answer.",
+            GENERIC,
+        ],
+        "improvements": [
+            "When one of DevBot's steps fails, the step now says why, right where it failed.",
+        ],
+    },
+    {
+        "version": "1.20.0",
+        "date": "2026-09-29",
+        "headline": "DevBot can prepare more changes for you, and every one ends in a clear confirmation.",
+        "features": [
+            "Run and cancel pipelines from DevBot -- ask it to run a pipeline on a branch, with the parameters you "
+            "name, or to cancel a run that is still going. You review it, and it is checked with Azure DevOps first.",
+            "Requests drafted for you -- ask DevBot for more Artifactory space, a cleaner or a new pipeline, and the "
+            "request form opens already filled in from the conversation. You complete it and send it; it still waits "
+            "for approval as usual.",
+            "A clear confirmation -- every change DevBot prepares ends in one big confirmation: what will happen, that "
+            "an AI drafted it, and that the decision is yours. Tick that you checked it, and only then does it go ahead.",
+        ],
+        "fixes": [GENERIC],
+        "improvements": [
+            "DevBot prepares at most 5 changes in one answer, so a long answer never buries you in cards.",
+        ],
+    },
+    {
+        "version": "1.19.0",
+        "date": "2026-09-29",
+        "headline": "DevBot checks what the Hub already knows before it answers.",
+        "features": [
+            "Every question first -- DevBot now looks up every question in the Confluence pages and the past fixes "
+            "the Hub keeps, before it answers, and answers from what it found, with where it came from. You no longer "
+            "have to ask \"has this happened before?\" for it to look. The first step of an answer shows what it found.",
+        ],
+        "fixes": [GENERIC],
+        "improvements": [
+            "More past fixes from bugs: DevBot now finds the fix wherever it was written -- in the Solution field, in "
+            "System Info, or in the bug's discussion.",
+            "A past fix that needs server or admin access is no longer given to you as steps to follow: DevBot says how "
+            "it was fixed and who can do it.",
+        ],
+    },
+    {
+        "version": "1.18.2",
+        "date": "2026-09-29",
+        "headline": "Behind-the-scenes fixes.",
+        "features": [],
+        "fixes": [GENERIC],
+        "improvements": [],
+    },
+    {
+        "version": "1.18.1",
+        "date": "2026-09-28",
+        "headline": "Ask DevBot appears sooner, stands out, and works from the keyboard.",
+        "features": [],
+        "fixes": [GENERIC],
+        "improvements": [
+            "Ask DevBot on hover shows up after a moment's rest instead of a second and a half, outlines the row it will "
+            "ask about, and is larger and easier to spot.",
+            "From the keyboard: Tab onto a row in a widget and press Alt+A to ask DevBot about it.",
+        ],
+    },
+    {
+        "version": "1.18.0",
+        "date": "2026-09-28",
+        "headline": "Ask DevBot about anything on your dashboard.",
+        "features": [
+            "Ask DevBot on hover -- rest the pointer on a run, work item, pull request, SonarQube project, repository or "
+            "page in a widget for a moment, and an Ask DevBot button appears on it. One click opens DevBot, already "
+            "asking about that item. Settings can turn it off.",
+        ],
+        "fixes": [],
+        "improvements": [],
+    },
+    {
+        "version": "1.17.0",
+        "date": "2026-09-28",
+        "headline": "Past fixes you could not open before, written clearly, and why a streak ended.",
+        "features": [
+            "Fixed before, for everyone -- DevBot now shows the fix of a similar closed bug even when it was written in "
+            "a project you cannot open: the problem in one sentence and the fix, rewritten clearly with its commands "
+            "kept. The link to the bug is there when you can open it.",
+        ],
+        "fixes": [GENERIC],
+        "improvements": [
+            "Your streak says why it went back down: which day ended it, and that the month's freezes were already "
+            "used on the days it lists. That day is marked in the two weeks, and it says when the freezes come back.",
+        ],
+    },
+    {
+        "version": "1.16.0",
+        "date": "2026-09-28",
+        "headline": "Ask DevBot from the widgets, and find the same problem fixed before.",
+        "features": [
+            "Explain -- a failed run in the Pipelines widget has an Explain button, and a work item has Ask DevBot: "
+            "DevBot opens and looks into it straight away.",
+            "Fixed before -- DevBot finds the same problem fixed before in closed Bugs and alerts that have a "
+            "resolution written, by meaning, and quotes the fix with a link to the work item. Ask \"Has this "
+            "happened before?\", or let it check on its own when it looks into a failure. It only shows work items "
+            "you can open.",
+            "Save the fix -- when nothing had a fix written down, DevBot offers to save its answer as a Confluence "
+            "page, so the next person who hits the error finds it. You check and change it before anything is created.",
+            "Good or bad answer -- rate each answer with a thumbs up or down, and say what was wrong. It goes to the "
+            "Hub's admins with the question and the answer, so they can see what to fix; the pages behind well-rated "
+            "answers come up a little sooner next time.",
+        ],
+        "fixes": [],
+        "improvements": [
+            "A question about what a lookup is for, such as \"has this happened before?\", reaches that lookup even "
+            "when it names no system.",
+        ],
+    },
+    {
+        "version": "1.15.0",
+        "date": "2026-09-28",
+        "headline": "DevBot finds Confluence pages by what they mean, and reads pull request comments.",
+        "features": [
+            "Search by meaning -- DevBot finds the page that fixes a problem even when it is worded differently or "
+            "written in Hebrew while the error is in English. It covers the Confluence spaces the Hub indexes, and "
+            "the DevBot AI page says which ones. It still only shows you pages you can open yourself.",
+            "Pull request comments -- ask DevBot what the comments on a pull request say and it reads the threads: "
+            "who wrote what, on which file and line, and which are still open. Looking into a pull request now "
+            "quotes its open comments too, instead of only counting them.",
+        ],
+        "fixes": [
+            "Your AI key's limits -- the key panel showed \"not reported\" when the limits were set on your team, "
+            "per model or in a budget rather than on the key itself. It now shows them and says where they come "
+            "from, and \"none set\" when the AI service says there are none.",
+            "A question that names Confluence keeps DevBot's Confluence search even when it also mentions a build or "
+            "a pipeline.",
+            "The DevBot icon in the sidebar is centred again.",
+            "The browser tab shows the Hub's icon on every page, including the sign-in page.",
+        ],
+        "improvements": [
+            "When DevBot looks into a failed run, failing tests or a work item, it searches Confluence by meaning as "
+            "well as by the error's words, and puts the page that names the exact error first.",
+            "The Hub's logo is sharper in the header and on the sign-in page, in both light and dark themes.",
+            "When a model turns down a question as too long, DevBot remembers how much that model really takes, "
+            "so it does not happen again and the model picker shows its real size.",
+        ],
+    },
+    {
         "version": "1.14.0",
         "date": "2026-09-24",
         "headline": "Know what DevBot can do, and what it costs you.",

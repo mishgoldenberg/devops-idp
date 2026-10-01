@@ -375,6 +375,76 @@ def ado_repositories(ctx: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]:
             "summary": f"{len(names)} repositor{'ies' if len(names) != 1 else 'y'} in {args['project']}"}
 
 
+def find_pull_request(ctx: ToolContext, client: httpx.Client, pr_id: int, collection: str = "") -> Tuple[str, Dict[str, Any]]:
+    """One pull request by its number, from whichever collection has it."""
+    for base in ctx.ado_bases_for(client, collection):
+        resp = client.get(f"{base}/_apis/git/pullrequests/{pr_id}", params=API)
+        if resp.status_code == 200:
+            return base, resp.json()
+        if resp.status_code not in NOT_MINE:
+            resp.raise_for_status()
+    raise ToolFailure(f"Pull request {pr_id} was not found in any collection your token can read.")
+
+
+def pr_root(base: str, pr: Dict[str, Any]) -> str:
+    repo = pr.get("repository") or {}
+    project = (repo.get("project") or {}).get("name") or pr.get("project") or ""
+    return (f"{base}/{quote(str(project), safe='')}/_apis/git/repositories/"
+            f"{quote(str(repo.get('id') or ''), safe='')}/pullrequests/{pr.get('pullRequestId')}")
+
+
+def _is_text(comment: Dict[str, Any]) -> bool:
+    return comment.get("commentType") in (1, "text") and not comment.get("isDeleted")
+
+
+def pr_threads(client: httpx.Client, root: str) -> List[Dict[str, Any]]:
+    """The people's comment threads on a pull request, oldest first.
+
+    Azure DevOps keeps its own events (votes, pushes, status changes) as threads too,
+    with system comments; those are left out, so what remains is what people wrote.
+    """
+    resp = client.get(f"{root}/threads", params=API)
+    if resp.status_code != 200:
+        return []
+    out = []
+    for thread in resp.json().get("value") or []:
+        if thread.get("isDeleted"):
+            continue
+        comments = [c for c in thread.get("comments") or [] if _is_text(c)]
+        if not comments:
+            continue
+        where = thread.get("threadContext") or {}
+        line = (where.get("rightFileStart") or where.get("leftFileStart") or {}).get("line")
+        out.append({
+            "id": thread.get("id"),
+            "status": thread.get("status") or "active",
+            "file": (where.get("filePath") or "") + (f":{line}" if line and where.get("filePath") else ""),
+            "comments": [{"author": who(c.get("author")), "date": str(c.get("publishedDate") or "")[:10],
+                          "text": plain(c.get("content"), 600)} for c in comments],
+        })
+    return out
+
+
+def ado_pull_request_comments(ctx: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]:
+    wanted = (args.get("status") or "active").lower()
+    with ctx.ado_client() as client:
+        base, pr = find_pull_request(ctx, client, int(args["pr_id"]), args.get("collection", ""))
+        threads = pr_threads(client, pr_root(base, pr))
+    active = [t for t in threads if t["status"] in ("active", "pending")]
+    shown = active if wanted == "active" else threads
+    repo = pr.get("repository") or {}
+    project = (repo.get("project") or {}).get("name") or ""
+    url = f"{base}/{quote(str(project), safe='')}/_git/{quote(str(repo.get('name') or ''), safe='')}/pullrequest/{pr.get('pullRequestId')}"
+    return {
+        "data": {"pull_request": {"id": pr.get("pullRequestId"), "title": pr.get("title"), "status": pr.get("status"),
+                                  "repository": repo.get("name"), "project": project},
+                 "threads": shown[:15], "active_count": len(active), "resolved_count": len(threads) - len(active),
+                 "more": max(0, len(shown) - 15)},
+        "summary": (f"{len(active)} active and {len(threads) - len(active)} resolved comment thread(s) on PR {pr.get('pullRequestId')}"),
+        "links": [{"title": f"PR {pr.get('pullRequestId')}: {pr.get('title')}", "url": url}],
+    }
+
+
 COLLECTION = {"type": "string", "description": "Azure DevOps collection name. Omit to search all."}
 
 register(
@@ -404,6 +474,12 @@ register(
           "status": {"type": "string", "enum": ["active", "completed", "abandoned", "all"]}, "top": {"type": "integer"},
           "collection": COLLECTION},
          ado_pull_requests),
+    Tool("ado_pull_request_comments", "azure", "read", "Reading the pull request's comments",
+         "The comment threads people wrote on one pull request: who said what, on which file and line, and "
+         "whether the thread is active or resolved. status 'active' (default) or 'all'.",
+         {"pr_id": {"type": "integer"}, "status": {"type": "string", "enum": ["active", "all"]}, "collection": COLLECTION},
+         ado_pull_request_comments, required=["pr_id"], max_chars=4200,
+         words=["comment", "thread", "review note", "feedback", "הער", "תגוב"]),
     Tool("ado_repositories", "azure", "read", "Listing repositories",
          "Git repositories in one project.",
          {"project": {"type": "string"}, "collection": COLLECTION}, ado_repositories, required=["project"]),

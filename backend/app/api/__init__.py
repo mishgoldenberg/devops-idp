@@ -43,6 +43,9 @@ from . import (
     ado_actions,
     streak,
     devbot,
+    devbot_index,
+    devbot_admin,
+    adminbot,
     confluence_actions,
 )
 
@@ -140,6 +143,10 @@ api_router.include_router(streak.router, prefix="/streaks", tags=["streaks"])
 # DevBot, the chat assistant: conversations, and questions answered from every
 # connected system with the person's own tokens and their own model key.
 api_router.include_router(devbot.router, prefix="/devbot", tags=["devbot"])
+api_router.include_router(devbot_index.router, prefix="/devbot/index", tags=["devbot"])
+api_router.include_router(devbot_admin.router, prefix="/devbot/admin", tags=["devbot"])
+# AdminBot: the same assistant over the Hub's own records, for admins, on the Hub's AI key.
+api_router.include_router(adminbot.router, prefix="/adminbot", tags=["devbot"])
 # Writes to Confluence as the signed-in person, checked and confirmed first -- the same
 # dialog and the same rules as the Azure DevOps actions above.
 api_router.include_router(confluence_actions.router, prefix="/confluence/actions", tags=["confluence"])

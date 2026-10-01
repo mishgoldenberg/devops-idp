@@ -7,8 +7,7 @@
 > There is no Terraform container, no Kubernetes Job, no GCS bucket and no tfstate —
 > none of which exist on a offline anyway.
 >
-> `backend/app/terraform_runner.py` is still in the tree and still imports, but nothing
-> in the live path calls it. Read [self-service-flow.md](self-service-flow.md) for what
+> `backend/app/terraform_runner.py`, which ran it, has been removed. Read [self-service-flow.md](self-service-flow.md) for what
 > actually happens today. This document is kept for the history of why the Job approach
 > was tried and what it cost.
 

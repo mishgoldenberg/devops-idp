@@ -36,6 +36,7 @@ its own.
 
 from __future__ import annotations
 
+import logging
 import re
 from collections import Counter
 from typing import Any, Dict, List, Optional, Tuple
@@ -45,6 +46,8 @@ import httpx
 
 from . import ado, artifactory, confluence, proposals, sonar
 from .base import NotConnected, Tool, ToolContext, ToolFailure, register
+
+log = logging.getLogger(__name__)
 
 API = ado.API
 FAILED_RESULTS = ("failed", "partiallysucceeded", "canceled")
@@ -294,33 +297,109 @@ def open_bugs(ctx: ToolContext, client: httpx.Client, project: str, terms: List[
         return []
 
 
-def confluence_help(ctx: ToolContext, terms: List[str], read_best: bool = True) -> Dict[str, Any]:
-    """Confluence pages about an error: searched most-specific first, the best one read."""
+def confluence_help(ctx: ToolContext, terms: List[str], read_best: bool = True, about: str = "") -> Dict[str, Any]:
+    """Confluence pages about an error, the best one read.
+
+    Two searches, merged: by MEANING over the indexed spaces when there is a sentence to
+    search with (``about``), and by WORDS, most specific term first. A page whose title
+    or excerpt carries the error's own code or name is the surest match and goes first;
+    then what meaning found (it reads past wording and language); then the rest.
+    """
     if not ctx.systems.get("confluence"):
         return {"searched": False, "why": "Confluence is not connected for this person, so it was not searched."}
+    meant: List[Dict[str, Any]] = []
+    if about.strip():
+        from .. import knowledge
+
+        if knowledge.ready():
+            ctx.progress("confluence", "Searching Confluence by meaning")
+            meant = confluence.meaning_search(ctx, about, limit=3)
     tried: List[str] = []
+    worded: List[Dict[str, Any]] = []
+    key = ""
     for term in terms:
         tried.append(term)
         ctx.progress("confluence", f"Searching Confluence for '{term}'")
         try:
-            pages = confluence.search(ctx, term, limit=4)
+            worded = confluence.search(ctx, term, limit=4)
         except (ToolFailure, NotConnected, httpx.HTTPError) as exc:
-            return {"searched": False, "why": f"The Confluence search failed: {exc}"}
-        if not pages:
-            continue
-        out: Dict[str, Any] = {"searched": True, "searched_for": tried,
-                               "pages": [{k: p.get(k) for k in ("title", "space", "excerpt", "url")} for p in pages[:3]]}
-        key = term.split()[0].lower()
-        best = next((p for p in pages if key in (str(p.get("title")) + " " + str(p.get("excerpt"))).lower()), pages[0])
-        if read_best:
-            ctx.progress("confluence", f"Reading '{best.get('title')}'")
-            try:
-                page = confluence.read_page(ctx, str(best.get("id")), limit=1600)
-                out["best_page"] = {"title": page["title"], "url": page["url"], "updated": page["updated"], "text": page["text"]}
-            except (ToolFailure, httpx.HTTPError):
-                pass
-        return out
-    return {"searched": True, "searched_for": tried, "pages": []}
+            if not meant:
+                return {"searched": False, "why": f"The Confluence search failed: {exc}"}
+            break
+        if worded:
+            key = term.split()[0].lower()
+            break
+    exact = [p for p in worded if key and key in (str(p.get("title")) + " " + str(p.get("excerpt"))).lower()]
+    ranked: List[Dict[str, Any]] = []
+    for page, how in ([(p, "words") for p in exact] + [(p, "meaning") for p in meant] + [(p, "words") for p in worded]):
+        if all(str(r["id"]) != str(page.get("id")) for r in ranked):
+            ranked.append({"id": page.get("id"), "title": page.get("title"), "space": page.get("space"), "url": page.get("url"),
+                           "excerpt": str(page.get("passage") or page.get("excerpt") or "")[:300], "found_by": how,
+                           **({"match": f"{page['score']}%"} if page.get("score") else {})})
+    if meant:
+        tried = [about[:120]] + tried
+    if not ranked:
+        return {"searched": True, "searched_for": tried, "pages": []}
+    out: Dict[str, Any] = {"searched": True, "searched_for": tried,
+                           "pages": [{k: v for k, v in r.items() if k != "id"} for r in ranked[:3]]}
+    best = ranked[0]
+    if read_best:
+        ctx.progress("confluence", f"Reading '{best.get('title')}'")
+        try:
+            page = confluence.read_page(ctx, str(best.get("id")), limit=1600)
+            out["best_page"] = {"title": page["title"], "url": page["url"], "updated": page["updated"], "text": page["text"],
+                                "found_by": best["found_by"]}
+        except (ToolFailure, httpx.HTTPError):
+            pass
+    return out
+
+
+def past_fixes(ctx: ToolContext, about: str, limit: int = 3, skip: str = "") -> List[Dict[str, Any]]:
+    """Fixes already written down for problems like this one, found by the problem
+    (title and description) of closed work items and, where an admin switched them on,
+    support tickets. Empty when the index has none.
+
+    Every fix is shown in the form the index build reviewed it into (knowledge.review_fix):
+    the problem in one sentence and the fix rewritten professionally -- never the raw
+    note. The person asking may not have access to the project it was written in, so a
+    work item's link is added only when their own PAT can open it."""
+    from .. import knowledge, llm
+
+    if not about.strip():
+        return []
+    try:
+        hits = [h for h in confluence.meaning_hits(ctx, about)
+                if h.get("source") in ("ado", "snow") and h["id"] != skip and h.get("fix")][:limit]
+        if not hits:
+            return []
+        ctx.progress("azure", "Looking for the same problem fixed before")
+        try:
+            pat = ctx.ado_pat()
+        except NotConnected:
+            pat = ""
+        check_ado = knowledge.ado_check(pat) if pat else None
+        openable = {h["id"] for h in knowledge.visible([h for h in hits if h["source"] == "ado"], ctx.user_id,
+                                                       limit, check_ado)} if check_ado else set()
+    except (llm.LLMError, httpx.HTTPError, ToolFailure):
+        return []
+    except Exception:  # an extra, never the reason a question fails
+        log.warning("devbot: the past fixes search failed", exc_info=True)
+        return []
+    out = []
+    for h in hits:
+        item = {"problem": h.get("summary") or h["title"], "fix": h["fix"], "match": f"{h['score']}%",
+                "updated": h.get("updated")}
+        if h.get("audience") == "support":
+            # Done on servers or systems the person cannot reach: they are told who to ask.
+            item["who_can_apply"] = "the support team only"
+        if h["source"] == "ado":
+            item["recorded_in"] = h["ref"] or "a work item"
+            if h["id"] in openable:
+                item["url"] = h["url"]
+        else:
+            item["recorded_in"] = "a support ticket"
+        out.append(item)
+    return out
 
 
 def sonar_for(ctx: ToolContext, names: List[str], branch: str = "", pull_request: str = "") -> Optional[Dict[str, Any]]:
@@ -395,7 +474,21 @@ def _links(*groups: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
-def _answer_note(help_: Dict[str, Any], findings: List[str]) -> str:
+# How to present a fix only the support team can apply: what was done, and that the
+# person should ask for it rather than try it.
+SUPPORT_NOTE = ("A fix marked who_can_apply 'the support team only' was done on servers or systems the person cannot "
+                "reach: say that is how the support team fixed it, and suggest they open a support ticket "
+                "(/ui/support?new=1) mentioning the problem, instead of giving it as steps to follow.")
+
+
+def _answer_note(help_: Dict[str, Any], findings: List[str], fixes: Optional[List[Dict[str, Any]]] = None) -> str:
+    if fixes and not help_.get("best_page"):
+        return ("This problem was fixed before (past_fixes): explain the error, then give the fix of the most similar "
+                "one as written, saying where it was recorded (recorded_in, linked when it has a url). Say it is a past "
+                "fix and may need adapting. Mention the other findings briefly. " + SUPPORT_NOTE)
+    if fixes:
+        return ("A Confluence page matches this failure and it was fixed before too: give the fix FROM the page (quote "
+                "its commands, link it), then mention the past fix in past_fixes briefly, with where it was recorded.")
     if help_.get("best_page"):
         return ("A Confluence page matches this failure: explain the error, give the fix FROM that page (quote its "
                 "commands) and link the page. Mention the other findings briefly.")
@@ -459,7 +552,10 @@ def investigate_pipeline_failure(ctx: ToolContext, args: Dict[str, Any]) -> Dict
                 if failing:
                     findings.append("Quality gate failed on " + "; ".join(f"{c['metric']} {c['actual']} ({c['threshold']})" for c in failing) + ".")
 
-        help_ = confluence_help(ctx, terms)
+        help_ = confluence_help(ctx, terms, about=sig)
+        fixes = past_fixes(ctx, sig)
+        if fixes:
+            findings.append(f"{fixes[0]['recorded_in']} had the same problem; its recorded fix: {fixes[0]['fix'][:200]}")
         bugs = open_bugs(ctx, client, project, terms, str(row.get("collection") or ""))
         if bugs:
             findings.append(f"{len(bugs)} open bug(s) already mention this.")
@@ -476,6 +572,7 @@ def investigate_pipeline_failure(ctx: ToolContext, args: Dict[str, Any]) -> Dict
         "tests": tests or None,
         "findings": findings,
         "confluence": help_,
+        "past_fixes": fixes,
         "open_bugs": [{k: b[k] for k in ("id", "title", "state", "assigned_to", "url")} for b in bugs],
         "last_success": passed,
         **extra,
@@ -489,11 +586,17 @@ def investigate_pipeline_failure(ctx: ToolContext, args: Dict[str, Any]) -> Dict
     return {
         "data": data,
         "actions": suggested,
-        "note": _answer_note(help_, findings),
-        "summary": (sig or "No error message found")[:140] + (" · fix found in Confluence" if help_.get("best_page") else ""),
+        "note": _answer_note(help_, findings, fixes),
+        "summary": (sig or "No error message found")[:140] + (" · fix found in Confluence" if help_.get("best_page") else "")
+                   + (" · fixed before" if fixes else ""),
         "links": _links([{"title": f"{run['pipeline']} {run['run']}", "url": run["url"], "system": "azure"}],
                         [{"title": p["title"], "url": p["url"], "system": "confluence"} for p in pages],
+                        [{"title": f"{f['recorded_in']}: {f['problem']}"[:160], "url": f["url"], "system": "azure"} for f in fixes if f.get("url")],
                         [{"title": f"Bug #{b['id']} {b['title']}", "url": b["url"], "system": "azure"} for b in bugs]),
+        # Nothing written down anywhere: once DevBot has answered, the person is offered
+        # to save the fix to Confluence, so the next one to hit this finds it.
+        **({"save_fix": {"title": ("Fix: " + sig)[:120], "about": sig}}
+           if sig and help_.get("searched") and not help_.get("pages") and not fixes else {}),
     }
 
 
@@ -525,9 +628,12 @@ def investigate_test_failures(ctx: ToolContext, args: Dict[str, Any]) -> Dict[st
         first = (tests.get("failed") or [{}])[0]
         sig = signature([first.get("error", ""), first.get("name", "")])
         terms = [t for t in search_terms(sig) + [str(first.get("name") or "").rsplit(".", 1)[-1]] if t][:3]
-        help_ = confluence_help(ctx, terms)
+        help_ = confluence_help(ctx, terms, about=sig)
+        fixes = past_fixes(ctx, sig)
         bugs = open_bugs(ctx, client, project, terms, str(row.get("collection") or ""))
     findings = []
+    if fixes:
+        findings.append(f"{fixes[0]['recorded_in']} had the same problem; its recorded fix: {fixes[0]['fix'][:200]}")
     new = [t["name"] for t in tests.get("failed") or [] if str(t.get("earlier_runs", "")).startswith("new")]
     repeat = [t["name"] for t in tests.get("failed") or [] if str(t.get("earlier_runs", "")).startswith("also")]
     if new:
@@ -535,17 +641,22 @@ def investigate_test_failures(ctx: ToolContext, args: Dict[str, Any]) -> Dict[st
     if repeat:
         findings.append("Failing before this run too (likely flaky or long-broken): " + ", ".join(repeat[:4]) + ".")
     data = {"run": run, "which_run": note or None, "tests": tests, "findings": findings, "confluence": help_,
-            "open_bugs": [{k: b[k] for k in ("id", "title", "state", "url")} for b in bugs]}
+            "past_fixes": fixes, "open_bugs": [{k: b[k] for k in ("id", "title", "state", "url")} for b in bugs]}
     pages = help_.get("pages") or []
     suggested = [proposals.bug_for_tests(run, tests["failed"])] if tests.get("failed") and not bugs else []
     return {
         "data": data,
         "actions": suggested,
-        "note": _answer_note(help_, findings),
+        "note": _answer_note(help_, findings, fixes),
         "summary": f"{tests.get('failed_count', 0)} failed test(s) in {run['pipeline']} {run['run']}",
         "links": _links([{"title": f"{run['pipeline']} {run['run']} tests", "url": (run["url"] or "") + "&view=ms.vss-test-web.build-test-results-tab", "system": "azure"}],
                         [{"title": p["title"], "url": p["url"], "system": "confluence"} for p in pages],
+                        [{"title": f"{f['recorded_in']}: {f['problem']}"[:160], "url": f["url"], "system": "azure"} for f in fixes if f.get("url")],
                         [{"title": f"Bug #{b['id']} {b['title']}", "url": b["url"], "system": "azure"} for b in bugs]),
+        # Nothing written down anywhere: once DevBot has answered, the person is offered
+        # to save the fix to Confluence, so the next one to hit this finds it.
+        **({"save_fix": {"title": ("Fix: " + sig)[:120], "about": sig}}
+           if sig and help_.get("searched") and not help_.get("pages") and not fixes else {}),
     }
 
 
@@ -573,11 +684,8 @@ def pull_request_state(ctx: ToolContext, client: httpx.Client, base: str, pr: Di
             if ctx_.get("buildId"):
                 build = {"build_id": ctx_["buildId"], "pipeline": ctx_.get("buildDefinitionName"),
                          "url": ado.run_url(base, str(project), ctx_["buildId"])}
-    threads = client.get(f"{root}/threads", params=API)
-    active = 0
-    if threads.status_code == 200:
-        active = sum(1 for t in threads.json().get("value") or []
-                     if t.get("status") == "active" and any(c.get("commentType") in (1, "text") for c in t.get("comments") or []))
+    open_threads = [t for t in ado.pr_threads(client, root) if t["status"] in ("active", "pending")]
+    active = len(open_threads)
     items = client.get(f"{root}/workitems", params=API)
     wi_ids = [int(w["id"]) for w in (items.json().get("value") or [])] if items.status_code == 200 else []
     blockers = [f"{p['policy']} is {p['status']}" for p in policies if p["blocking"] and p["status"] not in ("approved", "notApplicable")]
@@ -596,25 +704,19 @@ def pull_request_state(ctx: ToolContext, client: httpx.Client, base: str, pr: Di
         "source": ado.short_branch(pr.get("sourceRefName")), "target": ado.short_branch(pr.get("targetRefName")),
         "repository": repo.get("name"), "project": project, "merge_status": pr.get("mergeStatus"),
         "reviewers": reviewers, "policies": policies, "active_threads": active, "build": build,
+        # What the open threads SAY, briefly: "1 thread needs resolution" is the question
+        # the next message asks about.
+        "open_comments": [{"file": t["file"], "by": t["comments"][0]["author"], "text": t["comments"][0]["text"][:300],
+                           "replies": len(t["comments"]) - 1} for t in open_threads[:5]],
         "work_item_ids": wi_ids[:10], "ready": not blockers and pr.get("status") == "active", "blocked_by": blockers,
         "url": f"{base}/{quote(str(project), safe='')}/_git/{quote(str(repo.get('name') or ''), safe='')}/pullrequest/{pr_id}",
     }
 
 
-def find_pull_request(ctx: ToolContext, client: httpx.Client, pr_id: int, collection: str = "") -> Tuple[str, Dict[str, Any]]:
-    for base in ctx.ado_bases_for(client, collection):
-        resp = client.get(f"{base}/_apis/git/pullrequests/{pr_id}", params=API)
-        if resp.status_code == 200:
-            return base, resp.json()
-        if resp.status_code not in ado.NOT_MINE:
-            resp.raise_for_status()
-    raise ToolFailure(f"Pull request {pr_id} was not found in any collection your token can read.")
-
-
 def investigate_pull_request(ctx: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]:
     with ctx.ado_client(read=30.0) as client:
         ctx.progress("azure", f"Reading pull request {args['pr_id']}")
-        base, pr = find_pull_request(ctx, client, int(args["pr_id"]), args.get("collection", ""))
+        base, pr = ado.find_pull_request(ctx, client, int(args["pr_id"]), args.get("collection", ""))
         ctx.progress("azure", "Checking its reviews, policies and build")
         state = pull_request_state(ctx, client, base, pr)
         linked = ado.work_item_rows(client, base, state["work_item_ids"]) if state["work_item_ids"] else []
@@ -656,31 +758,58 @@ def investigate_work_item(ctx: ToolContext, args: Dict[str, Any]) -> Dict[str, A
         for link in info.get("pull_request_links")[:3]:
             ctx.progress("azure", f"Reading its pull request {link['id']}")
             try:
-                _, pr = find_pull_request(ctx, client, int(link["id"]), item["collection"])
+                _, pr = ado.find_pull_request(ctx, client, int(link["id"]), item["collection"])
             except (ToolFailure, ValueError):
                 continue
             state = pull_request_state(ctx, client, base, pr)
             prs.append({k: state[k] for k in ("id", "title", "status", "repository", "ready", "blocked_by", "build", "url")})
         open_children = [c for c in info["children"] if c.get("state") not in ado.CLOSED_STATES]
-    help_ = confluence_help(ctx, [f"{item['id']}", " ".join(str(item["title"]).split()[:5])], read_best=False) \
+    help_ = confluence_help(ctx, [f"{item['id']}", " ".join(str(item["title"]).split()[:5])], read_best=False,
+                            about=str(item["title"])) \
         if ctx.systems.get("confluence") else {"searched": False, "why": "Confluence is not connected."}
     gate = sonar_for(ctx, [prs[0]["repository"]], pull_request=str(prs[0]["id"])) if prs else None
+    fixes = past_fixes(ctx, " ".join(filter(None, [str(item["title"]), str(item.get("description") or item.get("repro_steps") or "")[:600]])),
+                       skip=f"ado:{item.get('collection') or ''}:{item['id']}")
     findings = []
+    if fixes:
+        findings.append(f"{fixes[0]['recorded_in']} looks like the same problem; its recorded fix: {fixes[0]['fix'][:200]}")
     if info["children"]:
         findings.append(f"{len(info['children']) - len(open_children)} of {len(info['children'])} child items are done.")
     for pr in prs:
         findings.append(f"PR {pr['id']} is {pr['status']}" + ("" if pr["ready"] else ": blocked by " + "; ".join(pr["blocked_by"])) + ".")
     if gate:
         findings.append(f"SonarQube on PR {prs[0]['id']}: {gate['status']}.")
-    data = {**info, "pull_requests": prs, "sonarqube": gate, "findings": findings, "confluence": help_}
+    data = {**info, "pull_requests": prs, "sonarqube": gate, "findings": findings, "confluence": help_,
+            "past_fixes": fixes}
     pages = help_.get("pages") or []
     return {
         "data": data,
-        "note": "Give its state in one line, then what is left to do (open children, PR blockers), then related pages.",
+        "note": "Give its state in one line, then what is left to do (open children, PR blockers), then related pages"
+                + (", then the similar problem fixed before (past_fixes) with its recorded fix and where it was recorded."
+                   if fixes else "."),
         "summary": f"#{item['id']} {item['title']} ({item['state']})",
         "links": _links([{"title": f"#{item['id']} {item['title']}", "url": item["url"], "system": "azure"}],
                         [{"title": f"PR {p['id']}: {p['title']}", "url": p["url"], "system": "azure"} for p in prs],
-                        [{"title": p["title"], "url": p["url"], "system": "confluence"} for p in pages]),
+                        [{"title": p["title"], "url": p["url"], "system": "confluence"} for p in pages],
+                        [{"title": f"{f['recorded_in']}: {f['problem']}"[:160], "url": f["url"], "system": "azure"} for f in fixes if f.get("url")]),
+    }
+
+
+def find_past_fixes(ctx: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]:
+    from .. import knowledge
+
+    if not (knowledge.ready("ado") or knowledge.ready("snow")):
+        raise ToolFailure("The Hub does not keep past fixes yet: an admin sets them up on Platform Managing.")
+    fixes = past_fixes(ctx, args["problem"], limit=max(1, min(int(args.get("top") or 4), 8)))
+    return {
+        "data": {"past_fixes": fixes, "count": len(fixes)},
+        "note": ("Give each fix as written, most similar first: the problem, the fix, and where it was recorded "
+                 "(recorded_in, linked when it has a url). Say they are past fixes that may need adapting. " + SUPPORT_NOTE
+                 if fixes else
+                 "Nothing like this was fixed before in what the Hub keeps. Say so."),
+        "summary": f"{len(fixes)} past fix{'es' if len(fixes) != 1 else ''}",
+        "links": [{"title": f"{f['recorded_in']}: {f['problem']}"[:160], "url": f["url"], "system": "azure"}
+                  for f in fixes if f.get("url")],
     }
 
 
@@ -814,6 +943,13 @@ register(
          "the SonarQube quality gates of matching projects.",
          {"project": {"type": "string"}, "collection": {"type": "string"}}, investigate_project_health,
          required=["project"], max_chars=4200, also=["sonarqube"]),
+    Tool("find_past_fixes", "azure", "read", "Looking for the same problem fixed before",
+         "Fixes already recorded for a problem like this one: resolutions of closed Bugs and alerts in Azure DevOps, and "
+         "support ticket resolutions where the Hub keeps them. Found by meaning, so describe the problem or paste the error.",
+         {"problem": {"type": "string", "description": "The error or the problem, in any words or language"},
+          "top": {"type": "integer"}}, find_past_fixes, required=["problem"], max_chars=3600,
+         words=["before", "again", "happened", "past", "previous", "similar", "same error", "fixed", "resolution",
+                "\u05e7\u05e8\u05d4", "\u05d1\u05e2\u05d1\u05e8", "\u05d3\u05d5\u05de\u05d4", "\u05e9\u05d5\u05d1"]),
     Tool("investigate_artifact", "artifactory", "investigate", "Tracing the artifact",
          "Where an artifact or Docker image tag came from: its build properties, the pipeline run that built it, the "
          "commit, and that run's work items.",

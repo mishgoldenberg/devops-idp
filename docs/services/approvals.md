@@ -27,13 +27,14 @@ The engine behind the self-service workflow:
 
 - **Azure DevOps** — pre-flight during `ADO_PROJECT_CREATE` to create a
   custom inherited process (`azure_devops.ensure_custom_ado_process`).
-- **Kubernetes** — `terraform_runner.submit_terraform_job` creates a
-  `BatchV1 Job` + `ConfigMap` that runs `hashicorp/terraform:1.6`.
+- **Azure DevOps** — the project itself, created over the REST API with the admin
+  PAT in the one collection the request names (`_create_project_in_collection`).
+- **Artifactory / Azure Repos** — quota increases, and cleaner specs written to their
+  repository through a pull request.
+- **ServiceNow** — the ticket raised when the outcome is known.
 
 ## Environment variables
 
-- `K8S_NAMESPACE`, `TERRAFORM_JOB_TIMEOUT_SECONDS` — used indirectly via
-  `terraform_runner`.
 - `AZURE_DEVOPS_BASE_URL` / `AZURE_DEVOPS_ADMIN_PAT` — required for real ADO
   project creation.
 - `SAFE_MODE` — if truthy (env or DB flag), the executor short-circuits
@@ -61,12 +62,11 @@ return 409 Conflict.
 
 ## Failure handling
 
-- Raw exceptions from ADO / Terraform / K8s are caught by
+- Raw exceptions from the target systems are caught by
   `resilient_http.safe_integration` and surfaced as a generic
   "Service temporarily unavailable" 502 to the UI.
-- A stuck Terraform pod is killed by `active_deadline_seconds` and
-  reported as a `FAILED` status with a human-readable reason
-  (see [terraform_runner.md](./terraform_runner.md)).
+- A request stuck in `APPROVED` or `IN_PROGRESS` (a pod restarted mid-run) can be
+  force-failed by an admin (`POST /requests/{id}/force-fail`).
 
 ## Related docs
 

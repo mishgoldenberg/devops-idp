@@ -714,6 +714,12 @@ def set_user_role(
     )
     if not updated:
         raise HTTPException(status_code=500, detail="Role update failed - please try again")
+    try:
+        from security import invalidate_active_cache
+
+        invalidate_active_cache(str(target["id"]))
+    except Exception as exc:  # pragma: no cover - a cache miss is not a failed update
+        log.warning("could not clear the admin cache for %s: %s", target["email"], exc)
 
     demoted = int(target.get("hierarchy_level") or 99) == 1 and int(role["hierarchy_level"]) != 1
     return {

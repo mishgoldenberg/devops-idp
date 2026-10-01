@@ -726,10 +726,37 @@ def get_tickets(refresh: bool = False, current_user: AuthUser = Depends(get_curr
     return {"success": True, "data": records, "timestamp": _now_iso()}
 
 
+# ── whose ticket is it ───────────────────────────────────────────────────────
+
+_SYS_ID = re.compile(r"^[A-Za-z0-9]{1,64}$")
+
+
+def _require_own_ticket(sys_id: str, current_user: AuthUser) -> Dict[str, Any]:
+    """Refuse a ticket that is not on this person's own list (get_tickets).
+
+    Every read and write here goes through the service account, which can open ANY
+    ticket: the id in the address was the only thing standing between one person and
+    another's ticket, its attachments and its comment box. The list is answered from
+    its 60-second cache and read again once, uncached, before refusing, so a ticket
+    raised a moment ago is not turned away. Checked in each function that reads or
+    writes, not in the page. Returns the ticket as the list has it."""
+    if not _SYS_ID.match(str(sys_id or "")):
+        raise HTTPException(status_code=404, detail="That ticket does not exist, or it is not yours.")
+    for refresh in (False, True):
+        mine = {str(t.get("sys_id") or ""): t for t in (get_tickets(refresh=refresh, current_user=current_user).get("data") or [])}
+        if sys_id in mine:
+            return mine[sys_id]
+    _log.warning("ServiceNow: %s asked for ticket %s, which is not theirs",
+                 current_user.get("email") or current_user.get("username"), sys_id)
+    raise HTTPException(status_code=404, detail="That ticket does not exist, or it is not yours.")
+
+
 # ── GET /tickets/{sys_id} ─────────────────────────────────────────────────────
 
 @router.get("/tickets/{sys_id}")
 def get_ticket_detail(sys_id: str, current_user: AuthUser = Depends(get_current_user)):
+    _require_own_ticket(sys_id, current_user)
+
     def _fetch():
         with _snow_client() as client:
             ticket_resp = client.get(
@@ -854,14 +881,24 @@ def get_attachment(
     current_user: AuthUser = Depends(get_current_user),
 ):
     """Stream an attachment's bytes through the portal so the browser never hits
-    ServiceNow directly and the service-account credentials stay server-side."""
+    ServiceNow directly and the service-account credentials stay server-side. Only an
+    attachment OF that ticket, and only of one of the person's own tickets."""
+    _require_own_ticket(sys_id, current_user)
+    if not _SYS_ID.match(str(attachment_id or "")):
+        raise HTTPException(status_code=404, detail="That attachment does not exist.")
     try:
         with _snow_client() as client:
+            meta = client.get(f"/api/now/attachment/{attachment_id}")
+            meta.raise_for_status()
+            if str((meta.json().get("result") or {}).get("table_sys_id") or "") != sys_id:
+                raise HTTPException(status_code=404, detail="That attachment does not exist.")
             resp = client.get(
                 f"/api/now/attachment/{attachment_id}/file",
                 headers={"Accept": "*/*"},
             )
             resp.raise_for_status()
+    except HTTPException:
+        raise
     except Exception as exc:
         _raise_snow_error(exc, "downloading attachment")
     content_type = resp.headers.get("Content-Type", "application/octet-stream")
@@ -895,6 +932,9 @@ def reply_to_ticket(
     sys_id: str = Form(...),
     message: str = Form(""),
     attachments: Optional[List[UploadFile]] = File(None),
+    # True: check that the ticket is the caller's and say what would be sent; send nothing.
+    # The confirmation step of a reply DevBot drafted (the shared action dialog).
+    dry_run: bool = Form(False),
     current_user: AuthUser = Depends(get_current_user),
 ):
     # Posted as multipart/form-data to a STATIC path (sys_id in the body, not the
@@ -905,6 +945,16 @@ def reply_to_ticket(
     has_files = any(bool(u and u.filename) for u in (attachments or []))
     if not text and not has_files:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
+    number = str(_require_own_ticket(sys_id, current_user).get("number") or "your ticket")
+    # "is True": called as a plain function, the parameter is still its Form() default.
+    if dry_run is True:
+        return {
+            "success": True,
+            "dry_run": True,
+            "summary": f"Reply on {number}",
+            "checks": [f"{number} is one of your tickets.",
+                       "The support team sees the message on the ticket, under your name."],
+        }
 
     display = _portal_display_name(current_user)
     email = (current_user.get("email") or current_user.get("username") or "").strip()
@@ -956,6 +1006,9 @@ def reply_to_ticket(
     }
     return {
         "success": True,
+        "summary": f"Reply on {number}",
+        "result": "Sent.",
+        "url": f"/ui/support?ticket={sys_id}",
         "data": new_message,
         "attachments_uploaded": attachment_count,
         "timestamp": _now_iso(),

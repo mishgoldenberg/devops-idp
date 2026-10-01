@@ -1,0 +1,266 @@
+{#
+	The big confirmation: the last thing between a change DevBot or AdminBot drafted and
+	that change being made. Deliberately loud -- a coloured band, the change in large
+	type, what will happen, whose decision it is, and a tick the person has to give
+	before the button wakes up -- because a small "Confirm" under an AI's draft is a
+	button people press without reading.
+
+	window.portalConfirm.ask({
+		title,            the change, in large type ("Run Deploy on main")
+		system,           who it goes to ("Azure DevOps", "DevOps Hub"), for the kicker
+		lines: [],        what will happen, one sentence each (the target system's own checks)
+		facts: [[k, v]],  a small table of what it is about
+		items: [],        a list the change covers (a bulk decision), shown as a scrolling list
+		verb,             the button ("Run pipeline")
+		danger,           red instead of amber (reject, deactivate, cancel)
+		drafted,          true when an AI wrote the draft: says so, and that it can be wrong
+		admin,            the change is made as a Hub admin rather than as the person
+		note: {label, value},   an optional text box (the note to a requester)
+		run: async (note) => result   performed while the dialog waits; a failure is shown IN it
+	}) -> Promise<{ok, note, result}>
+
+	Included once, from banner.html, so every page that can confirm a change has it.
+#}
+<style>
+	[data-confirm] .cf2-box {
+		max-width: 38rem;
+		width: calc(100vw - 2rem);
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		max-height: calc(100vh - 3em);
+		overflow: hidden;
+		border: 2px solid hsl(var(--wa));
+		box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+	}
+	[data-confirm][data-tone="danger"] .cf2-box { border-color: hsl(var(--er)); }
+	[data-confirm] .cf2-band {
+		display: flex;
+		align-items: center;
+		gap: 0.9rem;
+		padding: 1.1rem 1.35rem;
+		background: hsl(var(--wa));
+		/* The theme's own text-on-warning and text-on-error: the dark theme's error is a
+		   pale pink, on which white is unreadable. */
+		color: hsl(var(--wac, 30 100% 8%));
+	}
+	[data-confirm][data-tone="danger"] .cf2-band { background: hsl(var(--er)); color: hsl(var(--erc, 0 0% 100%)); }
+	[data-confirm] .cf2-band svg { width: 2.6rem; height: 2.6rem; flex: none; }
+	[data-confirm] .cf2-kicker { font-size: 0.72rem; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; opacity: 0.85; }
+	[data-confirm] .cf2-title { font-size: 1.35rem; font-weight: 800; line-height: 1.25; overflow-wrap: anywhere; }
+	/* The body scrolls; the band and the buttons do not. */
+	[data-confirm] .cf2-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 1.1rem 1.35rem 0.4rem; font-size: 0.9rem; line-height: 1.55; }
+	[data-confirm] .cf2-label { font-size: 0.72rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: hsl(var(--bc) / 0.6); margin: 0 0 0.4rem; }
+	[data-confirm] .cf2-lines { display: flex; flex-direction: column; gap: 0.4rem; margin: 0 0 1rem; }
+	[data-confirm] .cf2-lines li { display: flex; gap: 0.55rem; align-items: flex-start; font-weight: 600; }
+	[data-confirm] .cf2-lines svg { width: 1.15rem; height: 1.15rem; flex: none; margin-top: 0.15rem; color: hsl(var(--bc) / 0.7); }
+	[data-confirm] .cf2-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.3rem 1rem; margin: 0 0 1rem; font-size: 0.85rem; }
+	[data-confirm] .cf2-facts dt { color: hsl(var(--bc) / 0.55); }
+	[data-confirm] .cf2-facts dd { margin: 0; overflow-wrap: anywhere; font-weight: 600; }
+	[data-confirm] .cf2-items { max-height: 11rem; overflow-y: auto; border: 1px solid hsl(var(--bc) / 0.15); border-radius: 0.6rem; padding: 0.4rem 0.75rem; margin: 0 0 1rem; font-size: 0.84rem; }
+	[data-confirm] .cf2-items li { padding: 0.25rem 0; border-bottom: 1px dashed hsl(var(--bc) / 0.12); overflow-wrap: anywhere; }
+	[data-confirm] .cf2-items li:last-child { border-bottom: 0; }
+	[data-confirm] .cf2-ai {
+		display: flex;
+		gap: 0.6rem;
+		align-items: flex-start;
+		margin: 0 0 0.9rem;
+		padding: 0.65rem 0.8rem;
+		border-radius: 0.6rem;
+		background: hsl(var(--wa) / 0.14);
+		font-size: 0.85rem;
+	}
+	[data-confirm] .cf2-ai b { display: block; }
+	[data-confirm] .cf2-duty {
+		margin: 0 0 1rem;
+		padding: 0.85rem 1rem;
+		border: 2px dashed hsl(var(--bc) / 0.3);
+		border-radius: 0.7rem;
+		font-size: 0.88rem;
+	}
+	[data-confirm] .cf2-duty b { display: block; font-size: 0.98rem; margin-bottom: 0.2rem; }
+	[data-confirm] .cf2-note { margin: 0 0 1rem; }
+	[data-confirm] .cf2-note textarea { width: 100%; font-size: 0.85rem; }
+	[data-confirm] .cf2-tick {
+		display: flex;
+		gap: 0.75rem;
+		align-items: center;
+		padding: 0.8rem 1rem;
+		border-radius: 0.7rem;
+		border: 2px solid hsl(var(--bc) / 0.2);
+		font-weight: 700;
+		cursor: pointer;
+		user-select: none;
+	}
+	[data-confirm] .cf2-tick:has(input:checked) { border-color: hsl(var(--su)); background: hsl(var(--su) / 0.1); }
+	/* Native, large, in the theme's colour: DaisyUI's checkbox sizes are not compiled. */
+	[data-confirm] .cf2-tick input { width: 1.4rem; height: 1.4rem; flex: none; accent-color: hsl(var(--su)); cursor: pointer; }
+	[data-confirm] .cf2-error {
+		display: none;
+		margin: 0.9rem 0 0;
+		padding: 0.65rem 0.8rem;
+		border-radius: 0.6rem;
+		background: hsl(var(--er) / 0.12);
+		color: hsl(var(--er));
+		font-weight: 600;
+		font-size: 0.85rem;
+		overflow-wrap: anywhere;
+	}
+	[data-confirm] .cf2-foot { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.9rem 1.35rem 1.2rem; border-top: 1px solid hsl(var(--bc) / 0.1); }
+	[data-confirm] .cf2-go {
+		width: 100%;
+		min-height: 3.4rem;
+		font-size: 1.05rem;
+		font-weight: 800;
+		border-radius: 0.8rem;
+		border: 0;
+		cursor: pointer;
+		background: hsl(var(--wa));
+		color: hsl(var(--wac, 30 100% 8%));
+		transition: filter 0.15s;
+	}
+	[data-confirm][data-tone="danger"] .cf2-go { background: hsl(var(--er)); color: hsl(var(--erc, 0 0% 100%)); }
+	[data-confirm] .cf2-go:hover:not(:disabled) { filter: brightness(1.06); }
+	[data-confirm] .cf2-go:disabled { opacity: 0.4; cursor: not-allowed; }
+	[data-confirm] .cf2-cancel { width: 100%; }
+</style>
+
+<dialog class="modal" data-confirm aria-labelledby="cf2-title">
+	<div class="modal-box cf2-box">
+		<div class="cf2-band">
+			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+			<div class="min-w-0 flex-1">
+				<div class="cf2-kicker" data-cf2-kicker>Confirm a change</div>
+				<div class="cf2-title" id="cf2-title" data-cf2-title dir="auto"></div>
+			</div>
+		</div>
+		<div class="cf2-body">
+			<div data-cf2-what></div>
+			<div class="cf2-ai" data-cf2-ai>
+				<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: none; margin-top: 0.1rem"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+				<div><b data-cf2-ai-who>Drafted by AI</b>It can be wrong. Read every detail above before you confirm.</div>
+			</div>
+			<div class="cf2-duty">
+				<b>This is your decision.</b>
+				<span data-cf2-duty></span>
+			</div>
+			<label class="cf2-note" data-cf2-note-wrap style="display: none">
+				<span class="cf2-label" style="display: block" data-cf2-note-label></span>
+				<textarea class="textarea textarea-bordered" rows="2" maxlength="500" dir="auto" data-cf2-note></textarea>
+			</label>
+			<label class="cf2-tick">
+				<input type="checkbox" data-cf2-tick />
+				<span>I have checked it, and I take responsibility for this change.</span>
+			</label>
+			<div class="cf2-error" data-cf2-error dir="auto" role="alert"></div>
+		</div>
+		<div class="cf2-foot">
+			<button type="button" class="cf2-go" data-cf2-go disabled></button>
+			<button type="button" class="btn btn-ghost btn-sm cf2-cancel" data-cf2-cancel>Cancel, change nothing</button>
+		</div>
+	</div>
+	{# No click-outside-to-close: a stray click is not an answer, and one while the change is on its way would hide its outcome. #}
+</dialog>
+
+<script>
+	(function () {
+		if (window.portalConfirm) return;
+		const modal = document.querySelector("[data-confirm]");
+		if (!modal) return;
+		const $ = (sel) => modal.querySelector(sel);
+		const tick = $("[data-cf2-tick]");
+		const go = $("[data-cf2-go]");
+		const err = $("[data-cf2-error]");
+		const DOT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>';
+		let current = null; // { opts, resolve, busy }
+
+		function esc(v) {
+			return String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+		}
+
+		function finish(value) {
+			if (!current) return;
+			const done = current;
+			current = null;
+			if (modal.open) modal.close();
+			done.resolve(value);
+		}
+
+		function ask(opts) {
+			opts = opts || {};
+			// One at a time: a second ask while one is open answers the first with "no".
+			if (current) finish({ ok: false });
+			return new Promise((resolve) => {
+				current = { opts: opts, resolve: resolve, busy: false };
+				modal.setAttribute("data-tone", opts.danger ? "danger" : "warn");
+				$("[data-cf2-kicker]").textContent = "Confirm a change" + (opts.system ? " · " + opts.system : "");
+				$("[data-cf2-title]").textContent = opts.title || "Make this change?";
+				const lines = (opts.lines || []).filter(Boolean);
+				const facts = (opts.facts || []).filter((f) => f && f[1] !== undefined && f[1] !== null && String(f[1]) !== "");
+				const items = (opts.items || []).filter(Boolean);
+				$("[data-cf2-what]").innerHTML =
+					(lines.length ? '<p class="cf2-label">What will happen</p><ul class="cf2-lines">' +
+						lines.map((l) => "<li>" + DOT + '<span dir="auto">' + esc(l) + "</span></li>").join("") + "</ul>" : "") +
+					(facts.length ? '<dl class="cf2-facts">' + facts.map((f) => "<dt>" + esc(f[0]) + '</dt><dd dir="auto">' + esc(f[1]) + "</dd>").join("") + "</dl>" : "") +
+					(items.length ? '<p class="cf2-label">' + esc(items.length) + " included</p>" +
+						'<ul class="cf2-items">' + items.map((i) => '<li dir="auto">' + esc(i) + "</li>").join("") + "</ul>" : "");
+				$("[data-cf2-ai]").style.display = opts.drafted ? "" : "none";
+				$("[data-cf2-ai-who]").textContent = "Drafted by " + (opts.drafted === true ? "AI" : opts.drafted);
+				$("[data-cf2-duty]").textContent = opts.admin
+					? "It is made in your name, as a Hub admin, exactly as shown above, and it is recorded in the Hub's log under your name. DevOps Hub and its assistants carry out what you confirm; they are not responsible for what follows from it."
+					: "It is made in your name, with your own account and permissions, exactly as shown above. DevOps Hub and DevBot carry out what you confirm; they are not responsible for what follows from it.";
+				const noteWrap = $("[data-cf2-note-wrap]");
+				noteWrap.style.display = opts.note ? "block" : "none";
+				$("[data-cf2-note-label]").textContent = (opts.note && opts.note.label) || "Note";
+				$("[data-cf2-note]").value = (opts.note && opts.note.value) || "";
+				err.style.display = "none";
+				err.textContent = "";
+				tick.checked = false;
+				go.textContent = opts.verb || "Yes, make this change";
+				go.disabled = true;
+				$("[data-cf2-cancel]").disabled = false;
+				if (!modal.open) modal.showModal();
+				// The tick first: nothing here should be one Enter away from being done.
+				tick.focus();
+			});
+		}
+
+		tick.addEventListener("change", () => {
+			if (current && !current.busy) go.disabled = !tick.checked;
+		});
+
+		go.addEventListener("click", async () => {
+			if (!current || current.busy || !tick.checked) return;
+			const note = $("[data-cf2-note]").value.trim();
+			const run = current.opts.run;
+			if (!run) { finish({ ok: true, note: note }); return; }
+			current.busy = true;
+			const label = go.textContent;
+			go.disabled = true;
+			go.textContent = "Working…";
+			$("[data-cf2-cancel]").disabled = true;
+			err.style.display = "none";
+			try {
+				const result = await run(note);
+				finish({ ok: true, note: note, result: result });
+			} catch (e) {
+				// Said here, where the person is looking, and the dialog stays open: they
+				// can read why, and try again or cancel.
+				if (!current) return;
+				current.busy = false;
+				err.textContent = (e && e.message) || "It was not done.";
+				err.style.display = "block";
+				go.textContent = label;
+				go.disabled = !tick.checked;
+				$("[data-cf2-cancel]").disabled = false;
+			}
+		});
+
+		$("[data-cf2-cancel]").addEventListener("click", () => { if (current && !current.busy) finish({ ok: false }); });
+		// Escape and the backdrop: a "no", unless the change is already on its way.
+		modal.addEventListener("cancel", (event) => { if (current && current.busy) event.preventDefault(); });
+		modal.addEventListener("close", () => { if (current) finish({ ok: false }); });
+
+		window.portalConfirm = { ask: ask };
+	})();
+</script>

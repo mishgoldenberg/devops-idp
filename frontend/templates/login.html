@@ -13,15 +13,11 @@
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<title>DevOps Hub Sign In</title>
-		<link rel="stylesheet" href="/static/css/output.css" />
+		<link rel="stylesheet" href="/static/css/output.css?v={{ asset_v }}" />
 		<!-- Palette override. MUST stay after output.css: both declare the same
 		     DaisyUI custom properties, so this one wins on source order alone. -->
-		<link rel="stylesheet" href="/static/css/theme.css" />
-		<link
-			rel="shortcut icon"
-			href="/static/images/devopshub-favicon.png"
-			type="image/png"
-		/>
+		<link rel="stylesheet" href="/static/css/theme.css?v={{ asset_v }}" />
+		{% include "partials/favicon.html" %}
 		<!--
 			nord's own primary is a muted slate-blue, which reads as grey on a white card.
 			These two classes put the brand blue on the sign-in buttons. A <style> block
@@ -83,7 +79,7 @@
 							cannot express.
 						-->
 						<img
-							src="/static/images/devopshub-logo-mark.png"
+							src="/static/images/devopshub-logo.svg"
 							alt="DevOps Hub logo"
 							class="object-contain"
 							style="height: 104px; width: 104px"

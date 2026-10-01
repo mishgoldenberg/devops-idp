@@ -56,18 +56,23 @@ def sync_user_widgets(
 
     try:
         db.ensure_observability_tables_once()
-        execute("DELETE FROM user_widgets WHERE user_id = %s", [user_id])
-        for key in keys:
-            execute(
-                """
-                INSERT INTO user_widgets (user_id, widget_key, session_id, created_at)
-                VALUES (%s, %s, %s, NOW())
-                ON CONFLICT (user_id, widget_key) DO NOTHING
-                """,
-                [user_id, key, session_id],
-            )
+        # One transaction, two statements. It was a DELETE and then an INSERT per widget,
+        # each its own round trip and commit (600 ms for sixteen widgets), and a reader
+        # between them saw this person with no widgets at all.
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM user_widgets WHERE user_id = %s", [user_id])
+                if keys:
+                    cur.execute(
+                        """
+                        INSERT INTO user_widgets (user_id, widget_key, session_id, created_at)
+                        SELECT %s, k, %s, NOW() FROM unnest(%s::text[]) AS k
+                        ON CONFLICT (user_id, widget_key) DO NOTHING
+                        """,
+                        [user_id, session_id, list(dict.fromkeys(keys))],
+                    )
     except Exception:
-        pass
+        log.warning("dashboard: widget list not synced for %s", user_id, exc_info=True)
     return {"success": True, "data": {"widgets": keys}}
 
 

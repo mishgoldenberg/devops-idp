@@ -535,26 +535,46 @@
 		}
 		const sessionId = getSessionId();
 		const trackedThisMount = new Set();
+		// Collected and sent as ONE request a moment later: a post per widget was sixteen
+		// requests on every dashboard visit.
+		let trackQueue = [];
+		let trackTimer = null;
 		function trackWidget(key) {
 			if (!key || trackedThisMount.has(key)) return;
 			trackedThisMount.add(key);
-			try {
-				fetch("/api/observability/widget", {
-					method: "POST",
-					credentials: "same-origin",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ widget_key: key, session_id: sessionId }),
-					keepalive: true,
-				}).catch(() => {});
-			} catch (_) {
-				/* silent-fail per spec */
-			}
+			trackQueue.push(key);
+			clearTimeout(trackTimer);
+			trackTimer = setTimeout(() => {
+				const keys = trackQueue;
+				trackQueue = [];
+				try {
+					fetch("/api/observability/widget", {
+						method: "POST",
+						credentials: "same-origin",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({ widget_keys: keys, session_id: sessionId }),
+						keepalive: true,
+					}).catch(() => {});
+				} catch (_) {
+					/* silent-fail per spec */
+				}
+			}, 400);
 		}
 
 		// Always send the full current widget list; backend replaces the row set.
-		// Called on initial load and after every change/save so observability
-		// reflects the live dashboard state (including removals).
-		function syncUserWidgets(widgets) {
+		// Called after every change/save, and on load only when the list differs from the
+		// one this browser last sent (or a day has passed), so observability reflects the
+		// live dashboard without a write on every visit.
+		const SYNC_KEY = "portal-widgets-synced";
+		function syncUserWidgets(widgets, onlyIfChanged) {
+			const sig = JSON.stringify([...widgets].sort());
+			if (onlyIfChanged) {
+				try {
+					const last = JSON.parse(localStorage.getItem(SYNC_KEY) || "{}");
+					if (last.sig === sig && Date.now() - (last.at || 0) < 86400000) return;
+				} catch (_) {}
+			}
+			try { localStorage.setItem(SYNC_KEY, JSON.stringify({ sig: sig, at: Date.now() })); } catch (_) {}
 			try {
 				fetch("/api/dashboard/widgets/sync", {
 					method: "POST",
@@ -584,7 +604,7 @@
 		// Sync checkboxes + fire initial render-tracking events.
 		apply(savedEnabled);
 		// Initial sync: make sure DB matches what the user actually sees.
-		syncUserWidgets(savedEnabled);
+		syncUserWidgets(savedEnabled, true);
 
 		toggles.forEach((cb) =>
 			cb.addEventListener("change", () => {
@@ -971,36 +991,56 @@
 			return Math.min(MAX, Math.max(1, n));
 		}
 
-		function apply(shell) {
+		// Writes only what differs: setting a style to the value it already has still
+		// invalidates layout, and this runs after every widget swap.
+		function setStyle(shell, prop, value) {
+			if (shell.style[prop] !== value) shell.style[prop] = value;
+		}
+
+		function apply(shell, m) {
 			const key = shell.getAttribute("data-widget-key");
 			const size = sizes[key];
 			if (!size) {
 				// Never sized by hand: leave the markup's own classes alone so the
 				// default dashboard looks exactly as it always has.
-				shell.style.gridColumn = "";
-				shell.style.gridRow = "";
-				shell.style.height = "";
+				setStyle(shell, "gridColumn", "");
+				setStyle(shell, "gridRow", "");
+				setStyle(shell, "height", "");
 				return;
 			}
 			const c = clamp(size.c);
 			const r = clamp(size.r);
 			// A span wider than the grid is clamped by the grid itself, so a 3-wide
 			// widget degrades to full width on a 2- or 1-column breakpoint for free.
-			shell.style.gridColumn = "span " + c + " / span " + c;
+			setStyle(shell, "gridColumn", "span " + c + " / span " + c);
 			// grid-ROW span is what stops a tall widget leaving a hole. Making the box
 			// taller only stretched its own row; the grid still believed the widget
 			// occupied ONE row, so its neighbours stayed short and the space beside and
 			// below them could never be filled. Claiming the rows lets `grid-auto-flow:
 			// dense` back-fill them with the next widget that fits.
-			shell.style.gridRow = "span " + r + " / span " + r;
+			setStyle(shell, "gridRow", "span " + r + " / span " + r);
 			// Exactly the height of r tracks plus the gaps between them, so the box
 			// lines up with the rows it just claimed.
-			const { rowH, gap } = metrics();
-			shell.style.height = rowH * r + gap * (r - 1) + "px";
+			const { rowH, gap } = m || metrics();
+			setStyle(shell, "height", rowH * r + gap * (r - 1) + "px");
 		}
 
-		function applyAll() {
-			grid.querySelectorAll(".widget-shell[data-widget-key]").forEach(apply);
+		// The grid is measured ONCE, before any write. Measuring inside each apply() made
+		// the browser lay the page out again for every hand-sized widget, every swap.
+		// After a swap it waits for the next frame, so forty swaps cost one pass; the first
+		// paint (now=true) is immediate, or hand-sized widgets would jump a frame later.
+		let applyQueued = false;
+		function applyNow() {
+			applyQueued = false;
+			// Nothing sized by hand: nothing to measure.
+			const m = Object.keys(sizes).length ? metrics() : { rowH: 0, gap: 0 };
+			grid.querySelectorAll(".widget-shell[data-widget-key]").forEach((shell) => apply(shell, m));
+		}
+		function applyAll(now) {
+			if (now === true) { applyNow(); return; }
+			if (applyQueued) return;
+			applyQueued = true;
+			requestAnimationFrame(applyNow);
 		}
 
 		// Density is a live switch (Settings, and the header toggle), and it changes the
@@ -1335,11 +1375,20 @@
 
 		applyOrder();
 		ensureHandles();
-		applyAll();
+		applyAll(true);
 
 		// Widgets can be hidden/shown from the customise drawer, and HTMX swaps their
 		// contents — re-assert both after any of that rather than only on first paint.
-		document.body.addEventListener("htmx:afterSwap", () => { ensureHandles(); applyAll(); });
+		// Only when a swap brought a widget BOX (its sizes and handles live on the box):
+		// a swap of a widget's contents changes neither, and re-measuring the grid after
+		// each of forty of them was most of a dashboard load's main-thread time.
+		document.body.addEventListener("htmx:afterSwap", (event) => {
+			const t = event.target;
+			if (!t || !t.matches) return;
+			if (!t.matches(".widget-shell, [data-widget-grid]") && !t.querySelector(".widget-shell")) return;
+			ensureHandles();
+			applyAll();
+		});
 		window.addEventListener("portal:refreshed", () => { ensureHandles(); applyAll(); });
 	})();
 </script>

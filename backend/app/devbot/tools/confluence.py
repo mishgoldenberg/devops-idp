@@ -21,7 +21,7 @@ import httpx
 
 from resilient_http import tls_verify
 
-from .base import Tool, ToolContext, ToolFailure, register
+from .base import NotConnected, Tool, ToolContext, ToolFailure, register
 
 
 def cql_literal(value: str) -> str:
@@ -112,6 +112,43 @@ def search(ctx: ToolContext, query: str, space: str = "", limit: int = 8) -> Lis
                 for r in resp.json().get("results") or []]
 
 
+def meaning_hits(ctx: ToolContext, query: str, space: str = "") -> List[Dict[str, Any]]:
+    """Everything in the index that means what ``query`` says, from every source, NOT
+    yet checked against the person. Asked once per question and sentence: a pipeline
+    investigation wants pages and past fixes for the same error, and one query to the
+    embedding model serves both."""
+    from .. import knowledge
+
+    if not knowledge.ready():
+        return []
+    return ctx.memo(f"meaning:{space}:{query[:500]}", lambda: knowledge.search(query, limit=10, space=space))
+
+
+def meaning_search(ctx: ToolContext, query: str, limit: int = 4, space: str = "") -> List[Dict[str, Any]]:
+    """Indexed PAGES that mean what the query says, only those this person may open.
+
+    Empty when the index is not built, or on any failure of it: meaning search adds to
+    the word search and never stands in the way of it.
+    """
+    from .. import knowledge, llm
+
+    try:
+        found = [h for h in meaning_hits(ctx, query, space) if h.get("source", "confluence") == "confluence"]
+        if not found:
+            return []
+        return knowledge.visible_to(ctx.token("confluence"), ctx.base("confluence"), found, ctx.user_id, limit)
+    except NotConnected:
+        return []
+    except (llm.LLMError, httpx.HTTPError, ToolFailure) as exc:
+        ctx.memo("meaning_search_failed", lambda: str(exc))
+        return []
+    except Exception:  # the index is an extra; a broken one must not break the question
+        import logging
+
+        logging.getLogger(__name__).warning("devbot: meaning search failed", exc_info=True)
+        return []
+
+
 def page_id_from(value: str) -> str:
     value = str(value or "").strip()
     if value.isdigit():
@@ -150,10 +187,21 @@ def read_page(ctx: ToolContext, page: str, limit: int = 3500) -> Dict[str, Any]:
 # ── tools ────────────────────────────────────────────────────────────────────
 
 def conf_search(ctx: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]:
-    rows = search(ctx, args["query"], args.get("space", ""), max(1, min(int(args.get("top") or 8), 15)))
+    top = max(1, min(int(args.get("top") or 8), 15))
+    # By meaning first (the indexed spaces), then by words across all of Confluence;
+    # a page both find is listed once, where meaning found it, with the passage that matched.
+    meant = meaning_search(ctx, args["query"], limit=min(top, 5), space=args.get("space", ""))
+    for row in meant:
+        row["found_by"] = "meaning"
+    words = search(ctx, args["query"], args.get("space", ""), top)
+    have = {str(r["id"]) for r in meant}
+    rows = meant + [{**r, "found_by": "words"} for r in words if str(r.get("id")) not in have]
+    rows = rows[:top]
+    by_meaning = sum(1 for r in rows if r.get("found_by") == "meaning")
     return {
         "data": {"pages": rows, "count": len(rows)},
-        "summary": f"{len(rows)} page{'s' if len(rows) != 1 else ''} matching '{args['query']}'",
+        "summary": f"{len(rows)} page{'s' if len(rows) != 1 else ''} matching '{args['query']}'"
+                   + (f", {by_meaning} by meaning" if by_meaning else ""),
         "links": [{"title": r["title"], "url": r["url"]} for r in rows[:6]],
     }
 
@@ -187,7 +235,9 @@ def conf_spaces(ctx: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]:
 
 register(
     Tool("conf_search", "confluence", "read", "Searching Confluence",
-         "Search Confluence pages by words (full text), best match first, with an excerpt. Optional space key.",
+         "Search Confluence pages, best match first. Where the Hub indexes a space, pages are also found by "
+         "MEANING (any wording, English or Hebrew) with the passage that matched; elsewhere by words, with an "
+         "excerpt. Describe the problem in plain words. Optional space key.",
          {"query": {"type": "string"}, "space": {"type": "string", "description": "Space key"}, "top": {"type": "integer"}},
          conf_search, required=["query"]),
     Tool("conf_page", "confluence", "read", "Reading a Confluence page",

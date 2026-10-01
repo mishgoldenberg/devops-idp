@@ -43,6 +43,7 @@ except ImportError:
     pass
 
 import logging
+import os
 import threading
 import time as _time_mod
 from urllib.parse import urlparse
@@ -51,8 +52,44 @@ from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+
+
+# The files every page links, fingerprinted together (asset_v).
+_FINGERPRINTED = ("css/output.css", "css/theme.css", "js/htmx.min.js")
+
+
+def static_fingerprint(static_dir) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    for name in _FINGERPRINTED:
+        try:
+            digest.update((static_dir / name).read_bytes())
+        except OSError:
+            digest.update(name.encode())
+    return digest.hexdigest()[:12]
+
+
+class CachedStaticFiles(StaticFiles):
+    """Static files the browser may keep.
+
+    Without a Cache-Control header every page switch asked again for the stylesheet,
+    the theme and htmx. A fingerprinted link (?v=) never changes content, so it is kept
+    for a year; anything else for an hour, then served from cache while it is checked
+    again in the background (a changed logo shows on the next page, never blocks one).
+    """
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        if response.status_code in (200, 304):
+            versioned = b"v=" in (scope.get("query_string") or b"")
+            response.headers["Cache-Control"] = (
+                "public, max-age=31536000, immutable" if versioned
+                else "public, max-age=3600, stale-while-revalidate=604800"
+            )
+        return response
 from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -70,6 +107,8 @@ import streaks
 import usage_tracking
 import sso_config
 from devbot import config as devbot_config
+from devbot import knowledge as devbot_knowledge
+from devbot import monitor as devbot_monitor
 from devbot import store as devbot_store
 from ui import ui_router
 
@@ -97,6 +136,10 @@ def create_app() -> FastAPI:
     # Templates & static assets used by the HTMX-based UI.
     # Access templates from request.app.state.templates in route handlers.
     app.state.templates = Jinja2Templates(directory=base_dir / "templates")
+    # The templates are part of the image and never change while it runs, so Jinja
+    # need not look at every template file on disk before every render (it did: a page
+    # includes dozens of partials). TEMPLATES_AUTO_RELOAD=1 for editing them locally.
+    app.state.templates.env.auto_reload = os.getenv("TEMPLATES_AUTO_RELOAD", "").strip().lower() in ("1", "true", "yes")
     # The version this image calls itself, as a Jinja GLOBAL rather than something
     # every route has to remember to put in its context. The sidebar reads it on every
     # page to decide whether to mark What's New as unread, and a page that forgot to
@@ -110,10 +153,23 @@ def create_app() -> FastAPI:
     app.state.templates.env.globals["portal_quick_actions"] = catalog_forms.quick_actions()
     # Where people create their own AI model key, for the token guide on every page.
     app.state.templates.env.globals["devbot_key_help_url"] = devbot_config.key_help_url()
+    # Whether the widgets offer "Ask DevBot": only where DevBot is set up.
+    app.state.templates.env.globals["devbot_enabled"] = devbot_config.enabled()
     static_dir = base_dir / "static"
+    # A fingerprint of the files every page loads (stylesheet, theme, htmx). Pages link
+    # them as ?v=<this>, which lets the browser keep them for a year: a deploy that
+    # changes one changes the fingerprint, so the next page asks for the new file.
+    app.state.templates.env.globals["asset_v"] = static_fingerprint(static_dir)
+    # The dotted sidebar pages by path, for a page that arrived from a prefetch to say it
+    # was visited (portal-chrome.html): the one list, from notifications.SECTIONS.
+    from api.notifications import SECTIONS as _dotted_sections
+
+    app.state.templates.env.globals["seen_sections"] = {path: key for key, path in _dotted_sections.items()}
+    # Shown in the footer only when the file is there: a missing one was a 404 on every page.
+    app.state.templates.env.globals["credits_image"] = (static_dir / "images" / "credits.png").exists()
 
     # Make static assets available at /static
-    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+    app.mount("/static", CachedStaticFiles(directory=static_dir), name="static")
 
     # CORS Middleware
     # Use configured CORS_ORIGINS (comma-separated) or "*" as a fallback.
@@ -218,6 +274,12 @@ def create_app() -> FastAPI:
             route explicitly plumbing the config.
         """
         request.state.portal_is_admin = False
+        # Pages only: a stylesheet, an image or an /api call renders no sidebar, and
+        # this ran a token decode and a database query for every one of them.
+        path = request.url.path
+        if path.startswith("/static/") or path.startswith("/api/"):
+            request.state.portal_system_urls = {}
+            return await call_next(request)
         token = request.cookies.get("auth_token")
         if token:
             try:
@@ -241,7 +303,9 @@ def create_app() -> FastAPI:
     # JSON for four widgets. Text shrinks to a fifth or less. Below 1 KB it is not
     # worth the bytes of the gzip header. Outside everything but the audit log, which
     # reads status codes, never bodies.
-    app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
+    # Level 2, not 5: on a pod's CPU the higher level cost three times the time for a
+    # tenth fewer bytes, which on an internal network is the wrong trade.
+    app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=2)
 
     # ── Logging ─────────────────────────────────────────────────────────────────
     # Installed LAST, which makes it the OUTERMOST middleware — so it sees requests
@@ -256,6 +320,14 @@ def create_app() -> FastAPI:
     @app.get("/", include_in_schema=False)
     def root(request: Request):
         return RedirectResponse(url="/ui/auth")
+
+    # Browsers ask for /favicon.ico on their own whatever the page links, and
+    # bookmarks and the tab strip of a JSON response use it. Without this they
+    # get a 404 and show a blank page icon.
+    @app.get("/favicon.ico", include_in_schema=False)
+    def favicon():
+        return FileResponse(static_dir / "images" / "favicon.ico", media_type="image/x-icon",
+                            headers={"Cache-Control": "public, max-age=86400"})
 
     # Kubernetes probe endpoints live on the `health` router mounted at
     # /api/health (see api/health.py). The /live and /ready paths are kept
@@ -312,6 +384,18 @@ def create_app() -> FastAPI:
                 "detail": "Something went wrong. Please try again.",
             },
         )
+
+    @app.on_event("startup")
+    async def widen_threadpool():
+        """Nearly every route is a plain `def`, run on a worker thread, and most of them
+        wait on another system (Azure DevOps, the ticketing system, SonarQube). With
+        Starlette's default of 40 threads, forty people waiting on a slow system left
+        a page render -- which needs a thread for a few milliseconds -- queued behind
+        them for seconds. Threads that wait cost almost nothing; the database is
+        protected separately by its pool (db.get_connection waits for a connection)."""
+        import anyio.to_thread
+
+        anyio.to_thread.current_default_thread_limiter().total_tokens = int(os.getenv("WORKER_THREADS", "100"))
 
     @app.on_event("startup")
     def on_startup():
@@ -496,6 +580,7 @@ def create_app() -> FastAPI:
                     # DevBot conversations nobody has opened for DEVBOT_HISTORY_DAYS,
                     # and the usage rows older than the Usage view reads.
                     devbot_store.purge(devbot_config.history_days())
+                    devbot_monitor.purge()
                 except Exception as exc:
                     _log.warning("DevBot retention sweep failed: %s", exc)
                 _time_mod.sleep(interval_seconds)
@@ -513,6 +598,14 @@ def create_app() -> FastAPI:
             )
         except Exception as exc:
             _log.warning("could not start audit retention thread: %s", exc)
+
+        # DevBot's page search index catches up with page edits on its own. Every pod
+        # runs the loop; a Redis lock lets one of them build at a time, and it does
+        # nothing at all until an admin has set the index up.
+        try:
+            threading.Thread(target=devbot_knowledge.schedule_loop, name="devbot-index-schedule", daemon=True).start()
+        except Exception as exc:
+            _log.warning("could not start the DevBot index schedule: %s", exc)
 
     # Include all API routers (azure_devops, auth, approvals, etc.)
     app.include_router(api_router)

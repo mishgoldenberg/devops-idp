@@ -74,6 +74,7 @@
 	itself with the theme and needs no second design for dark mode.
 #}
 <header
+	data-portal-banner
 	class="relative px-8 py-6 border-b border-base-300 bg-base-200 flex items-center gap-3"
 >
 	{#
@@ -111,15 +112,27 @@
 			once. Giving the visible one real alt text would mean the name disappears in
 			whichever theme hides it, since a `display: none` image is not announced.
 		-->
+		<!--
+			The MARK, not the badge: the badge's ring, five tool icons and lettering were
+			drawn for a large size and squeezed into 48px they blur into a smudge. The cube
+			alone (the favicon's shape) stays sharp, and the name is written beside it. The
+			sign-in page, at 104px, keeps the full badge.
+		-->
 		<img
-			src="../static/images/devopshub-logo-mark.png"
+			src="/static/images/devopshub-mark.svg"
 			alt=""
-			class="w-12 h-12 object-contain brand-logo-light"
+			width="40"
+			height="40"
+			class="object-contain brand-logo-light"
+			style="width: 40px; height: 40px"
 		/>
 		<img
-			src="../static/images/devopshub-logo.png"
+			src="/static/images/devopshub-mark-white.svg"
 			alt=""
-			class="w-12 h-12 object-contain brand-logo-dark"
+			width="40"
+			height="40"
+			class="object-contain brand-logo-dark"
+			style="width: 40px; height: 40px"
 		/>
 		<div class="min-w-0 shrink-0">
 			<h1 class="font-bold text-2xl text-base-content leading-tight">DevOps Hub</h1>
@@ -436,15 +449,27 @@
 			}
 		}
 
-		async function refresh() {
+		// The LIST is read when somebody is about to look at it -- the pointer reaches the
+		// bell, focus lands on it, or the count changes while it is open -- not with every
+		// count. Every page and every 45-second poll read both, for a list that is opened
+		// a few times a day.
+		let listCount = null;   // the unread count the list on screen was read at
+		let lastCount = 0;
+		function isOpen() { return root.matches(":focus-within") || root.matches(":hover"); }
+
+		async function refresh(withList) {
 			try {
+				const wantList = withList === true;
 				const [countRes, listRes] = await Promise.all([
 					fetch("/api/notifications/unread-count", { credentials: "same-origin" }),
-					fetch("/api/notifications", { credentials: "same-origin" }),
+					wantList ? fetch("/api/notifications", { credentials: "same-origin" }) : Promise.resolve(null),
 				]);
 				if (countRes.ok) {
 					const cj = await countRes.json();
 					const n = Number(cj?.data?.count || 0);
+					lastCount = n;
+					// The count moved while the list is on screen: read it again now.
+					if (!wantList && listCount !== null && listCount !== n && isOpen()) refresh(true);
 					if (n > 0) {
 						// Capped at "9+" so the badge is always one or two glyphs and stays
 						// a circle. Past nine unread the exact number tells you nothing the
@@ -455,7 +480,8 @@
 						badge.classList.add("hidden");
 					}
 				}
-				if (listRes.ok) {
+				if (listRes && listRes.ok) {
+					listCount = lastCount;
 					const lj = await listRes.json();
 					const items = Array.isArray(lj?.data) ? lj.data : [];
 					if (!items.length) {
@@ -494,7 +520,7 @@
 									window.location.href = link;
 									return;
 								}
-								refresh();
+								refresh(true);
 							});
 						});
 					}
@@ -510,8 +536,13 @@
 				method: "POST",
 				credentials: "same-origin",
 			}).catch(() => {});
-			refresh();
+			refresh(true);
 		});
+
+		// About to look: read the list if it is not the one for the current count.
+		function warm() { if (listCount === null || listCount !== lastCount) refresh(true); }
+		root.addEventListener("pointerenter", warm);
+		root.addEventListener("focusin", warm);
 
 		refresh();
 		// A background tab does not need its notification count kept warm — it costs
@@ -722,6 +753,22 @@
 
 		// Public API — used by feature code (forms, admin actions, etc.).
 		window.portalToast = showToast;
+		// "Ask DevBot" buttons in the widgets: they appear only where DevBot is set up,
+		// and open the DevBot page with the question, which asks it at once.
+		window.portalDevbot = {
+			enabled: {{ "true" if devbot_enabled else "false" }},
+			ask: function (question) {
+				window.location.href = "/ui/devbot?ask=" + encodeURIComponent(String(question || "").slice(0, 2000));
+			},
+			// A widget row's question for the hover chip (devbot-hover.html), as an
+			// attribute ready to put in its markup; nothing where DevBot is not set up.
+			attr: function (question) {
+				if (!this.enabled || !question) return "";
+				return ' data-devbot-ask="' + String(question).slice(0, 600).replace(/[&<>"']/g, function (c) {
+					return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+				}) + '"';
+			},
+		};
 
 		let lastShownAt = 0;
 		function throttledToast(msg, kind) {
@@ -1043,6 +1090,31 @@
 {% include 'partials/components/pat-help.html' with context %}
 {# Every Azure DevOps action, with its check and confirmation: window.portalAdo.open(kind, target). #}
 {% include 'partials/components/ado-actions.html' %}
+{# The big confirmation every change an assistant drafted ends in (DevBot, AdminBot). #}
+{% include 'partials/components/action-confirm.html' %}
+
+{#
+	Pages fetched before they are clicked. Resting the pointer on a link to another
+	Hub page for a moment (or pressing on it) fetches that page in the background, so
+	the click shows it at once. Only the HTML is fetched, nothing on it runs; the server
+	leaves its "you have seen this" marks for the real visit (ui.py, Sec-Purpose).
+	Browsers without speculation rules ignore this block.
+#}
+<script type="speculationrules">
+{
+	"prefetch": [{
+		"where": {
+			"and": [
+				{ "href_matches": "/ui/*" },
+				{ "not": { "href_matches": "/ui/auth*" } },
+				{ "not": { "href_matches": "/ui/components/*" } },
+				{ "not": { "selector_matches": "[data-no-prefetch], [download], [target=_blank]" } }
+			]
+		},
+		"eagerness": "moderate"
+	}]
+}
+</script>
 
 <!--
 	The shared chrome: app shell, scrollbars, compact density, the sidebar's hide/resize
@@ -1064,3 +1136,5 @@
 	every page, and so it can read the rendered sidebar for the pages this user has.
 #}
 {% include 'partials/components/command-palette.html' with context %}
+{# Ask DevBot on a widget row the pointer rests on; only where DevBot is set up. #}
+{% if devbot_enabled %}{% include 'partials/components/devbot-hover.html' %}{% endif %}

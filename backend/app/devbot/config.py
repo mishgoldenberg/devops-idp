@@ -100,3 +100,30 @@ def max_streams() -> int:
     a burst of questions from crowding out the rest of the Hub on the same pod.
     """
     return _int(os.getenv("DEVBOT_MAX_STREAMS", "8"), 8, 1, 64)
+
+
+# ── the page search index (knowledge.py) ─────────────────────────────────────
+# Spaces, the Confluence token and the AI key it is built with are set by an admin on
+# the Platform Managing page and kept in the database; these only tune it.
+
+def embed_model() -> str:
+    """The embedding model to build the index with. Empty: pick one from the key's list,
+    a multilingual e5 first, because questions and pages here come in two languages."""
+    return _clean(os.getenv("DEVBOT_EMBED_MODEL", ""))
+
+
+def index_interval_hours() -> int:
+    """How often the index catches up with page edits. Only changed pages are re-read."""
+    return _int(os.getenv("DEVBOT_INDEX_INTERVAL_HOURS", "12"), 12, 1, 168)
+
+
+def index_max_chunks() -> int:
+    """The most passages the index holds. Each costs about 1 KB of memory in every
+    backend pod while it is searched, so this is the index's memory bound."""
+    return _int(os.getenv("DEVBOT_INDEX_MAX_CHUNKS", "40000"), 40000, 100, 400000)
+
+
+def index_min_score() -> float:
+    """How alike a passage must be to a question, 0-100, to be offered as a match.
+    e5 scores even unrelated text around 70; related passages land above 80."""
+    return _int(os.getenv("DEVBOT_INDEX_MIN_SCORE", "80"), 80, 0, 100) / 100.0

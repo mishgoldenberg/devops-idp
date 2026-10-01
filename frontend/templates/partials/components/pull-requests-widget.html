@@ -224,13 +224,19 @@
 				? '<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer" class="text-sm font-medium text-base-content hover:text-primary truncate">' + esc(pr.title) + "</a>"
 				: '<span class="text-sm font-medium text-base-content truncate">' + esc(pr.title) + "</span>";
 
+			// The hover chip's question (devbot-hover.html): for a reviewer, what to look at;
+			// for the author, what still blocks it.
+			const which = "pull request " + id + " (" + (pr.title || "") + ")" + (pr.repository ? " in " + pr.repository : "");
+			const askAttr = window.portalDevbot && window.portalDevbot.attr ? window.portalDevbot.attr(ROLE === "review"
+				? "I was asked to review " + which + ". What does it change, what do the reviews and checks say, and is it ready?"
+				: "Is my " + which + " ready to merge, and what blocks it?") : "";
 			// The repository used to sit in an outlined badge — an oval that read as a
 			// status chip when it is only a name. Plain text, same as the branches.
 			return (
 				// Pinned rows carry the same amber tint as the other widgets' pinned rows.
 				'<li class="rounded-lg border px-3 py-2.5 flex flex-col gap-1 ' +
 					(on ? "border-warning/30 bg-warning/5" : "border-base-300 bg-base-200/60") +
-					'" data-pr-id="' + esc(id) + '">' +
+					'" data-pr-id="' + esc(id) + '"' + askAttr + ">" +
 					'<div class="flex items-center gap-2">' +
 						title +
 						'<button type="button" class="btn btn-ghost btn-xs btn-circle ml-auto shrink-0" ' +

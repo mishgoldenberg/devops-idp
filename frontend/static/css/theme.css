@@ -157,22 +157,40 @@
    as the compiled rule, at one lower specificity, so `.widget-skeleton .sk-line`
    still wins wherever it already applies and nothing that works today changes.
    ───────────────────────────────────────────────────────────────────────── */
-.sk-line {
-	will-change: background-position;
-	animation: portal-skeleton 1.8s ease-in-out infinite;
-	background-image: linear-gradient(
-		105deg,
-		transparent 0%,
-		transparent 40%,
-		hsl(var(--b1) / 0.6) 50%,
-		transparent 60%,
-		transparent 100%
-	);
-	background-size: 200% auto;
-	background-repeat: no-repeat;
-	background-position-x: -50%;
+.sk-line,
+.widget-skeleton .sk-line {
+	position: relative;
+	overflow: hidden;
 	border-radius: 0.25rem;
 	background-color: hsl(var(--b3) / 0.7);
+	/* The sweep is a MOVING layer (transform), not a moving background: animating
+	   background-position repainted every line on the main thread every frame, and a
+	   loading dashboard has sixty of them while it is busiest. A transform is moved by
+	   the compositor and costs the page nothing. */
+	animation: none;
+	background-image: none;
+	will-change: auto;
+}
+.sk-line::after,
+.widget-skeleton .sk-line::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	background-image: linear-gradient(105deg, transparent 30%, hsl(var(--b1) / 0.6) 50%, transparent 70%);
+	transform: translateX(-100%);
+	animation: portal-shimmer 1.8s ease-in-out infinite;
+}
+@keyframes portal-shimmer {
+	to { transform: translateX(100%); }
+}
+/* A placeholder kept in the page but hidden (a widget that has loaded) does not sweep. */
+.hidden .sk-line::after,
+[hidden] .sk-line::after,
+.hidden.sk-line::after {
+	animation: none;
+}
+@media (prefers-reduced-motion: reduce) {
+	.sk-line::after { animation: none; }
 }
 
 /* ── Announcement cards ─────────────────────────────────────────────────────
@@ -321,4 +339,29 @@
 	font-size: 0.75rem;
 	padding-inline: 0.5rem;
 	width: 100%;
+}
+
+/* ── Moving between pages ────────────────────────────────────────────────────
+   A page switch is a short crossfade instead of a cut: the browser keeps the old page
+   on screen until the new one can paint, then fades between them. The banner and the
+   sidebar are named so they are held still while only the page itself moves. Browsers
+   without cross-document view transitions simply navigate as before. */
+@view-transition { navigation: auto; }
+/* Named only WHILE a transition runs: a named element is its own stacking context, and
+   the banner's menus (notifications, +, search) would otherwise open underneath the page. */
+html:active-view-transition [data-portal-banner] { view-transition-name: portal-banner; }
+html:active-view-transition [data-portal-sidebar] { view-transition-name: portal-sidebar; }
+::view-transition-group(portal-banner),
+::view-transition-group(portal-sidebar) { animation-duration: 0s; }
+::view-transition-old(root) { animation: 120ms ease-in both portal-page-out; }
+::view-transition-new(root) { animation: 200ms cubic-bezier(0.2, 0.7, 0.2, 1) both portal-page-in; }
+@keyframes portal-page-out { to { opacity: 0; } }
+@keyframes portal-page-in { from { opacity: 0; transform: translateY(6px); } }
+
+/* Content a widget has just been given arrives with a short fade (portal-chrome.html
+   runs it with the Web Animations API: the content's resting state is its normal one,
+   so a browser that skips the animation still shows it). */
+
+@media (prefers-reduced-motion: reduce) {
+	@view-transition { navigation: none; }
 }

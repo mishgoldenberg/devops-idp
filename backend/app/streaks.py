@@ -5,9 +5,10 @@ WHAT COUNTS
 ONE streak, not four competing ones -- it should sit quietly beside the work, not
 become it. A workday counts when the person did any of:
 
-    visit     used the Hub (the usage beat)
+    visit     used the Hub (the usage beat, once a person has touched the page)
     pr        opened a pull request, voted on one or commented on one
-    pipeline  a pipeline run they queued SUCCEEDED
+    pipeline  a pipeline run they queued SUCCEEDED -- counted on the day they queued it,
+              and not for runs a schedule or another pipeline started in their name
     workitem  closed or moved a work item, or changed one from the Hub
 
 The popover shows which of the four happened each day; the number is the streak.
@@ -55,6 +56,11 @@ WEEKEND_NOTICE = "סוגר שבת? חבל, קבל כמה הקפאות חינם �
 
 # Python's weekday(): Monday is 0 ... Sunday is 6. Friday (4) and Saturday (5) rest.
 _WEEKEND = {4, 5}
+
+# Runs nobody queued that day: Azure DevOps puts the person who set up a schedule, or
+# who started the pipeline that triggered this one, in requestedFor -- and such a run
+# finishing on a day they were away would save that day.
+_NOT_BY_HAND = {"schedule", "buildcompletion", "resourcetrigger", "triggered"}
 
 
 def _zone() -> str:
@@ -201,10 +207,14 @@ def compute(days: Dict[date, Set[str]], today: date, bonus_months: Set[date]) ->
     A missed workday uses a freeze from its own month while a streak is running; with
     none left the streak ends. Days before the first activity, weekends and today (the
     day is not over) never use one.
+
+    ``ended`` is the last day a streak ended and why, because a streak that reads 1 after
+    a missed day looks like a bug unless it says that the month's freezes ran out.
     """
     current = longest = 0
     frozen: Set[date] = set()
     used: Dict[date, int] = {}
+    ended: Optional[Dict[str, Any]] = None
     active_days = sorted(d for d, kinds in days.items() if kinds and d <= today)
     if active_days:
         day = active_days[0]
@@ -220,6 +230,8 @@ def compute(days: Dict[date, Set[str]], today: date, bonus_months: Set[date]) ->
                         used[month] = used.get(month, 0) + 1
                         frozen.add(day)
                     else:
+                        ended = {"day": day, "length": current, "freezes": allowed,
+                                 "frozen_on": sorted(d for d in frozen if _month(d) == month)}
                         current = 0
             day += timedelta(days=1)
     month = _month(today)
@@ -228,6 +240,7 @@ def compute(days: Dict[date, Set[str]], today: date, bonus_months: Set[date]) ->
         "current": current,
         "longest": longest,
         "frozen": frozen,
+        "ended": ended,
         "freezes": {
             "allowed": allowed,
             "used": used.get(month, 0),
@@ -318,9 +331,14 @@ def status(email: str) -> Dict[str, Any]:
             "today": day == today,
         })
     sync = query_one("SELECT synced_at, backfilled, last_error FROM user_streak_sync WHERE user_email = %s", [who]) or {}
+    ended = result["ended"]
     return {
         "current": result["current"],
         "longest": result["longest"],
+        # The last time a streak ended, while that day is still on the popover's two weeks.
+        "ended": ({"day": ended["day"].isoformat(), "length": ended["length"], "freezes": ended["freezes"],
+                   "frozen_on": [d.isoformat() for d in ended["frozen_on"]]}
+                  if ended and (today - ended["day"]).days <= 13 else None),
         "today": {
             "day": today.isoformat(),
             "workday": is_workday(today),
@@ -335,6 +353,35 @@ def status(email: str) -> Dict[str, Any]:
             "error": sync.get("last_error") or "",
             "running": who in _running,
         },
+    }
+
+
+def explain(email: str) -> Dict[str, Any]:
+    """One person's streak with the reason behind its number, for an admin (AdminBot).
+    Read-only: unlike status(), it grants no weekend bonus and sends nothing."""
+    who = _who(email)
+    today = _today()
+    days = _days_for([who]).get(who, {})
+    bonus = _bonus_for([who]).get(who, set())
+    result = compute(days, today, bonus)
+    ended = result["ended"]
+    recent = [{"day": d.isoformat(), "weekday": d.strftime("%a"), "workday": is_workday(d),
+               "did": sorted(days.get(d, set())), "frozen": d in result["frozen"]}
+              for d in (today - timedelta(days=back) for back in range(20, -1, -1))]
+    sync = query_one("SELECT synced_at, backfilled, last_error FROM user_streak_sync WHERE user_email = %s", [who]) or {}
+    return {
+        "email": who,
+        "current": result["current"],
+        "longest": result["longest"],
+        "freezes_this_month": result["freezes"],
+        "last_ended": ({"day": ended["day"].isoformat(), "streak_before": ended["length"],
+                        "why": f"a missed workday with all {ended['freezes']} freezes of that month already used",
+                        "freezes_used_on": [d.isoformat() for d in ended["frozen_on"]]} if ended else None),
+        "last_21_days": recent,
+        "azure_devops_history": {"synced_at": sync.get("synced_at").isoformat() if sync.get("synced_at") else None,
+                                 "error": sync.get("last_error") or ""},
+        "rules": "Workdays are Sunday to Thursday; each month has 5 freezes (+2 after a weekend visit); a missed "
+                 "workday uses one, and with none left the streak ends.",
     }
 
 
@@ -470,8 +517,10 @@ def sync_ado(user: Dict[str, Any]) -> Dict[str, int]:
                                             "queryOrder": "finishTimeDescending", "$top": "200"})
                 if builds.status_code == 200:
                     for build in builds.json().get("value") or []:
-                        if _is_mine(build, me, str(user.get("email") or "")) and build.get("finishTime"):
-                            stamps["pipeline"].append(build["finishTime"])
+                        when = build.get("queueTime") or build.get("startTime")
+                        if (_is_mine(build, me, str(user.get("email") or "")) and when and recent(when)
+                                and str(build.get("reason") or "").lower() not in _NOT_BY_HAND):
+                            stamps["pipeline"].append(when)
             # When they VOTED is only in the pull request's threads. Bounded: the most
             # recent 30 they reviewed.
             for pid, repo_id, pr_id in reviewed[:30]:

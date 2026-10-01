@@ -16,6 +16,10 @@ Runs in the event loop and never blocks it: the model is called with an async cl
 and the database and the tools (which reuse the Hub's own synchronous integration
 code) run on the thread pool. A slow model therefore holds a connection, not a thread.
 
+AdminBot (bot="admin") is the same loop over the Hub's own records, for admins: the
+Hub's AI key instead of the person's, the tools of system "hub" instead of DevBot's,
+its own prompt, and its conversations kept apart from DevBot's.
+
 The per-minute limits shape the loop. Every model call is one request against the
 person's key, so a question makes at most ``plan.rounds`` of them and the LAST one is
 always made without tools -- a question ends in an answer, never in a lookup that ran
@@ -29,6 +33,7 @@ import asyncio
 import json
 import logging
 import time
+import uuid
 from datetime import date
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 
@@ -37,7 +42,7 @@ from fastapi.concurrency import run_in_threadpool
 from redis_client import get_redis
 from security import AuthUser
 
-from . import budget, config, llm, models, prompts, store
+from . import budget, config, grounding, knowledge, llm, models, monitor, prompts, store
 from .tools import base as tools
 
 log = logging.getLogger(__name__)
@@ -45,6 +50,23 @@ log = logging.getLogger(__name__)
 KEEPALIVE_SECONDS = 10
 LIMIT_WAIT_MAX = 30
 _LIMITS_TTL = 900
+# Changes one answer, and one conversation, may put in front of the person. A model
+# stuck in a loop would otherwise fill the page with cards nobody asked for; a bulk
+# card (several requests at once) counts as one. Offers an investigation makes by
+# itself ("suggested") do not count: they are the obvious next steps, not requests.
+MAX_PROPOSALS_PER_ANSWER = 5
+MAX_PROPOSALS_PER_CONVERSATION = 30
+
+
+def proposals_so_far(rows: List[Dict[str, Any]]) -> int:
+    return sum(1 for r in rows if r.get("role") == "assistant"
+               for a in (r.get("meta") or {}).get("actions") or [] if not a.get("suggested"))
+
+
+def room_for_proposals(state: "_Turn") -> int:
+    asked = sum(1 for a in state.actions if not a.get("suggested"))
+    return max(0, min(MAX_PROPOSALS_PER_ANSWER - asked,
+                      MAX_PROPOSALS_PER_CONVERSATION - state.proposed_before - asked))
 
 _active = 0
 _per_user: Dict[str, int] = {}
@@ -174,12 +196,18 @@ def system_states(uid: str) -> Dict[str, str]:
         except Exception:
             has_token = False
         states[system] = "connected" if has_token else ("public" if system == "sonarqube" else "missing")
+    # Support tickets need no token of the person's: the Hub reads them with its own
+    # account and shows each person only theirs (tools/support.py).
+    states["servicenow"] = "connected" if knowledge.snow_available() else "unavailable"
     return states
 
 
 def connected_systems(uid: str) -> Dict[str, bool]:
     """Which systems this person can be answered from."""
-    return {system: state in ("connected", "public") for system, state in system_states(uid).items()}
+    out = {system: state in ("connected", "public") for system, state in system_states(uid).items()}
+    # The Hub's own forms need no connection: everyone can be handed a draft of one.
+    out["requests"] = True
+    return out
 
 
 def model_key(uid: str) -> str:
@@ -191,16 +219,35 @@ def model_key(uid: str) -> str:
         return ""
 
 
+def hub_key() -> str:
+    """The Hub's own AI key (Platform Managing -> DevBot search index), which AdminBot
+    answers with: its questions are the Hub's business, not the admin's own budget."""
+    try:
+        return knowledge.settings(secrets=True)["gateway_key"]
+    except Exception:
+        return ""
+
+
+def still_admin(user: AuthUser) -> bool:
+    from security import has_effective_admin_access_live
+
+    try:
+        return bool(has_effective_admin_access_live(user))
+    except Exception:
+        return False
+
+
 # ── streaming ────────────────────────────────────────────────────────────────
 
-async def stream_turn(user: AuthUser, message: str, conversation_id: str = "", model_id: str = "") -> AsyncIterator[str]:
+async def stream_turn(user: AuthUser, message: str, conversation_id: str = "", model_id: str = "",
+                      bot: str = "devbot") -> AsyncIterator[str]:
     """The events of one question, with a keep-alive while nothing else is said.
 
     Proxies close a connection that stays silent for long enough, and a model that is
     thinking, or a pipeline log being read, can be silent for longer than that.
     """
     queue: "asyncio.Queue[Optional[Dict[str, Any]]]" = asyncio.Queue()
-    worker = asyncio.create_task(_turn(user, message, conversation_id, model_id, queue.put_nowait))
+    worker = asyncio.create_task(_turn(user, message, conversation_id, model_id, queue.put_nowait, bot))
     try:
         while True:
             try:
@@ -239,6 +286,18 @@ class _Turn:
         self.error: Dict[str, Any] = {}
         self.question_saved = False
         self.stopped = False
+        # For the monitoring page (monitor.py): how the question ended and what it took.
+        self.limit_waits = 0
+        self.found_only = False
+        self.message_id: Optional[int] = None
+        self.model_id = ""
+        # An investigation that found no page and no past fix leaves this; the finished
+        # answer is then offered as a new Confluence page (save_fix_action).
+        self.save_fix: Dict[str, Any] = {}
+        # Whose limits the gateway's figures are: the person's key, or the Hub's.
+        self.limits_owner = ""
+        # Proposals already made earlier in this conversation (room_for_proposals).
+        self.proposed_before = 0
 
     def add_source(self, link: Dict[str, Any]) -> None:
         url = str(link.get("url") or "")
@@ -248,11 +307,13 @@ class _Turn:
 
 
 async def _turn(user: AuthUser, message: str, conversation_id: str, model_id: str,
-                emit: Callable[[Optional[Dict[str, Any]]], None]) -> None:
+                emit: Callable[[Optional[Dict[str, Any]]], None], bot: str = "devbot") -> None:
     global _active
     uid = user_id(user)
+    admin = bot == "admin"
     started = time.monotonic()
     state = _Turn()
+    state.limits_owner = "hub" if admin else uid
     conv_id = ""
     slot = False
 
@@ -277,8 +338,13 @@ async def _turn(user: AuthUser, message: str, conversation_id: str, model_id: st
         _per_user[uid] = _per_user.get(uid, 0) + 1
         slot = True
 
-        key = await run_in_threadpool(model_key, uid)
+        if admin and not await run_in_threadpool(still_admin, user):
+            return fail("forbidden", "AdminBot is for the Hub's admins.")
+        key = await run_in_threadpool(hub_key if admin else model_key, *([] if admin else [uid]))
         if not key:
+            if admin:
+                return fail("no_key", "AdminBot answers with the Hub's AI key, which is not set. An admin sets it on "
+                                      "Platform Managing, under DevBot search index.")
             return fail("no_key", "Connect your AI model key first: DevBot uses your own key to talk to the models.")
 
         try:
@@ -290,7 +356,7 @@ async def _turn(user: AuthUser, message: str, conversation_id: str, model_id: st
 
         conversation = None
         if conversation_id:
-            conversation = await run_in_threadpool(store.get_conversation, uid, conversation_id)
+            conversation = await run_in_threadpool(store.get_conversation, uid, conversation_id, bot)
             if not conversation:
                 return fail("not_found", "That conversation does not exist any more.")
         if model_id and model_id not in {m["id"] for m in available}:
@@ -298,46 +364,68 @@ async def _turn(user: AuthUser, message: str, conversation_id: str, model_id: st
         model = models.choose(available, model_id, (conversation or {}).get("model", ""))
         assert model is not None
         mid = model["id"]
+        state.model_id = mid
         if conversation is None:
             title = " ".join(text.split())[:80]
-            conversation = await run_in_threadpool(store.create_conversation, uid, title, mid)
+            conversation = await run_in_threadpool(store.create_conversation, uid, title, mid, bot)
         conv_id = conversation["id"]
         state.conv_id = conv_id
 
         await run_in_threadpool(store.add_message, conv_id, "user", text, {})
         state.question_saved = True
-        rows = await run_in_threadpool(store.messages, uid, conv_id)
+        rows = await run_in_threadpool(store.messages, uid, conv_id, 400, bot)
         history = to_model_messages(rows)
-        systems = await run_in_threadpool(connected_systems, uid)
+        state.proposed_before = proposals_so_far(rows)
+        systems = {"hub": True} if admin else await run_in_threadpool(connected_systems, uid)
         emit({"type": "start", "conversation_id": conv_id, "title": conversation.get("title", ""),
               "model": mid, "model_label": model["label"], "systems": systems})
 
         cap = models.capability(mid)
-        offered = [] if cap.get("tools") is False else tools.specs_for(text, systems, recent_systems(rows))
+        if cap.get("tools") is False:
+            offered = []
+        elif admin:
+            offered = tools.hub_specs()
+        else:
+            offered = tools.specs_for(text, systems, recent_systems(rows))
         if cap.get("tools") is False:
             notice(f"{model['label']} cannot read live data, so it answers from general knowledge only. "
-                   "Pick a model marked Live data to ask about your systems.", "warn")
+                   "Pick a model marked Live data to ask about " + ("the Hub." if admin else "your systems."), "warn")
 
-        plan = budget.plan(int(model["context"]), model.get("max_output"), await run_in_threadpool(last_limits, uid))
-        ctx = tools.ToolContext(user, systems)
-        system_msg = {"role": "system", "content": prompts.system_prompt(
-            display_name(user), systems, [t["function"]["name"] for t in offered], date.today(),
-            model_can_call_tools=cap.get("tools") is not False)}
+        # What the gateway said about the key stands in until a chat answer has reported
+        # the live figures, which win: headers are what the gateway is enforcing now.
+        described = llm.limits_for(await run_in_threadpool(models.key_info, key, False), mid)
+        plan = budget.plan(int(model["context"]), model.get("max_output"),
+                           {**described, **await run_in_threadpool(last_limits, state.limits_owner)})
+        ctx = tools.ToolContext(user, systems, admin=admin)
+        names = [t["function"]["name"] for t in offered]
+        system_msg = {"role": "system", "content": prompts.admin_prompt(display_name(user), names, date.today())
+                      if admin else prompts.system_prompt(display_name(user), systems, names, date.today(),
+                                                          model_can_call_tools=cap.get("tools") is not False)}
+        if not admin:
+            # What the Hub already knows about the question, before the model is asked.
+            known = await _ground(ctx, text, state, emit)
+            if known:
+                system_msg["content"] += "\n\n" + known
 
         await _answer(user, key, model, plan, system_msg, history, offered, ctx, state, emit, notice)
         if state.failed:
             # The error is already on its way to the page. The requests it spent still
             # count against the key, so they still count here.
-            if state.requests:
+            if state.requests and not admin:
                 await run_in_threadpool(store.record_usage, uid, mid, state.prompt_tokens,
                                         state.completion_tokens, state.requests)
             return
 
+        offer = None if admin else save_fix_action(state, systems)
+        if offer:
+            state.actions.append(offer)
+            emit({"type": "action", "action": offer})
         if not state.answer.strip() and state.actions:
             state.answer = "Review the proposed change below. Nothing is sent until you confirm it."
         if not state.answer.strip():
             if state.steps:
                 state.answer = _fallback_answer(state)
+                state.found_only = True
             else:
                 return fail("empty_answer", "The model returned an empty answer. Ask again, or pick another model.")
 
@@ -354,8 +442,10 @@ async def _turn(user: AuthUser, message: str, conversation_id: str, model_id: st
             "duration_ms": int((time.monotonic() - started) * 1000),
         }
         message_id = await run_in_threadpool(store.add_message, conv_id, "assistant", state.answer, meta)
-        await run_in_threadpool(store.touch_conversation, uid, conv_id, mid)
-        if state.requests:
+        state.message_id = message_id
+        await run_in_threadpool(store.touch_conversation, uid, conv_id, mid, bot)
+        # AdminBot spends the Hub's key, not the admin's: nothing to add to their usage.
+        if state.requests and not admin:
             await run_in_threadpool(store.record_usage, uid, mid, state.prompt_tokens,
                                     state.completion_tokens, state.requests)
         emit({"type": "done", "message": {"id": message_id, "role": "assistant", "content": state.answer, "meta": meta}})
@@ -374,6 +464,21 @@ async def _turn(user: AuthUser, message: str, conversation_id: str, model_id: st
         log.exception("devbot: the question failed")
         fail("internal", "Something went wrong while answering. The details are in the Hub's log.")
     finally:
+        # Every question that got as far as a model, however it ended. In the finally for
+        # the same reason as the failed answer below: each way out leaves with `return`.
+        if slot and state.model_id:
+            outcome = ("stopped" if state.stopped else "failed" if state.error else
+                       "found_only" if state.found_only else "answered")
+            try:
+                await asyncio.shield(run_in_threadpool(
+                    monitor.record, uid, conversation_id=state.conv_id, message_id=state.message_id,
+                    model=state.model_id, outcome=outcome, error_kind=str(state.error.get("kind") or ""),
+                    requests=state.requests, prompt_tokens=state.prompt_tokens,
+                    completion_tokens=state.completion_tokens,
+                    duration_ms=int((time.monotonic() - started) * 1000), limit_waits=state.limit_waits,
+                    steps=state.steps, bot=bot))
+            except BaseException:
+                log.warning("devbot: the question's outcome was not recorded", exc_info=True)
         if slot:
             _active -= 1
             _per_user[uid] = max(0, _per_user.get(uid, 1) - 1)
@@ -394,7 +499,6 @@ async def _answer(user: AuthUser, key: str, model: Dict[str, Any], plan: budget.
                   history: List[Dict[str, Any]], offered: List[Dict[str, Any]], ctx: tools.ToolContext,
                   state: _Turn, emit: Callable, notice: Callable) -> None:
     mid = model["id"]
-    uid = user_id(user)
     waited = shrunk = False
     round_no = 0
     while round_no < plan.rounds:
@@ -430,17 +534,25 @@ async def _answer(user: AuthUser, key: str, model: Dict[str, Any], plan: budget.
                 continue
             if exc.kind == "limit" and not waited and exc.retry_after is not None and exc.retry_after <= LIMIT_WAIT_MAX:
                 waited = True
+                state.limit_waits += 1
                 emit({"type": "notice", "level": "warn",
-                      "text": f"Your key's per-minute limit was reached. Waiting {exc.retry_after} seconds for it to free up."})
+                      "text": f"The key's per-minute limit was reached. Waiting {exc.retry_after} seconds for it to free up."})
                 await asyncio.sleep(exc.retry_after + 1)
                 continue
             if exc.kind == "context" and not shrunk:
                 shrunk = True
-                plan.prompt_cap = max(1500, int(estimated * 0.55))
+                if exc.context_tokens:
+                    # The model said how big it really is: plan against that from now on.
+                    await run_in_threadpool(models.learn_context, mid, exc.context_tokens)
+                    plan.answer_tokens = min(plan.answer_tokens, max(256, exc.context_tokens // 4))
+                    plan.prompt_cap = max(1000, min(plan.prompt_cap, exc.context_tokens - plan.answer_tokens - 256))
+                else:
+                    plan.prompt_cap = max(1500, int(estimated * 0.55))
                 continue
             if state.steps:
                 notice(exc.message, "warn")
                 state.answer = _fallback_answer(state)
+                state.found_only = True
                 return
             emit_error(exc, emit, state)
             state.failed = True
@@ -453,7 +565,7 @@ async def _answer(user: AuthUser, key: str, model: Dict[str, Any], plan: budget.
             budget.learn(mid, estimated, int(usage["prompt_tokens"]))
         if end.get("limits"):
             state.limits = {**state.limits, **end["limits"]}
-            _save_limits(uid, end["limits"])
+            _save_limits(state.limits_owner, end["limits"])
             emit({"type": "limits", "limits": state.limits})
 
         calls = end.get("tool_calls") or []
@@ -481,6 +593,46 @@ async def _answer(user: AuthUser, key: str, model: Dict[str, Any], plan: budget.
         return
 
 
+GROUNDING_SECONDS = 20
+
+
+async def _ground(ctx: tools.ToolContext, question: str, state: _Turn, emit: Callable) -> str:
+    """Look the question up in the index (grounding.py) as the first step the person
+    sees, and hand back what the prompt should carry. Bounded: a slow or failed search
+    costs a line in the steps, never the answer."""
+    step: Dict[str, Any] = {"id": "knowledge-" + uuid.uuid4().hex[:8], "tool": "knowledge_search", "system": "knowledge",
+                            "label": "Checking what the Hub already knows", "status": "running"}
+    started = time.monotonic()
+    announced = False
+    try:
+        pending = asyncio.ensure_future(run_in_threadpool(grounding.gather, ctx.child(lambda s, t: None), question))
+        done, _ = await asyncio.wait({pending}, timeout=0.05)
+        if not done:
+            emit({"type": "step", **step})
+            announced = True
+        found = await asyncio.wait_for(pending, timeout=GROUNDING_SECONDS)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        log.warning("devbot: the knowledge lookup failed: %s", exc)
+        found, failed = {}, f"skipped: {type(exc).__name__}"
+    else:
+        failed = ""
+    if found is None:
+        # Nothing to search (no index, or a message too short): no step at all.
+        if announced:
+            step.update(status="done", detail="Nothing to search", ms=int((time.monotonic() - started) * 1000))
+            emit({"type": "step", **step})
+        return ""
+    step.update(status="error" if failed else "done", detail=failed or grounding.summary(found),
+                ms=int((time.monotonic() - started) * 1000))
+    state.steps.append(step)
+    for link in grounding.links(found or {}):
+        state.add_source(link)
+    emit({"type": "step", **step})
+    return grounding.for_prompt(found or {})
+
+
 def emit_error(exc: "llm.LLMError", emit: Callable, state: Optional["_Turn"] = None) -> None:
     extra = {"retry_after": exc.retry_after} if exc.retry_after else {}
     if state is not None:
@@ -491,6 +643,13 @@ def emit_error(exc: "llm.LLMError", emit: Callable, state: Optional["_Turn"] = N
 async def _run_tools(user: AuthUser, ctx: tools.ToolContext, calls: List[Dict[str, Any]], interim: str,
                      history: List[Dict[str, Any]], state: _Turn, emit: Callable) -> None:
     """Run the lookups the model asked for, side by side, and hand it the results."""
+    # Every call gets an id of its own. Some servers number calls call_0, call_1 afresh
+    # in each answer, or send none, and a replayed conversation pairs each result with
+    # its call by id: a repeated one hands the model the wrong result, or the gateway
+    # refuses the whole conversation.
+    for call in calls:
+        call["id"] = f"{str(call.get('id') or 'call')[:40]}-{uuid.uuid4().hex[:8]}"
+        call.setdefault("type", "function")
     history.append({"role": "assistant", "content": interim or None, "tool_calls": calls})
     conv_rows: List[Dict[str, Any]] = []
 
@@ -511,7 +670,18 @@ async def _run_tools(user: AuthUser, ctx: tools.ToolContext, calls: List[Dict[st
             loop.call_soon_threadsafe(emit, {"type": "substep", "id": step_id, "system": sub_system, "text": text})
 
         result = await run_in_threadpool(tools.run, ctx.child(progress), name, args)
-        step.update({"status": "done" if result.get("ok") else "error", "detail": str(result.get("summary") or "")[:300],
+        asked = [a for a in result.get("actions") or [] if not a.get("suggested")]
+        if asked and len(asked) > room_for_proposals(state):
+            # Refused, not trimmed: a card that silently did not appear is a change the
+            # model goes on to describe as proposed.
+            result = {"ok": False, "ms": result.get("ms"),
+                      "error": f"No more changes can be proposed here: at most {MAX_PROPOSALS_PER_ANSWER} in one "
+                               f"answer and {MAX_PROPOSALS_PER_CONVERSATION} in one conversation. Tell the person "
+                               "to review the cards already shown, or to start a new conversation."}
+        # A failed step carries its reason: "Cancel the run ✗" with nothing after it
+        # leaves the person guessing what to do.
+        detail = result.get("summary") or ("" if result.get("ok") else result.get("error"))
+        step.update({"status": "done" if result.get("ok") else "error", "detail": str(detail or "")[:300],
                      "ms": result.get("ms")})
         if trail:
             step["trail"] = trail[-12:]
@@ -523,6 +693,8 @@ async def _run_tools(user: AuthUser, ctx: tools.ToolContext, calls: List[Dict[st
         for action in result.get("actions") or []:
             state.actions.append(action)
             emit({"type": "action", "action": action})
+        if result.get("save_fix"):
+            state.save_fix = result["save_fix"]
         emit({"type": "step", **step})
         return {"call": call, "name": name, "result": result, "args": args}
 
@@ -542,6 +714,34 @@ async def _run_tools(user: AuthUser, ctx: tools.ToolContext, calls: List[Dict[st
         for row in conv_rows:
             content = row.pop("content")
             await run_in_threadpool(store.add_message, state.conv_id, "tool", content, row)
+
+
+def save_fix_action(state: _Turn, systems: Dict[str, bool]) -> Optional[Dict[str, Any]]:
+    """"Save this fix to Confluence", when nothing had it written down.
+
+    Only for a real answer (not the list of what was found when the model gave up), only
+    where the person can write to Confluence, and as a DRAFT in the widgets' dialog: the
+    space, the title and every line can be changed before anything is created.
+    """
+    if not state.save_fix or state.found_only or not state.answer.strip() or not systems.get("confluence"):
+        return None
+    from .tools import proposals
+
+    try:
+        spaces = knowledge.settings()["spaces"]
+    except Exception:
+        spaces = []
+    space = spaces[0] if spaces else ""
+    title = str(state.save_fix.get("title") or "A fix found with DevBot")[:200]
+    content = (state.answer.strip() + "\n\n---\n\nWritten with DevBot in DevOps Hub, from the investigation of:\n\n```\n"
+               + str(state.save_fix.get("about") or "")[:600] + "\n```\n")
+    return proposals.action(
+        "conf-create", "Save this fix to Confluence",
+        "Nothing had this fix written down. Save this answer as a page" + (f" in {space}" if space else "")
+        + " so the next person who hits the error finds it. You can change it first.",
+        {"space": space, "title": title, "content": content, "parent_id": ""},
+        suggested=True,
+    )
 
 
 def _fallback_answer(state: _Turn) -> str:

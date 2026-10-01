@@ -62,6 +62,9 @@
 	[data-streak-panel] .streak-day[data-rest] { background: transparent; box-shadow: inset 0 0 0 1px hsl(var(--bc) / 0.12); }
 	[data-streak-panel] .streak-day[data-frozen] { background: hsl(var(--in) / 0.18); color: hsl(var(--in)); }
 	[data-streak-panel] .streak-day[data-today] { outline: 2px solid hsl(var(--p)); outline-offset: 1px; }
+	[data-streak-panel] .streak-day[data-ended] { box-shadow: inset 0 0 0 2px hsl(var(--er) / 0.7); color: hsl(var(--er)); }
+	[data-streak-panel] .streak-ended { font-size: 0.75rem; line-height: 1.45; padding: 0.45rem 0.6rem; border-radius: 0.45rem;
+		background: hsl(var(--er) / 0.07); border: 1px solid hsl(var(--er) / 0.25); }
 	[data-streak-panel] .streak-axis { display: flex; justify-content: space-between; font-size: 0.65rem; color: hsl(var(--bc) / 0.45); margin-top: 0.2rem; }
 	[data-streak-panel] .streak-notice {
 		border-radius: 0.6rem;
@@ -129,13 +132,17 @@
 				: "Weekend: nothing today counts or breaks your streak.";
 
 			const f = d.freezes || {};
+			const ended = d.ended || null;
 			const strip = (d.days || []).map((x) => {
 				const dt = new Date(x.day + "T12:00:00");
 				const level = x.kinds.length >= 3 ? 3 : x.kinds.length;
+				const endedHere = ended && ended.day === x.day;
 				const label = dt.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" }) +
-					(x.frozen ? ": a freeze kept the streak" : !x.workday ? ": weekend" : x.kinds.length ? ": " + x.kinds.length + " of 4" : ": nothing");
+					(x.frozen ? ": a freeze kept the streak" : endedHere ? ": nothing, and no freeze left, so the streak ended"
+						: !x.workday ? ": weekend" : x.kinds.length ? ": " + x.kinds.length + " of 4" : ": nothing");
 				return '<span class="streak-day" title="' + esc(label) + '"' +
 					(x.workday ? "" : " data-rest") + (x.frozen ? " data-frozen" : "") + (x.today ? " data-today" : "") +
+					(endedHere ? " data-ended" : "") +
 					(x.workday && level ? ' data-level="' + level + '"' : "") + ">" +
 					(x.frozen ? "❄" : DAY_LETTER[dt.getDay()]) + "</span>";
 			}).join("");
@@ -145,6 +152,19 @@
 					return '<li><span class="streak-dot"' + (on ? " data-on" : "") + ">" + (on ? TICK : "") + "</span><span" + (on ? "" : ' class="streak-muted"') + ">" + esc(k[1]) + "</span></li>";
 				}).join("") + "</ul>"
 				: '<p class="text-sm streak-muted">Weekend. Nothing today counts toward your streak, and nothing breaks it.</p>';
+			// Why the number went back down. Without it, a 1 the day after a missed day
+			// reads as a bug rather than as the month's freezes having run out.
+			let endedLine = "";
+			if (ended) {
+				const endDay = new Date(ended.day + "T12:00:00");
+				const next = new Date(endDay.getFullYear(), endDay.getMonth() + 1, 1);
+				const fmt = (dt, opts) => dt.toLocaleDateString(undefined, opts);
+				endedLine = '<div class="streak-ended">Your ' + esc(ended.length) + "-day streak ended on " +
+					esc(fmt(endDay, { weekday: "long", day: "numeric", month: "short" })) + ": nothing counted that day, and all " +
+					esc(ended.freezes) + " of " + esc(fmt(endDay, { month: "long" })) + "'s freezes were already used" +
+					((ended.frozen_on || []).length ? " (on " + ended.frozen_on.map((x) => esc(fmt(new Date(x + "T12:00:00"), { day: "numeric", month: "short" }))).join(", ") + ")" : "") +
+					". Freezes come back on " + esc(fmt(next, { day: "numeric", month: "long" })) + ".</div>";
+			}
 			const sync = d.sync || {};
 			const syncLine = sync.running
 				? '<p class="text-xs streak-muted">Reading your Azure DevOps history…</p>'
@@ -160,6 +180,7 @@
 				(d.notice ? '<div class="streak-notice" dir="rtl">' + esc(d.notice.text) + " ❄+" + esc(d.notice.bonus) + "</div>" : "") +
 				'<div><div class="text-xs font-semibold streak-muted mb-1">Today</div>' + checklist + "</div>" +
 				'<div><div class="streak-days">' + strip + '</div><div class="streak-axis"><span>two weeks ago</span><span>today</span></div></div>' +
+				endedLine +
 				syncLine +
 				'<details class="streak-how"><summary>How it works</summary><p class="mt-1">' +
 					"A workday (Sunday to Thursday) counts when you do any one of the four things above. " +

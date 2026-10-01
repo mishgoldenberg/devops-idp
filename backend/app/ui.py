@@ -120,12 +120,16 @@ def _pick_greeting(seed: str) -> Tuple[str, str]:
     return _GREETINGS[index]
 
 
-def _stamp_visit(user: Dict[str, Any], section: str) -> None:
+def _stamp_visit(user: Dict[str, Any], section: str, request: Optional[Request] = None) -> None:
     """Clear the sidebar's "something changed" dot for a page by opening it.
 
     Stamped here, when the PAGE is served, rather than by a script on it: the dot
-    means "you have not been here since", and being here is exactly this request.
+    means "you have not been here since", and being here is exactly this request --
+    unless the browser fetched it ahead of a click that may never come (a hover
+    prefetch, banner.html), which says so in Sec-Purpose.
     """
+    if request is not None and "prefetch" in (request.headers.get("sec-purpose") or "").lower():
+        return
     _mark_section_seen(str(user.get("email") or ""), section)
 
 
@@ -546,7 +550,7 @@ def ui_support_page(request: Request):
     except HTTPException:
         return RedirectResponse(url="/ui/auth", status_code=303)
 
-    _stamp_visit(user, "support")
+    _stamp_visit(user, "support", request)
     templates = _get_templates(request)
     return templates.TemplateResponse(
         "support.html",
@@ -625,7 +629,7 @@ def ui_suggestions_page(request: Request):
     except HTTPException:
         return RedirectResponse(url="/ui/auth", status_code=303)
 
-    _stamp_visit(user, "suggestions")
+    _stamp_visit(user, "suggestions", request)
     templates = _get_templates(request)
     return templates.TemplateResponse(
         "suggestions.html",
@@ -699,7 +703,7 @@ def ui_my_requests_page(request: Request):
     # Approvals page so we don't drift from the backend authorization.
     is_admin = has_effective_admin_access_live(AuthUser(payload))
 
-    _stamp_visit(user, "my-requests")
+    _stamp_visit(user, "my-requests", request)
     templates = _get_templates(request)
     return templates.TemplateResponse(
         "my-requests.html",
@@ -815,6 +819,61 @@ def ui_users_page(request: Request):
             "user": user,
             "current_page": "users",
             "now": datetime.utcnow().isoformat() + "Z",
+        },
+    )
+
+
+@ui_router.get("/ui/devbot-monitor", response_class=HTMLResponse)
+def ui_devbot_monitor_page(request: Request):
+    """Admin-only: how DevBot is used, how questions end, and what people said about it."""
+    token = request.cookies.get("auth_token")
+    if not token:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+    try:
+        user = _get_ui_user(token)
+        payload = decode_access_token(token)
+    except HTTPException:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+    if not has_effective_admin_access_live(AuthUser(payload)):
+        return RedirectResponse(url="/ui/", status_code=303)
+
+    templates = _get_templates(request)
+    return templates.TemplateResponse(
+        "devbot-monitor.html",
+        {
+            "request": request,
+            "user": user,
+            "current_page": "devbot-monitor",
+            "now": datetime.utcnow().isoformat() + "Z",
+        },
+    )
+
+
+@ui_router.get("/ui/adminbot", response_class=HTMLResponse)
+def ui_adminbot_page(request: Request):
+    """Admin-only: AdminBot, DevBot's page over the Hub's own records (api/adminbot.py)."""
+    token = request.cookies.get("auth_token")
+    if not token:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+    try:
+        user = _get_ui_user(token)
+        payload = decode_access_token(token)
+    except HTTPException:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+    if not has_effective_admin_access_live(AuthUser(payload)):
+        return RedirectResponse(url="/ui/", status_code=303)
+
+    templates = _get_templates(request)
+    return templates.TemplateResponse(
+        "adminbot.html",
+        {
+            "request": request,
+            "user": user,
+            "current_page": "adminbot",
+            "now": datetime.utcnow().isoformat() + "Z",
+            "devbot_enabled": devbot_config.enabled(),
+            # The DevBot page, as AdminBot (devbot-container.html reads it).
+            "bot": "admin",
         },
     )
 

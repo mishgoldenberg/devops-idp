@@ -57,7 +57,61 @@ def test_key_problems_are_not_model_problems():
 def test_limits_are_read_from_headers():
     headers = {"x-ratelimit-limit-requests": "20", "x-ratelimit-remaining-requests": "17",
                "x-ratelimit-limit-tokens": "40000", "x-ratelimit-remaining-tokens": "not-a-number"}
-    assert llm.read_limits(headers) == {"rpm": 20, "rpm_left": 17, "tpm": 40000}
+    assert llm.read_limits(headers) == {"rpm": 20, "rpm_left": 17, "rpm_scope": "key", "tpm": 40000, "tpm_scope": "key"}
+
+
+def test_scoped_limit_headers_report_the_tightest():
+    # LiteLLM names each header after the scope that set it once several apply.
+    headers = {"x-ratelimit-team-limit-requests": "6", "x-ratelimit-team-remaining-requests": "5",
+               "X-RateLimit-Model_Per_Key-Limit-Requests": "4", "x-ratelimit-model_per_key-remaining-requests": "2",
+               "x-ratelimit-api_key-limit-tokens": "12000", "x-ratelimit-api_key-remaining-tokens": "9000",
+               "x-litellm-key-rpm-limit": "None", "x-ratelimit-reset-requests": "30s"}
+    assert llm.read_limits(headers) == {"rpm": 4, "rpm_left": 2, "rpm_scope": "model_per_key",
+                                        "tpm": 12000, "tpm_left": 9000, "tpm_scope": "api_key"}
+    assert llm.read_limits({"x-litellm-key-tpm-limit": "30000"}) == {"tpm": 30000, "tpm_scope": "key"}
+
+
+_REAL_CLIENT = llm.httpx.Client
+
+
+def _gateway(monkeypatch, routes):
+    """llm's own httpx.Client, answering from a dict of path -> JSON (404 otherwise)."""
+    import httpx
+
+    def handler(request):
+        path = request.url.path + ("?" + request.url.query.decode() if request.url.query else "")
+        body = routes.get(path)
+        return httpx.Response(200, json=body) if body is not None else httpx.Response(404, json={"detail": "Not Found"})
+
+    monkeypatch.setattr(llm.httpx, "Client", lambda *a, **kw: _REAL_CLIENT(transport=httpx.MockTransport(handler),
+                                                                          headers=kw.get("headers")))
+    monkeypatch.setenv("DEVBOT_LLM_BASE_URL", "https://gw.example/litellm/v1")
+
+
+def test_key_info_falls_back_to_the_team_and_keeps_per_model_limits(monkeypatch):
+    _gateway(monkeypatch, {
+        "/litellm/key/info": {"info": {"rpm_limit": None, "tpm_limit": None, "team_id": "t 1", "spend": 1.5,
+                                       "metadata": {"model_rpm_limit": {"Qwen/Qwen3.6-27B-FP8": 4}}}},
+        "/litellm/team/info?team_id=t%201": {"team_info": {"rpm_limit": 6, "tpm_limit": 12000}},
+    })
+    info = llm.key_info("sk")
+    assert info["described"] and info["source"] == "team" and (info["rpm"], info["tpm"]) == (6, 12000)
+    assert llm.limits_for(info, "Qwen/Qwen3.6-27B-FP8") == {"rpm": 4, "tpm": 12000}
+    assert llm.limits_for(info, "other") == {"rpm": 6, "tpm": 12000}
+
+
+def test_key_info_says_described_when_the_key_has_no_limits(monkeypatch):
+    _gateway(monkeypatch, {"/key/info": {"info": {"rpm_limit": None, "tpm_limit": None, "key_alias": "mine"}}})
+    assert llm.key_info("sk") == {"described": True, "name": "mine"}
+    _gateway(monkeypatch, {})
+    assert llm.key_info("sk") == {}
+
+
+def test_a_context_refusal_states_the_real_window():
+    body = '{"error":{"message":"This model' + "'" + 's maximum context length is 32768 tokens. However, you requested 40100 tokens"}}'
+    exc = llm.classify(400, body, {}, "m")
+    assert exc.kind == "context" and exc.context_tokens == 32768
+    assert llm.classify(400, '{"error":{"message":"prompt is too long"}}', {}).context_tokens is None
 
 
 def test_embedding_models_are_not_chat_models():
@@ -329,3 +383,68 @@ def test_a_failed_question_is_not_replayed():
         {"role": "user", "content": "q1", "meta": {}},
     ]
     assert [m["content"] for m in to_model_messages(rows)] == ["q1"]
+
+
+def test_a_comments_follow_up_reaches_the_comments_tool_past_the_cap():
+    # Azure DevOps alone has more tools than can be offered; the one the question is
+    # about must not be the one the cap cuts.
+    for question in ("what are the comments?", "מה ההערות על ה-PR?"):
+        names = _names(tools.specs_for(question, ALL, recent=["azure", "confluence"]))
+        assert "ado_pull_request_comments" in names, question
+        assert len(names) <= tool_base.MAX_OFFERED
+
+
+def test_pull_request_threads_leave_out_what_azure_devops_wrote_itself():
+    import httpx
+    from devbot.tools import ado
+
+    body = {"value": [
+        {"id": 1, "status": "active", "threadContext": {"filePath": "/a.py", "rightFileStart": {"line": 7}},
+         "comments": [{"author": {"displayName": "Ruth"}, "content": "<p>Add a <b>test</b></p>", "commentType": "text"},
+                      {"author": {"displayName": "Dev"}, "content": "gone", "commentType": "text", "isDeleted": True}]},
+        {"id": 2, "comments": [{"author": {"displayName": "Ruth"}, "content": "voted -5", "commentType": "system"}]},
+        {"id": 3, "isDeleted": True, "comments": [{"content": "x", "commentType": 1}]},
+    ]}
+    client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json=body)))
+    threads = ado.pr_threads(client, "https://ado.example/c/p/_apis/git/repositories/r/pullrequests/5")
+    assert threads == [{"id": 1, "status": "active", "file": "/a.py:7",
+                        "comments": [{"author": "Ruth", "date": "", "text": "Add a test"}]}]
+
+
+def test_a_system_named_outright_keeps_its_tools_past_the_cap():
+    # "build" pulls in every Azure DevOps tool; the Confluence question must keep conf_search.
+    names = _names(tools.specs_for("Search Confluence: our build agent does not trust the certificate", ALL))
+    assert "conf_search" in names
+    assert len(names) <= tool_base.MAX_OFFERED
+
+
+def test_a_question_about_a_past_fix_gets_the_past_fixes_tool_without_naming_a_system():
+    for question in ("Has this happened before? the vpn drops every hour", "האם זה קרה בעבר?"):
+        assert "find_past_fixes" in _names(tools.specs_for(question, ALL)), question
+
+
+def test_adminbots_tools_are_never_offered_to_devbot_and_refused_outside_it():
+    everything = {**ALL, "hub": True}
+    for question in ("how many users are there?", "approve the request", "show me the logs"):
+        assert not [n for n in _names(tools.specs_for(question, everything)) if n.startswith(("hub_", "propose_user", "propose_request"))]
+    hub_names = _names(tools.hub_specs())
+    assert "hub_user" in hub_names and all(tool_base.REGISTRY[n].system == "hub" for n in hub_names)
+    person = {"id": "u1", "email": "a@b"}
+    refused = tools.run(tools.ToolContext(person, everything), "hub_health", {})
+    assert not refused["ok"] and "no tool called" in refused["error"]
+    # ...and DevBot's own tools are not AdminBot's to call.
+    refused = tools.run(tools.ToolContext(person, everything, admin=True), "conf_search", {"query": "x"})
+    assert not refused["ok"] and "no tool called" in refused["error"]
+
+
+def test_an_adminbot_tool_rechecks_that_the_person_is_an_admin(monkeypatch):
+    import security
+
+    monkeypatch.setattr(security, "has_effective_admin_access_live", lambda user: False)
+    result = tools.run(tools.ToolContext({"id": "u1"}, {"hub": True}, admin=True), "hub_health", {})
+    assert not result["ok"] and "admins" in result["error"]
+
+
+def test_a_question_about_tickets_reaches_the_persons_own_tickets():
+    for question in ("what is the status of my open support tickets?", "מה המצב של הקריאה שלי?"):
+        assert "support_my_tickets" in _names(tools.specs_for(question, {**ALL, "servicenow": True})), question

@@ -23,6 +23,8 @@ rows where user_email = the caller's email):
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from collections import OrderedDict
 from typing import Any, Dict, Optional
 
@@ -50,8 +52,17 @@ def _caller_email(user: AuthUser) -> str:
     return email
 
 
+_last_cleanup = 0.0
+
+
 def _cleanup_old_notifications() -> None:
-    """Best-effort retention: drop notifications older than _RETENTION_DAYS."""
+    """Best-effort retention: drop notifications older than _RETENTION_DAYS. At most
+    every ten minutes per process: it ran a DELETE on every page anybody opened."""
+    global _last_cleanup
+    now = time.monotonic()
+    if now - _last_cleanup < 600:
+        return
+    _last_cleanup = now
     try:
         execute(
             "DELETE FROM notifications "
@@ -284,6 +295,10 @@ def mark_section_seen(email: str, section: str) -> None:
         log.warning("could not stamp %s visit for %s: %s", section, e, exc)
 
 
+_scanning: set = set()
+_scan_lock = threading.Lock()
+
+
 def _observe_ticket_updates(current_user: AuthUser, email: str) -> None:
     """Run the ticket check that raises "has a new update" notifications.
 
@@ -292,17 +307,31 @@ def _observe_ticket_updates(current_user: AuthUser, email: str) -> None:
     every five minutes per person: this is called from every page, and the check
     reads ServiceNow.
     """
-    try:
-        from integrations_cache import cached_external
-        from api.dashboards import get_snow_items
+    # In the background: when the five minutes were up, the page waited for ServiceNow
+    # before its sidebar dots could be drawn. A ticket answered a moment ago gets its dot
+    # on the next page instead.
+    with _scan_lock:
+        if email in _scanning:
+            return
+        _scanning.add(email)
 
-        cached_external(
-            "nav", email, "ticket-scan",
-            lambda: {"checked": bool(get_snow_items(current_user=current_user))},
-            ttl=300,
-        )
-    except Exception as exc:
-        log.info("sections: ticket check skipped: %s: %s", type(exc).__name__, exc)
+    def scan() -> None:
+        try:
+            from integrations_cache import cached_external
+            from api.dashboards import get_snow_items
+
+            cached_external(
+                "nav", email, "ticket-scan",
+                lambda: {"checked": bool(get_snow_items(current_user=current_user))},
+                ttl=300,
+            )
+        except Exception as exc:
+            log.info("sections: ticket check skipped: %s: %s", type(exc).__name__, exc)
+        finally:
+            with _scan_lock:
+                _scanning.discard(email)
+
+    threading.Thread(target=scan, name="ticket-scan", daemon=True).start()
 
 
 @router.get("/sections")
@@ -382,6 +411,16 @@ def mark_read(
         except Exception as inner:
             log.debug("mark_read failed: %s", inner)
     return {"success": True}
+
+
+@router.post("/sections/{section}/seen", status_code=204)
+def section_seen(section: str, current_user: AuthUser = Depends(get_current_user)) -> None:
+    """A dotted page was opened from a copy the browser fetched ahead of the click
+    (banner.html's prefetch): the server never saw that visit, so the page says so."""
+    if section not in SECTIONS:
+        raise HTTPException(status_code=404, detail="No such section.")
+    mark_section_seen(str(current_user.get("email") or ""), section)
+    return None
 
 
 @router.post("/read-all")
