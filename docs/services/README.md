@@ -11,7 +11,7 @@ environment variables it reads, and how it fails.
 | Module            | Prefix              | Doc                                    |
 | ----------------- | ------------------- | -------------------------------------- |
 | `auth`            | `/api/auth`         | [auth.md](./auth.md)                   |
-| `dashboards`      | `/api/dashboards`   | [dashboards.md](./dashboards.md)       |
+| `dashboards`      | `/api/dashboard`    | [dashboards.md](./dashboards.md)       |
 | `approvals`       | `/api/approvals`    | [approvals.md](./approvals.md)         |
 | `azure_devops`    | `/api/azure-devops` | [azure_devops.md](./azure_devops.md)   |
 | `servicenow`      | `/api/support`      | [servicenow.md](./servicenow.md)       |
@@ -25,7 +25,6 @@ environment variables it reads, and how it fails.
 | `safe_mode`       | `/api/safe-mode`    | [safe_mode.md](./safe_mode.md)         |
 | `admin`           | `/api/admin`        | [admin.md](./admin.md)                 |
 | `health`          | `/api/health`       | [health.md](./health.md)               |
-| `metrics`         | `/api/metrics`      | [metrics.md](./metrics.md)             |
 | `pins`            | `/api`              | [pins.md](./pins.md)                   |
 | `announcements`   | `/api/announcements`| the billboard on every dashboard; admin CRUD + per-user, per-version dismissals |
 | `inbox`           | `/api/inbox`        | "Needs you" — one list across five systems, with per-item dismissals |
@@ -35,8 +34,8 @@ environment variables it reads, and how it fails.
 | `activity`        | `/api/activity`     | recent activity feed |
 | `suggestions`     | `/api/suggestions`  | the suggestion board, votes and comments |
 | `search`          | `/api/search`       | portal-wide search, fans out across the integrations |
-| `system_urls`     | `/api` (no prefix)  | the configured external system links |
-| `user_prefs`      | `/api/me`           | theme, density, display name, avatar |
+| `system_urls`     | (none)              | the configured external system links, read by every page's Open button |
+| `user_prefs`      | `/api/me`           | theme, density, avatar |
 
 ## Cross-cutting modules
 
@@ -47,4 +46,5 @@ environment variables it reads, and how it fails.
 | `sso_config.py`       | OIDC config, secret encryption, and the JWT_SECRET self-check |
 | `login_guard.py`      | per-account and per-address lockout for local sign-in |
 | `resilient_http.py`   | [resilient_http.md](./resilient_http.md)    |
+| `common.py`           | the small helpers more than one module needs: timestamps, the admin guard, link and picture checks |
 | `integrations_cache.py` | [integrations_cache.md](./integrations_cache.md) |

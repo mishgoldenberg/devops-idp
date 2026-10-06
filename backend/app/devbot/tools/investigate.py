@@ -46,6 +46,7 @@ import httpx
 
 from . import ado, artifactory, confluence, proposals, sonar
 from .base import NotConnected, Tool, ToolContext, ToolFailure, register
+from common import failure_text
 
 log = logging.getLogger(__name__)
 
@@ -324,7 +325,8 @@ def confluence_help(ctx: ToolContext, terms: List[str], read_best: bool = True, 
             worded = confluence.search(ctx, term, limit=4)
         except (ToolFailure, NotConnected, httpx.HTTPError) as exc:
             if not meant:
-                return {"searched": False, "why": f"The Confluence search failed: {exc}"}
+                return {"searched": False, "why": str(exc) if isinstance(exc, (ToolFailure, NotConnected))
+                        else failure_text("Confluence", exc)}
             break
         if worded:
             key = term.split()[0].lower()
@@ -443,7 +445,7 @@ def artifact_check(ctx: ToolContext, wanted: Dict[str, str]) -> Optional[Dict[st
                                         '.include("repo","path","name","modified").sort({"$desc":["modified"]}).limit(15)')
             found = [f"{r.get('repo')}/{(r.get('path') or '').strip('.').strip('/')}/{r.get('name')}".replace("//", "/") for r in rows]
     except (ToolFailure, httpx.HTTPError) as exc:
-        return {"checked": False, "why": f"The Artifactory search failed: {exc}"}
+        return {"checked": False, "why": str(exc) if isinstance(exc, ToolFailure) else failure_text("Artifactory", exc)}
     version = wanted.get("version") or ""
     has_version = bool(version) and any(version in f for f in found)
     return {"checked": True, "looked_for": wanted, "found": found[:8],

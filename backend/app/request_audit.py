@@ -1,32 +1,13 @@
 """
 Automatic logging: HTTP calls, and the application's own log records.
 
-The Logs page used to show about ten kinds of event, because those were the ten
-places somebody had remembered to call ``audit.log()``. Everything else the portal
-did — every token saved, every widget preference, every failed call to Artifactory,
-every 500 — happened silently. The page was a list of the events we had thought to
-name, which is not what a log is for: you go to a log to find out about the thing
-you did NOT anticipate.
-
-Two mechanisms here, and between them they catch the rest:
-
   1. ``AuditMiddleware`` records every state-changing HTTP request.
   2. ``DatabaseLogHandler`` mirrors WARNING-and-above from the application's Python
-     loggers into the same table.
+     loggers into the same table, so an integration's failure lands one row away from
+     the user action that triggered it, readable from a browser.
 
-(2) is the one that changes the character of the page. The integrations already log
-their failures — "Artifactory AQL failed", "SNow producer returned 403" — but those
-went to the pod's stdout, where nobody could reach them without a kubectl session.
-Now they land in the same stream as the user action that triggered them, one row
-apart, and the question "why did that fail for them and not for me" is answerable
-from a browser.
-
-WHAT IS DELIBERATELY NOT LOGGED
--------------------------------
-GET requests. Every widget on the dashboard polls; with ten widgets and a room full
-of users that is millions of rows a week saying nothing happened, and the writes we
-DO care about would be buried under them. Reads are not events. Failed reads are —
-a GET that 4xx/5xx's is recorded, because that is not a read, it is a problem.
+GET requests are not logged: every widget polls, and reads are not events. A GET that
+fails (4xx or 5xx) is.
 """
 
 from __future__ import annotations
@@ -140,6 +121,10 @@ FRIENDLY: Dict[tuple, str] = {
     ("DELETE", "/ui/azure-devops/pat"): "Disconnected Azure DevOps",
     ("POST", "/ui/profile"): "Updated their profile",
     ("POST", "/api/azure-devops/actions/pr-vote"): "Voted on a pull request",
+    ("POST", "/api/gitlab/actions/mr-approve"): "Approved (or un-approved) a GitLab merge request",
+    ("POST", "/api/gitlab/actions/mr-comment"): "Commented on a GitLab merge request",
+    ("POST", "/api/gitlab/actions/pipeline-retry"): "Retried a GitLab pipeline",
+    ("POST", "/api/gitlab/actions/pipeline-run"): "Ran a GitLab pipeline",
     ("POST", "/api/azure-devops/actions/pr-comment"): "Commented on a pull request",
     ("POST", "/api/azure-devops/actions/pipeline-rerun"): "Ran a pipeline again",
     ("POST", "/api/azure-devops/actions/work-item-state"): "Moved a work item",

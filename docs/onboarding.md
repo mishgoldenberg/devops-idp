@@ -127,48 +127,23 @@ This is the canonical "I'm new, make me productive" task. We'll add a
 widget that shows the number of tickets the user opened in the last
 7 days, for example.
 
-1. **Pick a key**: `snow_my_tickets_7d`.
-2. **Register in DB**: add the widget to `widget_types` via the SQL seed
-   or an `ensure_*` helper. Include the minimum role level (e.g. any
-   authenticated user).
-3. **Create the partial endpoint** in `backend/app/ui.py`:
+1. Add it to `HOME_WIDGETS` in `backend/app/widget_registry.py`: a key, the id of
+   its element, the label people see in the Customize drawer, and its `system`.
+   That one entry is what the drawer, the admin visibility page, Connections and
+   the widget-usage counts all read.
+2. Add a route that renders its partial in `backend/app/ui.py`, under
+   `/ui/components/…`.
+3. Add the partial under `frontend/templates/partials/components/`, built like an
+   existing widget (a `section-card`, its own loading, empty and error states).
+4. Add its shell to `partials/components/dashboard-container.html`: an element with
+   the registry's id, `data-widget-key`, and `hx-get` pointing at the route, with
+   `hx-trigger="intersect once, refresh, click from:#refresh-btn"`.
 
-   ```python
-   @ui_router.get("/ui/components/support/my-tickets-7d")
-   def ui_widget_snow_recent(request: Request, current_user=Depends(get_current_user)):
-       templates = _get_templates(request)
-       # Call the existing backend instead of ServiceNow directly.
-       data = ...
-       return templates.TemplateResponse(
-           "partials/components/widgets/snow-my-tickets-7d.html",
-           {"request": request, "data": data},
-       )
-   ```
-
-4. **Create the partial template** under
-   `frontend/templates/partials/components/widgets/snow-my-tickets-7d.html`.
-   Match the shape of an existing widget partial — `section-card` with
-   title, body, and "View all" link.
-5. **Add the placeholder** to `dashboard-container.html`:
-
-   ```html
-   <div id="widget-snow-my-tickets-7d" class="section-card">
-     {% include "partials/components/widget-skeleton.html" %}
-   </div>
-   <script>
-     htmx.ajax("GET", "/ui/components/support/my-tickets-7d", {
-       target: "#widget-snow-my-tickets-7d",
-       swap: "innerHTML",
-     });
-   </script>
-   ```
-
-6. **Emit observability**: your partial should include the same
-   `fetch("/api/observability/widget", {method:"POST", …,
-   body:{widget_key:"snow_my_tickets_7d"}})` that other widgets do.
-
-7. Rebuild Tailwind if you used new classes:
+5. Rebuild Tailwind if you used new classes, and commit `output.css`:
    `cd frontend && npm run build:css`.
+
+Removing a widget is the reverse; `scripts/check_code_hygiene.py` will name anything
+left behind in Python.
 
 ---
 
@@ -217,8 +192,8 @@ This is the "I want to be dangerous" task.
 - **End-to-end**: run `docker compose up -d`, then manually walk the
   path you changed (dashboard → submit request → approve → observe
   status).
-- **CI**: `backend-workflow.yml` and `frontend-workflow.yml` run on PR.
-  `template-workflow.yml` actually deploys from `main`/release tags.
+- **CI**: `azure-pipelines.yml` runs the guards, builds both images and deploys;
+  `.github/workflows/ci.yml` runs the same guards on GitHub and deploys nothing.
 
 ---
 

@@ -257,9 +257,9 @@ def run(ctx: ToolContext, name: str, raw_args: Any) -> Dict[str, Any]:
     except httpx.HTTPError as exc:
         log.warning("devbot tool %s failed: %s: %s", name, type(exc).__name__, exc)
         result = {"ok": False, "error": explain_integration_failure(label, exc)}
-    except Exception as exc:  # a bug in a tool must not end the question
+    except Exception:  # a bug in a tool must not end the question
         log.exception("devbot tool %s crashed", name)
-        result = {"ok": False, "error": f"The {label} lookup failed unexpectedly ({type(exc).__name__})."}
+        result = {"ok": False, "error": f"The {label} lookup failed unexpectedly; the details are in the Hub's log."}
     result["ms"] = int((time.monotonic() - started) * 1000)
     if not result.get("summary"):
         result["summary"] = result.get("error", "Done.") if not result.get("ok") else "Done."

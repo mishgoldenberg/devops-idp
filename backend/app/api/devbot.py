@@ -29,10 +29,10 @@ from pydantic import BaseModel, Field
 from security import AuthUser, get_current_user
 
 from devbot import config, knowledge, llm, models, monitor, orchestrator, store
+from common import audited_error
 
 log = logging.getLogger(__name__)
 router = APIRouter()
-
 
 
 class ChatBody(BaseModel):
@@ -56,26 +56,18 @@ class OutcomeBody(BaseModel):
     url: str = Field("", max_length=2000)
 
 
-def _uid(user: AuthUser) -> str:
+def require_user_id(user: AuthUser) -> str:
+    """The signed-in person's id, or 401 (also used by api/adminbot.py)."""
     uid = orchestrator.user_id(user)
     if not uid:
         raise HTTPException(status_code=401, detail="User id missing")
     return uid
 
 
-def _fail(request: Request, status: int, detail: str) -> HTTPException:
-    # The Logs page shows why, not just the status.
-    try:
-        request.state.audit_detail = detail
-    except Exception:
-        pass
-    return HTTPException(status_code=status, detail=detail)
-
-
 @router.get("/status")
 def status(current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]:
     """Everything the page needs to decide what to show before the first question."""
-    uid = _uid(current_user)
+    uid = require_user_id(current_user)
     out: Dict[str, Any] = {
         "enabled": config.enabled(),
         "key_connected": False,
@@ -116,13 +108,13 @@ def usage(current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]:
     what the gateway says about the key itself (its limits, budget and spend). The two
     are different numbers on purpose: the Hub counts what DevBot asked; the gateway
     counts everything the key was used for, anywhere."""
-    uid = _uid(current_user)
+    uid = require_user_id(current_user)
     key = orchestrator.model_key(uid)
     try:
         summary = store.usage_summary(uid)
     except Exception as exc:
         log.warning("devbot: usage could not be read: %s", exc)
-        raise HTTPException(status_code=503, detail=f"Your usage could not be read from the database ({type(exc).__name__}).")
+        raise HTTPException(status_code=503, detail="Your usage could not be read right now. Try again in a minute.")
     return {"success": True, "data": {
         **summary,
         "limits": orchestrator.last_limits(uid),
@@ -134,14 +126,14 @@ def usage(current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]:
 @router.post("/models/check")
 async def check_model(body: CheckBody, request: Request, current_user: AuthUser = Depends(get_current_user)):
     """Find out whether a model can read live data. Costs the person one request."""
-    uid = _uid(current_user)
+    uid = require_user_id(current_user)
     key = orchestrator.model_key(uid)
     if not key:
-        raise _fail(request, 428, "Connect your AI model key first.")
+        raise audited_error(request, 428, "Connect your AI model key first.")
     try:
         result = await llm.probe_tools(key, body.model)
     except llm.LLMError as exc:
-        raise _fail(request, 429 if exc.kind == "limit" else 502, exc.message)
+        raise audited_error(request, 429 if exc.kind == "limit" else 502, exc.message)
     models.remember(body.model, result.get("tools"), result.get("detail") or "")
     return {"success": True, "data": {"model": body.model, **result}}
 
@@ -159,30 +151,30 @@ def _visible(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 @router.get("/conversations")
 def conversations(current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]:
-    return {"success": True, "data": store.list_conversations(_uid(current_user))}
+    return {"success": True, "data": store.list_conversations(require_user_id(current_user))}
 
 
 @router.get("/conversations/{conversation_id}")
 def conversation(conversation_id: str, request: Request, current_user: AuthUser = Depends(get_current_user)):
-    uid = _uid(current_user)
+    uid = require_user_id(current_user)
     row = store.get_conversation(uid, conversation_id)
     if not row:
-        raise _fail(request, 404, "That conversation does not exist, or it is not yours.")
+        raise audited_error(request, 404, "That conversation does not exist, or it is not yours.")
     return {"success": True, "data": {**row, "messages": _visible(store.messages(uid, conversation_id))}}
 
 
 @router.patch("/conversations/{conversation_id}")
 def rename(conversation_id: str, body: RenameBody, request: Request,
            current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]:
-    if not store.rename_conversation(_uid(current_user), conversation_id, body.title.strip()):
-        raise _fail(request, 404, "That conversation does not exist, or it is not yours.")
+    if not store.rename_conversation(require_user_id(current_user), conversation_id, body.title.strip()):
+        raise audited_error(request, 404, "That conversation does not exist, or it is not yours.")
     return {"success": True}
 
 
 @router.delete("/conversations/{conversation_id}")
 def delete(conversation_id: str, request: Request, current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]:
-    if not store.delete_conversation(_uid(current_user), conversation_id):
-        raise _fail(request, 404, "That conversation does not exist, or it is not yours.")
+    if not store.delete_conversation(require_user_id(current_user), conversation_id):
+        raise audited_error(request, 404, "That conversation does not exist, or it is not yours.")
     return {"success": True}
 
 
@@ -193,10 +185,14 @@ def action_outcome(conversation_id: str, action_id: str, body: OutcomeBody, requ
     declined. Recorded on the answer that proposed it, so the page shows it and the model
     reads it with the next question. The change itself was made by the dialog, as the
     person; this only writes down what the dialog reported."""
-    patch = {"status": body.status, "result": body.result.strip(), "url": body.url.strip()}
-    updated = store.update_action(_uid(current_user), conversation_id, body.message_id, action_id[:32], patch)
+    # The url is shown as a link on the card: only an address a browser may follow.
+    url = body.url.strip()
+    if url and not url.lower().startswith(("https://", "http://", "/")) or url.startswith("//"):
+        url = ""
+    patch = {"status": body.status, "result": body.result.strip(), "url": url}
+    updated = store.update_action(require_user_id(current_user), conversation_id, body.message_id, action_id[:32], patch)
     if not updated:
-        raise _fail(request, 404, "That proposal does not exist in this conversation.")
+        raise audited_error(request, 404, "That proposal does not exist in this conversation.")
     return {"success": True, "data": updated}
 
 
@@ -211,11 +207,11 @@ def feedback(conversation_id: str, message_id: int, body: FeedbackBody, request:
     """A thumbs up or down on one answer, with an optional note. Sent with the question
     and the answer it is about, which is what makes it useful to whoever reads it: the
     page says so before the person sends it. An empty rating takes it back."""
-    uid = _uid(current_user)
+    uid = require_user_id(current_user)
     rows = store.messages(uid, conversation_id)
     index = next((i for i, m in enumerate(rows) if int(m["id"]) == message_id and m["role"] == "assistant"), None)
     if index is None:
-        raise _fail(request, 404, "That answer does not exist in this conversation.")
+        raise audited_error(request, 404, "That answer does not exist in this conversation.")
     answer = rows[index]
     question = next((m["content"] for m in reversed(rows[:index]) if m["role"] == "user"), "")
     try:
@@ -225,16 +221,16 @@ def feedback(conversation_id: str, message_id: int, body: FeedbackBody, request:
                           {"feedback": {"rating": body.rating, "note": body.note.strip()} if body.rating else None})
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception:
         log.warning("devbot: feedback was not saved", exc_info=True)
-        raise _fail(request, 503, f"Your feedback was not saved: {type(exc).__name__}")
+        raise audited_error(request, 503, "Your feedback was not saved. Try again in a minute.")
     return {"success": True, "data": {"rating": body.rating}}
 
 
 @router.post("/chat")
 async def chat(body: ChatBody, current_user: AuthUser = Depends(get_current_user)):
     """Ask a question. The answer streams back as server-sent events (see orchestrator)."""
-    _uid(current_user)
+    require_user_id(current_user)
     return StreamingResponse(
         orchestrator.stream_turn(current_user, body.message, body.conversation_id.strip(), body.model.strip()),
         media_type="text/event-stream",

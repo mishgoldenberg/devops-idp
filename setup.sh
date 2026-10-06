@@ -143,37 +143,18 @@ fi
 
 echo ""
 
-# Set DATABASE_URL for migration scripts
-# Read .env file to get database credentials with defaults
-DB_USER="devops"
-DB_PASS="Devops4ever"
+# psql runs inside the postgres container over its local socket, so it needs the
+# user and database name only -- no password. Defaults match docker-compose.yml.
+DB_USER="devops_user"
 DB_NAME="devops_control_center"
-DB_HOST="localhost"
-DB_PORT="5432"
-
 if [ -f ".env" ]; then
-    # Extract values from .env file
-    while IFS= read -r line; do
-        # Skip comments and empty lines
-        case "$line" in
-            \#*|'') continue ;;
-        esac
-        
-        # Extract key and value
-        key=$(echo "$line" | cut -d'=' -f1)
-        value=$(echo "$line" | cut -d'=' -f2-)
-        
+    while IFS="=" read -r key value; do
         case "$key" in
             POSTGRES_USER) DB_USER="$value" ;;
-            POSTGRES_PASSWORD) DB_PASS="$value" ;;
             POSTGRES_DB) DB_NAME="$value" ;;
-            POSTGRES_HOST) DB_HOST="$value" ;;
-            POSTGRES_PORT) DB_PORT="$value" ;;
         esac
-    done < <(grep -E "^POSTGRES_" .env 2>/dev/null || true)
+    done < <(grep -E "^POSTGRES_(USER|DB)=" .env 2>/dev/null || true)
 fi
-
-export DATABASE_URL="postgresql://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${DB_NAME}"
 
 # Run migrations
 echo -e "${YELLOW}📊 Running database migrations...${NC}"

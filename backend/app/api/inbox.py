@@ -33,7 +33,10 @@ from typing import Any, Callable, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
+import gitlab_client
 from security import AuthUser, get_current_user, has_effective_admin_access_live
+
+from . import gitlab as gl_api
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -81,6 +84,37 @@ def _pull_requests_awaiting_me(user: AuthUser) -> List[Dict[str, Any]]:
                 "title": pr.get("title") or "",
                 "my_vote": pr.get("my_vote") or 0,
             } if pr.get("repository_id") else None,
+        })
+    return items
+
+
+def _merge_requests_awaiting_me(user: AuthUser) -> List[Dict[str, Any]]:
+    """GitLab merge requests where I am a reviewer and have not approved. Nothing --
+    not "unavailable" -- when GitLab is not set up here or not connected: a source the
+    person never connected is not a source that failed."""
+    if not gitlab_client.configured() or not gitlab_client.user_token(user):
+        return []
+    result = gl_api.filter_merge_requests(gl_api.merge_requests_for(user), "", "", "review")
+    items: List[Dict[str, Any]] = []
+    for mr in result.get("data") or []:
+        items.append({
+            "kind": "merge_request",
+            "system": "GitLab",
+            "title": mr.get("title") or "Merge request",
+            "subtitle": f"{mr.get('project_path') or ''} · by {mr.get('created_by') or 'someone'}",
+            "url": mr.get("url"),
+            "age": mr.get("created_date"),
+            "why": "Waiting for your review",
+            "key": f"mr:{mr.get('project_id')}:{mr.get('iid')}",
+            # The labelled button beside ✓ opens the approve dialog -- never ✓ itself.
+            "review": {
+                "kind": "gl-approve",
+                "label": "Approve…",
+                "hint": "Approve it in GitLab, after a check and your confirmation",
+                "target": {"project_id": mr.get("project_id"), "iid": mr.get("iid"), "id": mr.get("iid"),
+                           "title": mr.get("title") or "", "project_path": mr.get("project_path") or "",
+                           "approved": bool(mr.get("approved_by_me"))},
+            },
         })
     return items
 
@@ -152,8 +186,7 @@ def _my_requests_needing_attention(user: AuthUser) -> List[Dict[str, Any]]:
         if status == "FAILED":
             why = "Failed — needs another look"
         elif isinstance(execution, dict) and execution.get("grants_ok") is False:
-            # The case that used to be invisible: the project exists but the person it
-            # was for never got access.
+            # The project exists but the person it was for never got access.
             why = "Completed, but not every permission was granted"
         elif status == "REJECTED" and recently_decided:
             why = "Rejected"
@@ -254,6 +287,7 @@ def _work_items_awaiting_my_review(user: AuthUser) -> List[Dict[str, Any]]:
 
 _SOURCES: Dict[str, Callable[[AuthUser], List[Dict[str, Any]]]] = {
     "Pull requests": _pull_requests_awaiting_me,
+    "GitLab": _merge_requests_awaiting_me,
     "Work items": _work_items_awaiting_my_review,
     "Approvals": _approvals_awaiting_me,
     "Your requests": _my_requests_needing_attention,
@@ -284,7 +318,7 @@ def inbox(
         return cached_external("inbox", owner, "needs-you", lambda: _collect(current_user), ttl=45)
     except Exception as exc:
         # Imported here and reported, not swallowed: a lazy import that silently falls
-        # back is exactly how the external cache was dead in the cluster for months.
+        # back hides a broken deploy.
         log.warning("inbox: cache unavailable, answering uncached: %s", exc)
         return _collect(current_user)
 

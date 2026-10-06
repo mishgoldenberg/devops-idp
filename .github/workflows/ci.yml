@@ -47,5 +47,8 @@ jobs:
       - name: The changelog is present and written for users
         run: python scripts/check_changelog.py
 
+      - name: No dead or duplicated code
+        run: python scripts/check_code_hygiene.py
+
       - name: Everything compiles
         run: python -m compileall -q backend/app scripts

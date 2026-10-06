@@ -22,14 +22,16 @@ Anything that reads/writes the DB goes through here; don't open raw
 connections from API routers.
 """
 
+import logging
 import os
 import threading
 import time
 from contextlib import contextmanager
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import psycopg2
-from psycopg2 import errorcodes, pool
+import psycopg2.pool
+from psycopg2 import errorcodes
 from psycopg2.extensions import register_adapter
 from psycopg2.extras import Json, RealDictCursor
 from config import get_settings
@@ -38,6 +40,8 @@ from config import get_settings
 # function bodies, so there is no cycle — and a lazy import here would turn a
 # packaging mistake into a silently skipped migration instead of a startup error.
 from security import PLATFORM_ADMIN_LEVEL, REGULAR_USER_LEVEL
+
+log = logging.getLogger(__name__)
 
 # Globally teach psycopg2 how to serialize Python dicts into Postgres JSON /
 # JSONB columns. Without this, any `execute(sql, [some_dict])` raises
@@ -371,18 +375,8 @@ def ensure_observability_tables() -> None:
             "drop_legacy_home_widget_prefs",
             "DROP TABLE IF EXISTS home_widget_prefs",
         ),
-        # widget_usage is NOT dropped. It used to be, immediately above the
-        # CREATE TABLE IF NOT EXISTS below — which made that guard meaningless and
-        # emptied the table every time this function ran.
-        #
-        # This function runs at BACKEND STARTUP, so it fired on every pod start. With
-        # two replicas and autoscaling that is several times a day, and every one of
-        # them silently reset "Suggested for you", "Recently used" and every count on
-        # the Observability page for all users. The same statement existed in the
-        # deploy-time SQL job and has been removed there too.
-        #
-        # It is the current schema, not legacy. Replacing it one day is a migration
-        # written for that change, not a drop that runs forever.
+        # widget_usage is never dropped: this runs at every pod start, and a drop would
+        # reset every usage count. Replacing it one day is a migration.
         # Event-based widget usage: one row per widget view.
         (
             "widget_usage",
@@ -743,17 +737,12 @@ def ensure_artifactory_cleaners_table() -> None:
         )
         """
     )
-    # The pull request's own lifecycle, added after the table shipped.
-    #
-    # A cleaner does nothing until somebody merges its pull request, and it does
-    # nothing ever if they abandon it -- which is exactly what happened the first time
-    # one was reviewed. Without these columns the portal said "completed" for both
-    # outcomes, because opening the pull request was all it had ever recorded.
+    # The pull request's own lifecycle: a cleaner does nothing until its pull request is
+    # merged, and nothing ever if it is abandoned.
     #
     # pull_request_id is what Azure DevOps is asked about; status is the portal's own
     # word for it (PR_OPEN / RUNNING / ABANDONED / FAILED); pr_checked_at is when that
-    # word was last confirmed, so a stale answer can say it is stale rather than
-    # passing itself off as current.
+    # word was last confirmed, so a stale answer can say it is stale.
     for ddl in (
         "ALTER TABLE artifactory_cleaners ADD COLUMN IF NOT EXISTS pull_request_id INTEGER",
         "ALTER TABLE artifactory_cleaners ADD COLUMN IF NOT EXISTS pr_state VARCHAR(32)",
@@ -792,12 +781,10 @@ def ensure_artifactory_cleaners_table() -> None:
         "ALTER TABLE artifactory_cleaners ADD COLUMN IF NOT EXISTS first_run_id INTEGER",
         "ALTER TABLE artifactory_cleaners ADD COLUMN IF NOT EXISTS first_run_url TEXT",
         "ALTER TABLE artifactory_cleaners ADD COLUMN IF NOT EXISTS first_run_state VARCHAR(16) NOT NULL DEFAULT ''",
-        # Whether anything of this cleaner is on the cluster. DEFAULT TRUE, and the
-        # direction is the whole point: every cleaner that existed before this column
-        # did was applied by a build somebody ran by hand, so assuming FALSE would
-        # have the portal declare "nothing left on the cluster" over a live CronJob
-        # still deleting artifacts every night. New rows are written FALSE explicitly
-        # by cleaner_store.record and become TRUE when a build succeeds.
+        # Whether anything of this cleaner is on the cluster. DEFAULT TRUE: cleaners from
+        # before the column were applied by hand, and FALSE would declare a live CronJob
+        # gone. New rows are written FALSE (cleaner_store.record) and become TRUE when a
+        # build succeeds.
         "ALTER TABLE artifactory_cleaners ADD COLUMN IF NOT EXISTS cluster_applied BOOLEAN NOT NULL DEFAULT TRUE",
         "ALTER TABLE artifactory_cleaners ADD COLUMN IF NOT EXISTS cluster_state VARCHAR(16) NOT NULL DEFAULT ''",
         "ALTER TABLE artifactory_cleaners ADD COLUMN IF NOT EXISTS cluster_cleared_by VARCHAR(255)",
@@ -1263,49 +1250,6 @@ def ensure_backup_runs_table() -> None:
     )
 
 
-def backup_runs_schema_unavailable() -> bool:
-    """True when ``backup_runs`` does not exist yet.
-
-    Distinguishes "the table was never created" from "the table is empty", which
-    the API has to tell apart: the first is a deploy that has not finished, the
-    second is a backup that has never run — and only the second is an alarm.
-    """
-    try:
-        query_one("SELECT 1 FROM backup_runs LIMIT 1")
-        return False
-    except Exception as exc:
-        if _is_undefined_table(exc):
-            return True
-        raise
-
-
-def cleanup_old_audit_logs(retention_days: int = 7) -> int:
-    """
-    Delete audit_logs rows older than ``retention_days`` days.
-
-    Audit logs grow unbounded as users exercise the portal. Keeping only the
-    last week is enough for the dashboards + recent-activity views that read
-    from this table, and it keeps the table small enough that admin queries
-    stay snappy without a dedicated archive job.
-
-    Returns the number of rows deleted (0 on failure — best-effort).
-    """
-    try:
-        row = query_one(
-            f"""
-            WITH deleted AS (
-                DELETE FROM audit_logs
-                WHERE created_at < NOW() - INTERVAL '{int(retention_days)} days'
-                RETURNING 1
-            )
-            SELECT COUNT(*) AS n FROM deleted
-            """
-        )
-        return int((row or {}).get("n") or 0)
-    except Exception:
-        return 0
-
-
 _item_tables_lock = threading.Lock()
 _item_tables_ensured = False
 
@@ -1420,7 +1364,7 @@ def ensure_approval_workflow_tables() -> None:
         )
     except Exception as exc:
         # approval_requests may not exist yet on a minimal dev DB.
-        logging.getLogger(__name__).warning("request_ratings not created: %s: %s", type(exc).__name__, exc)
+        log.warning("request_ratings not created: %s: %s", type(exc).__name__, exc)
 
     # In-app notifications (bell + dropdown). Email-keyed so the UI can
     # resolve them directly from the SSO token without an extra users join.
@@ -1743,24 +1687,12 @@ def ensure_bootstrap_service_user() -> None:
         log.warning("ensure_bootstrap_service_user failed: %s", exc)
 
 
-
-
 def collapse_non_admin_roles() -> None:
     """Move every account that is not a Platform Admin onto the lowest role.
 
-    The roles table shipped seven levels, but only level 1 was ever a real
-    privilege boundary: the intermediate roles differed from one another solely
-    in a ``permissions`` array that no authorization decision read. Approval was
-    the single exception — it tested ``hierarchy_level <= 5`` — and that is now
-    Platform-Admin-only too, which leaves levels 2 to 6 granting exactly nothing.
-
-    Leaving accounts sitting on them would keep the misleading label without the
-    access, so this puts the data where the model already is. Idempotent: it
-    reports how many rows it touched and does nothing at all on the next start.
-
-    Deliberately NOT a DROP or a DELETE. The intermediate role rows stay in the
-    table, because deleting rows that ``users.role_id`` may still reference is
-    the kind of startup-path destruction this codebase has been bitten by before.
+    Level 1 is the only privilege boundary; levels 2 to 6 grant nothing, so an account
+    on one only carries a misleading label. Idempotent. Never a DROP or a DELETE: the
+    intermediate role rows stay, because users.role_id may still reference them.
     """
     try:
         target = query_one(

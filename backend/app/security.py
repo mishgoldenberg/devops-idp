@@ -19,7 +19,7 @@ import logging
 import os
 import threading
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import bcrypt
 import jwt
@@ -41,16 +41,9 @@ security_scheme = HTTPBearer(auto_error=False)
 
 # ── Deactivation, enforced on every request ──────────────────────────────────
 #
-# Deactivating a user used to do almost nothing. `is_active = true` is checked when
-# somebody SIGNS IN — and that is the one moment a deactivated user is not doing
-# anything. Whoever was already signed in kept a valid JWT, and since nothing on the
-# request path ever looked at the database again, they kept full access for the
-# remaining life of the token: up to eight hours of an account an admin believed they
-# had just switched off.
-#
-# So the check moves to where tokens are read. It is cached briefly because it now runs
-# on every request including page renders, and the cost of a per-request query on the
-# hot path is real; 30 seconds is short enough that "deactivate" means what it says.
+# Checked where tokens are read, not only at sign-in: otherwise a deactivated user keeps
+# full access for the rest of their token's life. Cached for 30 seconds, because it runs
+# on every request.
 _ACTIVE_TTL_S = int(os.getenv("AUTH_ACTIVE_CHECK_TTL", "30"))
 _active_cache: Dict[str, Tuple[float, bool]] = {}
 # The live admin answer for a token that does not say admin (has_effective_admin_access_live),
@@ -258,20 +251,8 @@ def get_current_user(
 # RBAC helpers
 # ================================
 #
-# There is exactly one privilege boundary in this application: Platform Admin, or
-# not. Everything else is an ordinary user.
-#
-# It used to look richer than that. A seven-level hierarchy sat in the roles table,
-# each row carrying a permissions array ("approve:ado_projects", "view:observability"),
-# and helpers existed to read both. None of them were ever called — the array was
-# loaded, signed into the token and ignored, while the real gates tested the
-# hierarchy level directly. Four roles in the middle were therefore identical to one
-# another and two at the bottom identical to each other, which is the worst way for an
-# access model to be wrong: it reads as fine-grained and behaves as coarse.
-#
-# has_role_level(), has_permission(), can_view_aggregated_metrics() and
-# can_manage_users() were that dead machinery and are gone. Do not reintroduce a
-# check that a caller has to remember to make; add the gate to the handler.
+# There is exactly one privilege boundary: Platform Admin, or not. Do not add a
+# permission a caller has to remember to check; put the gate in the handler.
 
 PLATFORM_ADMIN_LEVEL = 1
 REGULAR_USER_LEVEL = 7
@@ -347,20 +328,6 @@ def _admin_from_db(user_id: str) -> Optional[bool]:
     except Exception:
         return None
     return False
-
-
-def can_view_observability(user: AuthUser) -> bool:
-    """
-    Observability and monitoring are restricted to Admins only.
-
-    Frontend exposes three simplified roles:
-      - Admin
-      - TeamLead
-      - User
-
-    The underlying database roles are mapped to these effective roles in the auth payload.
-    """
-    return has_effective_admin_access(user)
 
 
 def is_platform_admin_level(hierarchy_level) -> bool:

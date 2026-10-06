@@ -122,6 +122,11 @@
 				hint: "Personal Access Token with Work Items and Code (read & write), Build (read & execute), User Profile and Project and Team (read).",
 			},
 			{
+				system: "gitlab",
+				label: "GitLab",
+				hint: "Personal Access Token with the api scope (read_api is enough to see your merge requests and pipelines; the actions need api).",
+			},
+			{
 				system: "sonarqube",
 				label: "SonarQube",
 				hint: "User token, generated from your SonarQube account settings.",
@@ -352,7 +357,7 @@
 					health.status === "fulfilled"
 						? `the server returned HTTP ${health.value.status}`
 						: "the request did not complete";
-				["sonarqube", "artifactory", "confluence", "devbot"].forEach((s) =>
+				["sonarqube", "artifactory", "confluence", "gitlab", "devbot"].forEach((s) =>
 					apply(s, {
 						error: true,
 						configured: true,

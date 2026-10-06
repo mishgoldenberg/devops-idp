@@ -22,39 +22,26 @@ import re
 from typing import Any, Dict, List, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from devbot import config, knowledge, llm
-from security import AuthUser, get_current_user, has_effective_admin_access_live
+from security import AuthUser
+from common import admin_user, audited_error, failure_text
 
 router = APIRouter()
 log = logging.getLogger(__name__)
 
 
-def _require_admin(user: AuthUser = Depends(get_current_user)) -> AuthUser:
-    if not has_effective_admin_access_live(user):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required.")
-    return user
-
-
-def _fail(request: Request, code: int, detail: str) -> HTTPException:
-    try:
-        request.state.audit_detail = detail
-    except Exception:
-        pass
-    return HTTPException(status_code=code, detail=detail)
-
-
 @router.get("")
-def index_status(request: Request, _admin: AuthUser = Depends(_require_admin)) -> Dict[str, Any]:
+def index_status(request: Request, _admin: AuthUser = Depends(admin_user)) -> Dict[str, Any]:
     try:
         return {"success": True, "data": knowledge.admin_status()}
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception:
         log.warning("devbot index: status failed", exc_info=True)
-        raise _fail(request, 503, f"The index state could not be read: {type(exc).__name__}: {exc}")
+        raise audited_error(request, 503, "The index state could not be read; the details are in the Hub's log.")
 
 
 class SettingsBody(BaseModel):
@@ -108,7 +95,7 @@ def _check_confluence(token: str, spaces: List[str]) -> List[Dict[str, Any]]:
 
 
 @router.put("/settings")
-def save_settings(body: SettingsBody, request: Request, admin: AuthUser = Depends(_require_admin)) -> Dict[str, Any]:
+def save_settings(body: SettingsBody, request: Request, admin: AuthUser = Depends(admin_user)) -> Dict[str, Any]:
     """Keep the settings only after they are shown to work: every space readable with
     the token, and the model one the key may use. A setting that fails here would
     otherwise fail at 3 a.m. in a build nobody is watching."""
@@ -129,11 +116,11 @@ def save_settings(body: SettingsBody, request: Request, admin: AuthUser = Depend
     token = current["confluence_token"] if body.confluence_token is None else body.confluence_token.strip()
     key = current["gateway_key"] if body.gateway_key is None else body.gateway_key.strip()
     if body.enabled and spaces and not token:
-        raise _fail(request, 400, "Give a Confluence token that can read those spaces.")
+        raise audited_error(request, 400, "Give a Confluence token that can read those spaces.")
     if body.enabled and (spaces or ado_after["enabled"] or snow_after["enabled"]) and not key:
-        raise _fail(request, 400, "Give an AI key for the Hub to build the index with.")
+        raise audited_error(request, 400, "Give an AI key for the Hub to build the index with.")
     if ado_after["enabled"] and not ado_after["types"]:
-        raise _fail(request, 400, "Name at least one work item type to take past fixes from (for example Bug).")
+        raise audited_error(request, 400, "Name at least one work item type to take past fixes from (for example Bug).")
     checks: Dict[str, Any] = {"spaces": [], "model": "", "ado": "", "snow": "", "fix_model": ""}
     fix_model = current["fix_model"] if body.fix_model is None else body.fix_model.strip()
     if ado_after["enabled"]:
@@ -143,36 +130,36 @@ def save_settings(body: SettingsBody, request: Request, admin: AuthUser = Depend
         try:
             checks["snow"] = _check_snow(snow_after["table"])
         except ValueError as exc:
-            raise _fail(request, 400, f"Ticket fixes: {exc}")
+            raise audited_error(request, 400, f"Ticket fixes: {exc}")
         except httpx.HTTPError as exc:
-            raise _fail(request, 502, f"ServiceNow could not be reached: {type(exc).__name__}")
+            raise audited_error(request, 502, failure_text("ServiceNow", exc))
     if token and spaces:
         try:
             checks["spaces"] = _check_confluence(token, spaces)
         except httpx.HTTPError as exc:
-            raise _fail(request, 502, f"Confluence could not be reached: {type(exc).__name__}")
+            raise audited_error(request, 502, failure_text("Confluence", exc))
         bad = [c for c in checks["spaces"] if not c["ok"]]
         if bad:
-            raise _fail(request, 400, "; ".join(f"{c['space']}: {c['detail']}" for c in bad))
+            raise audited_error(request, 400, "; ".join(f"{c['space']}: {c['detail']}" for c in bad))
     model = body.model.strip()
     if key:
         if not config.enabled():
-            raise _fail(request, 409, "DevBot is not set up on this Hub (DEVBOT_LLM_BASE_URL), so there is no AI "
+            raise audited_error(request, 409, "DevBot is not set up on this Hub (DEVBOT_LLM_BASE_URL), so there is no AI "
                                       "service to build the index with.")
         try:
             available = [m["id"] for m in llm.list_models(key, embedding=True)]
         except llm.LLMError as exc:
-            raise _fail(request, 400, f"The AI key: {exc.message}")
+            raise audited_error(request, 400, f"The AI key: {exc.message}")
         if not available:
-            raise _fail(request, 400, "The AI key may not use any embedding model. Ask for access to one "
+            raise audited_error(request, 400, "The AI key may not use any embedding model. Ask for access to one "
                                       "(a multilingual e5 works best here).")
         if model and model not in available:
-            raise _fail(request, 400, f"The AI key may not use {model}. It may use: {', '.join(available)}.")
+            raise audited_error(request, 400, f"The AI key may not use {model}. It may use: {', '.join(available)}.")
         chosen = model or knowledge.pick_model(available)
         try:
             vectors, _ = llm.embed(key, chosen, [knowledge.as_passage(chosen, "Check the index can be built.")])
         except llm.LLMError as exc:
-            raise _fail(request, 400, f"{chosen} did not embed a test sentence: {exc.message}")
+            raise audited_error(request, 400, f"{chosen} did not embed a test sentence: {exc.message}")
         checks["model"] = f"{chosen} ({len(vectors[0])} numbers per passage)"
         if (ado_after["enabled"] and knowledge.ado_available()) or snow_after["enabled"]:
             # Past fixes are reviewed by a chat model before they are kept: prove one
@@ -180,18 +167,18 @@ def save_settings(body: SettingsBody, request: Request, admin: AuthUser = Depend
             try:
                 chat = [m["id"] for m in llm.list_models(key)]
             except llm.LLMError as exc:
-                raise _fail(request, 400, f"The AI key: {exc.message}")
+                raise audited_error(request, 400, f"The AI key: {exc.message}")
             if fix_model and fix_model not in chat:
-                raise _fail(request, 400, f"The AI key may not use {fix_model} to review fixes. "
+                raise audited_error(request, 400, f"The AI key may not use {fix_model} to review fixes. "
                                           f"It may use: {', '.join(chat) or 'no chat model'}.")
             reviewer = knowledge.pick_chat_model(chat, fix_model)
             if not reviewer:
-                raise _fail(request, 400, "Past fixes are reviewed by a chat model before they are kept, and the AI "
+                raise audited_error(request, 400, "Past fixes are reviewed by a chat model before they are kept, and the AI "
                                           "key may not use any. Ask for access to one, or switch past fixes off.")
             try:
                 llm.complete(key, reviewer, [{"role": "user", "content": "Answer with the word OK."}], max_tokens=200)
             except llm.LLMError as exc:
-                raise _fail(request, 400, f"{reviewer} did not answer a test question: {exc.message}")
+                raise audited_error(request, 400, f"{reviewer} did not answer a test question: {exc.message}")
             checks["fix_model"] = f"fixes are reviewed by {reviewer}"
     knowledge.save_settings(spaces, model, body.enabled, str(admin.get("username") or admin.get("email") or ""),
                             confluence_token=body.confluence_token if body.confluence_token is None else body.confluence_token.strip(),
@@ -205,26 +192,26 @@ class KeyBody(BaseModel):
 
 
 @router.post("/models")
-def embedding_models(body: KeyBody, request: Request, _admin: AuthUser = Depends(_require_admin)) -> Dict[str, Any]:
+def embedding_models(body: KeyBody, request: Request, _admin: AuthUser = Depends(admin_user)) -> Dict[str, Any]:
     key = (body.gateway_key or "").strip() or knowledge.settings(secrets=True)["gateway_key"]
     if not key:
-        raise _fail(request, 400, "Give the AI key first.")
+        raise audited_error(request, 400, "Give the AI key first.")
     if not config.enabled():
-        raise _fail(request, 409, "DevBot is not set up on this Hub (DEVBOT_LLM_BASE_URL).")
+        raise audited_error(request, 409, "DevBot is not set up on this Hub (DEVBOT_LLM_BASE_URL).")
     try:
         available = [m["id"] for m in llm.list_models(key, embedding=True)]
         chat = [m["id"] for m in llm.list_models(key)]
     except llm.LLMError as exc:
-        raise _fail(request, 400, f"The AI key: {exc.message}")
+        raise audited_error(request, 400, f"The AI key: {exc.message}")
     return {"success": True, "data": {"models": available, "suggested": knowledge.pick_model(available),
                                       "chat_models": chat, "suggested_chat": knowledge.pick_chat_model(chat)}}
 
 
 @router.post("/build")
-def build_now(request: Request, _admin: AuthUser = Depends(_require_admin)) -> Dict[str, Any]:
+def build_now(request: Request, _admin: AuthUser = Depends(admin_user)) -> Dict[str, Any]:
     result = knowledge.start("admin")
     if not result["started"]:
-        raise _fail(request, 409, result["why"])
+        raise audited_error(request, 409, result["why"])
     return {"success": True, "data": result}
 
 
@@ -232,12 +219,12 @@ def build_now(request: Request, _admin: AuthUser = Depends(_require_admin)) -> D
 def past_fixes(request: Request, source: str = Query("", pattern="^(ado|snow|)$"),
                state: str = Query("", pattern="^(shown|held|hidden|waiting|)$"), q: str = Query("", max_length=200),
                limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0),
-               _admin: AuthUser = Depends(_require_admin)) -> Dict[str, Any]:
+               _admin: AuthUser = Depends(admin_user)) -> Dict[str, Any]:
     try:
         return {"success": True, "data": knowledge.list_fixes(source, state, q, limit, offset)}
-    except Exception as exc:
+    except Exception:
         log.warning("devbot index: the past fixes could not be listed", exc_info=True)
-        raise _fail(request, 503, f"The past fixes could not be read: {type(exc).__name__}")
+        raise audited_error(request, 503, "The past fixes could not be read; the details are in the Hub's log.")
 
 
 class FixBody(BaseModel):
@@ -247,25 +234,25 @@ class FixBody(BaseModel):
 
 
 @router.post("/fixes/hide")
-def hide_fix(body: FixBody, request: Request, admin: AuthUser = Depends(_require_admin)) -> Dict[str, Any]:
+def hide_fix(body: FixBody, request: Request, admin: AuthUser = Depends(admin_user)) -> Dict[str, Any]:
     if not knowledge.set_hidden(body.id, body.hidden, str(admin.get("username") or admin.get("email") or "")):
-        raise _fail(request, 404, "There is no such past fix in the index.")
+        raise audited_error(request, 404, "There is no such past fix in the index.")
     return {"success": True}
 
 
 @router.post("/fixes/review")
-def review_fix_again(body: FixBody, request: Request, _admin: AuthUser = Depends(_require_admin)) -> Dict[str, Any]:
+def review_fix_again(body: FixBody, request: Request, _admin: AuthUser = Depends(admin_user)) -> Dict[str, Any]:
     if not knowledge.request_review(body.id):
-        raise _fail(request, 404, "There is no such past fix in the index.")
+        raise audited_error(request, 404, "There is no such past fix in the index.")
     return {"success": True}
 
 
 @router.post("/stop")
-def stop_build(request: Request, _admin: AuthUser = Depends(_require_admin)) -> Dict[str, Any]:
+def stop_build(request: Request, _admin: AuthUser = Depends(admin_user)) -> Dict[str, Any]:
     """Stop the build within seconds, whatever it is doing. What it indexed so far
     stays, and the next build carries on from there (only what is missing or changed is
     read). A build left "running" by a pod that is gone is marked stopped at once."""
     outcome = knowledge.request_stop()
     if outcome == "none":
-        raise _fail(request, 409, "No build is running.")
+        raise audited_error(request, 409, "No build is running.")
     return {"success": True, "data": {"outcome": outcome}}

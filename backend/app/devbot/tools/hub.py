@@ -20,6 +20,9 @@ pending-only transition, the audit record).
 
 from __future__ import annotations
 
+import logging
+import re
+
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -27,6 +30,8 @@ from db import query_all, query_one
 
 from . import proposals
 from .base import Tool, ToolContext, ToolFailure, register
+
+log = logging.getLogger(__name__)
 
 _STATUSES = ("PENDING", "APPROVED", "IN_PROGRESS", "COMPLETED", "FAILED", "REJECTED", "EXECUTED")
 
@@ -119,8 +124,9 @@ def user_profile(ctx: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]:
         streak = streaks.explain(email)
         streak = {"current": streak["current"], "longest": streak["longest"],
                   "freezes_left": streak["freezes_this_month"].get("left"), "last_ended": streak["last_ended"]}
-    except Exception as exc:  # a nicety; never the reason the profile fails
-        streak = {"error": type(exc).__name__}
+    except Exception:  # a nicety; never the reason the profile fails
+        log.warning("adminbot: streak for %s could not be read", email, exc_info=True)
+        streak = {"error": "could not be read"}
     data = {
         "email": detail.get("email"), "name": detail.get("display_name"), "username": detail.get("username"),
         "name_from_sign_in": detail.get("sso_name") or None, "role": detail.get("role_name"),
@@ -203,7 +209,9 @@ def requests(ctx: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]:
 
 def request(ctx: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]:
     _guard(ctx)
-    rid = str(args["id"]).strip()
+    rid = str(args["id"]).strip().lower()
+    if not re.fullmatch(r"[0-9a-f-]{1,36}", rid):
+        raise ToolFailure(f"There is no request {rid[:40]}.")
     row = query_one(
         """
         SELECT ar.*, ar.request_type::text AS type_text, ar.status::text AS status_text, u.email AS requester,
@@ -308,8 +316,9 @@ def health(ctx: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]:
         index = {"configured": idx["configured"], "running": idx["running"], "indexed": idx["pages"],
                  "by_source": idx["by_source"], "last_build": last.get("status"), "last_build_at": last.get("finished_at")
                  or last.get("started_at"), "last_error": last.get("error") or None}
-    except Exception as exc:
-        index = {"error": type(exc).__name__}
+    except Exception:
+        log.warning("adminbot: index status could not be read", exc_info=True)
+        index = {"error": "could not be read"}
     data = {"version": changelog.version(), "safe_mode": safe_mode.is_enabled(), "devbot_set_up": config.enabled(),
             "requests": {k: int(v or 0) for k, v in pending.items()},
             "errors_in_log_24h": int(errors.get("n") or 0),
@@ -555,8 +564,9 @@ def _decide_each(user: Any, kind: str, t: Dict[str, Any], comment: Optional[str]
             done.append(str(item.get("title")))
         except HTTPException as exc:
             refused.append(f"{item.get('title')}: {exc.detail}")
-        except Exception as exc:
-            refused.append(f"{item.get('title')}: {type(exc).__name__}")
+        except Exception:
+            log.warning("adminbot: deciding %s failed", item.get("request_id"), exc_info=True)
+            refused.append(f"{item.get('title')}: failed unexpectedly (see the Hub's log)")
     if not done:
         raise HTTPException(status_code=409, detail="None was done. " + " | ".join(refused))
     result = f"{'Approved' if kind == 'requests-approve' else 'Rejected'} {len(done)} of {len(done) + len(refused)}."

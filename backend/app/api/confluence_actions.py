@@ -27,9 +27,10 @@ right before the write.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 import httpx
+from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
@@ -40,6 +41,7 @@ from security import AuthUser, get_current_user
 from devbot.markup import markdown_to_storage
 
 from .integrations import _base_url, _require_token
+from common import dry_run, simulated
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -49,15 +51,16 @@ class _Action(BaseModel):
     dry_run: bool = False
 
 
+# Ids and space keys go into Confluence's URL paths, so only their own shapes pass.
 class CreateBody(_Action):
-    space: str = Field(..., min_length=1, max_length=255)
+    space: str = Field(..., min_length=1, max_length=255, pattern=r"^~?[A-Za-z0-9_.-]+$")
     title: str = Field(..., min_length=1, max_length=255)
     content: str = Field(..., min_length=1, max_length=60000)
-    parent_id: str = Field("", max_length=32)
+    parent_id: str = Field("", max_length=32, pattern=r"^\s*\d*\s*$")
 
 
 class AppendBody(_Action):
-    page_id: str = Field(..., min_length=1, max_length=32)
+    page_id: str = Field(..., min_length=1, max_length=32, pattern=r"^\s*\d+\s*$")
     heading: str = Field("", max_length=255)
     content: str = Field(..., min_length=1, max_length=60000)
 
@@ -73,7 +76,8 @@ def _client(token: str) -> httpx.Client:
 def _fail(resp: httpx.Response, what: str) -> HTTPException:
     code = resp.status_code
     if code == 401:
-        return HTTPException(status_code=401, detail="Confluence did not accept your token. It may have expired: "
+        # 424, never 401: the Hub reads any 401 as its own session ending.
+        return HTTPException(status_code=424, detail="Confluence did not accept your token. It may have expired: "
                                                      "reconnect it on the Connections page.")
     if code == 403:
         return HTTPException(status_code=403, detail=f"Confluence does not allow you to {what}. Ask a space admin "
@@ -109,15 +113,6 @@ def _page_url(base: str, item: Dict[str, Any]) -> str:
     return base.rstrip("/") + (webui if webui.startswith("/") else f"/pages/viewpage.action?pageId={item.get('id')}")
 
 
-def _dry(summary: str, checks: List[str], **extra: Any) -> Dict[str, Any]:
-    return {"success": True, "dry_run": True, "summary": summary, "checks": checks, **extra}
-
-
-def _simulated(summary: str, **extra: Any) -> Dict[str, Any]:
-    return {"success": True, "simulated": True, "summary": summary,
-            "result": "Safe Mode is on: nothing was sent to Confluence.", **extra}
-
-
 @router.post("/page-create")
 def page_create(body: CreateBody, current_user: AuthUser = Depends(get_current_user)):
     token = _require_token(current_user, "confluence")
@@ -125,7 +120,7 @@ def page_create(body: CreateBody, current_user: AuthUser = Depends(get_current_u
     space = body.space.strip()
     title = " ".join(body.title.split())
     with _client(token) as client:
-        got = client.get(f"{base}/rest/api/space/{space}")
+        got = client.get(f"{base}/rest/api/space/{quote(space, safe='~')}")
         if got.status_code == 404:
             raise HTTPException(status_code=409, detail=f"There is no Confluence space with the key '{space}'.")
         if got.status_code != 200:
@@ -146,9 +141,9 @@ def page_create(body: CreateBody, current_user: AuthUser = Depends(get_current_u
         checks = [f"The space {space_name} exists.", f"No page there is called “{title}” yet.",
                   "The content is converted to Confluence formatting; code blocks stay code blocks."]
         if body.dry_run:
-            return _dry(summary, checks)
+            return dry_run(summary, checks)
         if safe_mode.is_enabled():
-            return _simulated(summary)
+            return simulated("Confluence", summary)
         payload: Dict[str, Any] = {
             "type": "page", "title": title, "space": {"key": space},
             "body": {"storage": {"value": markdown_to_storage(body.content), "representation": "storage"}},
@@ -186,9 +181,9 @@ def page_append(body: AppendBody, current_user: AuthUser = Depends(get_current_u
                   "If someone changes the page before you confirm, nothing is written."]
         url = _page_url(base, page)
         if body.dry_run:
-            return _dry(summary, checks, url=url)
+            return dry_run(summary, checks, url=url)
         if safe_mode.is_enabled():
-            return _simulated(summary, url=url)
+            return simulated("Confluence", summary, url=url)
         addition = markdown_to_storage(section)
         put = client.put(f"{base}/rest/api/content/{page_id}", json={
             "id": page_id, "type": "page", "title": title,

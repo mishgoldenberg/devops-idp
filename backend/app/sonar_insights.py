@@ -62,9 +62,8 @@ _log = logging.getLogger(__name__)
 # keys is a 6KB request line before the metric list -- at or over what an
 # intermediate proxy will carry.
 _MEASURE_CHUNK = 50
-# How many of those calls run at once. The crawl used to make them one after
-# another, so 800 projects meant sixteen server round trips back to back -- longer
-# than the widget's own 20-second deadline. Six keeps a busy SonarQube comfortable.
+# How many of those calls run at once: six keeps a busy SonarQube comfortable and the
+# crawl inside the widget's 20-second deadline.
 _PARALLEL = 6
 # Measures are reused until the project is analysed again (see _measures). The cap
 # bounds memory on an instance far bigger than this one; the age bounds how long a
@@ -140,9 +139,8 @@ PULL_REQUEST_METRICS: Tuple[str, ...] = (
     "skipped_tests",
 )
 
-# The set round 118 shipped and proved against this server. If the server rejects
-# the fuller set above -- one key it does not know is a 404 for the WHOLE call --
-# the snapshot falls back to this rather than leaving four widgets with an error.
+# A smaller set proven against this server. If it rejects the fuller set above -- one
+# unknown key is a 404 for the WHOLE call -- the snapshot falls back to this.
 _PROVEN_METRICS: Tuple[str, ...] = (
     "alert_status", "quality_gate_details", "bugs", "vulnerabilities", "code_smells",
     "security_hotspots", "security_hotspots_reviewed", "coverage",
@@ -151,9 +149,6 @@ _PROVEN_METRICS: Tuple[str, ...] = (
     "new_security_hotspots", "new_coverage", "new_duplicated_lines_density", "new_lines",
 )
 
-# Which of those are "new code" measures. SonarQube returns these under a period
-# rather than as a plain value, and the two are not interchangeable.
-_NEW_CODE_METRICS = frozenset(m for m in SNAPSHOT_METRICS if m.startswith("new_"))
 
 _RATING_LETTER = {"1.0": "A", "2.0": "B", "3.0": "C", "4.0": "D", "5.0": "E",
                   "1": "A", "2": "B", "3": "C", "4": "D", "5": "E"}

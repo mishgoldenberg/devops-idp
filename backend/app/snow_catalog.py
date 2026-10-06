@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from common import looks_like_sys_id, truthy
 from resilient_http import tls_verify
 
 log = logging.getLogger(__name__)
@@ -66,10 +67,6 @@ def _client(timeout: float = 30.0) -> httpx.Client:
 
 # ── Resolving an item ────────────────────────────────────────────────────────
 
-def _looks_like_sys_id(value: str) -> bool:
-    return bool(re.fullmatch(r"[0-9a-fA-F]{32}", str(value or "").strip()))
-
-
 def resolve_item(name: str, env_var: str) -> str:
     """The catalog item's sys_id: the environment variable if it holds one, else the
     active item whose name matches exactly.
@@ -80,7 +77,7 @@ def resolve_item(name: str, env_var: str) -> str:
     back to the person who filed it.
     """
     configured = (os.getenv(env_var) or "").strip()
-    if _looks_like_sys_id(configured):
+    if looks_like_sys_id(configured):
         return configured
     if configured:
         log.warning("%s is set but is not a sys_id (%r) -- resolving by name", env_var, configured[:40])
@@ -132,32 +129,40 @@ def resolve_item(name: str, env_var: str) -> str:
 _CONTAINER_TYPES = {"19", "20", "25", "26"}
 
 
-def _truthy(value: Any) -> bool:
-    return str(value).strip().lower() in ("true", "1", "yes")
-
-
-def _flatten(variables: Any) -> List[Dict[str, Any]]:
-    """Every input variable in the tree, containers unwrapped.
-
-    A catalog item lays its questions out in containers, and the API returns the tree:
-    a Container Start with the real fields nested under ``children``. Reading only the
-    top level therefore finds a handful of boxes and none of the questions inside
-    them, so nothing maps, every mandatory variable arrives empty, and ServiceNow
-    answers "Mandatory Variables are required" -- naming none of them, because from
-    its side they simply were not sent.
-
-    The Support ticket path has flattened since the day it was written, which is the
-    entire reason Support tickets go through on this instance and these did not. Two
-    modules read the same catalog API and only one of them knew the shape of it.
-    """
+def flatten(variables: Any) -> List[Dict[str, Any]]:
+    """Every variable in the tree, containers included. The catalog API nests an
+    item's questions under the ``children`` of its Container Start variables."""
     out: List[Dict[str, Any]] = []
     for variable in variables or []:
         if not isinstance(variable, dict):
             continue
         out.append(variable)
         if variable.get("children"):
-            out.extend(_flatten(variable["children"]))
+            out.extend(flatten(variable["children"]))
     return out
+
+
+# Variable types that name another RECORD, so the only acceptable value is a real
+# sys_id. Lookup Select Box (18) and Lookup Multiple Choice (22) are what Catalog
+# Builder makes of a "Choice" question whose options come from a table.
+REFERENCE_TYPES = {
+    "8", "18", "21", "22", "reference", "list", "lookup", "glide_list",
+    "lookup_select_box", "lookup_multiple_choice", "list_collector",
+}
+
+
+def table_of(spec: Dict[str, Any]) -> str:
+    """The table a reference or lookup variable points at, or ""."""
+    for key in ("reference", "lookup_table", "list_table", "table"):
+        value = str(spec.get(key) or "").strip().lower()
+        if value:
+            return value
+    return ""
+
+
+def refers_to_record(spec: Dict[str, Any]) -> bool:
+    kinds = {str(spec.get(k) or "").strip().lower() for k in ("type", "friendly_type")}
+    return bool(kinds & REFERENCE_TYPES) or bool(table_of(spec))
 
 
 def item_variables(sys_id: str) -> List[Dict[str, Any]]:
@@ -173,7 +178,7 @@ def item_variables(sys_id: str) -> List[Dict[str, Any]]:
         if resp.status_code >= 400:
             return []
         result = (resp.json() or {}).get("result") or {}
-    raw = _flatten(result.get("variables"))
+    raw = flatten(result.get("variables"))
     log.warning(
         "SNow catalog item %s declares %s variable(s) (%s at the top level)",
         sys_id, len(raw), len(result.get("variables") or []),
@@ -188,16 +193,11 @@ def item_variables(sys_id: str) -> List[Dict[str, Any]]:
         specs.append({
             "name": name,
             "label": str(variable.get("label") or name),
-            # Never bool(): this API answers with the STRING "false", and bool("false")
-            # is True. Read that way every variable looks mandatory, and every one of
-            # them gets filled with a made-up value.
-            "mandatory": _truthy(variable.get("mandatory")),
+            "mandatory": truthy(variable.get("mandatory")),
             "type": variable.get("type"),
+            "reference": table_of(variable),
             "choices": variable.get("choices") or [],
-            # The item's own default. A mandatory variable that ships with one is
-            # already answered; sending nothing for it turns a working order into
-            # "Mandatory variables are required" over a value ServiceNow itself
-            # would have used.
+            # The item's own default: a mandatory variable that has one is answered.
             "default": str(
                 variable.get("value")
                 or variable.get("default_value")
@@ -230,38 +230,65 @@ def _tokens(text: str) -> frozenset:
     return frozenset(w for w in words if w and w not in _NOISE)
 
 
+def account_forms(*names: str) -> List[str]:
+    r"""Every way a ServiceNow user record might spell this person, most exact first:
+    the address or login as given, the bare account of DOMAIN\user, and the part of
+    an address before the @."""
+    forms: List[str] = []
+    for name in names:
+        value = str(name or "").strip()
+        if not value:
+            continue
+        bare = value.split("\\")[-1]
+        for form in (value, bare, bare.split("@")[0]):
+            if form and form.lower() not in {f.lower() for f in forms}:
+                forms.append(form)
+    return forms
+
+
+def find_user(client: httpx.Client, *names: str) -> str:
+    """The sys_id of the ServiceNow user these names belong to, or "".
+
+    One query over every form against both email and user_name; the answer is the
+    row whose field EQUALS a form, preferring the most exact form and active users --
+    never the first row a broad query happens to return."""
+    forms = account_forms(*names)
+    if not forms:
+        return ""
+    query = "^OR".join(f"{field}={form}" for form in forms for field in ("email", "user_name"))
+    try:
+        resp = client.get(
+            "/api/now/table/sys_user",
+            params={"sysparm_query": query, "sysparm_fields": "sys_id,email,user_name,active",
+                    "sysparm_limit": "20"},
+        )
+    except httpx.HTTPError as exc:
+        log.warning("SNow user lookup failed for %s: %s: %s", forms, type(exc).__name__, exc)
+        return ""
+    rows = (resp.json().get("result") or []) if resp.status_code == 200 else []
+    for form in forms:
+        wanted = form.lower()
+        matches = [r for r in rows if r.get("sys_id") and wanted in (
+            str(r.get("email") or "").strip().lower(), str(r.get("user_name") or "").strip().lower())]
+        if matches:
+            matches.sort(key=lambda r: not truthy(r.get("active")))
+            log.warning("SNow user resolved: %s -> %s (matched %r)", forms[0], matches[0]["sys_id"], form)
+            return str(matches[0]["sys_id"])
+    log.warning("SNow user NOT resolved: tried %s, HTTP %s, %s row(s)", forms, resp.status_code, len(rows))
+    return ""
+
+
 def user_sys_id(email: str) -> str:
-    """The sys_user this e-mail belongs to, or "" when it cannot be resolved.
-
-    Needed because a catalog order is placed BY the service account. Without saying
-    who it is for, every requested item lands with the integration account in
-    "Requested for" -- so the team sees one person raising everything and the
-    requester cannot find their own item. The Support path resolves the caller the
-    same way before creating an incident.
-
-    Never raises: a requested item under the service account is worse than one under
-    the right person and far better than none at all.
-    """
-    wanted = str(email or "").strip()
-    if not wanted:
+    """The sys_user an e-mail belongs to, or "". A catalog order is placed BY the
+    service account, so without this every item lands under it in Requested for."""
+    if not str(email or "").strip():
         return ""
     try:
         with _client() as client:
-            for query in (f"email={wanted}", f"user_name={wanted}",
-                          f"user_name={wanted.split('@')[0]}"):
-                resp = client.get(
-                    "/api/now/table/sys_user",
-                    params={"sysparm_query": query, "sysparm_fields": "sys_id,email,user_name",
-                            "sysparm_limit": "1"},
-                )
-                rows = (resp.json().get("result") or []) if resp.status_code == 200 else []
-                log.warning("SNow user lookup: %s status=%s rows=%s",
-                            query, resp.status_code, len(rows))
-                if rows and rows[0].get("sys_id"):
-                    return str(rows[0]["sys_id"])
+            return find_user(client, email)
     except Exception as exc:
-        log.warning("SNow user lookup failed for %r: %s: %s", wanted, type(exc).__name__, exc)
-    return ""
+        log.warning("SNow user lookup failed for %r: %s: %s", email, type(exc).__name__, exc)
+        return ""
 
 
 def map_variables(
@@ -547,11 +574,6 @@ def variable_overrides(form_key: str) -> Dict[str, str]:
     return {str(k): str(v) for k, v in parsed.items()}
 
 
-# Variable types that name another RECORD. Everything else can be given a benign
-# value; these cannot, because the only thing ServiceNow accepts is a real sys_id and
-# a fabricated one points the request at nothing.
-_REFERENCE_TYPES = {"8", "21", "reference", "list", "lookup", "glide_list"}
-
 # Yes/No and Checkbox. These are the only ones for which "true" is a real answer.
 _BOOLEAN_TYPES = {"1", "7", "boolean", "checkbox", "yes_no"}
 
@@ -561,13 +583,7 @@ def fallback_for(spec: Dict[str, Any]) -> str:
 
     Ordering over REST enforces the dictionary-level mandatory flag and skips the UI
     policies that hide such a variable for the service actually being requested -- so
-    a variable nobody filling the form in has ever SEEN still has to carry a value,
-    and there is no field to add that would make it visible.
-
-    This is what the Support ticket path already does (see _default_value_for_spec in
-    api/servicenow.py), on the same instance, for the same reason. It is why Support
-    tickets go through while these did not: the wizard was never asked for a division
-    either, it simply sent the item's own first choice.
+    a variable nobody filling the form in has ever SEEN still has to carry a value.
 
     A choice variable gets its first real choice; a checkbox gets "true"; a text
     variable gets a phrase that reads as deliberate, because somebody works this
@@ -578,9 +594,9 @@ def fallback_for(spec: Dict[str, Any]) -> str:
         value = choice.get("value") if isinstance(choice, dict) else choice
         if value not in (None, ""):
             return str(value)
-    kind = str(spec.get("type") or "").strip().lower()
-    if kind in _REFERENCE_TYPES:
+    if refers_to_record(spec):
         return ""
+    kind = str(spec.get("type") or "").strip().lower()
     if kind in _BOOLEAN_TYPES:
         return "true"
     return "Not provided"

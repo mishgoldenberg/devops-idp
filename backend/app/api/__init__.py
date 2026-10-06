@@ -15,7 +15,6 @@ from fastapi import APIRouter
 from . import (
     admin,
     announcements,
-    release_notes,
     auth,
     backups,
     catalog,
@@ -23,7 +22,6 @@ from . import (
     dashboards,
     health,
     inbox,
-    metrics,
     observability,
     azure_devops,
     servicenow,
@@ -47,6 +45,8 @@ from . import (
     devbot_admin,
     adminbot,
     confluence_actions,
+    gitlab,
+    gitlab_actions,
 )
 
 
@@ -58,13 +58,8 @@ api_router.include_router(health.router, prefix="/health", tags=["health"])
 # Auth
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 
-# Dashboards (mounted at both /dashboards and /dashboard so the observability
-# sync endpoint is reachable at /api/dashboard/widgets/sync per spec).
-api_router.include_router(dashboards.router, prefix="/dashboards", tags=["dashboards"])
-api_router.include_router(dashboards.router, prefix="/dashboard", tags=["dashboards"], include_in_schema=False)
-
-# Metrics
-api_router.include_router(metrics.router, prefix="/metrics", tags=["metrics"])
+# The dashboard widgets' cross-system reads and the widget-usage sync.
+api_router.include_router(dashboards.router, prefix="/dashboard", tags=["dashboards"])
 
 # Observability (Admin-only usage & integration analytics)
 api_router.include_router(observability.router, prefix="/observability", tags=["observability"])
@@ -130,10 +125,6 @@ api_router.include_router(quick_links.router, prefix="/quick-links", tags=["quic
 # Admin announcements shown on every dashboard, and the per-user "I have read it".
 api_router.include_router(announcements.router, prefix="/announcements", tags=["announcements"])
 
-# "What's New": the version this deployment is running and the changelog that
-# got it here. Written once at start-up, read by everyone.
-api_router.include_router(release_notes.router, prefix="/release-notes", tags=["release-notes"])
-
 # Portal usage: the once-a-minute activity beat, and the admin Users page's reads.
 api_router.include_router(usage.router, prefix="/usage", tags=["usage"])
 
@@ -145,6 +136,10 @@ api_router.include_router(streak.router, prefix="/streaks", tags=["streaks"])
 api_router.include_router(devbot.router, prefix="/devbot", tags=["devbot"])
 api_router.include_router(devbot_index.router, prefix="/devbot/index", tags=["devbot"])
 api_router.include_router(devbot_admin.router, prefix="/devbot/admin", tags=["devbot"])
+# GitLab, with the person's own token: merge requests and pipelines for the widgets,
+# and the actions on them, checked and confirmed first like the Azure DevOps ones.
+api_router.include_router(gitlab.router, prefix="/gitlab", tags=["gitlab"])
+api_router.include_router(gitlab_actions.router, prefix="/gitlab/actions", tags=["gitlab"])
 # AdminBot: the same assistant over the Hub's own records, for admins, on the Hub's AI key.
 api_router.include_router(adminbot.router, prefix="/adminbot", tags=["devbot"])
 # Writes to Confluence as the signed-in person, checked and confirmed first -- the same

@@ -2,7 +2,7 @@
 
 <!-- GENERATED:API — do not edit by hand; run scripts/gen_docs.py -->
 
-263 endpoints across 31 groups, generated from the running application's OpenAPI schema.
+258 endpoints across 29 groups, generated from the running application's OpenAPI schema.
 
 Everything under `/api/…` returns JSON. Everything under `/ui/…` returns HTML fragments for HTMX and is not part of this reference — those are not an API, they are the pages.
 
@@ -21,7 +21,6 @@ Authentication is the `auth_token` cookie (HS256 JWT) on every route except `/ap
 | --- | --- | --- |
 | `GET` | `/api/admin/dashboard-widgets` | List Dashboard Widgets |
 | `PUT` | `/api/admin/dashboard-widgets` | Set Dashboard Widget Visibility |
-| `POST` | `/api/admin/grant-role` | Grant Role |
 | `POST` | `/api/admin/quick-links` | Create Quick Link |
 | `DELETE` | `/api/admin/quick-links/{quick_link_id}` | Delete Quick Link |
 | `PATCH` | `/api/admin/quick-links/{quick_link_id}` | Update Quick Link |
@@ -67,7 +66,6 @@ Authentication is the `auth_token` cookie (HS256 JWT) on every route except `/ap
 | `GET` | `/api/audit-logs` | List Audit Events |
 | `GET` | `/api/audit-logs/actions` | List Actions |
 | `GET` | `/api/audit-logs/export` | Export Audit Events |
-| `GET` | `/api/audit-logs/levels` | List Levels |
 
 ## auth
 
@@ -129,7 +127,6 @@ Authentication is the `auth_token` cookie (HS256 JWT) on every route except `/ap
 | `GET` | `/api/catalog/options/{source}` | Options |
 | `GET` | `/api/catalog/quota-preview` | Quota Preview |
 | `GET` | `/api/catalog/servicenow-diagnostics` | Servicenow Diagnostics |
-| `GET` | `/api/catalog/submissions` | List Submissions |
 | `POST` | `/api/catalog/submit/{key}` | Submit |
 
 ## confluence
@@ -143,15 +140,9 @@ Authentication is the `auth_token` cookie (HS256 JWT) on every route except `/ap
 
 | Method | Path | What it does |
 | --- | --- | --- |
-| `GET` | `/api/dashboards/` | Get Dashboards |
-| `POST` | `/api/dashboards/` | Create Dashboard |
-| `GET` | `/api/dashboards/ado-items` | Get Ado Items |
-| `GET` | `/api/dashboards/default` | Get Default Dashboard |
-| `GET` | `/api/dashboards/snow-items` | Get Snow Items |
-| `GET` | `/api/dashboards/widget-types` | Get Widget Types |
-| `POST` | `/api/dashboards/widgets/sync` | Sync User Widgets |
-| `DELETE` | `/api/dashboards/{dashboard_id}` | Delete Dashboard |
-| `PUT` | `/api/dashboards/{dashboard_id}` | Update Dashboard |
+| `GET` | `/api/dashboard/ado-items` | Get Ado Items |
+| `GET` | `/api/dashboard/snow-items` | Get Snow Items |
+| `POST` | `/api/dashboard/widgets/sync` | Sync User Widgets |
 
 ## devbot
 
@@ -196,6 +187,20 @@ Authentication is the `auth_token` cookie (HS256 JWT) on every route except `/ap
 | `GET` | `/api/favorites` | List Favorites |
 | `POST` | `/api/favorites` | Add Favorite |
 
+## gitlab
+
+| Method | Path | What it does |
+| --- | --- | --- |
+| `POST` | `/api/gitlab/actions/mr-approve` | Mr Approve |
+| `POST` | `/api/gitlab/actions/mr-comment` | Mr Comment |
+| `POST` | `/api/gitlab/actions/pipeline-retry` | Pipeline Retry |
+| `POST` | `/api/gitlab/actions/pipeline-run` | Pipeline Run |
+| `GET` | `/api/gitlab/actions/pipeline-variables` | Pipeline Variables |
+| `GET` | `/api/gitlab/groups` | Groups |
+| `GET` | `/api/gitlab/merge-requests` | Merge Requests |
+| `GET` | `/api/gitlab/pipelines` | Pipelines |
+| `GET` | `/api/gitlab/projects` | Projects |
+
 ## health
 
 | Method | Path | What it does |
@@ -226,7 +231,6 @@ Authentication is the `auth_token` cookie (HS256 JWT) on every route except `/ap
 | `GET` | `/api/integrations/sonarqube/hotspots` | Sonarqube Hotspots |
 | `GET` | `/api/integrations/sonarqube/my-issues` | Sonarqube My Issues |
 | `GET` | `/api/integrations/sonarqube/overview` | Sonarqube Overview |
-| `GET` | `/api/integrations/sonarqube/project-details` | Sonarqube Project Details |
 | `GET` | `/api/integrations/sonarqube/projects` | Sonarqube Projects |
 | `GET` | `/api/integrations/sonarqube/pull-request-details` | Sonarqube Pull Request Details |
 | `GET` | `/api/integrations/sonarqube/pull-requests` | Sonarqube Pull Requests |
@@ -236,14 +240,6 @@ Authentication is the `auth_token` cookie (HS256 JWT) on every route except `/ap
 | `DELETE` | `/api/integrations/{system}/token` | Delete Token |
 | `GET` | `/api/integrations/{system}/token` | Get Token Status |
 | `POST` | `/api/integrations/{system}/token` | Save Token |
-
-## metrics
-
-| Method | Path | What it does |
-| --- | --- | --- |
-| `GET` | `/api/metrics/approvals` | Get Approval Metrics |
-| `GET` | `/api/metrics/services` | Get Service Metrics |
-| `GET` | `/api/metrics/usage` | Get Usage Metrics |
 
 ## notifications
 
@@ -291,12 +287,6 @@ Authentication is the `auth_token` cookie (HS256 JWT) on every route except `/ap
 | `PATCH` | `/api/quick-links/mine/{link_id}` | Update My Quick Link |
 | `POST` | `/api/quick-links/mine/{link_id}/restore` | Restore My Quick Link |
 
-## release-notes
-
-| Method | Path | What it does |
-| --- | --- | --- |
-| `GET` | `/api/release-notes` | List Releases |
-
 ## safe-mode
 
 | Method | Path | What it does |
@@ -335,20 +325,12 @@ Authentication is the `auth_token` cookie (HS256 JWT) on every route except `/ap
 
 | Method | Path | What it does |
 | --- | --- | --- |
-| `GET` | `/api/support/stats` | Get Stats |
 | `GET` | `/api/support/ticket-form` | Ticket Form Diagnostics |
 | `GET` | `/api/support/tickets` | Get Tickets |
-| `POST` | `/api/support/tickets` | Create Ticket |
 | `POST` | `/api/support/tickets/create-flow` | Create Ticket Flow |
 | `POST` | `/api/support/tickets/reply` | Reply To Ticket |
 | `GET` | `/api/support/tickets/{sys_id}` | Get Ticket Detail |
 | `GET` | `/api/support/tickets/{sys_id}/attachments/{attachment_id}` | Get Attachment |
-
-## system-urls
-
-| Method | Path | What it does |
-| --- | --- | --- |
-| `GET` | `/api/system-urls` | Get System Urls |
 
 ## untagged
 
@@ -374,6 +356,9 @@ Authentication is the `auth_token` cookie (HS256 JWT) on every route except `/ap
 | `GET` | `/ui/components/azure-devops-tasks` | Ui Azure Devops Tasks Component |
 | `GET` | `/ui/components/banner` | Ui Banner Component |
 | `GET` | `/ui/components/confluence-pages` | Ui Confluence Pages Component |
+| `GET` | `/ui/components/gitlab-merge-requests` | Ui Gitlab Merge Requests Component |
+| `GET` | `/ui/components/gitlab-merge-requests-review` | Ui Gitlab Merge Requests Review Component |
+| `GET` | `/ui/components/gitlab-pipelines` | Ui Gitlab Pipelines Component |
 | `GET` | `/ui/components/pipelines` | Ui Pipelines Component |
 | `GET` | `/ui/components/pull-requests` | Ui Pull Requests Component |
 | `GET` | `/ui/components/pull-requests-review` | Ui Pull Requests Review Component |
@@ -393,6 +378,7 @@ Authentication is the `auth_token` cookie (HS256 JWT) on every route except `/ap
 | `POST` | `/ui/dashboard/preferences` | Ui Dashboard Preferences Save |
 | `GET` | `/ui/devbot` | Ui Devbot Page |
 | `GET` | `/ui/devbot-monitor` | Ui Devbot Monitor Page |
+| `GET` | `/ui/gitlab` | Ui Gitlab Page |
 | `GET` | `/ui/my-requests` | Ui My Requests Page |
 | `GET` | `/ui/observability` | Ui Observability Page |
 | `GET` | `/ui/platform-managing` | Ui Platform Managing Page |
@@ -423,7 +409,6 @@ Authentication is the `auth_token` cookie (HS256 JWT) on every route except `/ap
 | `DELETE` | `/api/me/avatar` | Clear Avatar |
 | `POST` | `/api/me/avatar` | Set Avatar |
 | `PUT` | `/api/me/density` | Set Density |
-| `PUT` | `/api/me/display-name` | Set Display Name |
 | `PUT` | `/api/me/theme` | Set Theme |
 
 <!-- /GENERATED:API -->

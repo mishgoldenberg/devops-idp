@@ -42,6 +42,8 @@ import threading
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
+import gitlab_client
+
 from db import execute, query_all, query_one
 
 log = logging.getLogger(__name__)
@@ -61,6 +63,11 @@ _WEEKEND = {4, 5}
 # who started the pipeline that triggered this one, in requestedFor -- and such a run
 # finishing on a day they were away would save that day.
 _NOT_BY_HAND = {"schedule", "buildcompletion", "resourcetrigger", "triggered"}
+# GitLab's pipeline sources that nobody started that day: a schedule, or another
+# pipeline (a parent, a multi-project or a trigger token).
+_GITLAB_NOT_BY_HAND = {"schedule", "pipeline", "parent_pipeline", "trigger", "external", "ondemand_dast_scan"}
+# A GitLab event that is the person working on a merge request.
+_GITLAB_MR_ACTIONS = {"opened", "approved", "accepted", "merged", "reopened", "updated"}
 
 
 def _zone() -> str:
@@ -126,6 +133,11 @@ def ensure_tables() -> None:
         )
         """
     )
+    # GitLab's history is read in the same hourly sync, with its own backfill flag: a
+    # person who connects GitLab after Azure DevOps still gets 60 days of it.
+    for column in ("gitlab_synced_at TIMESTAMP WITH TIME ZONE", "gitlab_backfilled BOOLEAN NOT NULL DEFAULT FALSE",
+                   "gitlab_error TEXT"):
+        execute(f"ALTER TABLE user_streak_sync ADD COLUMN IF NOT EXISTS {column}")
     execute(
         """
         CREATE TABLE IF NOT EXISTS user_streak_bonus (
@@ -427,10 +439,16 @@ def maybe_sync(user: Dict[str, Any]) -> bool:
 
     def run() -> None:
         try:
-            sync_ado(user)
-        except Exception as exc:
-            log.warning("streaks: Azure DevOps history not read for %s: %s: %s", who, type(exc).__name__, exc)
-            _mark(who, error=f"{type(exc).__name__}: {exc}"[:500])
+            try:
+                sync_ado(user)
+            except Exception as exc:
+                log.warning("streaks: Azure DevOps history not read for %s: %s: %s", who, type(exc).__name__, exc)
+                _mark(who, error=f"{type(exc).__name__}: {exc}"[:500])
+            try:
+                sync_gitlab(user)
+            except Exception as exc:
+                log.warning("streaks: GitLab history not read for %s: %s: %s", who, type(exc).__name__, exc)
+                _mark_gitlab(who, error=f"{type(exc).__name__}: {exc}"[:500])
         finally:
             with _running_lock:
                 _running.discard(who)
@@ -451,6 +469,81 @@ def _mark(who: str, *, error: str = "", backfilled: Optional[bool] = None) -> No
         """,
         [who, bool(backfilled), error or None],
     )
+
+
+def _mark_gitlab(who: str, *, error: str = "", backfilled: Optional[bool] = None) -> None:
+    execute(
+        """
+        INSERT INTO user_streak_sync (user_email, gitlab_synced_at, gitlab_backfilled, gitlab_error)
+        VALUES (%s, CURRENT_TIMESTAMP, %s, %s)
+        ON CONFLICT (user_email) DO UPDATE
+           SET gitlab_synced_at = CURRENT_TIMESTAMP,
+               gitlab_backfilled = user_streak_sync.gitlab_backfilled OR EXCLUDED.gitlab_backfilled,
+               gitlab_error = EXCLUDED.gitlab_error
+        """,
+        [who, bool(backfilled), error or None],
+    )
+
+
+def sync_gitlab(user: Dict[str, Any]) -> Dict[str, int]:
+    """Read the days this person opened, approved or commented on a merge request, or
+    had a pipeline they started succeed -- with THEIR GitLab token. Nothing when GitLab
+    is not set up here or they have not connected it: that is not an error."""
+    gl = gitlab_client
+    who = _who(user.get("email"))
+    token = gl.user_token(user)
+    if not who or not token or not gl.configured():
+        return {}
+    state = query_one("SELECT gitlab_synced_at, gitlab_backfilled FROM user_streak_sync WHERE user_email = %s",
+                      [who]) or {}
+    window = BACKFILL_DAYS
+    last = state.get("gitlab_synced_at")
+    if state.get("gitlab_backfilled") and last:
+        last = last if last.tzinfo else last.replace(tzinfo=timezone.utc)
+        window = min(BACKFILL_DAYS, max(2, (datetime.now(timezone.utc) - last).days + 2))
+    since = datetime.now(timezone.utc) - timedelta(days=window)
+    since_iso = since.strftime("%Y-%m-%dT%H:%M:%SZ")
+    stamps: Dict[str, List[str]] = {"pr": [], "pipeline": []}
+
+    def recent(stamp: Any) -> bool:
+        try:
+            return datetime.fromisoformat(str(stamp).replace("Z", "+00:00")) >= since
+        except ValueError:
+            return False
+
+    with gl.client(token) as cl:
+        me = gl.me(cl)
+        # The person's own activity feed: what they did, when, to what.
+        events = gl.paged(cl, "/events", {"after": (since - timedelta(days=1)).date().isoformat(), "sort": "desc"},
+                          limit=1000)
+        for event in events:
+            when = event.get("created_at")
+            if not when or not recent(when):
+                continue
+            target = str(event.get("target_type") or "")
+            action = str(event.get("action_name") or "").lower()
+            note = event.get("note") or {}
+            if target == "MergeRequest" and action in _GITLAB_MR_ACTIONS:
+                stamps["pr"].append(when)
+            elif target in ("Note", "DiffNote", "DiscussionNote") and note.get("noteable_type") == "MergeRequest":
+                stamps["pr"].append(when)
+        # Pipelines they started that passed, in the projects active in the window.
+        projects = gl.paged(cl, "/projects", {"membership": "true", "simple": "true", "archived": "false",
+                                              "last_activity_after": since_iso, "order_by": "last_activity_at"},
+                            limit=30)
+        for project in projects:
+            resp = cl.get(f"/projects/{project.get('id')}/pipelines",
+                          params={"username": me.get("username"), "status": "success", "updated_after": since_iso,
+                                  "per_page": 100})
+            if resp.status_code != 200:
+                continue
+            for p in gl.json_of(resp) or []:
+                when = p.get("created_at")
+                if when and recent(when) and str(p.get("source") or "").lower() not in _GITLAB_NOT_BY_HAND:
+                    stamps["pipeline"].append(when)
+    counts = {kind: record_history(who, kind, values) for kind, values in stamps.items()}
+    _mark_gitlab(who, backfilled=True)
+    return counts
 
 
 def sync_ado(user: Dict[str, Any]) -> Dict[str, int]:

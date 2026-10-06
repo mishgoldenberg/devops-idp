@@ -29,7 +29,7 @@ and what happens end-to-end when a user performs a typical action.
 │   ─ db.py (psycopg2 pool)       query_all/execute + ensure_*()     │
 │   ─ cache.py + redis_client.py  Redis get_cached / invalidate      │
 │   ─ integrations_cache.py       60 s TTL wrapper for ADO/SNOW      │
-│   ─ resilient_http.py           timeouts + retries + safe_call     │
+│   ─ resilient_http.py           TLS switch + failure wording       │
 │   ─ audit.py                    Writes audit_events rows           │
 │   ─ request_audit.py            Middleware + log mirror into audit │
 │   ─ widget_registry.py          The ONE dashboard widget catalogue │
@@ -221,11 +221,12 @@ everything else on it too; production runs at least two and scales to ten
 
 ## 8. Failure-mode design
 
-- Every outbound HTTP call has a **timeout** (see `resilient_http.py` for
-  the default 5 s connect / 10 s read).
-- `safe_integration` / `safe_call` wrappers turn exceptions into a
-  user-friendly 502 (`"Service temporarily unavailable"`) instead of a raw
-  stack trace.
+- Every outbound HTTP call has an explicit connect and read **timeout**, set
+  where its client is built.
+- A failure is told to the person as one sentence that says whose problem it is
+  (`resilient_http.explain_integration_failure`), never the exception.
+- A far system's 401 is answered as 424: the Hub reads any 401 as its own
+  session ending.
 - A global FastAPI exception handler in `main.py` logs the full traceback
   and returns a generic message to the client.
 - The frontend has a matching **global JS error boundary** in

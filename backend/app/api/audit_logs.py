@@ -1,14 +1,6 @@
 """
-Admin logs API.
-
-Backs the Admin → Logs page. Every endpoint requires Platform Admin
-(``has_effective_admin_access_live``) — the log contains who did what and from
-which IP, and that is not everybody's business.
-
-This header used to claim the threshold was ``hierarchy_level <= 5``. It never
-was: the function named right beside it tests for level 1, so the comment sent
-every reader — including a security reviewer — to the wrong conclusion about who
-can read the audit trail. State the guard, not a remembered intention.
+The Logs page's API. Every endpoint requires a Platform Admin
+(``has_effective_admin_access_live``): the log records who did what, from which IP.
 """
 
 from __future__ import annotations
@@ -23,20 +15,12 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
 
 import audit
-from security import AuthUser, get_current_user, has_effective_admin_access_live
+from security import AuthUser
+from common import admin_user
 
 
 log = logging.getLogger(__name__)
 router = APIRouter()
-
-
-def _require_admin(user: AuthUser = Depends(get_current_user)) -> AuthUser:
-    if not has_effective_admin_access_live(user):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required to view logs.",
-        )
-    return user
 
 
 @router.get("")
@@ -59,7 +43,7 @@ def list_audit_events(
     date_to_alias: Optional[str] = Query(None, alias="to"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
-    _admin: AuthUser = Depends(_require_admin),
+    _admin: AuthUser = Depends(admin_user),
 ) -> Dict[str, Any]:
     resolved_from = date_from or date_from_alias
     resolved_to = date_to or date_to_alias
@@ -115,7 +99,7 @@ def clear_audit_events(
         False,
         description="Required when no filter is set — deleting the ENTIRE log has to be asked for.",
     ),
-    admin: AuthUser = Depends(_require_admin),
+    admin: AuthUser = Depends(admin_user),
 ) -> Dict[str, Any]:
     """Delete the rows the current filter matches.
 
@@ -174,13 +158,8 @@ def clear_audit_events(
 
 
 @router.get("/actions")
-def list_actions(_admin: AuthUser = Depends(_require_admin)) -> Dict[str, Any]:
+def list_actions(_admin: AuthUser = Depends(admin_user)) -> Dict[str, Any]:
     return {"success": True, "data": audit.distinct_actions()}
-
-
-@router.get("/levels")
-def list_levels(_admin: AuthUser = Depends(_require_admin)) -> Dict[str, Any]:
-    return {"success": True, "data": audit.ALL_LEVELS}
 
 
 @router.get("/export")
@@ -192,7 +171,7 @@ def export_audit_events(
     q: Optional[str] = Query(None),
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
-    _admin: AuthUser = Depends(_require_admin),
+    _admin: AuthUser = Depends(admin_user),
 ) -> StreamingResponse:
     """The current view, as CSV.
 

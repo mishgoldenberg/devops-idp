@@ -20,9 +20,9 @@ import base64
 import binascii
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 import artifactory_admin
@@ -33,6 +33,7 @@ import identity
 import snow_catalog
 from db import execute_returning, query_all
 from request_types import CLEANER_REQUEST_TYPES
+from resilient_http import explain_integration_failure
 from security import AuthUser, get_current_user, has_effective_admin_access_live
 
 log = logging.getLogger(__name__)
@@ -519,14 +520,8 @@ def servicenow_diagnostics(current_user: AuthUser = Depends(get_current_user)) -
         seen[key] = entry
         items.append(entry)
 
-    # What actually happened the last few times, which beats any probe. Every attempt
-    # already stores its own reason here; nothing has ever shown it, so a request that
-    # quietly reached no queue looked exactly like one that did.
-    #
-    # Bounded two ways, because unbounded it becomes a permanent accusation. It was
-    # reporting five failures from a form that no longer orders anything at all, in
-    # wording from a version of the code that had since been replaced -- so the strip
-    # went on describing a fixed problem with no way for anybody to make it stop.
+    # What actually happened the last few times, which beats any probe -- bounded by age
+    # and by whether the form still orders anything, so a fixed problem stops showing.
     ordering_kinds = sorted(
         spec["key"] for spec in catalog_forms.all_forms() if spec.get("snow_item")
     )
@@ -650,7 +645,7 @@ def submit(
         log.exception("catalog submit %s failed", key)
         raise HTTPException(
             status_code=500,
-            detail=f"The request could not be submitted: {type(exc).__name__}: {exc}",
+            detail="The request could not be submitted. Try again; if it keeps failing, an admin can see why on the Logs page.",
         ) from exc
 
 
@@ -912,7 +907,7 @@ def quota_preview(
         chosen = artifactory_admin.project(project) if project else None
     except Exception as exc:
         log.warning("quota preview failed: %s: %s", type(exc).__name__, exc)
-        raise HTTPException(status_code=502, detail=f"Artifactory did not answer ({type(exc).__name__}).")
+        raise HTTPException(status_code=502, detail=explain_integration_failure("Artifactory", exc))
 
     added = 0
     if add:
@@ -1152,35 +1147,3 @@ def _submit_to_servicenow(
 
 # ── Reading them back ────────────────────────────────────────────────────────
 
-@router.get("/submissions")
-def list_submissions(
-    kind: Optional[str] = None,
-    current_user: AuthUser = Depends(get_current_user),
-) -> Dict[str, Any]:
-    """Your own submissions, or everybody's for a platform admin.
-
-    Filtered in the query, never in the template: this is the only place that decides
-    whose answers a caller can read.
-    """
-    is_admin = has_effective_admin_access_live(current_user)
-    clauses = []
-    params: List[Any] = []
-    if not is_admin:
-        clauses.append("requester_id = %s")
-        params.append(str(current_user["id"]))
-    if kind:
-        clauses.append("kind = %s")
-        params.append(kind)
-    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-
-    rows = query_all(
-        f"""
-        SELECT id, kind, requester_email, title, answers, snow_number, snow_error, created_at
-          FROM catalog_submissions
-          {where}
-         ORDER BY created_at DESC
-         LIMIT 200
-        """,
-        params,
-    )
-    return {"success": True, "data": rows or [], "is_admin": is_admin}

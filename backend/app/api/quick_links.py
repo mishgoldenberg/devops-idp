@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, field_validator
 
+from common import safe_image, safe_link
 from db import execute_returning, query_all, query_one
 from security import AuthUser, get_current_user, has_effective_admin_access_live
 
@@ -25,6 +26,25 @@ _QUICK_LINK_MAX_CHILDREN = 30
 # Per person, not per portal: a personal list long enough to need paging is a
 # bookmark bar, and this widget is not one.
 _USER_QUICK_LINK_MAX = 24
+# The uploader redraws an icon as a 96px PNG, a few KB; this leaves room for a
+# picture somebody made by hand and none for a file that is not an icon.
+ICON_MAX_BYTES = 256 * 1024
+
+
+# The field rules both writers' models use (here and api/admin.py).
+def required_text(value: Optional[str]) -> str:
+    text = (value or "").strip()
+    if not text:
+        raise ValueError("Required")
+    return text[:255]
+
+
+def link_or_blank(value: Optional[str]) -> str:
+    return safe_link(value)
+
+
+def icon_or_blank(value: Optional[str]) -> str:
+    return safe_image(value, ICON_MAX_BYTES)
 
 
 class QuickLinkChild(BaseModel):
@@ -33,13 +53,12 @@ class QuickLinkChild(BaseModel):
     name: str
     url: str
 
-    @field_validator("name", "url")
+    check_name = field_validator("name")(required_text)
+
+    @field_validator("url")
     @classmethod
-    def required_string(cls, v: str) -> str:
-        s = (v or "").strip()
-        if not s:
-            raise ValueError("Required")
-        return s
+    def required_link(cls, v: str) -> str:
+        return required_text(safe_link(v))
 
 
 def normalize_kind(kind: Optional[str]) -> str:
@@ -167,10 +186,8 @@ def list_quick_links(
         ORDER BY sort_order ASC, id ASC
         """
     )
-    # The live privilege lookup was deliberately removed from this path once, because
-    # it cost a query on every dashboard load for every user. So only ask when the
-    # answer can change the result: if nothing is restricted, there is nothing to
-    # hide, and the common case stays exactly as cheap as it was.
+    # The live privilege lookup costs a query, so it is made only when a restricted link
+    # exists and the answer can change the result.
     restricted = any(bool(r.get("admin_only")) for r in rows)
     is_admin = has_effective_admin_access_live(current_user) if restricted else False
 
@@ -249,18 +266,9 @@ class UserQuickLinkRequest(BaseModel):
     kind: str = "single"
     children: Optional[List[QuickLinkChild]] = None
 
-    @field_validator("name")
-    @classmethod
-    def required_string(cls, v: str) -> str:
-        s = (v or "").strip()
-        if not s:
-            raise ValueError("Required")
-        return s[:255]
-
-    @field_validator("url", "icon_url")
-    @classmethod
-    def optional_string(cls, v: Optional[str]) -> str:
-        return (v or "").strip()
+    check_name = field_validator("name")(required_text)
+    check_url = field_validator("url")(link_or_blank)
+    check_icon = field_validator("icon_url")(icon_or_blank)
 
 
 def _personal_row(owner: str, link_id: int) -> Dict[str, Any]:

@@ -38,22 +38,19 @@ from api.azure_devops import get_pipelines as _ado_pipelines
 from api.azure_devops import get_pull_requests as _ado_pull_requests
 from api.azure_devops import get_work_items as _ado_work_items
 from api.azure_devops import probe_user_pat as _ado_probe_pat
+import gitlab_client
 # The one definition of "I have already signed this off" — imported rather than
 # restated so the widget and the API can never disagree about it.
 from api.azure_devops import _VOTE_APPROVED as _ADO_VOTE_APPROVED
 from api.notifications import mark_section_seen as _mark_section_seen
-from api.dashboards import DashboardUpdateRequest
-from api.dashboards import get_default_dashboard as _dash_get_default
-from api.dashboards import update_dashboard as _dash_update
 from api.servicenow import get_tickets as _snow_get_tickets
 from db import query_one
 from devbot import config as devbot_config
-from secrets_manager import delete_user_azure_devops_pat, get_user_azure_devops_pat, store_user_azure_devops_pat
+from secrets_manager import delete_user_azure_devops_pat, store_user_azure_devops_pat
 from security import (
     AuthUser,
     create_access_token,
     decode_access_token,
-    has_effective_admin_access,
     has_effective_admin_access_live,
     is_platform_admin_level,
     verify_password,
@@ -62,12 +59,8 @@ from security import (
 ui_router = APIRouter()
 log = logging.getLogger(__name__)
 
-# The widget catalogue lives in one module now — it used to be written out by hand
-# here, in api/dashboards.py, and twice more in the dashboard template.
-from widget_registry import (  # noqa: E402  (kept beside the other app imports)
-    ADMIN_ONLY_WIDGETS,
-    HOME_WIDGET_KEYS,
-)
+# The one widget catalogue.
+from widget_registry import HOME_WIDGET_KEYS
 import widget_registry
 
 
@@ -276,7 +269,6 @@ def _local_login_payload(username: str, password: str) -> Optional[Dict[str, Any
     }
 
 
-
 def _time_ago(iso_str: str) -> str:
     """Convert an ISO-8601 datetime string to a human-readable relative time."""
     if not iso_str:
@@ -327,6 +319,7 @@ def ui_index(request: Request):
 
     templates = _get_templates(request)
     return templates.TemplateResponse(
+        request,
         "index.html",
         {
             "request": request,
@@ -361,11 +354,36 @@ def ui_azure_devops_page(request: Request):
 
     templates = _get_templates(request)
     return templates.TemplateResponse(
+        request,
         "azure-devops.html",
         {
             "request": request,
             "user": user,
             "current_page": "azure-devops",
+            "now": datetime.utcnow().isoformat() + "Z",
+        },
+    )
+
+
+@ui_router.get("/ui/gitlab", response_class=HTMLResponse)
+def ui_gitlab_page(request: Request):
+    """The GitLab page: merge requests and pipelines (gitlab-container.html)."""
+    token = request.cookies.get("auth_token")
+    if not token:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+    try:
+        user = _get_ui_user(token)
+    except HTTPException:
+        return RedirectResponse(url="/ui/auth", status_code=303)
+    templates = _get_templates(request)
+    return templates.TemplateResponse(
+        request,
+        "gitlab.html",
+        {
+            "request": request,
+            "user": user,
+            "current_page": "gitlab",
+            "gitlab_configured": gitlab_client.configured(),
             "now": datetime.utcnow().isoformat() + "Z",
         },
     )
@@ -385,6 +403,7 @@ def ui_artifactory_page(request: Request):
 
     templates = _get_templates(request)
     return templates.TemplateResponse(
+        request,
         "artifactory.html",
         {
             "request": request,
@@ -414,6 +433,7 @@ def ui_connections_page(request: Request):
 
     templates = _get_templates(request)
     return templates.TemplateResponse(
+        request,
         "connections.html",
         {
             "request": request,
@@ -449,6 +469,7 @@ def ui_devbot_page(request: Request):
 
     templates = _get_templates(request)
     return templates.TemplateResponse(
+        request,
         "devbot.html",
         {
             "request": request,
@@ -479,6 +500,7 @@ def ui_search_page(request: Request):
 
     templates = _get_templates(request)
     return templates.TemplateResponse(
+        request,
         "search.html",
         {
             "request": request,
@@ -504,6 +526,7 @@ def ui_sonarqube_page(request: Request):
 
     templates = _get_templates(request)
     return templates.TemplateResponse(
+        request,
         "sonarqube.html",
         {
             "request": request,
@@ -528,6 +551,7 @@ def ui_servicenow_page(request: Request):
 
     templates = _get_templates(request)
     return templates.TemplateResponse(
+        request,
         "servicenow.html",
         {
             "request": request,
@@ -553,6 +577,7 @@ def ui_support_page(request: Request):
     _stamp_visit(user, "support", request)
     templates = _get_templates(request)
     return templates.TemplateResponse(
+        request,
         "support.html",
         {
             "request": request,
@@ -577,6 +602,7 @@ def ui_confluence_page(request: Request):
 
     templates = _get_templates(request)
     return templates.TemplateResponse(
+        request,
         "confluence.html",
         {
             "request": request,
@@ -602,6 +628,7 @@ def ui_automations_page(request: Request):
 
     templates = _get_templates(request)
     return templates.TemplateResponse(
+        request,
         "automations.html",
         {
             "request": request,
@@ -618,8 +645,7 @@ def ui_automations_page(request: Request):
 
 @ui_router.get("/ui/suggestions", response_class=HTMLResponse)
 def ui_suggestions_page(request: Request):
-    """The suggestions board. Deliberately NOT admin-gated: a feedback board nobody
-    can read is a suggestions box, which is what this used to be."""
+    """The suggestions board. Not admin-gated: everybody reads it and votes."""
     token = request.cookies.get("auth_token")
     if not token:
         return RedirectResponse(url="/ui/auth", status_code=303)
@@ -632,6 +658,7 @@ def ui_suggestions_page(request: Request):
     _stamp_visit(user, "suggestions", request)
     templates = _get_templates(request)
     return templates.TemplateResponse(
+        request,
         "suggestions.html",
         {
             "request": request,
@@ -672,6 +699,7 @@ def ui_changelog_page(request: Request):
 
     templates = _get_templates(request)
     return templates.TemplateResponse(
+        request,
         "changelog.html",
         {
             "request": request,
@@ -706,6 +734,7 @@ def ui_my_requests_page(request: Request):
     _stamp_visit(user, "my-requests", request)
     templates = _get_templates(request)
     return templates.TemplateResponse(
+        request,
         "my-requests.html",
         {
             "request": request,
@@ -735,6 +764,7 @@ def ui_approvals_page(request: Request):
 
     templates = _get_templates(request)
     return templates.TemplateResponse(
+        request,
         "approvals.html",
         {
             "request": request,
@@ -761,6 +791,7 @@ def ui_observability_page(request: Request):
 
     templates = _get_templates(request)
     return templates.TemplateResponse(
+        request,
         "observability.html",
         {
             "request": request,
@@ -787,6 +818,7 @@ def ui_platform_managing_page(request: Request):
 
     templates = _get_templates(request)
     return templates.TemplateResponse(
+        request,
         "platform-managing.html",
         {
             "request": request,
@@ -813,6 +845,7 @@ def ui_users_page(request: Request):
 
     templates = _get_templates(request)
     return templates.TemplateResponse(
+        request,
         "users.html",
         {
             "request": request,
@@ -839,6 +872,7 @@ def ui_devbot_monitor_page(request: Request):
 
     templates = _get_templates(request)
     return templates.TemplateResponse(
+        request,
         "devbot-monitor.html",
         {
             "request": request,
@@ -865,6 +899,7 @@ def ui_adminbot_page(request: Request):
 
     templates = _get_templates(request)
     return templates.TemplateResponse(
+        request,
         "adminbot.html",
         {
             "request": request,
@@ -894,6 +929,7 @@ def ui_audit_logs_page(request: Request):
 
     templates = _get_templates(request)
     return templates.TemplateResponse(
+        request,
         "audit-logs.html",
         {
             "request": request,
@@ -918,6 +954,7 @@ def ui_profile_page(request: Request):
 
     templates = _get_templates(request)
     return templates.TemplateResponse(
+        request,
         "profile.html",
         {
             "request": request,
@@ -965,6 +1002,7 @@ def ui_settings_page(request: Request):
 
     templates = _get_templates(request)
     return templates.TemplateResponse(
+        request,
         "settings.html",
         {"request": request, "user": user, "current_page": "settings"},
     )
@@ -1138,6 +1176,7 @@ def ui_auth_page(request: Request):
             pass
 
     return templates.TemplateResponse(
+        request,
         "login.html",
         {
             "request": request,
@@ -1252,38 +1291,13 @@ def ui_auth_logout(request: Request):
     return response
 
 
-@ui_router.get("/ui/components/banner", response_class=HTMLResponse)
-def ui_banner_component(request: Request):
-    """Render the top banner for HTMX partial loading."""
-    templates = _get_templates(request)
-    return templates.TemplateResponse(
-        "partials/components/banner.html",
-        {"request": request},
-    )
-
-
-@ui_router.get("/ui/components/sidebar", response_class=HTMLResponse)
-def ui_sidebar_component(request: Request):
-    """Render the navigation sidebar for HTMX partial loading."""
-    templates = _get_templates(request)
-    return templates.TemplateResponse(
-        "partials/components/sidebar.html",
-        {"request": request},
-    )
-
-
 @ui_router.get("/ui/components/quick-links", response_class=HTMLResponse)
 def ui_quick_links_component(request: Request):
-    """Render the Quick Links dashboard component for HTMX partial loading.
-
-    No admin check any more. The widget used to carry the add/edit/delete UI and so
-    needed to know whether you were an admin — which cost a live privilege lookup on
-    every dashboard load, for every user, to decide whether to draw three buttons.
-    Managing quick links now lives in Platform Managing, so this component just shows
-    the links, and the lookup is gone with the buttons that needed it.
-    """
+    """The Quick Links dashboard component. It only shows the links; they are managed in
+    Platform Managing."""
     templates = _get_templates(request)
     return templates.TemplateResponse(
+        request,
         "partials/components/quick-links.html",
         {
             "request": request,
@@ -1344,6 +1358,7 @@ def ui_azure_devops_tasks_component(request: Request):
     templates = _get_templates(request)
     widget_state = _get_ado_task_counts(current_user)
     return templates.TemplateResponse(
+        request,
         "partials/components/azure-devops-tasks.html",
         {
             "request": request,
@@ -1388,15 +1403,8 @@ def _get_pr_data(current_user: Optional[AuthUser]) -> Dict[str, Any]:
 
 
 def _get_pr_created_data(current_user: Optional[AuthUser]) -> Dict[str, Any]:
-    """PRs the signed-in user opened.
-
-    Trusts the API's ``is_creator`` flag. This used to compare the PR's
-    ``created_by_email`` against the portal username as raw lowercase strings — but
-    on-prem Azure DevOps writes an author as ``DOMAIN\\user`` while the portal knows
-    the user by email, so the comparison never matched and this widget was ALWAYS
-    empty, even for a PR the user had just opened. The API already resolves identity
-    across both namespaces; re-deriving it here only reintroduced the bug.
-    """
+    """PRs the signed-in user opened, by the API's ``is_creator`` flag: identity is
+    resolved there, across DOMAIN\\user and e-mail."""
     state = _get_pr_data(current_user)
     if state.get("error"):
         return state
@@ -1452,6 +1460,7 @@ def ui_pull_requests_component(request: Request):
     templates = _get_templates(request)
     widget_state = _get_pr_created_data(current_user)
     return templates.TemplateResponse(
+        request,
         "partials/components/pull-requests.html",
         {
             "request": request,
@@ -1460,6 +1469,41 @@ def ui_pull_requests_component(request: Request):
             "needs_pat": _ado_needs_pat(widget_state["error"]),
         },
     )
+
+
+def _gitlab_widget(request: Request, template: str):
+    """A GitLab widget's shell. Only two things are decided here, both without asking
+    GitLab: is it set up on this Hub, and has this person connected a token. The rows
+    are fetched by the widget itself, so a slow GitLab never holds up the page."""
+    current_user = _current_user_from_token(request.cookies.get("auth_token", ""))
+    error, needs_pat = "", False
+    if not current_user:
+        error = "Sign in to see your GitLab merge requests and pipelines."
+    elif not gitlab_client.configured():
+        error = "GitLab is not set up on this Hub yet. Ask a platform admin."
+    elif not gitlab_client.user_token(current_user):
+        error, needs_pat = gitlab_client.NOT_CONNECTED, True
+    templates = _get_templates(request)
+    return templates.TemplateResponse(
+        request,
+        f"partials/components/{template}",
+        {"request": request, "error": error, "needs_pat": needs_pat},
+    )
+
+
+@ui_router.get("/ui/components/gitlab-merge-requests", response_class=HTMLResponse)
+def ui_gitlab_merge_requests_component(request: Request):
+    return _gitlab_widget(request, "gitlab-merge-requests.html")
+
+
+@ui_router.get("/ui/components/gitlab-merge-requests-review", response_class=HTMLResponse)
+def ui_gitlab_merge_requests_review_component(request: Request):
+    return _gitlab_widget(request, "gitlab-merge-requests-review.html")
+
+
+@ui_router.get("/ui/components/gitlab-pipelines", response_class=HTMLResponse)
+def ui_gitlab_pipelines_component(request: Request):
+    return _gitlab_widget(request, "gitlab-pipelines.html")
 
 
 @ui_router.get("/ui/components/recent-activity", response_class=HTMLResponse)
@@ -1474,6 +1518,7 @@ def ui_recent_activity_component(request: Request):
     """
     templates = _get_templates(request)
     return templates.TemplateResponse(
+        request,
         "partials/components/recent-activity.html",
         {"request": request},
     )
@@ -1486,6 +1531,7 @@ def ui_pull_requests_review_component(request: Request):
     templates = _get_templates(request)
     widget_state = _get_pr_review_data(current_user)
     return templates.TemplateResponse(
+        request,
         "partials/components/pull-requests-review.html",
         {
             "request": request,
@@ -1503,6 +1549,7 @@ def ui_pipelines_component(request: Request):
     templates = _get_templates(request)
     widget_state = _get_pipeline_data(current_user)
     return templates.TemplateResponse(
+        request,
         "partials/components/pipelines.html",
         {
             "request": request,
@@ -1534,6 +1581,7 @@ def _sonar_widget(request: Request, mode: str):
 	"""
 	templates = _get_templates(request)
 	return templates.TemplateResponse(
+		request,
 		"partials/components/sonarqube-widget.html",
 		{"request": request, "mode": mode, "sonar_base": _sonar_web_base()},
 	)
@@ -1586,6 +1634,7 @@ def ui_artifactory_storage_component(request: Request):
         return HTMLResponse("", status_code=403)
     templates = _get_templates(request)
     return templates.TemplateResponse(
+        request,
         "partials/components/artifactory-storage.html",
         {"request": request},
     )
@@ -1596,6 +1645,7 @@ def ui_artifactory_repos_component(request: Request):
     """Render the Artifactory repositories widget; the storage widget is separate."""
     templates = _get_templates(request)
     return templates.TemplateResponse(
+        request,
         "partials/components/artifactory-repos.html",
         {"request": request},
     )
@@ -1606,6 +1656,7 @@ def ui_confluence_pages_component(request: Request):
     """Render the Confluence Pages dashboard widget; data loads client-side."""
     templates = _get_templates(request)
     return templates.TemplateResponse(
+        request,
         "partials/components/confluence-pages.html",
         {"request": request},
     )
@@ -1638,6 +1689,7 @@ def ui_servicenow_tickets_component(request: Request):
             else:
                 error = "ServiceNow unavailable"
     return templates.TemplateResponse(
+        request,
         "partials/components/servicenow-tickets.html",
         {
             "request": request,

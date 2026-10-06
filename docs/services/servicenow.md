@@ -14,40 +14,44 @@ the shared service account.
 
 ## Main endpoints
 
-| Method | Path                                       | Description                                    |
-| ------ | ------------------------------------------ | ---------------------------------------------- |
-| GET    | `/api/support/tickets`                     | Current user's tickets (60 s cache)            |
-| GET    | `/api/support/tickets/{sys_id}`            | Ticket detail (Redis-cached)                   |
-| POST   | `/api/support/tickets`                     | Create a new incident                          |
-| POST   | `/api/support/tickets/create-flow`         | Create incident from 4-step form + attachments |
-| PATCH  | `/api/support/tickets/{sys_id}`            | Update a ticket                                |
-| GET    | `/api/support/tickets/{sys_id}/messages`   | Journal (comment + work-note) history          |
-| POST   | `/api/support/tickets/{sys_id}/messages`   | Append a comment                               |
+Every endpoint that takes a ticket id first checks it is on the caller's own list
+(`_require_own_ticket`): the service account can open any ticket.
+
+| Method | Path                                                  | Description                                     |
+| ------ | ----------------------------------------------------- | ----------------------------------------------- |
+| GET    | `/api/support/tickets`                                | Current user's tickets (60 s cache)             |
+| GET    | `/api/support/tickets/{sys_id}`                       | Ticket detail and its conversation              |
+| GET    | `/api/support/tickets/{sys_id}/attachments/{id}`      | Download one attachment                         |
+| POST   | `/api/support/tickets/reply`                          | Add a comment and attachments to a ticket       |
+| POST   | `/api/support/tickets/create-flow`                    | Open a ticket through the record producer       |
+| GET    | `/api/support/ticket-form`                            | Admins: the producer's questions, which one carries the requester, and whether you resolve to a ServiceNow user |
+
+## Who a ticket is for
+
+The producer inserts the incident as the service account. The requester is sent in
+the producer's caller question (a Reference or Lookup Select Box pointing at
+`sys_user`, named `caller_id` on this instance, or `SNOW_CALLER_VAR`), resolved from
+their e-mail and login (`snow_catalog.find_user`). Nothing is written to the incident
+afterwards, because any update by the service account reassigns it and moves it to In
+Progress; `SNOW_CALLER_PATCH=1` accepts that trade. When a ticket opens as the service
+account, `GET /api/support/ticket-form` says why.
 
 ## External APIs used
 
-- `GET/POST/PATCH {SNOW_BASE_URL}/api/now/table/incident[/{sys_id}]`
+- `POST {SNOW_BASE_URL}/api/sn_sc/servicecatalog/items/{producer}/submit_producer`
+- `GET/PATCH {SNOW_BASE_URL}/api/now/table/incident[/{sys_id}]`
 - `GET {SNOW_BASE_URL}/api/now/table/sys_user`
 - `GET {SNOW_BASE_URL}/api/now/table/sys_user_group`
 - `POST {SNOW_BASE_URL}/api/now/attachment/file`
-- `GET/POST {SNOW_BASE_URL}/api/now/table/sys_journal_field`
 
 Authentication: HTTP Basic (`SNOW_API_USERNAME` / `SNOW_API_PASSWORD`).
 
-## Environment variables
-
-- `SNOW_BASE_URL` — instance URL.
-- `SNOW_API_USERNAME` + `SNOW_API_PASSWORD`.
-
 ## Data written
 
-- `user_tickets` — mapping insert on every successful create.
-- `servicenow_tickets` — observability counter via
-  `observability_tracking.record_servicenow_ticket`.
-- `audit_events` — `TICKET_CREATED` on create; `TICKET_UPDATED` on
-  patch.
-- `notifications` — `TICKET_CREATED` with `link=/ui/support#{sys_id}`
-  and `group_key=ticket:{sys_id}`.
+- `user_tickets` — who opened which ticket, on every successful create.
+- `servicenow_tickets` — the Observability counter
+  (`observability_tracking.record_servicenow_portal_ticket`).
+- `activity` — the person's own "opened a ticket" entry.
 
 ## Performance / caching
 

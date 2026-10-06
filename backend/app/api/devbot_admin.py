@@ -15,20 +15,15 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from devbot import monitor
 from devbot.tools import base as tools
-from security import AuthUser, get_current_user, has_effective_admin_access_live
+from security import AuthUser
+from common import admin_user
 
 router = APIRouter()
 log = logging.getLogger(__name__)
-
-
-def _require_admin(user: AuthUser = Depends(get_current_user)) -> AuthUser:
-    if not has_effective_admin_access_live(user):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required.")
-    return user
 
 
 def _answer(request: Request, produce) -> Dict[str, Any]:
@@ -36,9 +31,9 @@ def _answer(request: Request, produce) -> Dict[str, Any]:
         return {"success": True, "data": produce()}
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception:
         log.warning("devbot admin: a monitoring query failed", exc_info=True)
-        detail = f"The DevBot figures could not be read: {type(exc).__name__}: {exc}"
+        detail = "The DevBot figures could not be read; the details are in the Hub's log."
         try:
             request.state.audit_detail = detail
         except Exception:
@@ -48,7 +43,7 @@ def _answer(request: Request, produce) -> Dict[str, Any]:
 
 @router.get("/overview")
 def overview(request: Request, days: int = Query(30, ge=0, le=730),
-             _admin: AuthUser = Depends(_require_admin)) -> Dict[str, Any]:
+             _admin: AuthUser = Depends(admin_user)) -> Dict[str, Any]:
     def produce() -> Dict[str, Any]:
         data = monitor.overview(days)
         # Each lookup by the name the chat shows while it runs, not its function name.
@@ -61,11 +56,11 @@ def overview(request: Request, days: int = Query(30, ge=0, le=730),
 
 @router.get("/people")
 def people(request: Request, days: int = Query(30, ge=0, le=730),
-           _admin: AuthUser = Depends(_require_admin)) -> Dict[str, Any]:
+           _admin: AuthUser = Depends(admin_user)) -> Dict[str, Any]:
     return _answer(request, lambda: monitor.people(days))
 
 
 @router.get("/feedback")
 def feedback(request: Request, rating: str = Query("", pattern="^(up|down|)$"), days: int = Query(30, ge=0, le=730),
-             _admin: AuthUser = Depends(_require_admin)) -> Dict[str, Any]:
+             _admin: AuthUser = Depends(admin_user)) -> Dict[str, Any]:
     return _answer(request, lambda: monitor.feedback(rating, days))

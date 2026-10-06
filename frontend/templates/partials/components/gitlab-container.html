@@ -1,0 +1,68 @@
+{#
+	The GitLab page: the Azure DevOps page's layout, in GitLab's colour.
+
+	Two columns: the two merge-request lists side by side, so "mine" and "waiting for me"
+	read together, and pipelines across the full width beneath, where a pipeline's branch
+	and its buttons fit on its row. Heights are inline styles because h-[..] utilities are
+	not compiled into output.css. .provider-gitlab turns the page's primary colour into
+	GitLab orange (theme.css).
+#}
+{% set gitlab_page_widgets = [
+	("gl-mr-component", "/ui/components/gitlab-merge-requests", "height: 32rem"),
+	("gl-mr-review-component", "/ui/components/gitlab-merge-requests-review", "height: 32rem"),
+	("gl-pipelines-component", "/ui/components/gitlab-pipelines", "grid-column: 1 / -1; height: 34rem"),
+] %}
+<style>
+	/* One column on a narrow window, two from 1024px. More specific than .widget-grid,
+	   whose own breakpoints would otherwise make it three. */
+	.widget-grid.gitlab-page-grid { grid-template-columns: minmax(0, 1fr); }
+	@media (min-width: 1024px) {
+		.widget-grid.gitlab-page-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+	}
+</style>
+<div class="page-shell provider-gitlab">
+	<header class="page-header">
+		<div>
+			<h1 class="page-title">GitLab</h1>
+			<p class="page-subtitle">Merge Requests and Pipelines</p>
+		</div>
+		<div class="flex items-center gap-2">
+			{% with system_key = 'gitlab' %}
+				{% include "partials/components/open-system-button.html" %}
+			{% endwith %}
+			<button id="refresh-btn" class="btn btn-outline btn-primary btn-sm">
+				&#8635; Refresh
+			</button>
+		</div>
+	</header>
+
+	<div class="page-content-flush">
+		{% if not gitlab_configured %}
+		<div class="portal-content-container">
+			<div class="alert text-sm">
+				GitLab is not set up on this Hub yet: a platform admin sets its address (GITLAB_BASE_URL) in the deployment.
+			</div>
+		</div>
+		{% else %}
+		<div class="widget-grid gitlab-page-grid">
+			{% for component_id, url, style in gitlab_page_widgets %}
+			<div
+				id="{{ component_id }}"
+				class="widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
+				style="{{ style }}"
+				hx-get="{{ url }}"
+				hx-trigger="load, refresh, click from:#refresh-btn"
+				data-autorefresh
+				hx-target="find .widget-content"
+				hx-swap="innerHTML"
+			>
+				<div class="widget-loading h-full">
+					{% include "partials/components/widget-skeleton.html" %}
+				</div>
+				<div class="widget-content h-full"></div>
+			</div>
+			{% endfor %}
+		</div>
+		{% endif %}
+	</div>
+</div>

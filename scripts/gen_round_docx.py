@@ -25,7 +25,7 @@ from docx import Document
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Pt, RGBColor
+from docx.shared import Pt
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -37,7 +37,6 @@ END = _TAG + "END##"
 
 APPLY_SHADE = "FFF4CE"
 CODE_SHADE = "F4F5F7"
-PAYLOAD_SHADE = "EEF2F7"
 
 
 # ── docx helpers ───────────────────────────────────────────────────────────
@@ -129,26 +128,129 @@ def body(doc, text: str, bold: bool = False) -> None:
 
 # -- the round ---------------------------------------------------------------
 
-ROUND = "140"
-SUMMARY = ("Monitoring: Usage, Users, DevBot and Logs under one sidebar entry with tabs; Search leaves the sidebar (the banner box); compact sidebar rows that fit a laptop screen; breadcrumbs say Monitoring; no mention of a closed network")
-DELETES = []
+ROUND = "144"
+SUMMARY = ('Security fixes and a cleanup: icons and profile pictures checked by their bytes and links that would run a script refused; validation errors answered in one sentence, the API map no longer published, and no exception names in messages; the hard-coded database password removed from setup.sh; starlette, PyJWT and cryptography upgraded, three unused packages dropped, every page rendering on the new framework; DevBot and AdminBot told that fetched text is data, never instructions, and their links and ids checked; Confluence and GitLab action inputs constrained; the unused Terraform permissions removed from the chart and no cluster token in the backend pod; dead code, endpoints and documents removed, shared helpers in common.py, history comments rewritten, a hygiene guard in CI; support tickets carry the requester again; an expired Azure DevOps or Confluence token no longer signs people out')
+DELETES = [
+    "backend/app/api/metrics.py",
+    "backend/app/api/release_notes.py",
+    "backend/app/test_rbac_and_pat.py",
+    "deployment/charts/backend/templates/terraform-rbac.yaml",
+    "docs/AZURE_DEVOPS.md",
+    "docs/INTEGRATION_GUIDE.md",
+    "docs/SELF_SERVICE_TERRAFORM.md",
+    "docs/services/metrics.md",
+    "frontend/src/app/support/page.tsx",
+    "frontend/src/components/common/AzureConnectPrompt.tsx",
+    "frontend/src/hooks/useAutoRefresh.ts",
+    "frontend/src/hooks/useAzureDevOpsConnection.ts",
+]
 FILES = [
-    ".gitignore",
+    ".dockerignore",
+    ".github/workflows/ci.yml",
+    "CLAUDE.md",
+    "azure-pipelines.yml",
+    "backend/app/Dockerfile",
+    "backend/app/ado_repo.py",
+    "backend/app/api/__init__.py",
+    "backend/app/api/activity.py",
+    "backend/app/api/admin.py",
+    "backend/app/api/adminbot.py",
+    "backend/app/api/ado_actions.py",
+    "backend/app/api/announcements.py",
+    "backend/app/api/approvals.py",
+    "backend/app/api/audit_logs.py",
+    "backend/app/api/auth.py",
+    "backend/app/api/azure_devops.py",
+    "backend/app/api/backups.py",
+    "backend/app/api/catalog.py",
+    "backend/app/api/confluence_actions.py",
+    "backend/app/api/dashboards.py",
+    "backend/app/api/devbot.py",
+    "backend/app/api/devbot_admin.py",
+    "backend/app/api/devbot_index.py",
+    "backend/app/api/favorites.py",
+    "backend/app/api/gitlab.py",
+    "backend/app/api/gitlab_actions.py",
+    "backend/app/api/health.py",
+    "backend/app/api/inbox.py",
+    "backend/app/api/integrations.py",
+    "backend/app/api/notifications.py",
+    "backend/app/api/observability.py",
+    "backend/app/api/pins.py",
+    "backend/app/api/quick_links.py",
+    "backend/app/api/search.py",
+    "backend/app/api/servicenow.py",
+    "backend/app/api/suggestions.py",
+    "backend/app/api/system_urls.py",
+    "backend/app/api/usage.py",
+    "backend/app/api/user_prefs.py",
+    "backend/app/artifactory_admin.py",
+    "backend/app/audit.py",
+    "backend/app/cache.py",
+    "backend/app/catalog_forms.py",
     "backend/app/changelog.py",
+    "backend/app/cleaner_store.py",
+    "backend/app/common.py",
+    "backend/app/db.py",
     "backend/app/devbot/knowledge.py",
-    "docs/devbot.md",
+    "backend/app/devbot/models.py",
+    "backend/app/devbot/monitor.py",
+    "backend/app/devbot/orchestrator.py",
+    "backend/app/devbot/prompts.py",
+    "backend/app/devbot/store.py",
+    "backend/app/devbot/tools/base.py",
+    "backend/app/devbot/tools/confluence.py",
+    "backend/app/devbot/tools/hub.py",
+    "backend/app/devbot/tools/investigate.py",
+    "backend/app/gitlab_client.py",
+    "backend/app/main.py",
+    "backend/app/observability_tracking.py",
+    "backend/app/release_notes.py",
+    "backend/app/request_audit.py",
+    "backend/app/requirements.txt",
+    "backend/app/resilient_http.py",
+    "backend/app/security.py",
+    "backend/app/snow_catalog.py",
+    "backend/app/sonar_insights.py",
+    "backend/app/ui.py",
+    "backend/app/widget_registry.py",
+    "backend/tests/test_gitlab.py",
+    "backend/tests/test_security_fixes.py",
+    "backend/tests/test_smoke.py",
+    "backend/tests/test_ticket_caller.py",
+    "deployment/charts/backend/templates/deployment.yaml",
+    "deployment/charts/backend/templates/service-accounts.yaml",
+    "deployment/charts/backend/values.yaml",
+    "docs/API_REFERENCE.md",
+    "docs/DEPLOYMENT.md",
+    "docs/architecture.md",
+    "docs/database.md",
+    "docs/env.md",
     "docs/frontend.md",
-    "docs/observability.md",
-    "frontend/templates/observability.html",
-    "frontend/templates/partials/components/audit-logs-container.html",
-    "frontend/templates/partials/components/breadcrumbs.html",
-    "frontend/templates/partials/components/command-palette.html",
-    "frontend/templates/partials/components/devbot-monitor-container.html",
-    "frontend/templates/partials/components/monitoring-tabs.html",
-    "frontend/templates/partials/components/observability-container.html",
-    "frontend/templates/partials/components/portal-chrome.html",
-    "frontend/templates/partials/components/sidebar.html",
-    "frontend/templates/partials/components/users-container.html",
+    "docs/onboarding.md",
+    "docs/self-service-flow.md",
+    "docs/services/README.md",
+    "docs/services/admin.md",
+    "docs/services/approvals.md",
+    "docs/services/audit_logs.md",
+    "docs/services/azure_devops.md",
+    "docs/services/confluence.md",
+    "docs/services/dashboards.md",
+    "docs/services/integrations_cache.md",
+    "docs/services/notifications.md",
+    "docs/services/resilient_http.md",
+    "docs/services/servicenow.md",
+    "docs/support.md",
+    "frontend/templates/partials/components/platform-managing-container.html",
+    "frontend/templates/partials/components/quick-link-children.html",
+    "frontend/templates/partials/components/quick-links.html",
+    "scripts/apply_docx.py",
+    "scripts/check_code_hygiene.py",
+    "scripts/check_imports.py",
+    "scripts/gen_pentest_checklist.py",
+    "scripts/gen_round_docx.py",
+    "scripts/restore_backup.py",
+    "setup.sh",
 ]
 PREAMBLE = ""
 

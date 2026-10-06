@@ -16,7 +16,6 @@ from security import (
     REGULAR_USER_LEVEL,
     SSO_NAME_CLAIM,
     create_access_token,
-    decode_access_token,
     is_platform_admin_level,
 )
 from sso_config import (
@@ -39,12 +38,6 @@ def _jwks_ssl_context() -> Optional[ssl.SSLContext]:
 
 
 router = APIRouter()
-
-
-def _now_iso() -> str:
-    from datetime import datetime, timezone
-
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _map_role_to_effective(
@@ -337,12 +330,5 @@ async def sso_callback(request: Request, code: Optional[str] = None, state: Opti
     response = RedirectResponse(url="/ui/", status_code=status.HTTP_303_SEE_OTHER)
     response.delete_cookie("sso_state", path="/")
     return _set_auth_cookie(response, request, token)
-
-
-# NOTE: a POST /verify endpoint that decoded an arbitrary token (passed as a query
-# param) and echoed its payload used to live here. It had no caller, and it was both a
-# JWT-decode oracle for anyone who could reach it and a token-in-URL leak (query strings
-# land in nginx access logs and Referer headers). Removed — token validation happens in
-# get_current_user for every real request; there is no need for a standalone endpoint.
 
 

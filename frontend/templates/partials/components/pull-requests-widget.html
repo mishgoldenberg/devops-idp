@@ -1,34 +1,51 @@
 {#
-	Shared body for BOTH pull-request widgets ("My Opened PRs" and "PRs Needing My
-	Review"). They differ only in a title, an empty state, and which role they ask the
-	API for — everything else (the three Azure DevOps selectors, sorting, pinning, the
-	row markup) was duplicated in two files that then drifted apart, which is how one
-	of them ended up with a badge around the repository name and the other didn't.
+	Shared body for EVERY pull-request widget: Azure DevOps's "My Opened PRs" and "PRs
+	Needing My Review", and GitLab's two merge-request widgets. They differ in a title,
+	an empty state, which role they ask the API for, and which SYSTEM they read --
+	everything else (the scoping selects, search, sorting, pinning, the row, the actions)
+	is one piece of code, because the copies that used to exist drifted apart, which is
+	how one of them ended up with a badge around the repository name and the other didn't.
 
 	Caller sets, before including:
 	  pr_role         "created" | "review"
 	  pr_title        heading text
 	  pr_empty_title  headline for the empty state
 	  pr_empty_hint   sub-line for the empty state
+	  pr_provider     "ado" (default) | "gitlab"
 
-	Like the pipelines widget, the SHELL is server-rendered (so the PAT-missing prompt
-	still works) and the ROWS are fetched client-side, so changing a filter does not
-	reload the page. Filtering is done by the API — the widget never decides for itself
-	what "mine" means, which is the bug that kept "My Opened PRs" permanently empty.
+	The SHELL is server-rendered (so the token prompt still works) and the ROWS are
+	fetched client-side, so changing a filter does not reload the page. Filtering is done
+	by the API -- the widget never decides for itself what "mine" means, which is the bug
+	that kept "My Opened PRs" permanently empty.
+
+	PROVIDERS. Azure DevOps scopes by collection, project and repository; GitLab by group
+	and project (its project IS the repository). A GitLab widget sits inside
+	.provider-gitlab, which turns the theme's primary colour into GitLab's orange
+	(theme.css), and its rows are keyed "project:iid" -- a merge request's number is only
+	unique within its project.
 #}
+{% set pr_provider = pr_provider | default("ado") %}
+{% if pr_provider == "gitlab" %}
+	{% set pr_root = "gitlab-" ~ pr_role %}
+	{% set pr_filters = [("group", "Group", "All groups"), ("project", "Project", "All projects")] %}
+	{% set pr_search_hint = "Search title, project, branch or author" %}
+{% else %}
+	{% set pr_root = pr_role %}
+	{% set pr_filters = [("collection", "Collection", "All collections"), ("project", "Project", "All projects"), ("repo", "Repository", "All repositories")] %}
+	{% set pr_search_hint = "Search title, repository, branch or author" %}
+{% endif %}
 {#
-	This partial is included twice on the dashboard, so this block appears twice. The
-	rules are identical and idempotent, which is why it can live with the markup it
-	belongs to instead of being pushed into a global stylesheet that would then have to
-	know about a widget.
+	This partial is included several times on the dashboard, so this block appears that
+	many times. The rules are identical and idempotent, which is why it can live with the
+	markup it belongs to instead of in a global stylesheet that would have to know about
+	a widget.
 #}
 <style>
 	/* A <select> clips its selected text with no ellipsis, so a value wider than the
-	   box just stops — and a name that stops without a mark reads as the whole name.
-	   These four selects are narrow on purpose (one row, one column), so this is the
-	   normal case rather than an edge case. `direction: ltr` is restated because the
-	   portal sets `dir="auto"` on inputs for Hebrew, and an RTL select would otherwise
-	   put the ellipsis on the wrong end. */
+	   box just stops -- and a name that stops without a mark reads as the whole name.
+	   These selects are narrow on purpose (one row, one column), so this is the normal
+	   case. `direction: ltr` is restated because the portal sets `dir="auto"` on inputs
+	   for Hebrew, and an RTL select would put the ellipsis on the wrong end. */
 	[data-pr-root] select {
 		text-overflow: ellipsis;
 		white-space: nowrap;
@@ -44,11 +61,27 @@
 		border-radius: 0.25rem;
 	}
 	[data-pr-root] .pr-act:hover { text-decoration: underline; text-underline-offset: 2px; }
+	[data-pr-root] .pr-tag {
+		font-size: 0.65rem;
+		font-weight: 600;
+		padding: 0 0.4rem;
+		border-radius: 0.3rem;
+		border: 1px solid hsl(var(--bc) / 0.2);
+		color: hsl(var(--bc) / 0.65);
+		white-space: nowrap;
+	}
+	[data-pr-root] .pr-tag[data-tone="ok"] { border-color: hsl(var(--su) / 0.5); color: hsl(var(--su)); }
+	[data-pr-root] .pr-tag[data-tone="bad"] { border-color: hsl(var(--er) / 0.5); color: hsl(var(--er)); }
 </style>
 
-<div class="section-card h-full flex flex-col" data-pr-root="{{ pr_role }}">
+<div class="section-card h-full flex flex-col{% if pr_provider == 'gitlab' %} provider-gitlab{% endif %}" data-pr-root="{{ pr_root }}" data-pr-provider="{{ pr_provider }}">
 	<div class="card-body p-5 flex flex-col h-full gap-3">
 		<div class="flex items-center gap-3">
+			{% if pr_provider == "gitlab" %}
+			<div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/30 bg-primary/10">
+				{% include "partials/components/gitlab-logo.html" %}
+			</div>
+			{% else %}
 			<div
 				class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-secondary/30 bg-secondary/10"
 			>
@@ -58,6 +91,7 @@
 					/>
 				</svg>
 			</div>
+			{% endif %}
 			<h3 class="text-sm font-bold uppercase tracking-widest text-base-content/70">
 				{{ pr_title }}
 			</h3>
@@ -65,55 +99,43 @@
 		</div>
 
 		{% if error and needs_pat %}
+		{% if pr_provider == "gitlab" %}
+		{% include "partials/components/gitlab-token-prompt.html" %}
+		{% else %}
 		{% include "partials/components/azure-pat-prompt.html" %}
+		{% endif %}
 		{% elif error %}
 		<div class="flex flex-1 items-center justify-center rounded-xl border border-error/20 bg-error/5 p-4 text-center text-xs text-error">
 			{{ error }}
 		</div>
 		{% else %}
-		<!--
-			Inline grid: `grid-cols-4` is not in the precompiled output.css.
-
-			One row of four, matching My Work Items. This widget is one column wide where
-			that one is two, so each select is genuinely narrow — `minmax(0, 1fr)` lets
-			them shrink rather than overflow the card, and a select shows the chosen
-			option truncated rather than pushing the row wide. The full name is still in
-			the dropdown and in the title attribute. Buying back the vertical row this
-			frees is worth more here: it is a list widget, and the row it saves is a
-			pull request.
-		-->
 		{#
-			Search over what is loaded, above the scoping selects: a fifth column would not
+			Search over what is loaded, above the scoping selects: another column would not
 			fit a one-column widget, and a search box is the control people reach for first.
+
+			The selects sit in one row with Sort, as many columns as the provider has
+			filters plus one. Inline grid: `grid-cols-N` is not in the precompiled
+			output.css. `minmax(0, 1fr)` lets them shrink rather than overflow the card;
+			the full name is still in the dropdown and in the title attribute.
 		#}
 		<input type="search" class="input input-bordered portal-widget-search" data-pr-search dir="auto"
-			placeholder="Search title, repository, branch or author" aria-label="Search pull requests" />
-		<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.5rem">
+			placeholder="{{ pr_search_hint }}" aria-label="Search {{ 'merge' if pr_provider == 'gitlab' else 'pull' }} requests" />
+		<div style="display: grid; grid-template-columns: repeat({{ pr_filters | length + 1 }}, minmax(0, 1fr)); gap: 0.5rem">
+			{% for key, label, all_label in pr_filters %}
 			<label class="form-control">
-				<span class="label-text text-[11px] uppercase tracking-wide text-base-content/50">Collection</span>
-				<select class="select select-bordered select-xs w-full" data-pr-collection aria-label="Collection">
-					<option value="">All collections</option>
+				<span class="label-text text-[11px] uppercase tracking-wide text-base-content/50">{{ label }}</span>
+				<select class="select select-bordered select-xs w-full" data-pr-filter="{{ key }}" data-all="{{ all_label }}" aria-label="{{ label }}">
+					<option value="">{{ all_label }}</option>
 				</select>
 			</label>
-			<label class="form-control">
-				<span class="label-text text-[11px] uppercase tracking-wide text-base-content/50">Project</span>
-				<select class="select select-bordered select-xs w-full" data-pr-project aria-label="Project">
-					<option value="">All projects</option>
-				</select>
-			</label>
-			<label class="form-control">
-				<span class="label-text text-[11px] uppercase tracking-wide text-base-content/50">Repository</span>
-				<select class="select select-bordered select-xs w-full" data-pr-repo aria-label="Repository">
-					<option value="">All repositories</option>
-				</select>
-			</label>
+			{% endfor %}
 			<label class="form-control">
 				<span class="label-text text-[11px] uppercase tracking-wide text-base-content/50">Sort</span>
-				<select class="select select-bordered select-xs w-full" data-pr-sort aria-label="Sort pull requests">
+				<select class="select select-bordered select-xs w-full" data-pr-sort aria-label="Sort">
 					<option value="newest">Newest</option>
-					<option value="collection">Collection</option>
-					<option value="project">Project</option>
-					<option value="repository">Repository</option>
+					{% for key, label, all_label in pr_filters %}
+					<option value="{{ key }}">{{ label }}</option>
+					{% endfor %}
 				</select>
 			</label>
 		</div>
@@ -131,39 +153,109 @@
 <script>
 	(function () {
 		const ROLE = "{{ pr_role }}";
-		const root = document.querySelector('[data-pr-root="' + ROLE + '"]');
+		const PROVIDER = "{{ pr_provider }}";
+		const root = document.querySelector('[data-pr-root="{{ pr_root }}"]');
 		if (!root) return;
 		const body = root.querySelector("[data-pr-body]");
-		if (!body) return; // error / PAT branch: nothing interactive to wire up
+		if (!body) return; // error / token branch: nothing interactive to wire up
+
+		// What differs between the systems, and nothing else. A filter names the list it
+		// is filled from, the query parameter it sends, the row field it sorts by, and the
+		// filters it depends on: `needs` are passed when set, `required` must be set or the
+		// select stays on "All" (an Azure DevOps repository only exists within a project; a
+		// GitLab project can be picked without a group, so its list is loaded up front).
+		const PROVIDERS = {
+			ado: {
+				list: "/api/azure-devops/pull-requests",
+				pinSource: "azure_devops",
+				pinPrefix: "pr:",
+				storage: "portal-pr-",
+				url: "",
+				filters: {
+					collection: { src: "/api/azure-devops/collections", param: "collection", field: "collection" },
+					project: { src: "/api/azure-devops/projects", param: "project", field: "project" },
+					repo: { src: "/api/azure-devops/repositories", param: "repository", field: "repository",
+						required: "project", needs: { project: "project", collection: "collection" } },
+				},
+				key: (pr) => String(pr.id || ""),
+				noun: (pr) => "pull request " + pr.id,
+				actions(pr) {
+					// Review only where you are asked to review; Comment wherever the row carries
+					// what the dialog has to name. Older cached rows just show no buttons.
+					if (!pr.repository_id || !window.portalAdo) return "";
+					return (ROLE === "review" ? '<button type="button" class="pr-act" data-pr-act="vote">Review…</button>' : "") +
+						'<button type="button" class="pr-act" data-pr-act="pr-comment">Comment…</button>';
+				},
+				target: (pr) => ({ collection: pr.collection, project: pr.project, repository_id: pr.repository_id,
+					id: pr.id, title: pr.title, my_vote: pr.my_vote }),
+				tags: () => "",
+			},
+			gitlab: {
+				list: "/api/gitlab/merge-requests",
+				pinSource: "gitlab",
+				pinPrefix: "mr:",
+				storage: "portal-gl-",
+				url: "gl",
+				filters: {
+					group: { src: "/api/gitlab/groups", param: "group", field: "project" },
+					project: { src: "/api/gitlab/projects", param: "project", field: "project_path", needs: { group: "group" } },
+				},
+				key: (pr) => String(pr.project_id || "") + ":" + String(pr.iid || pr.id || ""),
+				noun: (pr) => "merge request !" + (pr.iid || pr.id) + " in " + (pr.project_path || pr.repository || ""),
+				actions(pr) {
+					if (!pr.project_id || !window.portalAdo || !window.portalAdo.has("gl-approve")) return "";
+					// Approve where you are a reviewer; take an approval back wherever you gave one.
+					const approve = ROLE === "review" || pr.approved_by_me
+						? '<button type="button" class="pr-act" data-pr-act="gl-approve">' + (pr.approved_by_me ? "Unapprove…" : "Approve…") + "</button>" : "";
+					return approve + '<button type="button" class="pr-act" data-pr-act="gl-mr-comment">Comment…</button>';
+				},
+				target: (pr) => ({ project_id: pr.project_id, iid: pr.iid || pr.id, id: pr.iid || pr.id, title: pr.title,
+					project_path: pr.project_path, approved: !!pr.approved_by_me }),
+				tags(pr) {
+					const out = [];
+					if (pr.draft) out.push('<span class="pr-tag">Draft</span>');
+					if (pr.has_conflicts) out.push('<span class="pr-tag" data-tone="bad">Conflicts</span>');
+					const a = pr.approvals;
+					// Premium says how many it needs; Free only who approved.
+					if (a && typeof a.required === "number" && a.required > 0) {
+						out.push('<span class="pr-tag" data-tone="' + (a.left ? "" : "ok") + '" title="' + escAttr((a.names || []).join(", ")) + '">' +
+							a.count + "/" + a.required + " approvals</span>");
+					} else if (a && a.count) {
+						out.push('<span class="pr-tag" data-tone="ok" title="' + escAttr((a.names || []).join(", ")) + '">Approved ×' + a.count + "</span>");
+					}
+					return out.join("");
+				},
+			},
+		};
+		const CFG = PROVIDERS[PROVIDER] || PROVIDERS.ado;
 
 		const listEl = root.querySelector("[data-pr-list]");
 		const statusEl = root.querySelector("[data-pr-status]");
 		const countEl = root.querySelector("[data-pr-count]");
-		const collectionSel = root.querySelector("[data-pr-collection]");
-		const projectSel = root.querySelector("[data-pr-project]");
-		const repoSel = root.querySelector("[data-pr-repo]");
 		const sortSel = root.querySelector("[data-pr-sort]");
 		const searchEl = root.querySelector("[data-pr-search]");
+		const selects = {};
+		root.querySelectorAll("[data-pr-filter]").forEach((sel) => { selects[sel.getAttribute("data-pr-filter")] = sel; });
+		const ORDER = Object.keys(selects);
 		let term = "";
 		let searchTimer = null;
 
-		// Namespaced per widget: the two PR widgets are scoped independently, so
-		// narrowing "needs my review" to one project does not also narrow "my opened".
-		const K = (name) => "portal-pr-" + ROLE + "-" + name;
-		// URL parameters are namespaced the same way, so a link can carry both PR
-		// widgets' filters at once without them overwriting each other.
-		const Q = (name) => ROLE + "_" + name;
+		// Namespaced per widget AND per system: narrowing "needs my review" to one
+		// project does not also narrow "my opened", nor GitLab's widgets.
+		const K = (name) => CFG.storage + ROLE + "-" + name;
+		// URL parameters are namespaced the same way, so a link can carry every PR
+		// widget's filters at once without them overwriting each other.
+		const Q = (name) => CFG.url + ROLE + "_" + name;
 
-		// URL first, this browser's last choice second — so a link someone sends you
+		// URL first, this browser's last choice second -- so a link someone sends you
 		// shows what THEY were looking at, while opening the dashboard yourself still
 		// restores your own view.
 		const US = window.portalUrlState;
 		const initial = (name, fallback) =>
 			(US ? US.resolve(Q(name), K(name)) : localStorage.getItem(K(name)) || "") || fallback;
 
-		let selectedCollection = initial("collection", "");
-		let selectedProject = initial("project", "");
-		let selectedRepo = initial("repo", "");
+		const values = {};
+		ORDER.forEach((key) => { values[key] = initial(key, ""); });
 		let sortKey = initial("sort", "newest");
 		let rows = [];
 		let pinned = new Set();
@@ -184,6 +276,7 @@
 				.replace(/"/g, "&quot;")
 				.replace(/'/g, "&#39;");
 		}
+		function escAttr(str) { return esc(str); }
 
 		function timeAgo(iso) {
 			if (!iso) return "";
@@ -207,8 +300,8 @@
 			listEl.classList.add("hidden");
 		}
 
-		// The exact pin the Artifactory and SonarQube widgets use — same glyph, same
-		// amber-when-pinned treatment — so a pin looks like a pin everywhere in the
+		// The exact pin the Artifactory and SonarQube widgets use -- same glyph, same
+		// amber-when-pinned treatment -- so a pin looks like a pin everywhere in the
 		// portal instead of each widget inventing its own.
 		function renderPinSvg(pinned) {
 			return pinned
@@ -217,7 +310,7 @@
 		}
 
 		function prRow(pr) {
-			const id = String(pr.id || "");
+			const id = CFG.key(pr);
 			const on = pinned.has(id);
 			const url = String(pr.url || "");
 			const title = url
@@ -225,12 +318,14 @@
 				: '<span class="text-sm font-medium text-base-content truncate">' + esc(pr.title) + "</span>";
 
 			// The hover chip's question (devbot-hover.html): for a reviewer, what to look at;
-			// for the author, what still blocks it.
-			const which = "pull request " + id + " (" + (pr.title || "") + ")" + (pr.repository ? " in " + pr.repository : "");
-			const askAttr = window.portalDevbot && window.portalDevbot.attr ? window.portalDevbot.attr(ROLE === "review"
+			// for the author, what still blocks it. Azure DevOps only for now: DevBot does
+			// not read GitLab yet, and a chip it cannot answer is worse than none.
+			const which = CFG.noun(pr) + " (" + (pr.title || "") + ")" + (PROVIDER === "ado" && pr.repository ? " in " + pr.repository : "");
+			const askAttr = PROVIDER === "ado" && window.portalDevbot && window.portalDevbot.attr ? window.portalDevbot.attr(ROLE === "review"
 				? "I was asked to review " + which + ". What does it change, what do the reviews and checks say, and is it ready?"
 				: "Is my " + which + " ready to merge, and what blocks it?") : "";
-			// The repository used to sit in an outlined badge — an oval that read as a
+			const acts = CFG.actions(pr);
+			// The repository used to sit in an outlined badge -- an oval that read as a
 			// status chip when it is only a name. Plain text, same as the branches.
 			return (
 				// Pinned rows carry the same amber tint as the other widgets' pinned rows.
@@ -239,6 +334,7 @@
 					'" data-pr-id="' + esc(id) + '"' + askAttr + ">" +
 					'<div class="flex items-center gap-2">' +
 						title +
+						CFG.tags(pr) +
 						'<button type="button" class="btn btn-ghost btn-xs btn-circle ml-auto shrink-0" ' +
 							'data-pr-pin="' + esc(id) + '" data-pinned="' + (on ? "1" : "0") + '" ' +
 							'title="' + (on ? "Unpin" : "Pin to top") + '" aria-label="Toggle pin">' + renderPinSvg(on) + "</button>" +
@@ -247,34 +343,30 @@
 						'<span class="text-[11px] uppercase tracking-wide text-base-content/50">' + esc(pr.repository) + "</span>" +
 						'<span class="text-xs text-base-content/60 truncate">' + esc(pr.source_branch) + " → " + esc(pr.target_branch) + "</span>" +
 						'<span class="text-xs text-base-content/40 ml-auto shrink-0">' + esc(timeAgo(pr.created_date)) + "</span>" +
-					actions(pr) +
+						(acts ? '<span class="shrink-0 flex items-center gap-1">' + acts + "</span>" : "") +
 					"</div>" +
 				"</li>"
 			);
 		}
 
-		// Review (only where you are asked to review) and Comment, when the row carries
-		// what the dialog has to name. Older cached rows without it just show no buttons.
-		function actions(pr) {
-			if (!pr.repository_id || !window.portalAdo) return "";
-			return '<span class="shrink-0 flex items-center gap-1">' +
-				(ROLE === "review" ? '<button type="button" class="pr-act" data-pr-act="vote">Review…</button>' : "") +
-				'<button type="button" class="pr-act" data-pr-act="pr-comment">Comment…</button></span>';
+		function sortValue(pr, key) {
+			const f = CFG.filters[key];
+			return String((f ? pr[f.field] : pr[key]) || "");
 		}
 
 		function sorted(list) {
 			const copy = list.slice();
 			copy.sort((a, b) => {
-				// Pinned always float, regardless of the chosen sort — that is the
-				// entire point of pinning one.
-				const pa = pinned.has(String(a.id)) ? 0 : 1;
-				const pb = pinned.has(String(b.id)) ? 0 : 1;
+				// Pinned always float, regardless of the chosen sort -- that is the entire
+				// point of pinning one.
+				const pa = pinned.has(CFG.key(a)) ? 0 : 1;
+				const pb = pinned.has(CFG.key(b)) ? 0 : 1;
 				if (pa !== pb) return pa - pb;
 				if (sortKey === "newest") {
 					return String(b.created_date || "").localeCompare(String(a.created_date || ""));
 				}
 				return (
-					String(a[sortKey] || "").localeCompare(String(b[sortKey] || ""), undefined, { sensitivity: "base" }) ||
+					sortValue(a, sortKey).localeCompare(sortValue(b, sortKey), undefined, { sensitivity: "base" }) ||
 					String(b.created_date || "").localeCompare(String(a.created_date || ""))
 				);
 			});
@@ -285,8 +377,8 @@
 		// pull requests into main.
 		function matches(pr) {
 			if (!term) return true;
-			const text = [pr.title, pr.repository, pr.project, pr.collection, pr.source_branch,
-				pr.target_branch, pr.created_by, "#" + pr.id].join(" ").toLowerCase();
+			const text = [pr.title, pr.repository, pr.project, pr.project_path, pr.collection, pr.source_branch,
+				pr.target_branch, pr.created_by, "#" + pr.id, "!" + (pr.iid || "")].join(" ").toLowerCase();
 			return term.split(/\s+/).every((word) => text.indexOf(word) !== -1);
 		}
 
@@ -298,9 +390,8 @@
 			}
 			if (!rows.length) {
 				// One line, not a full illustrated empty state: with filters above it,
-				// "nothing here" usually means "nothing matches this filter", and a big
-				// celebratory panel for that is misleading.
-				setStatus("{{ pr_empty_title }} — {{ pr_empty_hint }}");
+				// "nothing here" usually means "nothing matches this filter".
+				setStatus({{ (pr_empty_title ~ " — " ~ pr_empty_hint) | tojson }});
 				return;
 			}
 			if (!visible.length) {
@@ -313,14 +404,14 @@
 
 		async function loadPins() {
 			try {
-				const res = await fetch("/api/pins?source=azure_devops", { credentials: "same-origin" });
+				const res = await fetch("/api/pins?source=" + CFG.pinSource, { credentials: "same-origin" });
 				if (!res.ok) return;
 				const data = (await res.json()).data || [];
 				pinned = new Set(
 					data
 						.map((p) => String(p.item_id || ""))
-						.filter((v) => v.startsWith("pr:"))
-						.map((v) => v.slice(3))
+						.filter((v) => v.startsWith(CFG.pinPrefix))
+						.map((v) => v.slice(CFG.pinPrefix.length))
 				);
 			} catch (_) {
 				/* pins are a nicety; the list still works without them */
@@ -338,7 +429,7 @@
 					method: on ? "DELETE" : "POST",
 					credentials: "same-origin",
 					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ source: "azure_devops", item_id: "pr:" + id }),
+					body: JSON.stringify({ source: CFG.pinSource, item_id: CFG.pinPrefix + id }),
 				});
 			} catch (_) {
 				if (on) pinned.add(id); else pinned.delete(id);
@@ -351,13 +442,8 @@
 			if (act) {
 				event.preventDefault();
 				const row = act.closest("[data-pr-id]");
-				const pr = row && rows.find((x) => String(x.id) === row.getAttribute("data-pr-id"));
-				if (pr && window.portalAdo) {
-					window.portalAdo.open(act.getAttribute("data-pr-act"), {
-						collection: pr.collection, project: pr.project, repository_id: pr.repository_id,
-						id: pr.id, title: pr.title, my_vote: pr.my_vote,
-					});
-				}
+				const pr = row && rows.find((x) => CFG.key(x) === row.getAttribute("data-pr-id"));
+				if (pr && window.portalAdo) window.portalAdo.open(act.getAttribute("data-pr-act"), CFG.target(pr));
 				return;
 			}
 			const btn = event.target.closest("[data-pr-pin]");
@@ -366,21 +452,21 @@
 			togglePin(btn.getAttribute("data-pr-pin"));
 		});
 
-		// Four selects across one column is narrow by design (see the markup), so the
-		// chosen value is usually wider than the box. The browser clips it silently and
-		// with no ellipsis, which reads as a truncated NAME rather than a truncated
-		// BOX — "DevCollec" looks like the collection is called that. An ellipsis says
-		// "there is more", and the title says what.
+		// The selects are narrow by design, so the chosen value is usually wider than the
+		// box. The browser clips it silently and with no ellipsis, which reads as a
+		// truncated NAME rather than a truncated BOX. An ellipsis says "there is more",
+		// and the title says what.
 		function syncSelectTitle(sel) {
 			if (!sel) return;
 			const opt = sel.options[sel.selectedIndex];
 			sel.title = opt ? opt.textContent.trim() : "";
 		}
 
-		function fillSelect(sel, names, allLabel, current) {
+		function fillSelect(sel, names, current) {
 			if (!sel) return;
+			const allLabel = sel.getAttribute("data-all") || "All";
 			sel.innerHTML =
-				'<option value="">' + allLabel + "</option>" +
+				'<option value="">' + esc(allLabel) + "</option>" +
 				names.map((n) => {
 					const s = n === current ? " selected" : "";
 					return '<option value="' + esc(n) + '"' + s + ">" + esc(n) + "</option>";
@@ -389,68 +475,54 @@
 			syncSelectTitle(sel);
 		}
 
-		// Every select in this widget keeps its tooltip current as the user changes it,
-		// registered once rather than on each one individually.
+		// Every select keeps its tooltip current as the user changes it, registered once.
 		root.addEventListener("change", (event) => {
 			if (event.target.matches("select")) syncSelectTitle(event.target);
 		});
 
-		async function loadCollections() {
-			try {
-				const res = await fetch("/api/azure-devops/collections", {
-					credentials: "same-origin",
-					headers: { Accept: "application/json" },
-				});
-				if (!res.ok) throw new Error("http " + res.status);
-				const names = ((await res.json()).data || []).map((c) => String(c.name || "")).filter(Boolean);
-				fillSelect(collectionSel, names, "All collections", selectedCollection);
-			} catch (_) {
-				fillSelect(collectionSel, [], "All collections", "");
-			}
-		}
-
-		async function loadProjects() {
-			try {
-				const res = await fetch("/api/azure-devops/projects", {
-					credentials: "same-origin",
-					headers: { Accept: "application/json" },
-				});
-				if (!res.ok) throw new Error("http " + res.status);
-				const names = ((await res.json()).data || []).map((p) => String(p.name || "")).filter(Boolean);
-				fillSelect(projectSel, names, "All projects", selectedProject);
-			} catch (_) {
-				fillSelect(projectSel, [], "All projects", "");
-			}
-		}
-
-		// Repositories only exist within a project, so this list is reloaded whenever
-		// the project changes and is empty ("All repositories") until one is chosen.
-		async function loadRepos() {
-			if (!selectedProject) {
-				selectedRepo = "";
-				remember("repo", "");
-				fillSelect(repoSel, [], "All repositories", "");
-				if (repoSel) repoSel.disabled = true;
+		async function loadFilter(key) {
+			const f = CFG.filters[key];
+			const sel = selects[key];
+			if (!f || !sel) return;
+			if (f.required && !values[f.required]) {
+				values[key] = "";
+				remember(key, "");
+				fillSelect(sel, [], "");
+				sel.disabled = true;
 				return;
 			}
-			if (repoSel) repoSel.disabled = false;
+			sel.disabled = false;
 			try {
-				const params = new URLSearchParams({ project: selectedProject });
-				if (selectedCollection) params.set("collection", selectedCollection);
-				const res = await fetch("/api/azure-devops/repositories?" + params.toString(), {
+				const params = new URLSearchParams();
+				Object.keys(f.needs || {}).forEach((param) => {
+					const from = f.needs[param];
+					if (values[from]) params.set(param, values[from]);
+				});
+				const qs = params.toString();
+				const res = await fetch(f.src + (qs ? "?" + qs : ""), {
 					credentials: "same-origin",
 					headers: { Accept: "application/json" },
 				});
 				if (!res.ok) throw new Error("http " + res.status);
 				const names = ((await res.json()).data || []).map((r) => String(r.name || "")).filter(Boolean);
-				fillSelect(repoSel, names, "All repositories", selectedRepo);
-				if (!names.includes(selectedRepo)) {
-					selectedRepo = "";
-					remember("repo", "");
+				fillSelect(sel, names, values[key]);
+				// A remembered value the list no longer offers is dropped, not kept as a
+				// filter nobody can see.
+				if (f.needs && values[key] && !names.includes(values[key])) {
+					values[key] = "";
+					remember(key, "");
 				}
 			} catch (_) {
-				fillSelect(repoSel, [], "All repositories", "");
+				fillSelect(sel, [], "");
 			}
+		}
+
+		// The filters whose list depends on `key`, to reload when it changes.
+		function dependents(key) {
+			return ORDER.filter((k) => {
+				const f = CFG.filters[k] || {};
+				return f.required === key || Object.values(f.needs || {}).indexOf(key) !== -1;
+			});
 		}
 
 		async function load() {
@@ -460,15 +532,19 @@
 			listEl.classList.add("hidden");
 			try {
 				const params = new URLSearchParams({ role: ROLE });
-				if (selectedCollection) params.set("collection", selectedCollection);
-				if (selectedProject) params.set("project", selectedProject);
-				if (selectedRepo) params.set("repository", selectedRepo);
-				const res = await fetch("/api/azure-devops/pull-requests?" + params.toString(), {
+				ORDER.forEach((key) => { if (values[key]) params.set(CFG.filters[key].param, values[key]); });
+				const res = await fetch(CFG.list + "?" + params.toString(), {
 					credentials: "same-origin",
 					headers: { Accept: "application/json" },
 				});
-				if (!res.ok) throw new Error("http " + res.status);
-				rows = (await res.json()).data || [];
+				let payload = null;
+				try { payload = await res.json(); } catch (_) {}
+				if (!res.ok) {
+					rows = [];
+					setStatus((payload && typeof payload.detail === "string" && payload.detail) || "Service unavailable");
+					return;
+				}
+				rows = (payload && payload.data) || [];
 				render();
 			} catch (_) {
 				rows = [];
@@ -476,33 +552,22 @@
 			}
 		}
 
-		collectionSel?.addEventListener("change", async () => {
-			selectedCollection = collectionSel.value || "";
-			remember("collection", selectedCollection);
-			await loadRepos();
-			load();
+		ORDER.forEach((key) => {
+			selects[key].addEventListener("change", async () => {
+				values[key] = selects[key].value || "";
+				remember(key, values[key]);
+				for (const dep of dependents(key)) await loadFilter(dep);
+				load();
+			});
 		});
 
-		projectSel?.addEventListener("change", async () => {
-			selectedProject = projectSel.value || "";
-			remember("project", selectedProject);
-			await loadRepos();
-			load();
-		});
-
-		repoSel?.addEventListener("change", () => {
-			selectedRepo = repoSel.value || "";
-			remember("repo", selectedRepo);
-			load();
-		});
-
-		// A vote or comment made through the dialog changes these lists: an approved pull
+		// An action made through the dialog changes these lists: an approved pull
 		// request leaves "needs my review". Removed when this copy is replaced.
-		function onAdoChanged() {
-			if (!root.isConnected) { document.removeEventListener("portal:ado-changed", onAdoChanged); return; }
+		function onChanged() {
+			if (!root.isConnected) { document.removeEventListener("portal:ado-changed", onChanged); return; }
 			load();
 		}
-		document.addEventListener("portal:ado-changed", onAdoChanged);
+		document.addEventListener("portal:ado-changed", onChanged);
 
 		searchEl?.addEventListener("input", () => {
 			clearTimeout(searchTimer);
@@ -520,8 +585,11 @@
 
 		(async function init() {
 			if (sortSel) sortSel.value = sortKey;
-			await Promise.all([loadCollections(), loadProjects(), loadPins()]);
-			await loadRepos();
+			// Independent lists first, together; then the ones that depend on them.
+			const free = ORDER.filter((k) => !CFG.filters[k].required && !CFG.filters[k].needs);
+			const tied = ORDER.filter((k) => free.indexOf(k) === -1);
+			await Promise.all(free.map(loadFilter).concat([loadPins()]));
+			for (const k of tied) await loadFilter(k);
 			load();
 		})();
 	})();

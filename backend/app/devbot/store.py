@@ -250,20 +250,6 @@ def update_action(user_id: str, conversation_id: str, message_id: int, action_id
     return found
 
 
-def replace_content(user_id: str, conversation_id: str, message_id: int, content: str) -> bool:
-    rows = execute_returning(
-        """
-        UPDATE devbot_messages m SET content = %s
-          FROM devbot_conversations c
-         WHERE m.id = %s AND m.conversation_id = c.id
-           AND c.id::text = %s AND c.user_id = %s
-        RETURNING m.id
-        """,
-        [content, message_id, conversation_id, user_id],
-    )
-    return bool(rows)
-
-
 # ── usage ────────────────────────────────────────────────────────────────────
 
 def record_usage(user_id: str, model: str, prompt_tokens: int, completion_tokens: int, requests: int) -> None:

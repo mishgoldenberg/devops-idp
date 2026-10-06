@@ -7,7 +7,6 @@ Call sites should treat failures as non-fatal (logging only).
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -24,82 +23,6 @@ WIDGET_LABELS: dict[str, str] = {
     "artifactory_storage": "Artifactory — Storage",
     "recent_activity": "Recent Activity",
 }
-
-
-def _widget_label(widget_key: str) -> str:
-    return WIDGET_LABELS.get(widget_key, widget_key.replace("_", " ").title())
-
-
-def record_self_service_execution(service_key: str, service_name: Optional[str] = None) -> None:
-    """
-    One row per logical self-service product, keyed by stable identifier e.g.
-    'azure_devops.create_project'. New flows register a new key + display name.
-    """
-    if not service_key or not str(service_key).strip():
-        return
-    sk = str(service_key).strip()[:255]
-    name = (service_name or sk.replace(".", " — ").replace("_", " ")).strip()[:255]
-    try:
-        import db
-
-        db.execute(
-            """
-            INSERT INTO self_service_usage (service_key, service_name, execution_count, last_executed_at)
-            VALUES (%s, %s, 1, CURRENT_TIMESTAMP)
-            ON CONFLICT (service_key) DO UPDATE SET
-              execution_count = self_service_usage.execution_count + 1,
-              service_name = EXCLUDED.service_name,
-              last_executed_at = CURRENT_TIMESTAMP
-            """,
-            [sk, name],
-        )
-    except Exception as exc:
-        logger.debug("record_self_service_execution failed: %s", exc)
-
-
-def register_azure_provision_job(
-    job_id: str,
-    project_name: str,
-    created_by: str,
-    process_type: str,
-) -> None:
-    if not job_id:
-        return
-    try:
-        import db
-
-        db.execute(
-            """
-            INSERT INTO azure_projects (job_id, project_name, created_by, process_type, created_at, completed_at)
-            VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, NULL)
-            ON CONFLICT (job_id) DO UPDATE SET
-              project_name = EXCLUDED.project_name,
-              created_by = EXCLUDED.created_by,
-              process_type = EXCLUDED.process_type
-            """,
-            [job_id[:128], project_name[:255], created_by[:255], process_type[:64]],
-        )
-    except Exception as exc:
-        logger.debug("register_azure_provision_job failed: %s", exc)
-
-
-def finalize_azure_provision_job(job_id: str) -> None:
-    """Mark provision as completed (Terraform succeeded)."""
-    if not job_id:
-        return
-    try:
-        import db
-
-        db.execute(
-            """
-            UPDATE azure_projects
-            SET completed_at = CURRENT_TIMESTAMP
-            WHERE job_id = %s AND completed_at IS NULL
-            """,
-            [job_id[:128]],
-        )
-    except Exception as exc:
-        logger.debug("finalize_azure_provision_job failed: %s", exc)
 
 
 def record_servicenow_portal_ticket(
@@ -129,25 +52,8 @@ def record_servicenow_portal_ticket(
         logger.debug("record_servicenow_portal_ticket failed: %s", exc)
 
 
-def priority_to_severity_band(priority_code: str) -> str:
-    """Map ServiceNow priority (1–5) to High / Medium / Low for dashboards."""
-    p = str(priority_code).strip()
-    if p in ("1", "2"):
-        return "High"
-    if p == "3":
-        return "Medium"
-    return "Low"
-
-
 def urgency_to_severity_band(urgency: str) -> str:
-    """Map the support wizard's urgency WORD (low/medium/high/urgent) to a band.
-
-    The wizard sends a word, not a ServiceNow priority code. Feeding that word to
-    ``priority_to_severity_band`` — which only recognises the digits 1–5 — made every
-    ticket fall through to "Low", so the observability dashboard showed everything as
-    Low regardless of what the user picked. This maps the words directly. Numeric codes
-    are accepted too, so either input is safe.
-    """
+    """The support wizard's urgency word (or a 1-5 priority code) as High/Medium/Low."""
     u = str(urgency or "").strip().lower()
     if u in ("urgent", "critical", "high", "1", "2"):
         return "High"

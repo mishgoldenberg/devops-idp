@@ -1,20 +1,38 @@
 {#
-    My Pipeline Runs.
+    Pipeline runs -- Azure DevOps's "My Pipeline Runs" and GitLab's "My GitLab Pipelines",
+    one widget with a provider (pipe_provider: "ado", the default, or "gitlab").
 
-    Rebuilt to work like the work-items widget: the shell is server-rendered (so the
-    PAT-missing flow still works), and the rows are fetched client-side so the user can
-    scope them with the Collection and Project selects without a page round-trip.
+    The shell is server-rendered (so the token-missing flow still works), and the rows
+    are fetched client-side so the user can scope them with the selects without a page
+    round-trip: Collection and Project for Azure DevOps, Group and Project for GitLab.
 
-    The old version was server-rendered from a `runs` list that was ALWAYS EMPTY: the
+    The first version was server-rendered from a `runs` list that was ALWAYS EMPTY: the
     backend filtered builds by the hub username against Azure DevOps's `requestedFor`
     (a domain account), two identity namespaces that never match. That is fixed in
-    azure_devops.py; the widget now also shows the real run state rather than only
-    succeeded/failed.
+    azure_devops.py; GitLab says whose a pipeline is itself (api/gitlab.py).
+
+    Actions, each checked with the system and confirmed first (ado-actions.html):
+      Azure DevOps   Run again…   a finished run, same branch and parameters
+      GitLab         Run again…   a finished pipeline: a new one, same branch and variables
+                     Retry…       a failed or canceled one: its failed jobs run again
 #}
-<div class="section-card h-full flex flex-col" data-pipelines-root>
+{% set pipe_provider = pipe_provider | default("ado") %}
+{% if pipe_provider == "gitlab" %}
+	{% set pipe_filters = [("group", "Group", "All groups"), ("project", "Project", "All projects")] %}
+	{% set pipe_title = "My GitLab Pipelines" %}
+{% else %}
+	{% set pipe_filters = [("collection", "Collection", "All collections"), ("project", "Project", "All projects")] %}
+	{% set pipe_title = "My Pipeline Runs" %}
+{% endif %}
+<div class="section-card h-full flex flex-col{% if pipe_provider == 'gitlab' %} provider-gitlab{% endif %}" data-pipelines-root="{{ pipe_provider }}">
 	<div class="card-body p-5 flex flex-col h-full gap-3">
 		<!-- Header -->
 		<div class="flex items-center gap-3">
+			{% if pipe_provider == "gitlab" %}
+			<div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/30 bg-primary/10">
+				{% include "partials/components/gitlab-logo.html" %}
+			</div>
+			{% else %}
 			<div
 				class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-accent/30 bg-accent/10"
 			>
@@ -26,14 +44,15 @@
 					<path d="M8 5v14l11-7z" />
 				</svg>
 			</div>
+			{% endif %}
 			<h3
 				class="text-sm font-bold uppercase tracking-widest text-base-content/70"
 			>
-				My Pipeline Runs
+				{{ pipe_title }}
 			</h3>
 			<!--
-				Mine / All. The widget filters to runs YOU queued, so on a project where
-				you have queued once it correctly shows a single row — which reads like a
+				Mine / All. The widget filters to runs YOU started, so on a project where
+				you have run once it correctly shows a single row -- which reads like a
 				fault rather than a filter. The toggle names the filter, shows how many
 				runs each side holds, and lets you see the rest without leaving the page.
 			-->
@@ -44,7 +63,11 @@
 		</div>
 
 		{% if error and needs_pat %}
+		{% if pipe_provider == "gitlab" %}
+		{% include "partials/components/gitlab-token-prompt.html" %}
+		{% else %}
 		{% include "partials/components/azure-pat-prompt.html" %}
+		{% endif %}
 		{% elif error %}
 		<div class="flex flex-1 items-center justify-center rounded-xl border border-error/20 bg-error/5 p-4 text-center text-xs text-error">
 			{{ error }}
@@ -55,19 +78,15 @@
 		<input type="search" class="input input-bordered portal-widget-search shrink-0" data-pipe-search dir="auto"
 			placeholder="Search pipeline, run number or result" aria-label="Search pipeline runs" />
 		<!-- Inline grid: a bare `grid-cols-2` is not in the precompiled output.css. -->
-		<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem;">
+		<div style="display: grid; grid-template-columns: repeat({{ pipe_filters | length }}, minmax(0, 1fr)); gap: 0.5rem;">
+			{% for key, label, all_label in pipe_filters %}
 			<label class="form-control">
-				<span class="label-text text-[11px] uppercase tracking-wide text-base-content/50">Collection</span>
-				<select class="select select-bordered select-xs w-full" data-pipe-collection-select aria-label="Collection">
-					<option value="">All collections</option>
+				<span class="label-text text-[11px] uppercase tracking-wide text-base-content/50">{{ label }}</span>
+				<select class="select select-bordered select-xs w-full" data-pipe-filter="{{ key }}" data-all="{{ all_label }}" aria-label="{{ label }}">
+					<option value="">{{ all_label }}</option>
 				</select>
 			</label>
-			<label class="form-control">
-				<span class="label-text text-[11px] uppercase tracking-wide text-base-content/50">Project</span>
-				<select class="select select-bordered select-xs w-full" data-pipe-project-select aria-label="Project">
-					<option value="">All projects</option>
-				</select>
-			</label>
+			{% endfor %}
 		</div>
 
 		<div class="flex-1 min-h-0 flex flex-col" data-pipe-body>
@@ -83,8 +102,8 @@
 			></ul>
 		</div>
 		<!--
-			"Why so few?" — every step of the fetch can drop runs silently (a collection
-			the token cannot enumerate, a project whose builds it cannot read, the
+			"Why so few?" -- every step of the fetch can drop runs silently (a collection
+			the token cannot enumerate, a project whose pipelines it cannot read, the
 			mine-only filter). This states what was actually reached and what was
 			skipped, so a short list is explainable instead of suspicious.
 		-->
@@ -98,30 +117,123 @@
 
 <script>
 	(function () {
-		const root = document.querySelector("[data-pipelines-root]");
+		const PROVIDER = "{{ pipe_provider }}";
+		const root = document.querySelector('[data-pipelines-root="{{ pipe_provider }}"]');
 		if (!root) return;
 		const body = root.querySelector("[data-pipe-body]");
 		if (!body) return; // error branch: nothing interactive to wire up
 
+		// What differs between the systems. Storage keys and URL parameters for Azure
+		// DevOps are the ones this widget always used, so saved views and shared links
+		// keep working.
+		const PROVIDERS = {
+			ado: {
+				list: "/api/azure-devops/pipelines",
+				system: "Azure DevOps",
+				storage: { collection: "ado-pipelines-collection", project: "ado-pipelines-project", scope: "ado-pipelines-scope" },
+				url: { collection: "pipe_collection", project: "pipe_project", scope: "pipe_scope" },
+				filters: {
+					collection: { src: "/api/azure-devops/collections", param: "collection" },
+					project: { src: "/api/azure-devops/projects", param: "project" },
+				},
+				where: (run) => [run.project, run.collection].filter(Boolean).join(" · "),
+				actions(run) {
+					// Only a FINISHED run can be run again; the dialog checks with Azure
+					// DevOps first and asks you to confirm.
+					return FINISHED.has(run.status) && run.definition_id && window.portalAdo
+						? '<button type="button" class="btn btn-ghost btn-xs text-primary shrink-0" data-pipe-act="rerun" data-run="' + escapeHtml(run.id) + '" title="Run this pipeline again on the same branch">Run again…</button>'
+						: "";
+				},
+				target: (run) => ({ collection: run.collection, project: run.project, id: run.id, run_id: run.run_id,
+					name: run.name, source_branch: run.source_branch, title: run.name }),
+				more(runs) {
+					const sample = (runs.find((r) => r.url) || {}).url || "";
+					return sample.includes("/_build") ? sample.split("/_build")[0] + "/_build" : "";
+				},
+				explains: true,
+				why(d) {
+					const lines = [
+						"Reached " + d.collections + " collection(s) and " + d.projects +
+						" project(s); found " + d.builds_seen + " run(s), " + d.builds_mine + " queued by you.",
+					];
+					if ((d.collections_skipped || []).length) {
+						lines.push("Collections skipped (token cannot list their projects): " +
+							d.collections_skipped.map((c) => escapeHtml(c.name) + " (HTTP " + c.status + ")").join(", ") + ".");
+					}
+					if ((d.projects_unreadable || []).length) {
+						lines.push("Projects whose builds could not be read — usually the PAT lacks Build (read) there: " +
+							d.projects_unreadable.map((p) => escapeHtml(p.name) + " (HTTP " + (p.status || "no response") + ")").join(", ") + ".");
+					}
+					if ((d.requesters || []).length) {
+						lines.push("Runs here were queued by: " + d.requesters.map(escapeHtml).join(", ") +
+							". You are matched as: " + (d.identity || []).map(escapeHtml).join(", ") +
+							". If none of those overlap, no run counts as yours — use All.");
+					}
+					return lines;
+				},
+			},
+			gitlab: {
+				list: "/api/gitlab/pipelines",
+				system: "GitLab",
+				storage: { group: "gitlab-pipelines-group", project: "gitlab-pipelines-project", scope: "gitlab-pipelines-scope" },
+				url: { group: "glpipe_group", project: "glpipe_project", scope: "glpipe_scope" },
+				filters: {
+					group: { src: "/api/gitlab/groups", param: "group" },
+					project: { src: "/api/gitlab/projects", param: "project", needs: { group: "group" } },
+				},
+				where: (run) => run.project_path || run.repository || "",
+				actions(run) {
+					if (!run.project_id || !window.portalAdo || !window.portalAdo.has("gl-rerun")) return "";
+					let out = "";
+					if (run.result === "failed" || run.result === "canceled") {
+						out += '<button type="button" class="btn btn-ghost btn-xs text-primary shrink-0" data-pipe-act="gl-retry" data-run="' + escapeHtml(run.id) + '" title="Run its failed jobs again, keeping the ones that passed">Retry…</button>';
+					}
+					if (run.finished) {
+						out += '<button type="button" class="btn btn-ghost btn-xs text-primary shrink-0" data-pipe-act="gl-rerun" data-run="' + escapeHtml(run.id) + '" title="A new pipeline on the same branch, with the same variables">Run again…</button>';
+					}
+					return out;
+				},
+				target: (run) => ({ project_id: run.project_id, pipeline_id: run.id, id: run.id, run_id: run.run_id,
+					name: run.project_path || run.name, ref: run.source_branch, result: run.result, title: run.project_path || run.name }),
+				more(runs) {
+					// A link only where there is one place to go: one project's pipelines.
+					if (!selected.project) return "";
+					const sample = (runs.find((r) => r.url) || {}).url || "";
+					return sample.includes("/-/pipelines") ? sample.split("/-/pipelines")[0] + "/-/pipelines" : "";
+				},
+				// DevBot does not read GitLab yet.
+				explains: false,
+				why(d) {
+					const lines = ["Read the " + d.projects + " most recently active project(s)" +
+						(d.limited_to ? " (at most " + d.limited_to + "; pick a project to see any other)" : "") +
+						"; found " + d.builds_seen + " pipeline(s), " + d.builds_mine + " started by you" +
+						(d.identity && d.identity[0] ? " (" + escapeHtml(d.identity[0]) + ")" : "") + "."];
+					if ((d.projects_unreadable || []).length) {
+						lines.push("Projects whose pipelines could not be read — your role there may not include CI/CD: " +
+							d.projects_unreadable.map((p) => escapeHtml(p.name) + " (HTTP " + (p.status || "no response") + ")").join(", ") + ".");
+					}
+					return lines;
+				},
+			},
+		};
+		const CFG = PROVIDERS[PROVIDER] || PROVIDERS.ado;
+		const FINISHED = new Set(["succeeded", "failed", "partial", "canceled"]);
+
 		const listEl = root.querySelector("[data-pipe-list]");
 		const statusEl = root.querySelector("[data-pipe-status]");
-		const collectionSelect = root.querySelector("[data-pipe-collection-select]");
-		const projectSelect = root.querySelector("[data-pipe-project-select]");
-
-		const collectionKey = "ado-pipelines-collection";
-		const projectKey = "ado-pipelines-project";
-		const scopeKey = "ado-pipelines-scope";
 		const scopeWrap = root.querySelector("[data-pipe-scope-wrap]");
+		const selects = {};
+		root.querySelectorAll("[data-pipe-filter]").forEach((sel) => { selects[sel.getAttribute("data-pipe-filter")] = sel; });
+		const ORDER = Object.keys(selects);
 
-		// Shareable: a link carrying ?pipe_collection=…&pipe_project=…&pipe_scope=…
-		// reproduces exactly this view for whoever opens it. Without parameters it
-		// falls back to what this browser last had.
+		// Shareable: a link carrying the URL parameters reproduces exactly this view for
+		// whoever opens it. Without parameters it falls back to what this browser last had.
 		const US = window.portalUrlState;
-		const pick = (q, k) => (US ? US.resolve(q, k) : localStorage.getItem(k) || "");
+		const pick = (name) => (US ? US.resolve(CFG.url[name], CFG.storage[name]) : localStorage.getItem(CFG.storage[name]) || "");
 
-		let selectedCollection = pick("pipe_collection", collectionKey);
-		let selectedProject = pick("pipe_project", projectKey);
-		let scope = pick("pipe_scope", scopeKey) === "all" ? "all" : "mine";
+		const selected = {};
+		ORDER.forEach((key) => { selected[key] = pick(key); });
+		let scope = pick("scope") === "all" ? "all" : "mine";
 
 		const searchEl = root.querySelector("[data-pipe-search]");
 		let term = "";
@@ -134,31 +246,7 @@
 
 		function paintWhy(d) {
 			if (!whyEl || !whyBodyEl || !d) return;
-			const lines = [];
-			lines.push(
-				"Reached " + d.collections + " collection(s) and " + d.projects +
-				" project(s); found " + d.builds_seen + " run(s), " + d.builds_mine + " queued by you."
-			);
-			if ((d.collections_skipped || []).length) {
-				lines.push(
-					"Collections skipped (token cannot list their projects): " +
-					d.collections_skipped.map((c) => escapeHtml(c.name) + " (HTTP " + c.status + ")").join(", ") + "."
-				);
-			}
-			if ((d.projects_unreadable || []).length) {
-				lines.push(
-					"Projects whose builds could not be read — usually the PAT lacks Build (read) there: " +
-					d.projects_unreadable.map((p) => escapeHtml(p.name) + " (HTTP " + (p.status || "no response") + ")").join(", ") + "."
-				);
-			}
-			if ((d.requesters || []).length) {
-				lines.push(
-					"Runs here were queued by: " + d.requesters.map(escapeHtml).join(", ") +
-					". You are matched as: " + (d.identity || []).map(escapeHtml).join(", ") +
-					". If none of those overlap, no run counts as yours — use All."
-				);
-			}
-			whyBodyEl.innerHTML = lines.join("<br>");
+			whyBodyEl.innerHTML = CFG.why(d).join("<br>");
 			whyEl.classList.remove("hidden");
 		}
 
@@ -215,7 +303,7 @@
 			return Math.floor(secs / 86400) + "d ago";
 		}
 
-		// The backend collapses ADO's status+result pair into one word; each gets a dot
+		// The backend collapses each system's status into one word; each gets a dot
 		// colour and a label colour. Only classes already in output.css are used.
 		const RUN_STATE = {
 			succeeded: { dot: "bg-success", text: "text-success", label: "Succeeded" },
@@ -226,8 +314,6 @@
 			pending: { dot: "bg-warning animate-pulse", text: "text-warning", label: "Pending" },
 		};
 
-		const FINISHED = new Set(["succeeded", "failed", "partial", "canceled"]);
-
 		function runRow(run) {
 			const state = RUN_STATE[run.status] || {
 				dot: "",
@@ -235,7 +321,7 @@
 				text: "text-base-content/60",
 				label: run.status || "Unknown",
 			};
-			const where = [run.project, run.collection].filter(Boolean).join(" · ");
+			const where = CFG.where(run);
 			const when = timeAgo(run.finished_date || run.started_date || run.created_date);
 			const name = escapeHtml(run.name || "Pipeline");
 			const url = String(run.url || "");
@@ -245,8 +331,8 @@
 				: '<span class="text-sm font-medium text-base-content truncate">' + name + "</span>";
 
 			// The hover chip's question (devbot-hover.html): why a failed run failed; for
-			// any other run, where it stands.
-			const askAttr = window.portalDevbot && window.portalDevbot.attr ? window.portalDevbot.attr(runQuestion(run)) : "";
+			// any other run, where it stands. Only where DevBot reads the system.
+			const askAttr = CFG.explains && window.portalDevbot && window.portalDevbot.attr ? window.portalDevbot.attr(runQuestion(run)) : "";
 			return (
 				'<li class="flex items-center gap-3 rounded-lg bg-base-200/60 border border-base-300 px-3 py-2.5"' + askAttr + ">" +
 					'<span class="h-2.5 w-2.5 shrink-0 rounded-full ' + (state.dot || "") + '" style="' + (state.style || "") + '"></span>' +
@@ -254,80 +340,58 @@
 						title +
 						'<span class="text-xs text-base-content/50 truncate">' +
 							escapeHtml(where) +
+							(run.source_branch && PROVIDER === "gitlab" ? " · " + escapeHtml(run.source_branch) : "") +
 							(run.run_id ? ' <span class="font-mono text-[11px] text-base-content/40">#' + escapeHtml(run.run_id) + "</span>" : "") +
 						"</span>" +
 					"</div>" +
 					'<span class="text-xs font-semibold shrink-0 ' + state.text + '">' + escapeHtml(state.label) + "</span>" +
 					(when ? '<span class="text-xs text-base-content/40 shrink-0">' + escapeHtml(when) + "</span>" : "") +
-					// Only a FINISHED run can be run again; the dialog checks with Azure
-					// DevOps first and asks you to confirm.
-					(FINISHED.has(run.status) && run.definition_id && window.portalAdo
-						? '<button type="button" class="btn btn-ghost btn-xs text-primary shrink-0" data-pipe-rerun="' + escapeHtml(run.id) + '" title="Run this pipeline again on the same branch">Run again…</button>'
-						: "") +
-					((run.status === "failed" || run.status === "partial") && window.portalDevbot && window.portalDevbot.enabled
+					CFG.actions(run) +
+					(CFG.explains && (run.status === "failed" || run.status === "partial") && window.portalDevbot && window.portalDevbot.enabled
 						? '<button type="button" class="btn btn-ghost btn-xs text-primary shrink-0" data-pipe-explain="' + escapeHtml(run.id) + '" title="Ask DevBot why it failed and whether there is a known fix">Explain</button>'
 						: "") +
 				"</li>"
 			);
 		}
 
-		// Callers pass the storage key; the URL parameter is derived from it so the two
-		// can never be wired up to disagree about which filter is being written.
-		const URL_PARAM = {
-			[collectionKey]: "pipe_collection",
-			[projectKey]: "pipe_project",
-			[scopeKey]: "pipe_scope",
-		};
-
-		function remember(key, value) {
-			if (US && URL_PARAM[key]) {
-				US.set(URL_PARAM[key], value, key);
+		function remember(name, value) {
+			if (US && CFG.url[name]) {
+				US.set(CFG.url[name], value, CFG.storage[name]);
 				return;
 			}
-			try { localStorage.setItem(key, value); } catch (_) {}
+			try { localStorage.setItem(CFG.storage[name], value); } catch (_) {}
 		}
 
-		async function loadCollections() {
-			if (!collectionSelect) return;
+		async function loadFilter(key) {
+			const f = CFG.filters[key];
+			const sel = selects[key];
+			if (!f || !sel) return;
+			const allLabel = sel.getAttribute("data-all") || "All";
 			try {
-				const res = await fetch("/api/azure-devops/collections", {
+				const params = new URLSearchParams();
+				Object.keys(f.needs || {}).forEach((param) => {
+					if (selected[f.needs[param]]) params.set(param, selected[f.needs[param]]);
+				});
+				const qs = params.toString();
+				const res = await fetch(f.src + (qs ? "?" + qs : ""), {
 					credentials: "same-origin",
 					headers: { Accept: "application/json" },
 				});
 				if (!res.ok) throw new Error("http " + res.status);
-				const rows = (await res.json()).data || [];
-				collectionSelect.innerHTML =
-					'<option value="">All collections</option>' +
-					rows.map((c) => {
-						const name = String(c.name || "");
-						const sel = name === selectedCollection ? " selected" : "";
-						return '<option value="' + escapeHtml(name) + '"' + sel + ">" + escapeHtml(name) + "</option>";
+				const names = ((await res.json()).data || []).map((r) => String(r.name || "")).filter(Boolean);
+				sel.innerHTML =
+					'<option value="">' + escapeHtml(allLabel) + "</option>" +
+					names.map((name) => {
+						const s = name === selected[key] ? " selected" : "";
+						return '<option value="' + escapeHtml(name) + '"' + s + ">" + escapeHtml(name) + "</option>";
 					}).join("");
-				collectionSelect.value = selectedCollection;
+				if (f.needs && selected[key] && !names.includes(selected[key])) {
+					selected[key] = "";
+					remember(key, "");
+				}
+				sel.value = selected[key];
 			} catch (_) {
-				collectionSelect.innerHTML = '<option value="">All collections</option>';
-			}
-		}
-
-		async function loadProjects() {
-			if (!projectSelect) return;
-			try {
-				const res = await fetch("/api/azure-devops/projects", {
-					credentials: "same-origin",
-					headers: { Accept: "application/json" },
-				});
-				if (!res.ok) throw new Error("http " + res.status);
-				const rows = (await res.json()).data || [];
-				projectSelect.innerHTML =
-					'<option value="">All projects</option>' +
-					rows.map((p) => {
-						const name = String(p.name || "");
-						const sel = name === selectedProject ? " selected" : "";
-						return '<option value="' + escapeHtml(name) + '"' + sel + ">" + escapeHtml(name) + "</option>";
-					}).join("");
-				projectSelect.value = selectedProject;
-			} catch (_) {
-				projectSelect.innerHTML = '<option value="">All projects</option>';
+				sel.innerHTML = '<option value="">' + escapeHtml(allLabel) + "</option>";
 			}
 		}
 
@@ -339,51 +403,50 @@
 			listEl.classList.add("hidden");
 			try {
 				const params = new URLSearchParams({ scope });
-				if (selectedCollection) params.set("collection", selectedCollection);
-				if (selectedProject) params.set("project", selectedProject);
-				const res = await fetch("/api/azure-devops/pipelines?" + params.toString(), {
+				ORDER.forEach((key) => { if (selected[key]) params.set(CFG.filters[key].param, selected[key]); });
+				const res = await fetch(CFG.list + "?" + params.toString(), {
 					credentials: "same-origin",
 					headers: { Accept: "application/json" },
 				});
-				if (!res.ok) throw new Error("http " + res.status);
-				const payload = await res.json();
+				let payload = null;
+				try { payload = await res.json(); } catch (_) {}
+				if (!res.ok) {
+					setStatus((payload && typeof payload.detail === "string" && payload.detail) || "Service unavailable");
+					return;
+				}
 				const runs = payload.data || [];
 				paintScope(payload.counts);
 				paintWhy(payload.diagnostics);
 				if (!runs.length) {
+					loaded = { runs: [], note: "", moreHtml: "" };
 					setStatus(
 						scope === "mine"
-							? "No runs queued by you here — try All."
+							? "No runs started by you here — try All."
 							: "No pipeline runs in this project."
 					);
 					return;
 				}
 
-				// identity_unresolved: the backend found runs but could not tell which are
-				// yours, because the PAT lacks the profile scope needed to ask Azure DevOps
-				// who the token belongs to. Showing every run and saying so beats showing
-				// an empty box next to a project that plainly has runs.
+				// identity_unresolved (Azure DevOps only): runs were found but the token could
+				// not say which are yours. Showing every run and saying so beats showing an
+				// empty box next to a project that plainly has runs.
 				const note = payload.identity_unresolved
-					? `<li class="px-2 pb-2 text-[11px] text-base-content/50">
-							Showing all runs — Azure DevOps did not tell us which are yours.
-						</li>`
+					? '<li class="px-2 pb-2 text-[11px] text-base-content/50">Showing all runs — ' +
+						escapeHtml(CFG.system) + " did not tell us which are yours.</li>"
 					: "";
 
 				// Only the 10 most recent runs. Beyond that the widget becomes a scroll of
-				// history nobody reads on a dashboard — the "More" box takes you to the full
-				// pipelines page in Azure DevOps for the current scope.
+				// history nobody reads on a dashboard -- "More" takes you to the full list.
 				const shown = runs.slice(0, 10);
 				let moreHtml = "";
-				const sample = (runs.find((r) => r.url) || {}).url || "";
-				// Only when the list is actually TRUNCATED. It used to appear whenever any
-				// run had a URL, so a widget showing a single run still offered "More" —
-				// which reads as "the rest are hidden" when there is no rest.
-				if (runs.length > shown.length && sample.includes("/_build")) {
-					const href = sample.split("/_build")[0] + "/_build";
+				// Only when the list is actually TRUNCATED: "More" reads as "the rest are
+				// hidden", which is untrue when there is no rest.
+				const href = runs.length > shown.length ? CFG.more(runs) : "";
+				if (href) {
 					moreHtml =
 						'<li><a href="' + escapeHtml(href) + '" target="_blank" rel="noopener noreferrer" ' +
 						'class="flex items-center justify-center gap-1 rounded-lg border border-dashed border-base-300 px-3 py-2 text-xs font-medium text-base-content/60 hover:border-primary/50 hover:text-primary transition-colors">' +
-						'More in Azure DevOps</a></li>';
+						"More in " + escapeHtml(CFG.system) + "</a></li>";
 				}
 				loaded = { runs: shown, note: note, moreHtml: moreHtml };
 				render();
@@ -396,8 +459,8 @@
 		function matches(run) {
 			if (!term) return true;
 			const label = (RUN_STATE[run.status] || {}).label || run.status;
-			const text = [run.name, "#" + run.run_id, run.project, run.collection, run.requested_for,
-				label, run.result].join(" ").toLowerCase();
+			const text = [run.name, "#" + run.run_id, run.project, run.project_path, run.collection, run.requested_for,
+				run.source_branch, label, run.result].join(" ").toLowerCase();
 			return term.split(/\s+/).every((word) => text.indexOf(word) !== -1);
 		}
 
@@ -421,24 +484,19 @@
 				}
 				return;
 			}
-			const btn = event.target.closest("[data-pipe-rerun]");
+			const btn = event.target.closest("[data-pipe-act]");
 			if (!btn) return;
 			event.preventDefault();
-			const run = loaded.runs.find((r) => String(r.id) === btn.getAttribute("data-pipe-rerun"));
-			if (run && window.portalAdo) {
-				window.portalAdo.open("rerun", {
-					collection: run.collection, project: run.project, id: run.id, run_id: run.run_id,
-					name: run.name, source_branch: run.source_branch, title: run.name,
-				});
-			}
+			const run = loaded.runs.find((r) => String(r.id) === btn.getAttribute("data-run"));
+			if (run && window.portalAdo) window.portalAdo.open(btn.getAttribute("data-pipe-act"), CFG.target(run));
 		});
 
-		// A run queued through the dialog belongs at the top of this list.
-		function onAdoChanged() {
-			if (!root.isConnected) { document.removeEventListener("portal:ado-changed", onAdoChanged); return; }
+		// A run started through the dialog belongs at the top of this list.
+		function onChanged() {
+			if (!root.isConnected) { document.removeEventListener("portal:ado-changed", onChanged); return; }
 			load();
 		}
-		document.addEventListener("portal:ado-changed", onAdoChanged);
+		document.addEventListener("portal:ado-changed", onChanged);
 
 		searchEl?.addEventListener("input", () => {
 			clearTimeout(searchTimer);
@@ -448,16 +506,18 @@
 			}, 150);
 		});
 
-		collectionSelect?.addEventListener("change", () => {
-			selectedCollection = collectionSelect.value || "";
-			remember(collectionKey, selectedCollection);
-			load();
-		});
-
-		projectSelect?.addEventListener("change", () => {
-			selectedProject = projectSelect.value || "";
-			remember(projectKey, selectedProject);
-			load();
+		ORDER.forEach((key) => {
+			selects[key].addEventListener("change", async () => {
+				selected[key] = selects[key].value || "";
+				remember(key, selected[key]);
+				// A list that depends on this one is re-read: the server knows which
+				// projects belong to the group.
+				for (const dep of ORDER) {
+					const needs = (CFG.filters[dep] || {}).needs || {};
+					if (Object.values(needs).indexOf(key) !== -1) await loadFilter(dep);
+				}
+				load();
+			});
 		});
 
 		scopeWrap?.addEventListener("click", (event) => {
@@ -466,14 +526,16 @@
 			const next = btn.getAttribute("data-pipe-scope") === "all" ? "all" : "mine";
 			if (next === scope) return;
 			scope = next;
-			remember(scopeKey, scope);
+			remember("scope", scope);
 			paintScope();
 			load();
 		});
 
 		(async function init() {
 			paintScope();
-			await Promise.all([loadCollections(), loadProjects()]);
+			const free = ORDER.filter((k) => !CFG.filters[k].needs);
+			await Promise.all(free.map(loadFilter));
+			for (const k of ORDER.filter((k) => free.indexOf(k) === -1)) await loadFilter(k);
 			load();
 		})();
 	})();

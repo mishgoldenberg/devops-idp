@@ -155,6 +155,13 @@ stages:
               python3 scripts/check_changelog.py
             displayName: Check the changelog
 
+          # Unused imports, private helpers nothing calls, functions copied between
+          # modules, and comments that narrate rounds instead of describing the code.
+          - script: |
+              set -euo pipefail
+              python3 scripts/check_code_hygiene.py
+            displayName: Check for dead and duplicated code
+
 
       - job: docker_build_and_push
         displayName: docker-build-and-push
@@ -390,6 +397,9 @@ stages:
                   "openshiftConsoleUrl": _clean("OPENSHIFT_CONSOLE_URL"),
                   "sonarqubeBaseUrl": os.environ.get("SONARQUBE_BASE_URL", ""),
                   "confluenceBaseUrl": os.environ.get("CONFLUENCE_BASE_URL", ""),
+                  # GitLab's web address. Optional: unset leaves the macro text, which
+                  # _clean() reads as empty, and the Hub says GitLab is not set up.
+                  "gitlabBaseUrl": _clean("GITLAB_BASE_URL"),
               }
 
               # Backups are enabled by the presence of a credential to take them
@@ -569,6 +579,7 @@ stages:
               OPENSHIFT_CONSOLE_URL: $(OPENSHIFT_CONSOLE_URL)
               SONARQUBE_BASE_URL: $(SONARQUBE_BASE_URL)
               CONFLUENCE_BASE_URL: $(CONFLUENCE_BASE_URL)
+              GITLAB_BASE_URL: $(GITLAB_BASE_URL)
 
           - script: |
               set -euo pipefail

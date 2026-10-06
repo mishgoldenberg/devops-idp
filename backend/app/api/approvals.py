@@ -40,6 +40,7 @@ from db import execute, execute_returning, query_all, query_one
 from security import AuthUser, get_current_user, has_effective_admin_access_live
 
 from .notifications import create_notification
+from common import now_iso
 
 
 # Where the bell dropdown should navigate when the user clicks a request
@@ -61,9 +62,6 @@ router = APIRouter()
 # still present in existing rows; new executions write COMPLETED.
 TERMINAL_OK_STATUSES = ("COMPLETED", "EXECUTED")
 
-# Admin-side status filters: "active" = everything still moving through the
-# pipeline (useful for the Approvals page "In Progress" tab).
-ACTIVE_STATUSES = ("APPROVED", "IN_PROGRESS")
 
 # The only request types the portal can actually carry out. A type must appear
 # here AND have a branch in `_execute_approved_request` to be executable. This
@@ -211,7 +209,7 @@ def create_request(
             group_key=f"request:{row['id']}",
         )
 
-    return {"success": True, "data": row, "timestamp": _now_iso()}
+    return {"success": True, "data": row, "timestamp": now_iso()}
 
 
 # ─── List / detail ──────────────────────────────────────────────────────
@@ -269,7 +267,7 @@ def get_requests(
     # a question nobody on that page asked.
     reviewer_view = is_admin and effective_scope == "all"
     rows = query_all(query, params)
-    return {"success": True, "data": _present(rows, reviewer_view), "timestamp": _now_iso()}
+    return {"success": True, "data": _present(rows, reviewer_view), "timestamp": now_iso()}
 
 
 # Keys of execution_result that belong to whoever reviews the work, not to whoever
@@ -398,7 +396,7 @@ def requests_summary(current_user: AuthUser = Depends(get_current_user)):
                 "low": int(rated.get("low") or 0),
             },
         },
-        "timestamp": _now_iso(),
+        "timestamp": now_iso(),
     }
 
 
@@ -448,7 +446,7 @@ def rate_request(
     return {
         "success": True,
         "data": {"rating": int(saved["rating"]), "comment": str(saved.get("comment") or "")},
-        "timestamp": _now_iso(),
+        "timestamp": now_iso(),
     }
 
 
@@ -464,7 +462,7 @@ def get_request(
     is_admin = _can_approve_any(current_user)
     if not is_admin and str(row.get("requester_id")) != str(current_user["id"]):
         raise HTTPException(status_code=403, detail="Forbidden")
-    return {"success": True, "data": _present([row], is_admin)[0], "timestamp": _now_iso()}
+    return {"success": True, "data": _present([row], is_admin)[0], "timestamp": now_iso()}
 
 
 @router.post("/requests/{request_id}/servicenow-retry")
@@ -628,7 +626,7 @@ def approve_request(
         name=f"approval-exec-{request_id[:8]}",
     ).start()
 
-    return {"success": True, "message": "Request approved", "timestamp": _now_iso()}
+    return {"success": True, "message": "Request approved", "timestamp": now_iso()}
 
 
 # ─── Reject ─────────────────────────────────────────────────────────────
@@ -691,7 +689,7 @@ def reject_request(
             group_key=f"request:{request_id}",
         )
 
-    return {"success": True, "message": "Request rejected", "timestamp": _now_iso()}
+    return {"success": True, "message": "Request rejected", "timestamp": now_iso()}
 
 
 # ─── Admin recovery: force-fail / delete stuck requests ────────────────
@@ -758,7 +756,7 @@ def force_fail_request(
 
     _log_audit(current_user["id"], "FORCE_FAIL_REQUEST", "approval_request", request_id)
     audit.log(
-        audit.Action.TERRAFORM_FAILED,
+        audit.Action.PROVISIONING_FAILED,
         user_email=str(current_user.get("email") or ""),
         metadata={
             "request_id": str(request_id),
@@ -782,7 +780,7 @@ def force_fail_request(
             group_key=f"request:{request_id}",
         )
 
-    return {"success": True, "message": "Request marked as failed", "timestamp": _now_iso()}
+    return {"success": True, "message": "Request marked as failed", "timestamp": now_iso()}
 
 
 @router.delete("/requests/{request_id}")
@@ -819,7 +817,7 @@ def delete_request(
         },
     )
 
-    return {"success": True, "message": "Request deleted", "timestamp": _now_iso()}
+    return {"success": True, "message": "Request deleted", "timestamp": now_iso()}
 
 
 # ─── Execution engine ───────────────────────────────────────────────────
@@ -896,15 +894,8 @@ def _execute_approved_request(request_row: Dict[str, Any]) -> None:
 def _execute_ado_project_create(
     request_row: Dict[str, Any], payload: Dict[str, Any]
 ) -> Dict[str, Any]:
-    """
-    Provision an Azure DevOps project directly via the REST API.
-
-    No Terraform and no Kubernetes Job: this runs inline in the execution thread and
-    creates the inherited process + project in each target collection over REST (see
-    ``azure_devops.provision_ado_project``). That removes the OpenShift Job-creation
-    requirement entirely — the reason the Terraform path could not run here — along with
-    the tfstate backend and the Terraform container image.
-    """
+    """Create the Azure DevOps project over REST, in the one collection the request
+    names, inside the execution thread (azure_devops.provision_ado_project)."""
     project_name = str(payload.get("project_name") or "").strip()
     process_type = str(payload.get("process_type") or "Scrum").strip()
     admin_username = str(payload.get("admin_username") or "").strip()
@@ -919,7 +910,7 @@ def _execute_ado_project_create(
     from .azure_devops import provision_ado_project
 
     audit.log(
-        audit.Action.TERRAFORM_STARTED,
+        audit.Action.PROVISIONING_STARTED,
         user_email=str(request_row.get("requester_email") or ""),
         metadata={
             "request_id": str(request_row.get("id")),
@@ -930,9 +921,8 @@ def _execute_ado_project_create(
         },
     )
 
-    # Creates in ONE collection — the one the requester chose, defaulting to
-    # ADO_DEFAULT_COLLECTION. It used to create in every configured collection, so a
-    # name already taken in either of them failed the whole request.
+    # Creates in ONE collection: the one the requester chose, defaulting to
+    # ADO_DEFAULT_COLLECTION.
     return provision_ado_project(
         project_name=project_name,
         process_type=process_type,
@@ -1185,15 +1175,11 @@ def _execute_artifactory_cleaner(
 
 
 def _record_servicenow(result: Dict[str, Any], snow: Dict[str, Any]) -> None:
-    """Put the ServiceNow outcome on the result -- unless there was never one to have.
+    """Put the ServiceNow outcome on the result, when the form orders a catalog item.
 
-    Three states, and only two of them belong on the screen. A request that raised a
-    ticket carries its number; one that tried and failed carries the reason, so an
-    approver can raise it again. A request whose form does not order a catalog item at
-    all carries NEITHER, because it did not fail: an Artifactory quota is set by this
-    backend and a cleaner becomes a pull request, and neither has ever needed a
-    ticket. Writing an empty number for those put a ServiceNow line on requests that
-    had completed perfectly, which reads as something having gone wrong.
+    A raised ticket carries its number; a failed one carries the reason, so an approver
+    can raise it again. A form that never orders an item (an Artifactory quota, a
+    cleaner) gets neither: an empty number there would read as a failure.
     """
     if snow.get("skipped"):
         return
@@ -1267,7 +1253,7 @@ def _finish_completed(request_id: str, result_data: Dict[str, Any]) -> None:
     row = _load_request(request_id)
     email = _requester_email(row or {})
     audit.log(
-        audit.Action.TERRAFORM_COMPLETED,
+        audit.Action.PROVISIONING_COMPLETED,
         user_email=email,
         metadata={
             "request_id": str(request_id),
@@ -1321,7 +1307,7 @@ def _finish_failed(request_id: str, error_message: str) -> None:
     row = _load_request(request_id)
     email = _requester_email(row or {})
     audit.log(
-        audit.Action.TERRAFORM_FAILED,
+        audit.Action.PROVISIONING_FAILED,
         user_email=email,
         metadata={
             "request_id": str(request_id),
@@ -1352,40 +1338,8 @@ def _requester_email(row: Dict[str, Any]) -> str:
 
 
 def _user_facing_error(exc: Exception) -> str:
-    """
-    Strip stack traces / internal paths before surfacing to the UI.
-
-    Upstream exceptions (Kubernetes ApiException, HTTPX, Terraform) tend to
-    dump enormous JSON bodies + HTTP headers into str(exc), which is both
-    user-hostile and a mild information leak. We detect the common shapes
-    and rewrite them as single-line, actionable messages; full detail is
-    still kept in the backend logs by the caller.
-    """
-    cls_name = exc.__class__.__name__
-    raw = str(exc) or cls_name
-
-    # kubernetes.client.exceptions.ApiException — massive HTTP dump.
-    if cls_name == "ApiException":
-        status_code = getattr(exc, "status", None)
-        if status_code == 403:
-            return (
-                "Kubernetes denied the request (403 Forbidden). The backend "
-                "ServiceAccount is missing permissions to create the "
-                "provisioning Job. Ask an admin to verify terraform-rbac.yaml "
-                "is applied in the same namespace as the backend pod."
-            )
-        if status_code == 404:
-            return (
-                "Kubernetes returned 404 — the target namespace or resource "
-                "was not found. Ask an admin to verify the provisioning "
-                "namespace exists and K8S_NAMESPACE is set correctly."
-            )
-        if status_code:
-            return f"Kubernetes API error ({status_code}). See backend logs for details."
-        return "Kubernetes API error. See backend logs for details."
-
-    # Clip absurdly long messages (terraform plans etc.) and flatten newlines.
-    single_line = " ".join(raw.splitlines()).strip()
+    """The failure as one line of at most 300 characters; the caller logs it in full."""
+    single_line = " ".join((str(exc) or exc.__class__.__name__).splitlines()).strip()
     return single_line if len(single_line) <= 300 else single_line[:300] + "…"
 
 
@@ -1504,15 +1458,8 @@ def _can_create(user: AuthUser, request_type: str) -> bool:
 
 
 def _can_approve_any(user: AuthUser) -> bool:
-    """Platform Admins, and nobody else.
-
-    This used to be ``hierarchy_level <= 5``, which let four intermediate roles
-    approve ANY request type — including ones their own permissions row did not
-    list, because that row was never read. Approval is the step that turns a
-    request into a real write against Azure DevOps with the admin PAT, so it now
-    sits behind the same single boundary as every other privileged action, and is
-    re-read from the database rather than trusted from the token.
-    """
+    """Platform Admins, and nobody else, read from the database rather than the token:
+    approving is what turns a request into a write made with the admin PAT."""
     return has_effective_admin_access_live(user)
 
 
@@ -1529,7 +1476,3 @@ def _log_audit(user_id: str, action: str, resource_type: str, resource_id: str) 
         pass
 
 
-def _now_iso() -> str:
-    from datetime import datetime, timezone
-
-    return datetime.now(timezone.utc).isoformat()

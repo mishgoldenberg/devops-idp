@@ -70,6 +70,20 @@
 				],
 				note: "Azure DevOps shows the token only once. If you close that dialog without copying it, you cannot get it back — you have to create a new one.",
 			},
+			gitlab: {
+				title: "Create a GitLab token",
+				intro: "A Personal Access Token lets the portal show your merge requests and pipelines, and act on them as you: approve or comment on a merge request, retry a pipeline or run it again. Every action asks you to confirm it first, and GitLab records it under your name.",
+				steps: [
+					"In GitLab, click your avatar in the top-left (or top-right) corner and choose <b>Edit profile</b>.",
+					"In the left menu, choose <b>Access Tokens</b> (on newer versions: <b>Access tokens</b> under <b>User settings</b>).",
+					"Click <b>Add new token</b>, and name it something you will recognise later — <b>DevOps Hub</b> works.",
+					"For <b>Expiration date</b>, choose the latest date your instance allows. A short expiry means the portal stops showing GitLab in a few weeks.",
+					"Under <b>Select scopes</b>, tick <b>api</b>. If you only want to look, not act, <b>read_api</b> is enough — the approve, comment, retry and run buttons then say the token lacks the scope.",
+					"Click <b>Create personal access token</b>, then <b>copy the token</b> (it starts with <b>glpat-</b>).",
+					"Paste it into the box you opened this from, and press Save.",
+				],
+				note: "GitLab shows the token only once. If you leave the page without copying it, create a new one. The token is stored encrypted and never leaves the Hub's server.",
+			},
 			sonarqube: {
 				title: "Create a SonarQube token",
 				intro: "A User Token lets the portal read your projects and their quality gates as you.",

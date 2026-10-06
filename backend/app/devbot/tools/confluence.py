@@ -140,7 +140,9 @@ def meaning_search(ctx: ToolContext, query: str, limit: int = 4, space: str = ""
     except NotConnected:
         return []
     except (llm.LLMError, httpx.HTTPError, ToolFailure) as exc:
-        ctx.memo("meaning_search_failed", lambda: str(exc))
+        # Read now: Python unbinds `exc` when this block ends, and memo runs the lambda later.
+        reason = str(exc)
+        ctx.memo("meaning_search_failed", lambda: reason)
         return []
     except Exception:  # the index is an extra; a broken one must not break the question
         import logging

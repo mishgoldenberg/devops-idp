@@ -12,15 +12,15 @@ browser sends, is written down in usage_tracking.py.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 import streaks
 import usage_tracking
-from security import AuthUser, get_current_user, has_effective_admin_access_live
+from security import AuthUser, get_current_user
+from common import now_iso, require_admin
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -34,16 +34,6 @@ class BeatBody(BaseModel):
     view: bool = False
     # A person touched the page (pointer, key, wheel, touch) since it loaded.
     human: bool = False
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _require_admin(current_user: AuthUser) -> None:
-    """has_effective_admin_access_live -- the same live check every admin page uses."""
-    if not has_effective_admin_access_live(current_user):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
 
 @router.post("/heartbeat", status_code=204)
@@ -73,13 +63,13 @@ def usage_summary(
     days: int = Query(30, ge=0, le=400),
     current_user: AuthUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    _require_admin(current_user)
-    return {"success": True, "data": usage_tracking.summary(days), "timestamp": _now_iso()}
+    require_admin(current_user)
+    return {"success": True, "data": usage_tracking.summary(days), "timestamp": now_iso()}
 
 
 @router.get("/users")
 def usage_users(current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]:
-    _require_admin(current_user)
+    require_admin(current_user)
     rows = usage_tracking.users_overview(exclude_email=str(current_user.get("email") or ""))
     try:
         # Admins see everyone's streak (streaks.py); a failure empties that column only.
@@ -94,7 +84,7 @@ def usage_users(current_user: AuthUser = Depends(get_current_user)) -> Dict[str,
         "success": True,
         "data": rows,
         "tracking_since": usage_tracking.tracking_since(),
-        "timestamp": _now_iso(),
+        "timestamp": now_iso(),
     }
 
 
@@ -106,8 +96,8 @@ def usage_user_detail(
 ) -> Dict[str, Any]:
     """One person in depth. The e-mail is a query parameter, not a path segment:
     an address with a "+" or a "/" in it is still one address."""
-    _require_admin(current_user)
+    require_admin(current_user)
     data = usage_tracking.user_detail(email, days)
     if not data:
         raise HTTPException(status_code=404, detail="No such user. Accounts are created on first sign-in.")
-    return {"success": True, "data": data, "timestamp": _now_iso()}
+    return {"success": True, "data": data, "timestamp": now_iso()}

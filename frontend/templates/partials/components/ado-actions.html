@@ -4,7 +4,9 @@
 	work item (api/ado_actions.py), and create or add to a Confluence page
 	(api/confluence_actions.py).
 
-	A kind may name its own system and API; Azure DevOps is the default. A target may
+	A kind may name its own system and API; Azure DevOps is the default. GitLab's kinds
+	(gl-*, api/gitlab_actions.py) also carry provider "gitlab", which turns the dialog's
+	primary colour into GitLab orange (.provider-gitlab in theme.css) while they are open. A target may
 	carry a DRAFT -- the text, the state, the vote DevBot proposed -- which fills the
 	form, and the person can change any of it before anything is checked or sent.
 	When an action completes it dispatches "portal:action-done" with the result (and, when
@@ -280,6 +282,95 @@
 				body: (t) => ({ collection: t.collection, project: t.project, build_id: Number(t.id) }),
 				verb: () => "Cancel the run",
 				danger: () => true,
+			},
+			// ── GitLab (api/gitlab_actions.py) ──
+			"gl-approve": {
+				system: "GitLab",
+				api: "/api/gitlab/actions/",
+				help: "gitlab",
+				provider: "gitlab",
+				title: (t) => (t.approved ? "Take back your approval of !" : "Approve merge request !") + (t.iid || t.id),
+				endpoint: "mr-approve",
+				view(t) {
+					const lead = t.approved
+						? "<p class=\"text-sm\">You approved <b dir=\"auto\">" + esc(t.title || "this merge request") + "</b>. Taking it back leaves the merge request as it is, without your approval.</p>"
+						: "<p class=\"text-sm\">Approve <b dir=\"auto\">" + esc(t.title || "this merge request") + "</b>" + (t.project_path ? " in <b dir=\"auto\">" + esc(t.project_path) + "</b>" : "") + ".</p>";
+					return lead +
+						'<span class="ado-act-label">Comment <span style="text-transform:none;letter-spacing:normal;font-weight:400">(optional)</span></span>' +
+						'<textarea class="textarea textarea-bordered ado-act-text" data-ado-text dir="auto" maxlength="4000" placeholder="' + (t.approved ? "Why you are taking it back" : "Anything the author should know") + '">' + esc(t.comment || "") + "</textarea>";
+				},
+				body: (t) => ({ project_id: Number(t.project_id), iid: Number(t.iid || t.id), approve: !t.approved,
+					comment: (bodyEl.querySelector("[data-ado-text]").value || "").trim() }),
+				verb: (b) => (b.approve ? "Approve" : "Take back approval"),
+				danger: (b) => !b.approve,
+			},
+			"gl-mr-comment": {
+				system: "GitLab",
+				api: "/api/gitlab/actions/",
+				help: "gitlab",
+				provider: "gitlab",
+				title: (t) => "Comment on merge request !" + (t.iid || t.id),
+				endpoint: "mr-comment",
+				view: (t) => '<span class="ado-act-label">Your comment</span><textarea class="textarea textarea-bordered ado-act-text" data-ado-text dir="auto" maxlength="4000">' + esc(t.text || "") + "</textarea>",
+				body(t) {
+					const text = (bodyEl.querySelector("[data-ado-text]").value || "").trim();
+					return text ? { project_id: Number(t.project_id), iid: Number(t.iid || t.id), text: text } : null;
+				},
+				verb: () => "Post comment",
+			},
+			"gl-retry": {
+				system: "GitLab",
+				api: "/api/gitlab/actions/",
+				help: "gitlab",
+				provider: "gitlab",
+				title: (t) => "Retry pipeline #" + (t.run_id || t.id),
+				endpoint: "pipeline-retry",
+				view: (t) => '<p class="text-sm">Retry the failed jobs of pipeline <b>#' + esc(t.run_id || t.id) + "</b> in <b dir=\"auto\">" + esc(t.name || "the project") +
+					"</b> on <b dir=\"auto\">" + esc(t.ref || "its branch") + "</b>.</p>" +
+					'<p class="text-xs text-base-content/60 mt-2">The jobs that passed are kept; the failed and canceled ones run again, on the same commit.</p>',
+				body: (t) => ({ project_id: Number(t.project_id), pipeline_id: Number(t.pipeline_id || t.id) }),
+				verb: () => "Retry",
+			},
+			"gl-rerun": {
+				system: "GitLab",
+				api: "/api/gitlab/actions/",
+				help: "gitlab",
+				provider: "gitlab",
+				title: (t) => "Run " + (t.name || "the pipeline") + " again",
+				endpoint: "pipeline-run",
+				view(t) {
+					return '<span class="ado-act-label">Branch or tag</span>' +
+						'<input type="text" class="input input-bordered input-sm w-full" data-ado-field="ref" dir="ltr" maxlength="400" value="' + esc(t.ref || "") + '">' +
+						'<span class="ado-act-label">Variables <span style="text-transform:none;letter-spacing:normal;font-weight:400">(one per line: KEY=value)</span></span>' +
+						'<textarea class="textarea textarea-bordered ado-act-text" data-ado-field="variables" dir="ltr" maxlength="4000" style="font-family: ui-monospace, Consolas, monospace; font-size: 0.8rem" placeholder="Reading the variables of #' + esc(t.run_id || t.id) + '…"></textarea>' +
+						'<p class="text-xs text-base-content/50 mt-1" data-ado-vars-note>A new pipeline from the latest commit of that branch. Pipeline #' + esc(t.run_id || t.id) + " stays as it is.</p>";
+				},
+				after(t) {
+					// The variables the pipeline ran with, filled in for the person to keep or
+					// change. Masked ones come back empty: GitLab never returns their values.
+					const box = bodyEl.querySelector('[data-ado-field="variables"]');
+					if (t.variables) { box.value = Object.keys(t.variables).map((k) => k + "=" + t.variables[k]).join("\n"); box.placeholder = ""; return; }
+					call("GET", "pipeline-variables?" + new URLSearchParams({ project_id: String(t.project_id), pipeline_id: String(t.pipeline_id || t.id) }))
+						.then((json) => {
+							const vars = json.data || {};
+							if (!box.value) box.value = Object.keys(vars).map((k) => k + "=" + vars[k]).join("\n");
+							box.placeholder = "None";
+							refresh();
+						}).catch(() => { box.placeholder = "None"; });
+				},
+				body(t) {
+					const ref = (bodyEl.querySelector('[data-ado-field="ref"]').value || "").trim();
+					if (!ref) return null;
+					const variables = {};
+					for (const line of (bodyEl.querySelector('[data-ado-field="variables"]').value || "").split("\n")) {
+						if (!line.trim()) continue;
+						const at = line.indexOf("=");
+						if (at < 1) return null;
+						variables[line.slice(0, at).trim()] = line.slice(at + 1).trim();
+					}
+					return { project_id: Number(t.project_id), ref: ref, variables: variables, from_pipeline_id: Number(t.pipeline_id || t.id) || null };
+				},
+				verb: () => "Run pipeline",
 			},
 			"ticket-reply": {
 				system: "Support",
@@ -565,6 +656,8 @@
 			if (!spec || !target) return false;
 			current = { kind: kind, spec: spec, target: target, options: options || {} };
 			workItem = null;
+			// The system's own colour while its action is open (GitLab orange).
+			modal.classList.toggle("provider-gitlab", spec.provider === "gitlab");
 			titleEl.textContent = spec.title(target);
 			subEl.textContent = target.title || "";
 			modal.showModal();

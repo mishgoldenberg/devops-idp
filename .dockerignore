@@ -1,0 +1,10 @@
+# Both images build from the repository root and copy only backend/app and
+# frontend; keep what is never needed at runtime out of the build context.
+.git
+*.docx
+**/__pycache__
+**/.pytest_cache
+**/node_modules
+backend/tests
+.env
+**/.env

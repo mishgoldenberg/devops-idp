@@ -23,7 +23,7 @@ reads (Azure DevOps, ServiceNow, SonarQube, Artifactory). It gives us:
 - `invalidate_owner(integration, owner)`
 
   Drop every cached entry for a single user under a single integration.
-  Called from write paths (e.g. after `POST /azure-devops/projects/create`
+  Called from write paths (e.g. after an approved project is provisioned
   we call `invalidate_owner("ado", email)` so the next read shows the
   new project immediately).
 

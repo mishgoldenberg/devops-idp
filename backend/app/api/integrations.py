@@ -4,12 +4,12 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 import os
 import re
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
 import httpx
 
-from resilient_http import tls_verify
+from resilient_http import explain_integration_failure, tls_verify
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
 
@@ -23,15 +23,17 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 from integrations_cache import cached_external, cached_external_swr, forget_external
+import gitlab_client
 import sonar_insights
 from devbot import config as devbot_config
 from devbot import llm as devbot_llm
 from devbot import models as devbot_models
+from common import now_iso
 
-SystemName = Literal["azure", "sonarqube", "artifactory", "confluence", "devbot"]
 # "devbot" is the person's own key to the AI model gateway. It is kept here, with the
 # other tokens, so Connections and the DevBot page read and write the same one.
-_TOKEN_SYSTEMS = {"azure", "sonarqube", "artifactory", "confluence", "devbot"}
+# "gitlab": a person's GitLab token (gitlab_client.py reads it from here).
+_TOKEN_SYSTEMS = {"azure", "sonarqube", "artifactory", "confluence", "devbot", "gitlab"}
 _PIN_SYSTEMS = {"sonarqube", "artifactory"}
 
 
@@ -42,12 +44,6 @@ class TokenBody(BaseModel):
 class PinBody(BaseModel):
     item_id: str = Field(..., min_length=1, max_length=255)
     item_name: str = Field("", max_length=512)
-
-
-def _now_iso() -> str:
-    from datetime import datetime, timezone
-
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _user_id(user: AuthUser) -> str:
@@ -71,6 +67,8 @@ def _base_url(system: str) -> str:
         url = os.getenv("ARTIFACTORY_BASE_URL", "").strip().rstrip("/")
     elif system == "confluence":
         url = os.getenv("CONFLUENCE_BASE_URL", "").strip().rstrip("/")
+    elif system == "gitlab":
+        url = gitlab_client.base_url()
     else:
         url = ""
     if not url:
@@ -157,7 +155,7 @@ def integrations_health(current_user: AuthUser = Depends(get_current_user)) -> D
     and does not affect the others.
     """
     uid = _user_id(current_user)
-    labels = {"sonarqube": "SonarQube", "artifactory": "Artifactory", "confluence": "Confluence"}
+    labels = {"sonarqube": "SonarQube", "artifactory": "Artifactory", "confluence": "Confluence", "gitlab": "GitLab"}
 
     def probe(key: str) -> Dict[str, Any]:
         label = labels[key]
@@ -198,10 +196,10 @@ def integrations_health(current_user: AuthUser = Depends(get_current_user)) -> D
         return result
 
     with ThreadPoolExecutor(max_workers=4) as pool:
-        systems = list(pool.map(probe, ["sonarqube", "artifactory", "confluence"]))
+        systems = list(pool.map(probe, ["sonarqube", "artifactory", "confluence", "gitlab"]))
         systems.append(_devbot_health(uid))
 
-    return {"success": True, "data": systems, "timestamp": _now_iso()}
+    return {"success": True, "data": systems, "timestamp": now_iso()}
 
 
 def _devbot_health(uid: str) -> Dict[str, Any]:
@@ -236,7 +234,7 @@ def _devbot_health(uid: str) -> Dict[str, Any]:
 def get_token_status(system: str, current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]:
     name = _normalize_system(system, _TOKEN_SYSTEMS)
     configured = bool(_get_token(_user_id(current_user), name))
-    return {"success": True, "data": {"configured": configured}, "timestamp": _now_iso()}
+    return {"success": True, "data": {"configured": configured}, "timestamp": now_iso()}
 
 
 @router.post("/{system}/token", status_code=204)
@@ -249,7 +247,7 @@ def save_token(
     raw = (body.token or "").strip()
     if len(raw) < 4:
         raise HTTPException(status_code=400, detail="Token is too short")
-    if name in {"sonarqube", "artifactory", "confluence"}:
+    if name in {"sonarqube", "artifactory", "confluence", "gitlab"}:
         _test_token(name, raw)
     elif name == "devbot":
         if not devbot_config.enabled():
@@ -290,7 +288,7 @@ def list_pins(system: str, current_user: AuthUser = Depends(get_current_user)) -
         """,
         [_user_id(current_user), name],
     )
-    return {"success": True, "data": rows, "timestamp": _now_iso()}
+    return {"success": True, "data": rows, "timestamp": now_iso()}
 
 
 @router.post("/{system}/pins")
@@ -354,39 +352,7 @@ def sonarqube_projects(current_user: AuthUser = Depends(get_current_user)) -> Di
         for item in payload.get("components", [])
     ]
     projects = _with_pin_flags(projects, _user_id(current_user), "sonarqube", "project_key")
-    return {"success": True, "data": projects, "timestamp": _now_iso()}
-
-
-@router.get("/sonarqube/project-details")
-def sonarqube_project_details(project_key: str, current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]:
-    token = _require_token(current_user, "sonarqube")
-    base = _base_url("sonarqube")
-    metrics = "bugs,vulnerabilities,coverage,duplicated_lines_density,ncloc,code_smells"
-    response = _sonar_request(
-        f"{base}/api/measures/component",
-        token,
-        params={"component": project_key, "metricKeys": metrics},
-    )
-    if response.status_code in {401, 403}:
-        raise HTTPException(status_code=401, detail="Invalid token or connection failed")
-    response.raise_for_status()
-    payload = response.json()
-    component = payload.get("component") or {}
-    measures = {m.get("metric"): m.get("value") for m in component.get("measures", [])}
-    data = {
-        "project_key": component.get("key") or project_key,
-        "name": component.get("name") or project_key,
-        "language": "Project",
-        "branches": ["main"],
-        "main_branch": "main",
-        "bugs": measures.get("bugs", "0"),
-        "vulnerabilities": measures.get("vulnerabilities", "0"),
-        "code_smells": measures.get("code_smells", "0"),
-        "coverage": measures.get("coverage", "0"),
-        "duplications": measures.get("duplicated_lines_density", "0"),
-        "lines_of_code": measures.get("ncloc", "0"),
-    }
-    return {"success": True, "data": data, "timestamp": _now_iso()}
+    return {"success": True, "data": projects, "timestamp": now_iso()}
 
 
 def _sonar_failure(base: str, exc: Exception) -> HTTPException:
@@ -475,7 +441,7 @@ def sonarqube_overview(
             "connected": bool(token) and sonar_insights.answered_scheme(base) == "basic",
             "token_stored": bool(token),
         },
-        "timestamp": _now_iso(),
+        "timestamp": now_iso(),
     }
 
 
@@ -504,7 +470,7 @@ def sonarqube_hotspots(
         raise
     except Exception as exc:
         raise _sonar_failure(base, exc)
-    return {"success": True, "data": rows, "timestamp": _now_iso()}
+    return {"success": True, "data": rows, "timestamp": now_iso()}
 
 
 @router.get("/sonarqube/my-issues")
@@ -529,7 +495,7 @@ def sonarqube_my_issues(
     username = str(current_user.get("username") or "").strip()
     identities = [i for i in (email, username, username.split("\\")[-1]) if i]
     if not identities:
-        return {"success": True, "data": [], "identities": [], "timestamp": _now_iso()}
+        return {"success": True, "data": [], "identities": [], "timestamp": now_iso()}
     if refresh:
         forget_external("sonarqube", _user_id(current_user), "my-issues")
     try:
@@ -548,7 +514,7 @@ def sonarqube_my_issues(
         "success": True,
         "data": rows,
         "identities": identities,
-        "timestamp": _now_iso(),
+        "timestamp": now_iso(),
     }
 
 
@@ -593,12 +559,12 @@ def sonarqube_pull_requests(
     except Exception as exc:
         raise HTTPException(
             status_code=502,
-            detail=f"Could not read your pull requests from Azure DevOps: {type(exc).__name__}",
+            detail=explain_integration_failure("Azure DevOps", exc),
         )
 
     open_prs = [p for p in ado if str(p.get("status") or "").lower() in {"active", "open", ""}]
     if not open_prs:
-        return {"success": True, "data": [], "unmatched": [], "timestamp": _now_iso()}
+        return {"success": True, "data": [], "unmatched": [], "timestamp": now_iso()}
 
     sonar_owner = owner if token else "anon"
     try:
@@ -624,9 +590,7 @@ def sonarqube_pull_requests(
 
     gates: Dict[str, Dict[str, Any]] = {}
     supported = True
-    # Bounded: each of these is a separate round trip, and a handler that walks
-    # every matched project has no ceiling on how long it takes. Side by side rather
-    # than one after another, which is what made this widget the slow one.
+    # Bounded, and side by side: each of these is a separate round trip.
     keys = sorted(set(mapping.values()))[:12]
     if keys:
         with ThreadPoolExecutor(max_workers=min(6, len(keys))) as pool:
@@ -682,7 +646,7 @@ def sonarqube_pull_requests(
         "data": rows,
         "unmatched": sorted(set(unmatched)),
         "pr_analysis_supported": supported,
-        "timestamp": _now_iso(),
+        "timestamp": now_iso(),
     }
 
 
@@ -719,7 +683,7 @@ def sonarqube_pull_request_details(
                 detail="SonarQube has no analysis for this pull request yet.",
             )
         raise _sonar_failure(base, exc)
-    return {"success": True, "data": data, "timestamp": _now_iso()}
+    return {"success": True, "data": data, "timestamp": now_iso()}
 
 
 def artifactory_ui_root(base: str) -> str:
@@ -762,7 +726,7 @@ def artifactory_repos(current_user: AuthUser = Depends(get_current_user)) -> Dic
         if item.get("key")
     ]
     repos = _with_pin_flags(repos, _user_id(current_user), "artifactory", "name")
-    return {"success": True, "data": repos, "timestamp": _now_iso()}
+    return {"success": True, "data": repos, "timestamp": now_iso()}
 
 
 @router.get("/artifactory/repo-details")
@@ -776,7 +740,7 @@ def artifactory_repo_details(name: str, current_user: AuthUser = Depends(get_cur
         "url": artifactory_repo_url(base, name),
         "artifacts": artifacts,
     }
-    return {"success": True, "data": data, "timestamp": _now_iso()}
+    return {"success": True, "data": data, "timestamp": now_iso()}
 
 
 @router.get("/artifactory/storage")
@@ -844,21 +808,17 @@ def artifactory_storage(current_user: AuthUser = Depends(get_current_user)) -> D
             repo["percentage"] = round(repo["used_bytes"] / used_total * 100, 1)
         repo.pop("used_bytes", None)
 
-    # ── What "the whole usage of Artifactory" actually is ────────────────────────
-    # /api/storageinfo reports THREE different totals and they legitimately disagree:
+    # ── What "the whole usage of Artifactory" is ─────────────────────────────────
+    # /api/storageinfo reports three totals that legitimately disagree:
     #
-    #   fileStoreSummary.usedSpace   physical disk used AFTER deduplication. This was
-    #                                the headline, and it is why the widget said 130 GB
-    #                                while a single repo underneath it read 1.73 TB —
-    #                                Artifactory stores one copy of a binary no matter
-    #                                how many repos reference it.
+    #   fileStoreSummary.usedSpace   physical disk used after deduplication: one copy
+    #                                of a binary however many repositories hold it.
     #   binariesSummary.binariesSize size of the deduplicated binaries.
-    #   repositoriesSummaryList TOTAL  the sum of every repository's usedSpace — the
-    #                                LOGICAL total, i.e. the number that is consistent
-    #                                with the repository list shown right below it.
+    #   repositoriesSummaryList TOTAL  the sum of every repository's usedSpace -- the
+    #                                LOGICAL total, consistent with the repository list.
     #
-    # The headline is the TOTAL row, because that is the one that agrees with what the
-    # user is looking at. The filestore is still reported, as the disk it all sits on.
+    # The headline is the TOTAL row, because it agrees with the list beneath it; the
+    # filestore is reported as the disk it all sits on.
     repo_total = _strip_percent_suffix(total_row.get("usedSpace")) if total_row else ""
     logical_total = repo_total or _format_bytes(used_total)
 
@@ -921,7 +881,7 @@ def artifactory_storage(current_user: AuthUser = Depends(get_current_user)) -> D
         "repositories": repos,
         "projects": _artifactory_projects(base, token, repo_bytes),
     }
-    return {"success": True, "data": data, "timestamp": _now_iso()}
+    return {"success": True, "data": data, "timestamp": now_iso()}
 
 
 def _format_bytes(num: float) -> str:
@@ -989,19 +949,14 @@ def _artifactory_projects(base: str, token: str, repo_bytes: Dict[str, float]) -
 
 @router.get("/confluence/recent")
 def confluence_recent(current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]:
-    """Pages THIS USER recently interacted with — viewed, edited or created.
+    """Pages THIS USER recently interacted with, read with their own token:
 
-    The widget used to list "the last 10 pages modified anywhere in Confluence", which
-    is the whole instance's activity, not the user's. The Confluence token is the user's
-    own (``_require_token``), so their own history is reachable:
+      1. ``/rest/api/user/history`` -- recently viewed. Not every Confluence version has
+         it (older Server builds answer 404), so it is attempted, not relied on.
+      2. CQL ``contributor = currentUser()`` -- pages they created or edited; works
+         everywhere and tops the list up.
 
-      1. ``/rest/api/user/history`` — recently VIEWED. Only some Confluence versions
-         expose it (Cloud does; older Server builds 404), so it is attempted, not relied on.
-      2. CQL ``contributor = currentUser()`` — pages they created or edited. Works
-         everywhere, and is the fallback (and the top-up) when history is unavailable.
-
-    Whichever produced a page is recorded on it as ``interaction`` so the widget can say
-    why the page is in the list.
+    Each page records which of the two found it (``interaction``).
     """
     token = _require_token(current_user, "confluence")
     base = _base_url("confluence")
@@ -1046,7 +1001,7 @@ def confluence_recent(current_user: AuthUser = Depends(get_current_user)) -> Dic
     # Pinned pages float to the top and keep their pin, exactly like every other widget.
     pages = _with_pin_flags(pages[:10], _user_id(current_user), "confluence", "id")
     pages.sort(key=lambda p: (0 if p.get("pinned") else 1))
-    return {"success": True, "data": pages, "timestamp": _now_iso()}
+    return {"success": True, "data": pages, "timestamp": now_iso()}
 
 
 @router.get("/confluence/search")
@@ -1062,7 +1017,7 @@ def confluence_search(
     token = _require_token(current_user, "confluence")
     query = (q or "").strip()
     if not query:
-        return {"success": True, "data": [], "timestamp": _now_iso()}
+        return {"success": True, "data": [], "timestamp": now_iso()}
     base = _base_url("confluence")
     # Escape any embedded double-quotes before placing the query inside the CQL
     # ``text~"..."`` clause so attackers can't break out of the literal.
@@ -1081,7 +1036,7 @@ def confluence_search(
     return {
         "success": True,
         "data": _format_confluence_pages(payload, base),
-        "timestamp": _now_iso(),
+        "timestamp": now_iso(),
     }
 
 
@@ -1155,18 +1110,18 @@ def _format_confluence_pages(payload: Dict[str, Any], base: str) -> List[Dict[st
 
 
 def _test_token(system: str, token: str) -> None:
-    """Validate a token by making THE SAME call the widget makes.
-
-    This used to probe endpoints the widgets never touch — /api/system/ping on Artifactory,
-    /rest/api/space on Confluence — and those are not present on every deployment. The
-    result was a Connections page that reported HTTP 404 (and so "broken") for systems
-    whose widgets were working perfectly. A health check that disagrees with the feature it
-    is reporting on is worse than no health check.
-
-    So each probe now hits the exact endpoint its widget depends on, with a limit of 1.
-    "Healthy" and "the widget works" cannot drift apart, because they are the same call.
-    """
+    """Validate a token by making the same call the widget makes, with a limit of 1, so
+    "healthy" and "the widget works" cannot disagree."""
     base = _base_url(system)
+    if system == "gitlab":
+        # gitlab_client.test_token is the /user call every GitLab reader starts from.
+        try:
+            gitlab_client.test_token(token)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=_describe_connect_failure(system, base, exc))
+        return
     try:
         if system == "sonarqube":
             response = _sonar_request(f"{base}/api/components/search_projects", token, params={"ps": 1}, timeout=8.0)
@@ -1200,14 +1155,8 @@ def _test_token(system: str, token: str) -> None:
 
 
 def _describe_connect_failure(system: str, base: str, exc: Exception) -> str:
-    """Turn a transport error into something a person can act on.
-
-    This used to say only "unreachable … ConnectTimeout", which names the exception
-    class and nothing else — it does not say WHICH host was dialled, and it reads like
-    a bad token when it is actually a network path problem. The distinction matters
-    here: the portal calls out from inside the cluster, so a firewall rule that was
-    opened for a laptop does not necessarily cover the pod's egress address.
-    """
+    """A transport error as something a person can act on: which host was dialled, and
+    that it is a network path from the cluster rather than a bad token."""
     label = system.title()
     host = ""
     try:
@@ -1326,10 +1275,6 @@ def _parse_admin_size(value: str) -> float:
     if unit not in _ADMIN_SIZE_UNITS or number <= 0:
         return 0.0
     return number * _ADMIN_SIZE_UNITS[unit]
-
-
-def _artifactory_headers(token: str) -> Dict[str, str]:
-    return {"Authorization": f"Bearer {token}", "Accept": "application/json"}
 
 
 def _artifactory_header_sets(token: str) -> List[Dict[str, str]]:

@@ -240,6 +240,7 @@ def run_guards() -> bool:
         ("imports and template includes", "check_imports.py"),
         ("templates against compiled CSS", "check_css_classes.py"),
         ("inline script blocks", "check_inline_js.py"),
+        ("dead and duplicated code", "check_code_hygiene.py"),
     ]
     ok = True
     for label, script in checks:

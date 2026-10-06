@@ -92,6 +92,25 @@
 	--erc: 0 0% 100%;
 }
 
+/* ── GitLab ───────────────────────────────────────────────────────────────
+   Everything the Hub draws in GitLab's name -- its widgets, its page, its actions'
+   dialog -- sits inside .provider-gitlab, which redeclares the PRIMARY colour as
+   GitLab orange. Every primary thing inside (links on hover, the Mine/All toggle,
+   buttons, the action dialog's choices) follows without a class of its own. Darker
+   in the light themes so text in it stays readable, lighter in the dark ones, with
+   dark text on its buttons as the Mocha accents have. */
+.provider-gitlab {
+	--p: 18 92% 47%;
+	--pf: 18 92% 41%;
+	--pc: 0 0% 100%;
+}
+[data-theme="night"] .provider-gitlab,
+[data-theme="dark"] .provider-gitlab {
+	--p: 22 96% 64%;
+	--pf: 22 96% 56%;
+	--pc: 240 21% 12%;
+}
+
 /* ── Mocha ──────────────────────────────────────────────────────────────── */
 [data-theme="night"],
 [data-theme="dark"] {

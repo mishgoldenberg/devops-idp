@@ -30,13 +30,12 @@ from typing import Any, Dict, List, Optional
 
 from psycopg2.extras import Json
 
-from db import execute, execute_returning, query_all, query_one
+from db import execute, query_all, query_one
 
 log = logging.getLogger(__name__)
 
 KEEP_DAYS = 730
 FEEDBACK_DAYS = 180
-OUTCOMES = ("answered", "found_only", "failed", "stopped")
 
 
 def ensure_tables() -> None:
@@ -62,7 +61,7 @@ def ensure_tables() -> None:
     )
     execute("CREATE INDEX IF NOT EXISTS idx_devbot_events_time ON devbot_events (created_at)")
     execute("CREATE INDEX IF NOT EXISTS idx_devbot_events_user ON devbot_events (user_id, created_at)")
-    # Which assistant was asked (Round 134): rows written before were all DevBot's.
+    # Which assistant was asked; older rows are all DevBot's.
     execute("ALTER TABLE devbot_events ADD COLUMN IF NOT EXISTS bot TEXT NOT NULL DEFAULT 'devbot'")
     execute(
         """

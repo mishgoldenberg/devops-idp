@@ -62,6 +62,7 @@ from .azure_devops import (
     _person_forms,
     normalize_admin_principal,
 )
+from common import dry_run, simulated
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -207,8 +208,9 @@ def _fail(resp: httpx.Response, what: str, scope: str) -> HTTPException:
     """Why Azure DevOps said no, in words that say whose problem it is."""
     code = resp.status_code
     if code == 401:
+        # 424, never 401: the Hub reads any 401 as its own session ending.
         return HTTPException(
-            status_code=401,
+            status_code=424,
             detail="Azure DevOps did not accept your token (HTTP 401). It may have expired: "
                    "reconnect it on the Connections page.",
         )
@@ -245,20 +247,6 @@ def _done(user: AuthUser, kind: Optional[str]) -> None:
         log.warning("ado actions: cache not cleared for %s: %s", _owner(user), exc)
     if kind:
         streaks.record(str(user.get("email") or ""), kind)
-
-
-def _dry(summary: str, checks: List[str], **extra: Any) -> Dict[str, Any]:
-    return {"success": True, "dry_run": True, "summary": summary, "checks": checks, **extra}
-
-
-def _simulated(summary: str, **extra: Any) -> Dict[str, Any]:
-    return {
-        "success": True,
-        "simulated": True,
-        "summary": summary,
-        "result": "Safe Mode is on: nothing was sent to Azure DevOps.",
-        **extra,
-    }
 
 
 def _short_branch(ref: str) -> str:
@@ -345,9 +333,9 @@ def pr_vote(body: VoteBody, current_user: AuthUser = Depends(get_current_user)):
         ]
         url = _pr_web(base, pr, body)
         if body.dry_run:
-            return _dry(summary, checks, url=url)
+            return dry_run(summary, checks, url=url)
         if safe_mode.is_enabled():
-            return _simulated(summary, url=url)
+            return simulated("Azure DevOps", summary, url=url)
 
         payload: Dict[str, Any] = {"vote": body.vote}
         if not reviewer:
@@ -387,9 +375,9 @@ def pr_comment(body: PrCommentBody, current_user: AuthUser = Depends(get_current
         summary = f"Comment on pull request #{body.pull_request_id} “{title}”"
         url = _pr_web(base, pr, body)
         if body.dry_run:
-            return _dry(summary, ["The pull request is active."], url=url)
+            return dry_run(summary, ["The pull request is active."], url=url)
         if safe_mode.is_enabled():
-            return _simulated(summary, url=url)
+            return simulated("Azure DevOps", summary, url=url)
         _add_thread(client, base, body, body.text)
     _done(current_user, "pr")
     return {"success": True, "summary": summary, "result": "Your comment is on the pull request.", "url": url}
@@ -420,9 +408,9 @@ def pipeline_rerun(body: RerunBody, current_user: AuthUser = Depends(get_current
             "The new run starts from the branch's latest commit, with the same parameters.",
         ]
         if body.dry_run:
-            return _dry(summary, checks)
+            return dry_run(summary, checks)
         if safe_mode.is_enabled():
-            return _simulated(summary)
+            return simulated("Azure DevOps", summary)
 
         queue: Dict[str, Any] = {"definition": {"id": definition["id"]}}
         if run.get("sourceBranch"):
@@ -494,9 +482,9 @@ def pipeline_run(body: PipelineRunBody, current_user: AuthUser = Depends(get_cur
             checks.append("Azure DevOps checks the parameters when the run is queued, and refuses unknown ones.")
         checks.append("The run starts from the branch's latest commit.")
         if body.dry_run:
-            return _dry(summary, checks)
+            return dry_run(summary, checks)
         if safe_mode.is_enabled():
-            return _simulated(summary)
+            return simulated("Azure DevOps", summary)
         queue: Dict[str, Any] = {"definition": {"id": body.definition_id}}
         if branch:
             queue["sourceBranch"] = branch
@@ -538,9 +526,9 @@ def pipeline_cancel(body: CancelBody, current_user: AuthUser = Depends(get_curre
         checks = [f"It is {doing or 'running'} now, on {_short_branch(run.get('sourceBranch')) or 'its branch'}.",
                   "What it has done so far stays; the steps not yet run are skipped."]
         if body.dry_run:
-            return _dry(summary, checks)
+            return dry_run(summary, checks)
         if safe_mode.is_enabled():
-            return _simulated(summary)
+            return simulated("Azure DevOps", summary)
         p = client.patch(url, params=API, json={"status": "cancelling"})
         if p.status_code >= 300:
             raise _fail(p, "stop pipeline runs", "Build (Read & execute)")
@@ -668,9 +656,9 @@ def work_item_state(body: StateBody, current_user: AuthUser = Depends(get_curren
         url = _wi_web(base, fields, body.id)
         if body.dry_run:
             _patch(client, base, body.id, ops, dry_run=True)
-            return _dry(summary, [f"Azure DevOps accepts moving it from {now} to {body.state}."], url=url)
+            return dry_run(summary, [f"Azure DevOps accepts moving it from {now} to {body.state}."], url=url)
         if safe_mode.is_enabled():
-            return _simulated(summary, url=url)
+            return simulated("Azure DevOps", summary, url=url)
         try:
             _patch(client, base, body.id, ops, dry_run=False)
         except HTTPException:
@@ -706,9 +694,9 @@ def work_item_description(body: TextBody, current_user: AuthUser = Depends(get_c
         url = _wi_web(base, fields, body.id)
         if body.dry_run:
             _patch(client, base, body.id, ops, dry_run=True)
-            return _dry(summary, [f"Azure DevOps accepts the change. The existing {label} stays as it is."], url=url)
+            return dry_run(summary, [f"Azure DevOps accepts the change. The existing {label} stays as it is."], url=url)
         if safe_mode.is_enabled():
-            return _simulated(summary, url=url)
+            return simulated("Azure DevOps", summary, url=url)
         _patch(client, base, body.id, ops, dry_run=False)
         if not _changed(client, base, body.id, lambda f: _paragraph(body.text) in str(f.get(field) or "")):
             raise HTTPException(status_code=502, detail=f"Azure DevOps did not keep the new text. Check the {label} there.")
@@ -732,9 +720,9 @@ def work_item_comment(body: TextBody, current_user: AuthUser = Depends(get_curre
         url = _wi_web(base, fields, body.id)
         if body.dry_run:
             _patch(client, base, body.id, ops, dry_run=True)
-            return _dry(summary, ["Azure DevOps accepts the comment."], url=url)
+            return dry_run(summary, ["Azure DevOps accepts the comment."], url=url)
         if safe_mode.is_enabled():
-            return _simulated(summary, url=url)
+            return simulated("Azure DevOps", summary, url=url)
         saved = _patch(client, base, body.id, ops, dry_run=False)
         if int(saved.get("rev") or 0) <= int(item.get("rev") or 0):
             raise HTTPException(status_code=502, detail="Azure DevOps did not record the comment. Check the item there.")
@@ -777,12 +765,12 @@ def work_item_assign(body: AssignBody, current_user: AuthUser = Depends(get_curr
         if body.dry_run:
             # validateOnly is what catches a name Azure DevOps does not know.
             _patch(client, base, body.id, ops, dry_run=True)
-            return _dry(summary, [
+            return dry_run(summary, [
                 f"Now assigned to: {before['display'] or before['unique'] or 'nobody'}.",
                 f"Azure DevOps knows “{target}” and accepts the change.",
             ], url=url)
         if safe_mode.is_enabled():
-            return _simulated(summary, url=url)
+            return simulated("Azure DevOps", summary, url=url)
         _patch(client, base, body.id, ops, dry_run=False)
         wanted = {f for f in [target.lower(), target.lower().split("\\")[-1], target.lower().split("@")[0]] if f}
         if not _changed(client, base, body.id,
@@ -831,10 +819,10 @@ def work_item_create(body: CreateBody, current_user: AuthUser = Depends(get_curr
 
         if body.dry_run:
             post(True)
-            return _dry(summary, [f"Azure DevOps accepts it: {wi_type} exists in {body.project} and every required field is filled.",
+            return dry_run(summary, [f"Azure DevOps accepts it: {wi_type} exists in {body.project} and every required field is filled.",
                                   "It is created in your name; nothing else changes."])
         if safe_mode.is_enabled():
-            return _simulated(summary)
+            return simulated("Azure DevOps", summary)
         created = post(False)
         new_id = int(created.get("id") or 0)
         if new_id <= 0:

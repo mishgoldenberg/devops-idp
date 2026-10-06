@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import ast
 import builtins
-import os
 import sys
 from pathlib import Path
 
@@ -43,7 +42,6 @@ DIST_TO_MODULE = {
     "pyjwt": "jwt",
     "python-multipart": "multipart",
     "python-dotenv": "dotenv",
-    "google-cloud-storage": "google",
     "uvicorn[standard]": "uvicorn",
 }
 

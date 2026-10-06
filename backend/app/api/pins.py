@@ -14,7 +14,7 @@ reuse them by picking a fresh `source` string.
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -29,7 +29,7 @@ router = APIRouter()
 
 # Keep this narrow; any unknown source is rejected so widgets can't scribble
 # into shared tracking tables with arbitrary keys.
-_ALLOWED_SOURCES = {"azure_devops", "servicenow"}
+_ALLOWED_SOURCES = {"azure_devops", "servicenow", "gitlab"}
 
 
 class PinPayload(BaseModel):

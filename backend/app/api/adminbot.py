@@ -24,44 +24,25 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 import audit
-from security import AuthUser, get_current_user, has_effective_admin_access_live
+from api.devbot import require_user_id
+from security import AuthUser
 
 from devbot import config, llm, models, orchestrator, store
 from devbot.tools import hub
+from common import admin_user, audited_error
 
 log = logging.getLogger(__name__)
 router = APIRouter()
 BOT = "admin"
 
 
-def _admin(user: AuthUser = Depends(get_current_user)) -> AuthUser:
-    if not has_effective_admin_access_live(user):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="AdminBot is for the Hub's admins.")
-    return user
-
-
-def _uid(user: AuthUser) -> str:
-    uid = orchestrator.user_id(user)
-    if not uid:
-        raise HTTPException(status_code=401, detail="User id missing")
-    return uid
-
-
-def _fail(request: Request, code: int, detail: str) -> HTTPException:
-    try:
-        request.state.audit_detail = detail
-    except Exception:
-        pass
-    return HTTPException(status_code=code, detail=detail)
-
-
 @router.get("/status")
-def bot_status(admin: AuthUser = Depends(_admin)) -> Dict[str, Any]:
+def bot_status(admin: AuthUser = Depends(admin_user)) -> Dict[str, Any]:
     """The same shape DevBot's page reads, for the Hub's key: the page is shared."""
     out: Dict[str, Any] = {
         "enabled": config.enabled(),
@@ -97,14 +78,14 @@ class CheckBody(BaseModel):
 
 
 @router.post("/models/check")
-async def check_model(body: CheckBody, request: Request, admin: AuthUser = Depends(_admin)):
+async def check_model(body: CheckBody, request: Request, admin: AuthUser = Depends(admin_user)):
     key = orchestrator.hub_key()
     if not key:
-        raise _fail(request, 428, "The Hub's AI key is not set (Platform Managing, DevBot search index).")
+        raise audited_error(request, 428, "The Hub's AI key is not set (Platform Managing, DevBot search index).")
     try:
         result = await llm.probe_tools(key, body.model)
     except llm.LLMError as exc:
-        raise _fail(request, 429 if exc.kind == "limit" else 502, exc.message)
+        raise audited_error(request, 429 if exc.kind == "limit" else 502, exc.message)
     models.remember(body.model, result.get("tools"), result.get("detail") or "")
     return {"success": True, "data": {"model": body.model, **result}}
 
@@ -120,16 +101,16 @@ def _visible(rows):
 
 
 @router.get("/conversations")
-def conversations(admin: AuthUser = Depends(_admin)) -> Dict[str, Any]:
-    return {"success": True, "data": store.list_conversations(_uid(admin), bot=BOT)}
+def conversations(admin: AuthUser = Depends(admin_user)) -> Dict[str, Any]:
+    return {"success": True, "data": store.list_conversations(require_user_id(admin), bot=BOT)}
 
 
 @router.get("/conversations/{conversation_id}")
-def conversation(conversation_id: str, request: Request, admin: AuthUser = Depends(_admin)):
-    uid = _uid(admin)
+def conversation(conversation_id: str, request: Request, admin: AuthUser = Depends(admin_user)):
+    uid = require_user_id(admin)
     row = store.get_conversation(uid, conversation_id, BOT)
     if not row:
-        raise _fail(request, 404, "That conversation does not exist, or it is not yours.")
+        raise audited_error(request, 404, "That conversation does not exist, or it is not yours.")
     return {"success": True, "data": {**row, "messages": _visible(store.messages(uid, conversation_id, bot=BOT))}}
 
 
@@ -138,16 +119,16 @@ class RenameBody(BaseModel):
 
 
 @router.patch("/conversations/{conversation_id}")
-def rename(conversation_id: str, body: RenameBody, request: Request, admin: AuthUser = Depends(_admin)):
-    if not store.rename_conversation(_uid(admin), conversation_id, body.title.strip(), BOT):
-        raise _fail(request, 404, "That conversation does not exist, or it is not yours.")
+def rename(conversation_id: str, body: RenameBody, request: Request, admin: AuthUser = Depends(admin_user)):
+    if not store.rename_conversation(require_user_id(admin), conversation_id, body.title.strip(), BOT):
+        raise audited_error(request, 404, "That conversation does not exist, or it is not yours.")
     return {"success": True}
 
 
 @router.delete("/conversations/{conversation_id}")
-def delete(conversation_id: str, request: Request, admin: AuthUser = Depends(_admin)):
-    if not store.delete_conversation(_uid(admin), conversation_id, BOT):
-        raise _fail(request, 404, "That conversation does not exist, or it is not yours.")
+def delete(conversation_id: str, request: Request, admin: AuthUser = Depends(admin_user)):
+    if not store.delete_conversation(require_user_id(admin), conversation_id, BOT):
+        raise audited_error(request, 404, "That conversation does not exist, or it is not yours.")
     return {"success": True}
 
 
@@ -160,13 +141,13 @@ class OutcomeBody(BaseModel):
 
 @router.post("/conversations/{conversation_id}/actions/{action_id}")
 def action_outcome(conversation_id: str, action_id: str, body: OutcomeBody, request: Request,
-                   admin: AuthUser = Depends(_admin)) -> Dict[str, Any]:
+                   admin: AuthUser = Depends(admin_user)) -> Dict[str, Any]:
     """Only a DECLINE is recorded this way: a confirmation goes through /run, which
     performs it, so "done" is never something the page merely claims."""
-    updated = store.update_action(_uid(admin), conversation_id, body.message_id, action_id[:32],
+    updated = store.update_action(require_user_id(admin), conversation_id, body.message_id, action_id[:32],
                                   {"status": "declined", "result": "", "url": ""}, BOT)
     if not updated:
-        raise _fail(request, 404, "That proposal does not exist in this conversation.")
+        raise audited_error(request, 404, "That proposal does not exist in this conversation.")
     return {"success": True, "data": updated}
 
 
@@ -178,13 +159,13 @@ class RunBody(BaseModel):
 
 @router.post("/conversations/{conversation_id}/actions/{action_id}/run")
 def run_action(conversation_id: str, action_id: str, body: RunBody, request: Request,
-               admin: AuthUser = Depends(_admin)) -> Dict[str, Any]:
-    uid = _uid(admin)
+               admin: AuthUser = Depends(admin_user)) -> Dict[str, Any]:
+    uid = require_user_id(admin)
     action = store.find_action(uid, conversation_id, body.message_id, action_id[:32], BOT)
     if not action:
-        raise _fail(request, 404, "That proposal does not exist in this conversation.")
+        raise audited_error(request, 404, "That proposal does not exist in this conversation.")
     if action.get("status") not in (None, "proposed"):
-        raise _fail(request, 409, f"That proposal was already {action.get('status')}.")
+        raise audited_error(request, 409, f"That proposal was already {action.get('status')}.")
     record = {"kind": action.get("kind"), "target": action.get("target"), "comment": body.comment,
               "conversation_id": conversation_id}
     try:
@@ -192,10 +173,10 @@ def run_action(conversation_id: str, action_id: str, body: RunBody, request: Req
     except HTTPException as exc:
         audit.log(audit.Action.ADMINBOT_ACTION, level=audit.Level.WARNING, user_email=str(admin.get("email") or ""),
                   metadata={**record, "refused": str(exc.detail)})
-        raise _fail(request, exc.status_code, str(exc.detail))
-    except Exception as exc:
+        raise audited_error(request, exc.status_code, str(exc.detail))
+    except Exception:
         log.warning("adminbot: %s failed", action.get("kind"), exc_info=True)
-        raise _fail(request, 500, f"It was not done: {type(exc).__name__}. The details are in the Hub's log.")
+        raise audited_error(request, 500, "It was not done. The details are in the Hub's log.")
     audit.log(audit.Action.ADMINBOT_ACTION, user_email=str(admin.get("email") or ""),
               metadata={**record, "result": outcome["result"]})
     updated = store.update_action(uid, conversation_id, body.message_id, action_id[:32],
@@ -210,8 +191,8 @@ class ChatBody(BaseModel):
 
 
 @router.post("/chat")
-async def chat(body: ChatBody, admin: AuthUser = Depends(_admin)):
-    _uid(admin)
+async def chat(body: ChatBody, admin: AuthUser = Depends(admin_user)):
+    require_user_id(admin)
     return StreamingResponse(
         orchestrator.stream_turn(admin, body.message, body.conversation_id.strip(), body.model.strip(), bot=BOT),
         media_type="text/event-stream",

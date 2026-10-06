@@ -8,25 +8,24 @@ The engine behind the self-service workflow:
 
 - Users create requests (`POST /requests`).
 - Admins approve or reject them.
-- A background worker executes approved requests (today mainly
-  `ADO_PROJECT_CREATE` via Terraform).
+- A background worker executes approved requests (an Azure DevOps project over REST,
+  an Artifactory quota, a cleaner pull request).
 - Every state change writes to `audit_events` and pushes a notification.
 
 ## Main endpoints
 
 | Method | Path                                      | Description                                    |
 | ------ | ----------------------------------------- | ---------------------------------------------- |
-| GET    | `/api/approvals/requests`                 | Admin list; filter by `status`, `request_type` |
+| GET    | `/api/approvals/requests`                 | `scope=mine` (My Requests) or `scope=all` (admins); filter by `status` |
 | POST   | `/api/approvals/requests`                 | Create a new request                           |
 | GET    | `/api/approvals/requests/{id}`            | Single request detail                          |
 | POST   | `/api/approvals/requests/{id}/approve`    | Admin approve, spawns executor                 |
 | POST   | `/api/approvals/requests/{id}/reject`     | Admin reject with reason                       |
-| GET    | `/api/approvals/my-requests`              | Requests created by the current user           |
 
 ## External APIs used
 
-- **Azure DevOps** — pre-flight during `ADO_PROJECT_CREATE` to create a
-  custom inherited process (`azure_devops.ensure_custom_ado_process`).
+- **Azure DevOps** — the inherited process a new project uses, created first if
+  missing (`azure_devops._ensure_inherited_process`).
 - **Azure DevOps** — the project itself, created over the REST API with the admin
   PAT in the one collection the request names (`_create_project_in_collection`).
 - **Artifactory / Azure Repos** — quota increases, and cleaner specs written to their

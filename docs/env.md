@@ -62,7 +62,7 @@ default behavior and whether they are required.
 | Name                   | Description                                                                          | Example                                 | Required |
 | ---------------------- | ------------------------------------------------------------------------------------ | --------------------------------------- | -------- |
 | `SNOW_BASE_URL`        | Full instance URL used for all ServiceNow API calls.                                  | `https://mycompany.service-now.com`     | Yes (real) |
-| `SNOW_API_USERNAME`    | Service-account user for incident and attachment APIs.                                | `portal_bot`                            | Yes (real) |
+| `SNOW_API_USERNAME`    | Service-account user for incident and attachment APIs.                                | `hub_service`                           | Yes (real) |
 | `SNOW_API_PASSWORD`    | Password for the service account.                                                     | `********`                              | Yes (real) |
 
 ## SonarQube / Artifactory / Confluence
@@ -72,13 +72,6 @@ default behavior and whether they are required.
 | `SONARQUBE_BASE_URL`   | SonarQube base URL used by the connected widget.       | `https://your-sonarqube.example.com`   | Yes      |
 | `ARTIFACTORY_BASE_URL` | Artifactory base URL used by connected widgets.        | `https://your-artifactory.example.com` | Yes      |
 | `CONFLUENCE_BASE_URL`  | Confluence base URL used by the Confluence Pages widget. | `https://your-confluence.example.com`  | Yes      |
-
-## Self-service / Terraform
-
-| Name                               | Description                                                                                    | Example                              | Required |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------ | -------- |
-| `K8S_NAMESPACE`                    | Namespace where Terraform Jobs are submitted. Defaults to the pod's own namespace.              | `devops-control-center-prod`         | No       |
-| `TERRAFORM_JOB_TIMEOUT_SECONDS`    | Max wall-clock time for a Terraform Job before Kubernetes kills it with `DeadlineExceeded`.     | `1200`                               | No       |
 
 ## Safe Mode
 
@@ -99,9 +92,9 @@ default behavior and whether they are required.
 
 ## How these are delivered in production
 
-1. Values come from **GitHub Actions secrets**.
-2. `deploy-workflow.yml` passes them as `--set secrets.<name>=…` into
-   `helm upgrade --install`.
+1. Values come from the Azure Pipelines **variable group**.
+2. `azure-pipelines.yml` writes them into `helm-secrets-values.json` and renders
+   the chart with `helm template … | oc apply`.
 3. `deployment/charts/backend/templates/secrets.yaml` renders them into a
    single `Secret` named `all-secrets`.
 4. The backend `Deployment` references it with `envFrom: secretRef:
@@ -169,6 +162,7 @@ default behavior and whether they are required.
 | `DEVBOT_MAX_TOOL_ROUNDS` | `4` | `config.py` |
 | `DEVBOT_STREAM` | `true` | `config.py` |
 | `ENVIRONMENT` | `development` | `config.py`, `release_notes.py` |
+| `GITLAB_BASE_URL` | _(none)_ | `gitlab_client.py` |
 | `HOST` | `0.0.0.0` | `config.py` |
 | `HUB_ADMIN_PASSWORD` | _(secret — must be set)_ | `config.py`, `db.py` |
 | `HUB_ADMIN_USERNAME` | _(none)_ | `config.py`, `db.py` |
@@ -198,7 +192,6 @@ default behavior and whether they are required.
 | `SNOW_PATCH_REQUESTED_FOR` | _(none)_ | `snow_catalog.py` |
 | `SNOW_PRODUCER_SYS_ID` | _(none)_ | `servicenow.py` |
 | `SNOW_SERVICE_ACCOUNT_DISPLAY` | _(none)_ | `servicenow.py` |
-| `SNOW_SUPPORT_GROUP_VAR` | `choose_a_support_group` | `servicenow.py` |
 | `SONARQUBE_BASE_URL` | _(none)_ | `integrations.py`, `config.py`, `ui.py` |
 | `STREAK_TIMEZONE` | _(none)_ | `streaks.py` |
 | `TEMPLATES_AUTO_RELOAD` | _(none)_ | `main.py` |

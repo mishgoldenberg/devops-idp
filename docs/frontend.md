@@ -19,7 +19,6 @@ frontend/
 │   │   └── output.css              # Generated; served to the browser
 │   └── images/                     # Logo, favicons
 └── templates/
-    ├── base.html                   # Page shell (<html>, head, sidebar, main)
     ├── index.html                  # Dashboard landing page
     ├── login.html
     ├── approvals.html              # Admin: pending approvals
@@ -81,9 +80,10 @@ the context, and return an `HTMLResponse`.
 Admin-only pages are also hidden from the sidebar for non-admins (see
 `sidebar.html`).
 
-## Base layout
+## Page layout
 
-`base.html` provides:
+There is no base template: every page in `templates/` is a complete HTML
+document that includes the same shared partials, which provide:
 
 - The HTML shell (`<head>`, `<body>`, font / theme / favicon).
 - The sidebar (`partials/components/sidebar.html`) on the left.
@@ -95,10 +95,8 @@ Admin-only pages are also hidden from the sidebar for non-admins (see
   **the big confirmation** (`action-confirm.html`, `window.portalConfirm.ask({...})`)
   that every change DevBot or AdminBot drafted ends in: what will happen, "drafted by
   AI", whose decision it is, and a tick before the button works.
-- A `{% block content %}` where each page slots its content.
-
-Page templates typically extend `base.html` and fill in `content` with a
-container partial plus a small inline `<script>` for page-local behavior.
+Each page then includes its own container partial plus a small inline `<script>` for
+page-local behaviour.
 
 ## Widget system
 
@@ -134,29 +132,30 @@ The fetched partial:
 
 ### Adding a widget
 
-1. Pick a unique `widget_key` (e.g. `ado_sprint_velocity`).
-2. Add a row to the `widget_types` table (label, icon, min-role) via
-   `deployment/charts/infrastructure/database/03_widget_types.sql` or an
-   `ALTER` in an ensure helper.
-3. Create a backend endpoint that renders the HTML partial, e.g.
-   `GET /ui/components/azure-devops/sprint-velocity`, implemented in
-   `backend/app/ui.py`.
-4. Add the placeholder + `htmx.ajax` call to
-   `partials/components/dashboard-container.html`.
-5. Make sure the placeholder matches the shape of
-   `partials/components/widget-skeleton.html` so the swap is visually
-   stable.
+1. Add it to `HOME_WIDGETS` in `backend/app/widget_registry.py`: a key, the id of
+   its element, the label people see in the Customize drawer, and its `system`.
+   That one entry is what the drawer, the admin visibility page, Connections and
+   the widget-usage counts all read.
+2. Add a route that renders its partial in `backend/app/ui.py`, under
+   `/ui/components/…`.
+3. Add the partial under `frontend/templates/partials/components/`, built like an
+   existing widget (a `section-card`, its own loading, empty and error states).
+4. Add its shell to `partials/components/dashboard-container.html`: an element with
+   the registry's id, `data-widget-key`, and `hx-get` pointing at the route, with
+   `hx-trigger="intersect once, refresh, click from:#refresh-btn"`.
+5. Use only classes already in `output.css`; it is never rebuilt in the pipeline.
 
-Removing a widget is the reverse: drop the `widget_types` row, drop the
-endpoint, drop the placeholder.
+Removing a widget is the reverse; `scripts/check_code_hygiene.py` will name anything
+left behind in Python.
 
 ### Customize Dashboard drawer
 
 The drawer in `dashboard-container.html`:
 
 - Lists all widgets the user is allowed to see (RBAC-filtered).
-- Checkbox changes hit `POST /api/dashboards/default/widgets` which
-  writes to `user_widgets`.
+- Checkbox changes are saved in a cookie through `/ui/dashboard/preferences`, and
+  mirrored into `user_widgets` (`POST /api/dashboard/widgets/sync`) for the
+  Observability page.
 - "Suggested for you" and "Recently used" sections pull from
   `/api/observability/widgets/suggested` and `/widgets/recent` for
   one-click add.
@@ -209,8 +208,18 @@ Three ways into DevBot from a widget, all ending in `window.portalDevbot.ask(que
 `sidebar.html` holds the navigation as data. An item can stand for several pages
 (`match`): **Monitoring** is current on Usage, Users, DevBot and Logs, which share the
 tab strip `monitoring-tabs.html`. Rows are kept compact (`portal-chrome.html`) so the
-whole list, admin section included, fits a laptop screen without scrolling; add a page
-to an existing entry's tabs before adding a row. Search is the box in the banner.
+whole list, admin section included, fits a window about 900px tall without scrolling;
+add a page to an existing entry's tabs before adding a row. Search is the box in the
+banner.
+
+## What's New
+
+The text is `backend/app/changelog.py`. The first pod to start a new version on an
+environment records it (`release_notes.record_current_deploy`) and posts "New in
+version X" on the dashboard billboard for two days (`ANNOUNCE_DAYS`), with the
+release's headline and leads (`changelog.teaser`) and a link to `/ui/changelog`. A
+release with only the generic line posts nothing. Restarts and other pods post nothing,
+and an admin can edit or take the note down like any announcement.
 
 ## Fast pages
 

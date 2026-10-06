@@ -126,7 +126,7 @@ raises. `_execute_approved_request` then dispatches. Its checks, in order:
 ### 5. User sees the outcome
 
 - Page: `/ui/my-requests`.
-- Endpoint: `GET /api/approvals/my-requests`.
+- Endpoint: `GET /api/approvals/requests?scope=mine`.
 - The page polls (via HTMX) so the row flips from `APPROVED` →
   `IN_PROGRESS` → `COMPLETED` / `FAILED` without a manual refresh.
 - The notification bell fires via `GET /api/notifications`.

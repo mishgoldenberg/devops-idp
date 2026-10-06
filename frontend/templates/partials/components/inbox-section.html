@@ -236,6 +236,7 @@
 							${i.people ? `<span class="block inbox-people truncate">${esc(i.people)}</span>` : ""}
 						</a>
 						${i.pr && window.portalAdo ? `<button type="button" class="btn btn-xs btn-outline btn-primary shrink-0" data-review="${esc(i.key || "")}" title="Vote on it in Azure DevOps, after a check and your confirmation">Review…</button>` : ""}
+						${i.review && window.portalAdo && window.portalAdo.has(i.review.kind) ? `<button type="button" class="btn btn-xs btn-outline btn-primary shrink-0${i.system === "GitLab" ? " provider-gitlab" : ""}" data-review="${esc(i.key || "")}" title="${esc(i.review.hint || "")}">${esc(i.review.label || "Review…")}</button>` : ""}
 						<span class="inbox-sys shrink-0">${esc(i.system)}</span>
 						<span class="text-xs text-base-content/40 shrink-0" style="min-width:2.2rem;text-align:right">${esc(ago(i.age))}</span>
 						${i.key ? `
@@ -331,6 +332,7 @@
 				event.preventDefault();
 				const item = shown.find((x) => x.key === review.getAttribute("data-review"));
 				if (item && item.pr) window.portalAdo?.open("vote", item.pr);
+				else if (item && item.review) window.portalAdo?.open(item.review.kind, item.review.target);
 				return;
 			}
 			const btn = event.target.closest("[data-act]");

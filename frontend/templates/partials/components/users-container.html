@@ -455,7 +455,7 @@
 
 		// Page keys as the sidebar names them. Anything unlisted is title-cased.
 		const PAGE_NAMES = {
-			home: "Dashboard", "azure-devops": "Azure DevOps", artifactory: "Artifactory", sonarqube: "SonarQube",
+			home: "Dashboard", "azure-devops": "Azure DevOps", gitlab: "GitLab", artifactory: "Artifactory", sonarqube: "SonarQube",
 			confluence: "Confluence", search: "Search", connections: "Connections", automations: "Requests",
 			"my-requests": "My Requests", support: "Support", suggestions: "Suggestions", changelog: "What's New",
 			observability: "Observability", "platform-managing": "Platform Managing", approvals: "Approvals",
@@ -741,7 +741,7 @@
 				: '<p class="text-sm us-muted">No sessions measured yet.</p>';
 			const connected = (d.connected || []).length
 				? '<ul class="us-list">' + d.connected.map(function (x) {
-					const name = { azure: "Azure DevOps", sonarqube: "SonarQube", artifactory: "Artifactory", confluence: "Confluence" }[x.system] || x.system;
+					const name = { azure: "Azure DevOps", gitlab: "GitLab", sonarqube: "SonarQube", artifactory: "Artifactory", confluence: "Confluence" }[x.system] || x.system;
 					return "<li><span>" + esc(name) + '</span><span class="us-muted">since ' + esc(date(x.since)) + "</span></li>";
 				}).join("") + "</ul>"
 				: '<p class="text-sm us-muted">No personal tokens connected.</p>';

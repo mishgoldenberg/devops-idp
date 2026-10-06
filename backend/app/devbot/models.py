@@ -105,13 +105,6 @@ def key_info(key: str, fetch: bool = True) -> Dict[str, Any]:
     return info
 
 
-def forget_models(key: str) -> None:
-    try:
-        get_redis().delete(f"devbot:models:{key_fingerprint(key)}")
-    except Exception:
-        pass
-
-
 def choose(models: List[Dict[str, Any]], *wanted: str) -> Optional[Dict[str, Any]]:
     """The first of ``wanted`` this key may use; then the configured default; then any
     model that can read live data; then any model at all."""

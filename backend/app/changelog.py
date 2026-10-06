@@ -1,43 +1,19 @@
 """
-The changelog. Written by hand, on purpose.
-
-WHY THIS IS NOT GENERATED FROM COMMITS
---------------------------------------
-The first attempt at "What's New" read `git log` and grouped the subjects under
-Features and Fixes. It produced an accurate list of things nobody wanted to read:
-
-    fix: artifactory storage 403 UX + log SNow producer response
-    chore: surface SNow producer diagnostics at WARNING (root logger is WARNING)
-
-That tells a developer what changed in a file. It tells the person who opened the
-portal to raise a request precisely nothing -- they do not know what a producer is,
-they never saw the 403, and "root logger is WARNING" is a sentence about us. A commit
-subject is addressed to whoever reviews the diff. A changelog is addressed to whoever
-uses the thing. They are different documents and the second one has to be written.
-
-So this file IS the changelog. Every round adds an entry here, in plain language,
-describing what a user can now do or what stopped going wrong for them. The version
-is chosen deliberately at the same time:
+The changelog, written by hand. Every round adds an entry in plain language and
+chooses the version:
 
     major   something people have to relearn, or a request type that no longer works
     minor   a new capability -- a page, a form, a widget, a self-service action
     patch   fixes and refinements to things that already existed
 
-WHAT MAKES A GOOD LINE
-----------------------
-Write the user's half of the sentence, not ours. "The pipeline is now authorised for
-its variable group" is our half; "A scheduled cleaner starts on its own instead of
-waiting for someone to press Permit in Azure DevOps" is theirs. Name the symptom
-somebody actually saw. No file names, no function names, no HTTP status codes, no
-round numbers.
+Not generated from commits: a commit subject is addressed to whoever reviews the diff,
+a changelog to whoever uses the portal. Write the user's half of the sentence and name
+the symptom somebody saw -- no file names, function names, HTTP status codes or round
+numbers (scripts/check_changelog.py). A line may carry a lead and a detail separated by
+" -- "; the page renders the lead in bold.
 
-Each line may carry a lead and a detail separated by " -- ". The page renders the lead
-in bold and the rest after it, so a reader skimming only the leads still gets the
-list. A line without a separator is shown whole.
-
-The newest release is first. `version()` is what the running image calls itself: it is
-stamped onto the images at build time and shown on the What's New page, so "which
-version is test on" has an answer that does not involve reading a build number.
+The newest release is first. `version()` is what the running image calls itself; it is
+stamped onto the images at build time and shown on the What's New page.
 """
 
 from __future__ import annotations
@@ -56,6 +32,61 @@ GENERIC = "General fixes and improvements you would not see directly."
 
 # Newest first. See the module docstring before adding one.
 RELEASES: List[Dict[str, Any]] = [
+    {
+        "version": "1.22.1",
+        "date": "2026-10-06",
+        "headline": "Safer pictures and clearer messages.",
+        "features": [],
+        "fixes": [
+            "An expired Azure DevOps or Confluence token no longer looks like being signed out -- voting, "
+            "commenting or running a pipeline now says to reconnect the token, and you stay on the page.",
+        ],
+        "improvements": [
+            "Quick link icons and profile pictures accept real pictures only -- PNG, JPEG, GIF or WebP -- and "
+            "say so when a file is not one. An uploaded icon is resized for you.",
+            "A quick link can point at any web or network address, but never at a script.",
+            "When something you send is not accepted, the message says which field and why, in one sentence.",
+            "DevBot ignores instructions hidden in the pages, work items and logs it reads -- it tells you they are "
+            "there instead -- and only links to things it actually found.",
+            GENERIC,
+        ],
+    },
+    {
+        "version": "1.22.0",
+        "date": "2026-10-04",
+        "headline": "GitLab joins the Hub: your merge requests and pipelines, next to Azure DevOps.",
+        "features": [
+            "A GitLab page in the sidebar, with the merge requests you opened, the ones waiting for your "
+            "review, and your pipelines -- in GitLab orange, so you always know which system you are looking at.",
+            "The same three as dashboard widgets: switch them on from Customize.",
+            "Approve a merge request or take your approval back, and comment on one, without leaving the Hub. "
+            "Retry a failed pipeline, or run one again on the same branch with the same variables. Every one "
+            "of these asks GitLab first, shows you exactly what will happen, and waits for you to confirm; "
+            "GitLab records it under your name.",
+            "Merge requests waiting for your review appear in Needs You, with an Approve button beside them.",
+        ],
+        "fixes": [],
+        "improvements": [
+            "Search finds your GitLab merge requests and GitLab projects.",
+            "Your streak counts GitLab too: opening, approving or commenting on a merge request, and a pipeline "
+            "you started that passed.",
+            "To start, connect GitLab on the Connections page with a personal access token: the guide there "
+            "says exactly what to tick.",
+        ],
+    },
+    {
+        "version": "1.21.0",
+        "date": "2026-10-01",
+        "headline": "Every update now tells you what it brought.",
+        "features": [
+            "A short note on the dashboard for every update -- when a new version arrives, the top of the dashboard says "
+            "what changed, for two days, with a link to this page.",
+        ],
+        "fixes": [],
+        "improvements": [
+            "The sidebar rows have a little more room again, so the list is easier to read.",
+        ],
+    },
     {
         "version": "1.20.3",
         "date": "2026-10-01",
@@ -1099,6 +1130,26 @@ def find(wanted: str) -> Optional[Dict[str, Any]]:
         if entry["version"] == str(wanted or ""):
             return entry
     return None
+
+
+def teaser(entry: Dict[str, Any], limit: int = 240) -> str:
+    """A release in a sentence or two, for the announcement a deploy posts.
+
+    The headline, then the bold lead (or the first sentence) of the first lines
+    with something in them, until the limit. Never the generic line: a release
+    with nothing else has nothing to announce (`is_generic`)."""
+    parts = [str(entry.get("headline") or "").strip()]
+    for key, _label in SECTIONS:
+        for line in entry.get(key) or []:
+            if line == GENERIC:
+                continue
+            piece = split_line(line)
+            text = piece["lead"] or piece["rest"].split(". ")[0]
+            text = text.rstrip(".") + "."
+            if len(" ".join(parts + [text])) > limit:
+                return " ".join(p for p in parts if p)
+            parts.append(text)
+    return " ".join(p for p in parts if p)
 
 
 def split_line(line: str) -> Dict[str, str]:

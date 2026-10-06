@@ -28,10 +28,11 @@ import time
 from collections import OrderedDict
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Depends, HTTPException, Path
 
 from db import execute, query_all, query_one
 from security import AuthUser, get_current_user
+from common import caller_email
 
 
 log = logging.getLogger(__name__)
@@ -40,16 +41,6 @@ router = APIRouter()
 # Keep 60 days of notifications by default. Older rows are removed
 # opportunistically whenever anyone lists their inbox.
 _RETENTION_DAYS = 60
-
-
-def _caller_email(user: AuthUser) -> str:
-    email = (user.get("email") or "").strip().lower()
-    if not email:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User email missing from auth context",
-        )
-    return email
 
 
 _last_cleanup = 0.0
@@ -222,7 +213,7 @@ def _group_rows(rows: list) -> list:
 
 @router.get("")
 def list_notifications(current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]:
-    email = _caller_email(current_user)
+    email = caller_email(current_user)
     _cleanup_old_notifications()
     rows = _load_user_rows(email, limit=50)
     return {"success": True, "data": _group_rows(rows)}
@@ -237,7 +228,7 @@ def unread_count(current_user: AuthUser = Depends(get_current_user)) -> Dict[str
     over a dropdown containing three items — twelve votes on one suggestion are one
     thing to look at, not twelve. The badge and the panel now count the same way.
     """
-    email = _caller_email(current_user)
+    email = caller_email(current_user)
     row = None
     try:
         row = query_one(
@@ -300,13 +291,9 @@ _scan_lock = threading.Lock()
 
 
 def _observe_ticket_updates(current_user: AuthUser, email: str) -> None:
-    """Run the ticket check that raises "has a new update" notifications.
-
-    It used to run only when the dashboard's ticket widget loaded, so somebody who
-    had hidden that widget never heard that a ticket was answered. Throttled to once
-    every five minutes per person: this is called from every page, and the check
-    reads ServiceNow.
-    """
+    """Run the ticket check that raises "has a new update" notifications -- from every
+    page, not only the ticket widget. At most once every five minutes per person,
+    because it reads ServiceNow."""
     # In the background: when the five minutes were up, the page waited for ServiceNow
     # before its sidebar dots could be drawn. A ticket answered a moment ago gets its dot
     # on the next page instead.
@@ -337,7 +324,7 @@ def _observe_ticket_updates(current_user: AuthUser, email: str) -> None:
 @router.get("/sections")
 def section_news(current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]:
     """How many things changed on each dotted page since this person last opened it."""
-    email = _caller_email(current_user)
+    email = caller_email(current_user)
     _observe_ticket_updates(current_user, email)
     data: Dict[str, Dict[str, Any]] = {name: {"count": 0, "latest": None} for name in SECTIONS}
     try:
@@ -380,7 +367,7 @@ def mark_read(
     notification_id: str = Path(...),
     current_user: AuthUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    email = _caller_email(current_user)
+    email = caller_email(current_user)
     try:
         # Mark the whole GROUP read, not just the row that was clicked. The bell shows
         # one entry per group_key, so reading "3 people voted on your suggestion" and
@@ -425,7 +412,7 @@ def section_seen(section: str, current_user: AuthUser = Depends(get_current_user
 
 @router.post("/read-all")
 def mark_all_read(current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]:
-    email = _caller_email(current_user)
+    email = caller_email(current_user)
     try:
         execute(
             "UPDATE notifications SET is_read = TRUE "

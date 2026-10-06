@@ -615,7 +615,7 @@ async def _ground(ctx: tools.ToolContext, question: str, state: _Turn, emit: Cal
         raise
     except Exception as exc:
         log.warning("devbot: the knowledge lookup failed: %s", exc)
-        found, failed = {}, f"skipped: {type(exc).__name__}"
+        found, failed = {}, "skipped: the lookup failed"
     else:
         failed = ""
     if found is None:

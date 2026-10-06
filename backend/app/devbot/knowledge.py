@@ -82,14 +82,14 @@ from resilient_http import tls_verify
 from sso_config import decrypt_secret, encrypt_secret
 
 from . import config, llm
+from common import failure_text
 
 log = logging.getLogger(__name__)
 
 _LOCK_KEY = "devbot:index:lock"
 _GEN_KEY = "devbot:index:gen"
-# The build's lock lives two minutes and its heartbeat renews it every 30 seconds, so
-# a pod that dies (a redeploy, an eviction) frees it within two minutes. It used to live
-# six hours: a killed build then read "running" and refused every new one that long.
+# The build's lock lives two minutes and its heartbeat renews it every 30 seconds, so a
+# pod that dies (a redeploy, an eviction) frees it within two minutes.
 _LOCK_TTL = 120
 _HEARTBEAT = 30
 _STALE_SECONDS = 180
@@ -145,22 +145,19 @@ def ensure_tables() -> None:
         """
     )
     execute("CREATE INDEX IF NOT EXISTS idx_devbot_index_chunks_page ON devbot_index_chunks (page_id, seq)")
-    # Past fixes (Round 131). Existing rows are Confluence pages, which is what the
-    # column defaults say.
+    # Past fixes. Existing rows are Confluence pages, which is what the column defaults say.
     for column, kind in (("source", "TEXT NOT NULL DEFAULT 'confluence'"), ("ref", "TEXT NOT NULL DEFAULT ''"),
                          ("origin", "TEXT NOT NULL DEFAULT ''"),
-                         # Past fixes (Round 132): the reviewed fix and problem, whether the
-                         # review ran, and why a note was held back. A past fix indexed
-                         # before the review existed has vetted = FALSE and is reviewed by
-                         # the next build.
+                         # Past fixes: the reviewed fix and problem, whether the review
+                         # ran, and why a note was held back. A fix indexed before the
+                         # review existed has vetted = FALSE and is reviewed next build.
                          ("fix", "TEXT NOT NULL DEFAULT ''"), ("summary", "TEXT NOT NULL DEFAULT ''"),
                          ("vetted", "BOOLEAN NOT NULL DEFAULT FALSE"), ("held", "TEXT NOT NULL DEFAULT ''"),
-                         # Hidden by an admin (Round 134): kept, never shown, and kept hidden
-                         # across rebuilds until an admin shows it again.
+                         # Hidden by an admin: kept, never shown, and kept hidden across
+                         # rebuilds until an admin shows it again.
                          ("hidden", "BOOLEAN NOT NULL DEFAULT FALSE"), ("hidden_by", "TEXT NOT NULL DEFAULT ''"),
-                         # Who can apply the fix (Round 136): "anyone", or "support" when it
-                         # needs rights on servers and systems the person asking does not
-                         # have. Empty on fixes reviewed before; the next build asks.
+                         # Who can apply the fix: "anyone", or "support" when it needs
+                         # rights the person asking does not have. Empty until reviewed.
                          ("audience", "TEXT NOT NULL DEFAULT ''")):
         execute(f"ALTER TABLE devbot_index_pages ADD COLUMN IF NOT EXISTS {column} {kind}")
     for column, kind in (("ado_enabled", "BOOLEAN NOT NULL DEFAULT TRUE"),
@@ -192,8 +189,8 @@ def ensure_tables() -> None:
         )
         """
     )
-    # The last sign of life of a running build (Round 135): a row still "running"
-    # whose heartbeat stopped belongs to a pod that is gone.
+    # The last sign of life of a running build: a row still "running" whose heartbeat
+    # stopped belongs to a pod that is gone.
     execute("ALTER TABLE devbot_index_runs ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMP WITH TIME ZONE "
             "DEFAULT CURRENT_TIMESTAMP")
 
@@ -441,9 +438,10 @@ def _web_url(base: str, item: Dict[str, Any]) -> str:
 def check_space(client: httpx.Client, base: str, key: str) -> Tuple[bool, str]:
     """Can this token read the space? With the reason in words when it cannot."""
     try:
-        resp = client.get(f"{base}/rest/api/space/{key}")
+        resp = client.get(f"{base}/rest/api/space/{quote(str(key), safe='')}")
     except httpx.HTTPError as exc:
-        return False, f"Confluence could not be reached: {type(exc).__name__}"
+        log.warning("devbot index: Confluence space %s: %s: %s", key, type(exc).__name__, exc)
+        return False, failure_text("Confluence", exc)
     if resp.status_code == 200 and "json" in (resp.headers.get("content-type") or ""):
         return True, str(resp.json().get("name") or key)
     if resp.status_code in (401,) or "html" in (resp.headers.get("content-type") or ""):
@@ -497,12 +495,13 @@ _NOT_FIX = re.compile(r"reason|resolved.?(by|date)|date|build|version|found.?in|
 # Read last, when nothing else is filled: people sometimes write the fix into System
 # Info. The review holds back what turns out to be environment details.
 _FIX_FALLBACK = ("Microsoft.VSTS.TCM.SystemInfo",)
-_RESOLUTION = re.compile(_FIX_FIRST.pattern + "|" + _FIX_ALSO.pattern, re.I)
 MAX_ADO_ITEMS = 5000
 
 
 def _wiql_text(value: str) -> str:
-    return "'" + str(value).replace("'", "''") + "'"
+    from api.azure_devops import _wiql_literal
+
+    return "'" + _wiql_literal(value) + "'"
 
 
 def resolution_fields(fields: List[Dict[str, Any]], override: str = "") -> List[str]:

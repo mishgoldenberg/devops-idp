@@ -48,6 +48,7 @@ from secrets_manager import (
     get_user_azure_devops_pat,
     store_user_azure_devops_pat,
 )
+from common import now_iso
 
 
 router = APIRouter()
@@ -79,13 +80,8 @@ _TARGET_COLLECTIONS: List[str] = [
     if c.strip()
 ]
 
-# The one a request goes to unless the requester picks another.
-#
-# Provisioning used to create the project in EVERY collection above, which is why the
-# logs are full of "A project named X already exists in TikshuvCollection-Inheritance":
-# the name only had to be taken in one of them for every request to record a failure,
-# and nobody had asked for a second copy of the project in the first place. A request
-# now names exactly one collection.
+# The one a request goes to unless the requester picks another. A request creates its
+# project in exactly one collection.
 _DEFAULT_COLLECTION: str = (
     os.getenv("ADO_DEFAULT_COLLECTION")
     or (_TARGET_COLLECTIONS[0] if _TARGET_COLLECTIONS else "DevCollection-Inheritance")
@@ -132,11 +128,10 @@ def default_admin_principal(email: str) -> str:
 def principal_candidates(principal: str) -> List[str]:
     """Every plausible identity form for what the requester typed, best first.
 
-    One form is not enough. Round 49 sent a single normalised principal and gave up
-    if the server did not recognise it — which is indistinguishable, from the outside,
-    from the grant working. Different AD-backed collections answer to different forms
-    (``DOMAIN\\user`` on one, the UPN on another, the bare sAMAccountName on a third),
-    so we try them all and record which one hit.
+    Different AD-backed collections answer to different forms (``DOMAIN\\user`` on one,
+    the UPN on another, the bare sAMAccountName on a third), and an unrecognised form
+    looks exactly like a grant that worked -- so all are tried and the one that hit is
+    recorded.
     """
     p = (principal or "").strip()
     out: List[str] = []
@@ -162,12 +157,6 @@ def principal_candidates(principal: str) -> List[str]:
     return out
 
 
-def _now_iso() -> str:
-    from datetime import datetime, timezone
-
-    return datetime.now(timezone.utc).isoformat()
-
-
 # Statuses that mean "this collection is not the one that holds what you asked for".
 # 400 belongs here because Azure DevOps validates project references inside a query
 # body: a collection that does not contain the project answers 400 ("project does not
@@ -177,17 +166,8 @@ _ADO_NOT_MINE = (400, 401, 403, 404)
 
 
 def _describe_ado_status(status_code: int) -> str:
-    """
-    Turn an Azure DevOps status into something true.
-
-    Every one of these used to read "Azure DevOps API error: N. Check
-    AZURE_DEVOPS_BASE_URL and PAT." regardless of N — so a 400, which is not an
-    authentication failure in any sense, told the user their token was wrong. That
-    is the message behind the wave of "please add your PAT" errors seen while the
-    PAT was in fact fine, and it sent people to re-enter a working credential.
-
-    Only 401 and 403 are about the token. Say so only for those.
-    """
+    """Turn an Azure DevOps status into something true: only 401 and 403 are about the
+    token, so only those tell the person to check it."""
     if status_code in (401, 403):
         return (
             "Azure DevOps rejected the credential (HTTP "
@@ -342,20 +322,11 @@ def _probe_pat_live(pat: str) -> Dict[str, Any]:
     try:
         auth = httpx.BasicAuth("", pat)
         with httpx.Client(verify=tls_verify(), auth=auth, timeout=httpx.Timeout(8.0, connect=5.0)) as client:
-            # /_apis/projects, NOT /_apis/connectionData. connectionData needs the
-            # PAT to carry the *profile* scope, and a PAT scoped exactly as the portal
-            # asks for it (Work Items / Code / Build, read) does NOT have that scope —
-            # so a perfectly good PAT came back 401 here and this page called it
-            # "expired or revoked" while every widget kept working. This is the call
-            # the widgets themselves make, so the two can no longer disagree.
+            # /_apis/projects, the call the widgets make -- not /_apis/connectionData,
+            # which needs the profile scope a PAT scoped as the portal asks does not have.
             #
-            # EVERY COLLECTION, NOT JUST THE CONFIGURED ONE. That was the second half
-            # of the same bug: AZURE_DEVOPS_BASE_URL names ONE collection, the widgets
-            # crawl all of them (_discover_ado_bases), and a PAT whose owner has no
-            # access to the configured one is rejected here while every widget on the
-            # dashboard is happily reading the others. A token is expired when NOTHING
-            # accepts it -- one collection saying no is that collection's answer, not
-            # the token's.
+            # Every collection, not only AZURE_DEVOPS_BASE_URL's: the widgets read all of
+            # them, so a token is expired only when NONE accepts it.
             try:
                 bases = _discover_ado_bases(client)
             except Exception:
@@ -392,15 +363,9 @@ def _probe_pat_live(pat: str) -> Dict[str, Any]:
 def probe_user_pat(current_user: AuthUser) -> Dict[str, Any]:
     """Is this user's stored PAT configured, and does it still work?
 
-    Cached for ten minutes per user. Called from the dashboard as well as the
-    Connections page now, and a token's validity is not a per-page-load question —
-    without the cache, 500 people opening the portal at 09:00 would be 500 extra
-    calls against the Azure DevOps server every time any of them pressed F5.
-
-    A rejected token also raises ONE notification per user per day. An expired PAT
-    used to be invisible until somebody noticed their widgets had been empty for a
-    while and thought to look at Connections; every user's token expires eventually,
-    and they all connect in the same week, so they will all expire in the same week.
+    Cached for ten minutes per user: the dashboard asks too, and a token's validity is
+    not a per-page-load question. A rejected token raises one notification per user per
+    day, because otherwise an expired PAT shows only as widgets that went quiet.
     """
     user_id = str(current_user.get("id"))
     pat = get_user_azure_devops_pat(user_id)
@@ -453,7 +418,7 @@ def get_pat_status(current_user: AuthUser = Depends(get_current_user)):
     return {
         "success": True,
         "data": probe_user_pat(current_user),
-        "timestamp": _now_iso(),
+        "timestamp": now_iso(),
     }
 
 
@@ -563,7 +528,7 @@ def get_projects(current_user: AuthUser = Depends(get_current_user)):
         # changes between calls, so the dropdown reshuffled itself and you had to hunt
         # for the project you picked last time.
         projects.sort(key=lambda p: (str(p.get("name") or "").lower(), str(p.get("collection") or "").lower()))
-        return {"success": True, "data": projects, "timestamp": _now_iso()}
+        return {"success": True, "data": projects, "timestamp": now_iso()}
     except HTTPException:
         raise
     except httpx.HTTPStatusError as exc:
@@ -605,8 +570,8 @@ def get_work_item_types(
                     if t.get("name") and not t.get("isDisabled")
                 ]
                 types.sort(key=lambda t: t["name"].lower())
-                return {"success": True, "data": types, "timestamp": _now_iso()}
-        return {"success": True, "data": [], "timestamp": _now_iso()}
+                return {"success": True, "data": types, "timestamp": now_iso()}
+        return {"success": True, "data": [], "timestamp": now_iso()}
     except httpx.HTTPStatusError as exc:
         raise HTTPException(status_code=502, detail=f"Azure DevOps API error: {exc.response.status_code}")
     except Exception as exc:
@@ -710,7 +675,7 @@ def get_area_paths(
     """Area paths for a project, for the My Work Items filter."""
     project = _query_str(project) or ""
     if not project:
-        return {"success": True, "data": [], "timestamp": _now_iso()}
+        return {"success": True, "data": [], "timestamp": now_iso()}
     try:
         pat = _get_pat_for_user(current_user)
         auth = httpx.BasicAuth("", pat)
@@ -718,15 +683,15 @@ def get_area_paths(
             for base_url in _discover_ado_bases(client):
                 areas = _fetch_area_paths(client, base_url, project)
                 if areas:
-                    return {"success": True, "data": areas, "timestamp": _now_iso()}
-        return {"success": True, "data": [], "timestamp": _now_iso()}
+                    return {"success": True, "data": areas, "timestamp": now_iso()}
+        return {"success": True, "data": [], "timestamp": now_iso()}
     except HTTPException:
         raise
     except Exception as exc:
         logging.exception("Azure DevOps area paths request failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Azure DevOps request failed: {exc}",
+            detail=explain_integration_failure("Azure DevOps", exc),
         )
 
 
@@ -746,8 +711,8 @@ def get_iterations(
             for base_url in _discover_ado_bases(client):
                 iterations = _fetch_iterations(client, base_url, project)
                 if iterations:
-                    return {"success": True, "data": iterations, "timestamp": _now_iso()}
-        return {"success": True, "data": [], "timestamp": _now_iso()}
+                    return {"success": True, "data": iterations, "timestamp": now_iso()}
+        return {"success": True, "data": [], "timestamp": now_iso()}
     except httpx.HTTPStatusError as exc:
         raise HTTPException(status_code=502, detail=f"Azure DevOps API error: {exc.response.status_code}")
     except Exception as exc:
@@ -871,7 +836,7 @@ def get_workitem_tasks(
                     child_ids.append(child_id)
 
             if not child_ids:
-                return {"success": True, "data": [], "timestamp": _now_iso()}
+                return {"success": True, "data": [], "timestamp": now_iso()}
 
             tasks = []
             for i in range(0, len(child_ids), 200):
@@ -893,7 +858,7 @@ def get_workitem_tasks(
                             "url": f"{parent_base}/_workitems/edit/{item.get('id')}",
                         }
                     )
-        return {"success": True, "data": tasks, "timestamp": _now_iso()}
+        return {"success": True, "data": tasks, "timestamp": now_iso()}
     except httpx.HTTPStatusError as exc:
         raise HTTPException(status_code=502, detail=f"Azure DevOps API error: {exc.response.status_code}")
     except HTTPException:
@@ -1097,12 +1062,9 @@ def _fetch_work_items_live(
                     else ""
                 )
 
-                # Epics and Features are PLANNING artefacts, not personal work. They are
-                # usually assigned to a lead — or to nobody — so filtering them by
-                # "assigned to me" showed an empty list to everyone except that one lead,
-                # which is not what a person picking "Epics" is asking to see. They want
-                # the epics, all of them. Everything else (Task, Bug, User Story) stays
-                # scoped to the signed-in user, which is what "My Work Items" means.
+                # Epics and Features are planning items, usually assigned to a lead or to
+                # nobody, so they are listed whoever holds them. Every other type is
+                # scoped to the signed-in user ("My Work Items").
                 is_portfolio = (work_item_type or "").strip().lower() in {"epic", "feature"}
                 assigned_clause = "" if is_portfolio else "AND [System.AssignedTo] = @Me "
 
@@ -1193,7 +1155,7 @@ def _fetch_work_items_live(
                         }
                     )
 
-        return {"success": True, "data": work_items, "timestamp": _now_iso()}
+        return {"success": True, "data": work_items, "timestamp": now_iso()}
     except httpx.HTTPStatusError as exc:
         import logging
         code = exc.response.status_code
@@ -1330,14 +1292,7 @@ def _fetch_pull_requests_live(
     current_user: AuthUser,
     collection: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Uncached real-mode PR fetch. Raises HTTPException on failure.
-
-    The per-project/per-repo PR enumeration used to run sequentially, which
-    made the dashboard widget feel sluggish on any org with more than a
-    handful of repos. We now parallelize the repo+PR GETs through a
-    ``ThreadPoolExecutor`` while keeping the outer httpx client around for
-    connection reuse.
-    """
+    """Uncached PR fetch, repositories read in parallel. Raises HTTPException on failure."""
     from concurrent.futures import ThreadPoolExecutor
     try:
         pat = _get_pat_for_user(current_user)
@@ -1435,12 +1390,9 @@ def _fetch_pull_requests_live(
                                 "project": project_name,
                                 "source_branch": pr.get("sourceRefName", "").replace("refs/heads/", ""),
                                 "target_branch": pr.get("targetRefName", "").replace("refs/heads/", ""),
-                                # Both flags are computed HERE, where the identity forms
-                                # live. The UI layer used to re-derive "is this mine?" by
-                                # comparing created_by_email to the portal username as raw
-                                # strings, which never matches an on-prem DOMAIN\\user — so
-                                # "My opened PRs" was permanently empty even though this
-                                # function had already worked out the answer correctly.
+                                # Both flags are computed here, where the identity forms
+                                # live; the UI trusts them instead of comparing raw strings,
+                                # which never match an on-prem DOMAIN\\user.
                                 "is_creator": is_creator,
                                 "is_reviewer": is_reviewer,
                                 "my_vote": my_vote,
@@ -1452,7 +1404,7 @@ def _fetch_pull_requests_live(
                                 "url": portal_url,
                             })
 
-        return {"success": True, "data": pull_requests, "timestamp": _now_iso()}
+        return {"success": True, "data": pull_requests, "timestamp": now_iso()}
     except httpx.HTTPStatusError as exc:
         import logging
         code = exc.response.status_code
@@ -1513,10 +1465,9 @@ def _ado_identity(client: httpx.Client, base_url: str) -> Dict[str, str]:
 def _account_forms(value: str) -> set:
     """Every way one account can be spelled, reduced to a comparable set.
 
-    Azure DevOps writes the same person three different ways depending on where you read
-    them from: ``DOMAIN\\jsmith``, ``jsmith@corp.example``, or just ``jsmith``. Comparing
-    those literally never matches, which is what left the pipelines widget empty. Reduce
-    each to its bare account name and compare THAT as well as the full string.
+    Azure DevOps writes one person as ``DOMAIN\\jsmith``, ``jsmith@corp.example`` or
+    ``jsmith`` depending on where it is read; compare the bare account name as well as
+    the full string.
     """
     raw = str(value or "").strip().lower()
     if not raw:
@@ -1610,7 +1561,7 @@ def provisioning_collections(current_user: AuthUser = Depends(get_current_user))
     return {
         "success": True,
         "data": {"collections": list(_TARGET_COLLECTIONS), "default": _DEFAULT_COLLECTION},
-        "timestamp": _now_iso(),
+        "timestamp": now_iso(),
     }
 
 
@@ -1620,17 +1571,11 @@ def provisioning_name_check(
     collection: Optional[str] = Query(None, description="Target collection; omit for the default"),
     current_user: AuthUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    """
-    Is this project name free in the target collection?
+    """Is this project name free in the target collection? Asked while the form is
+    filled in, so a taken name is not discovered after an approval.
 
-    Checked BEFORE the request is submitted, because the alternative is what has been
-    happening: the requester waits for an admin to approve, the approval runs, and only
-    then does Azure DevOps say the name is taken — a round trip through a human to learn
-    something that was knowable at typing time.
-
-    Read-only, and it uses the admin PAT because a requester's own token often cannot see
-    the target collection at all. It returns nothing but a boolean and the name that
-    collided, so it cannot be used to enumerate anything a project list would not.
+    Uses the admin PAT, because a requester's own token often cannot see the target
+    collection, and answers only a boolean and the colliding name.
     """
     wanted = (collection or "").strip() or _DEFAULT_COLLECTION
     if _TARGET_COLLECTIONS and wanted.lower() not in {c.lower() for c in _TARGET_COLLECTIONS}:
@@ -1656,7 +1601,7 @@ def provisioning_name_check(
         return {
             "success": True,
             "data": {"name": candidate, "collection": wanted, "available": not taken},
-            "timestamp": _now_iso(),
+            "timestamp": now_iso(),
         }
     except HTTPException:
         raise
@@ -1672,7 +1617,7 @@ def provisioning_name_check(
                 "available": None,
                 "detail": explain_integration_failure("azure_devops", exc),
             },
-            "timestamp": _now_iso(),
+            "timestamp": now_iso(),
         }
 
 
@@ -1687,7 +1632,7 @@ def get_collections(current_user: AuthUser = Depends(get_current_user)):
         return {
             "success": True,
             "data": [{"name": _collection_name(b), "url": b} for b in bases],
-            "timestamp": _now_iso(),
+            "timestamp": now_iso(),
         }
     except HTTPException:
         raise
@@ -1695,7 +1640,7 @@ def get_collections(current_user: AuthUser = Depends(get_current_user)):
         logging.exception("Azure DevOps collections request failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Azure DevOps request failed: {exc}",
+            detail=explain_integration_failure("Azure DevOps", exc),
         )
 
 
@@ -1712,7 +1657,7 @@ def get_repositories(
     the widgets simply offer "All repositories".
     """
     if not project:
-        return {"success": True, "data": [], "timestamp": _now_iso()}
+        return {"success": True, "data": [], "timestamp": now_iso()}
     try:
         pat = _get_pat_for_user(current_user)
         auth = httpx.BasicAuth("", pat)
@@ -1734,14 +1679,14 @@ def get_repositories(
                         seen.add(name.lower())
                         repos.append({"name": name, "project": project})
         repos.sort(key=lambda x: x["name"].lower())
-        return {"success": True, "data": repos, "timestamp": _now_iso()}
+        return {"success": True, "data": repos, "timestamp": now_iso()}
     except HTTPException:
         raise
     except Exception as exc:
         logging.warning("Azure DevOps repositories request failed: %s", exc)
         # A missing repo list must not break the widget — it just means the third
         # selector stays on "All repositories".
-        return {"success": True, "data": [], "timestamp": _now_iso()}
+        return {"success": True, "data": [], "timestamp": now_iso()}
 
 
 @router.get("/pipelines")
@@ -1904,7 +1849,7 @@ def get_pipelines(
                 "counts": {"mine": len(mine), "all": len(pipelines)},
                 "identity_unresolved": unresolved,
                 "diagnostics": diag,
-                "timestamp": _now_iso(),
+                "timestamp": now_iso(),
             }
     except httpx.HTTPStatusError as exc:
         import logging
@@ -1940,31 +1885,22 @@ def sanitize_ado_name(name: str) -> str:
     return s[:64]
 
 
-# ── REST-only project provisioning (no Terraform, no Kubernetes) ─────────────
+# ── Project provisioning, over REST ──────────────────────────────────────────
 #
-# The old path generated a Terraform module and ran it in a Kubernetes Job. On a
-# cluster where the service account cannot create Jobs — which is the case here —
-# that path cannot run at all, and it dragged along a tfstate backend and a
-# Terraform container image for what is, underneath, a handful of REST calls.
-#
-# Terraform's only real job was ONE call: create the project. The inherited process,
-# the uniqueness check and the admin assignment were already REST. So this does all of
-# it in REST, from the backend, using the admin PAT — no Job, no pod, no state.
-#
-# The admin PAT (AZURE_DEVOPS_ADMIN_PAT) must carry, per collection:
+# Done from the backend with the admin PAT (AZURE_DEVOPS_ADMIN_PAT), which must carry,
+# per collection:
 #   * Project and Team (Read, Write & Manage)   — create the project
 #   * Process (Read & Manage)                    — create the inherited process
 #   * Graph (Read & Manage)                      — resolve the user + add them to admins
 #   * Identity (Read) + Security (Manage)        — resolve the identity descriptor and
 #                                                  write the process Administer ACL
 #
-# On Azure DevOps Server a process lives INSIDE a collection, so the inherited process
-# is created independently in each target collection before the project that uses it.
-# The chosen admin gets TWO grants, which are different permission systems: membership
-# of the project's Project Administrators group (graph), and Administer on the inherited
-# process (an ACL on the Process security namespace). Both are best-effort — the project
-# is created regardless — and their outcome is reported in the result's per-collection
-# ``grants`` plus a top-level ``grants_ok``.
+# On Azure DevOps Server a process lives INSIDE a collection, so the inherited process is
+# created in the target collection before the project that uses it. The chosen admin gets
+# TWO grants in different permission systems: membership of the project's Project
+# Administrators group, and Administer on the inherited process (an ACL on the Process
+# security namespace). Both are best-effort -- the project is created regardless -- and
+# their outcome is reported in the result's ``grants`` and ``grants_ok``.
 
 
 def _admin_ado_client() -> httpx.Client:
@@ -1979,17 +1915,6 @@ def _admin_ado_client() -> httpx.Client:
         auth=httpx.BasicAuth("", _ENV_ADMIN_PAT),
         timeout=httpx.Timeout(60.0, connect=5.0),
     )
-
-
-def resolve_provision_collections(client: httpx.Client) -> Tuple[List[Tuple[str, str]], List[str]]:
-    """(name, base_url) for each configured target collection the server actually exposes.
-
-    Returns ``(found, missing)``. Names are matched case-insensitively against the live
-    collection list so a configured name that no longer exists is reported rather than
-    silently provisioned into the wrong place. Raises if NONE of the targets are found —
-    provisioning into zero collections is never what the user asked for.
-    """
-    return resolve_collections_named(client, _TARGET_COLLECTIONS)
 
 
 def resolve_collections_named(
@@ -2119,13 +2044,9 @@ def _create_project_in_collection(
 ) -> str:
     """Create one project in one collection and wait for it. Returns the project URL.
 
-    Raises RuntimeError (with a collection-named message) if the name is taken or the
-    create is rejected, so the orchestrator can record a per-collection outcome.
-
-    ``description`` is whatever the requester typed, or empty. It is no longer a
-    generated string: "Provisioned via the DevOps Hub self-service (Scrum)" was written
-    onto every project ever created here, where it displaced the one line that would
-    have said what the project is FOR.
+    Raises RuntimeError (naming the collection) if the name is taken or the create is
+    rejected. ``description`` is what the requester typed, or empty; nothing generated
+    is written onto the project.
     """
     collection = _collection_name(base_url)
 
@@ -2247,53 +2168,6 @@ def _identity_search(
     return [], last
 
 
-def _materialize_user(
-    client: httpx.Client, base_url: str, principal: str, group_descriptor: str = ""
-) -> Dict[str, str]:
-    """Bind an AD account into this collection — and, if given a group, into that group.
-
-    This is the call that was missing. ``POST _apis/graph/users`` with a principalName
-    creates the collection-local identity for a domain user who has never signed in;
-    passing ``groupDescriptors`` makes the same request add them to the group. So for the
-    common case — a brand-new project handed to someone who has never opened this
-    collection — one request both creates the identity and grants Project Administrator.
-
-    Returns ``{"status", "detail", "subject_descriptor"}``. Best-effort throughout.
-    """
-    tried: List[str] = []
-    for api in ("6.0-preview.1", "7.0-preview.1", "5.0-preview.1"):
-        url = f"{base_url}/_apis/graph/users?api-version={api}"
-        if group_descriptor:
-            url += f"&groupDescriptors={quote(group_descriptor, safe='')}"
-        try:
-            r = client.post(url, json={"principalName": principal})
-        except Exception as exc:
-            tried.append(f"{api}:{type(exc).__name__}")
-            continue
-        if r.status_code in (200, 201):
-            try:
-                body = r.json() or {}
-            except Exception:
-                body = {}
-            return {
-                "status": "ok",
-                "detail": f"bound via graph/users@{api}"
-                          + (" +group" if group_descriptor else ""),
-                "subject_descriptor": body.get("descriptor") or "",
-            }
-        # 409 means the subject is already there, which is a success for our purpose.
-        if r.status_code == 409:
-            return {
-                "status": "exists",
-                "detail": f"already present (409@{api})",
-                "subject_descriptor": "",
-            }
-        tried.append(f"{api}:HTTP {r.status_code} {r.text[:80]}")
-        if r.status_code in (401, 403):
-            break  # a permissions refusal will not change with the api-version
-    return {"status": "failed", "detail": " | ".join(tried), "subject_descriptor": ""}
-
-
 def _identity_prop(ident: Dict[str, Any], name: str) -> str:
     """Read an Identities API ``properties`` value, which may be a bare value or
     the ``{"$type": …, "$value": …}` wrapper depending on server version."""
@@ -2388,106 +2262,6 @@ def _resolve_provision_identity(
         "identity_id": "", "identity_descriptor": "", "subject_descriptor": "",
         "account": "", "display": principal,
     }
-
-
-def _project_admins_group_descriptor(
-    client: httpx.Client, base_url: str, project_name: str
-) -> str:
-    """Graph descriptor of ``<project>``'s Project Administrators group, or "".
-
-    Scoped correctly: the group's displayName is just "Project Administrators" — the
-    project lives in the group's SCOPE, not its name — so we resolve the project's
-    scope descriptor and list groups within it, rather than filtering displayName by
-    "``<project>`` Project Administrators", a string that never matches.
-
-    Kept as the FALLBACK behind the Identities lookup: on Server the Graph projection
-    may not carry the group at all, which is why it cannot be the only route.
-    """
-    try:
-        rp = client.get(
-            f"{base_url}/_apis/projects/{quote(project_name, safe='')}?api-version=7.0"
-        )
-        project_id = (rp.json() or {}).get("id") if rp.is_success else ""
-        if not project_id:
-            return ""
-        rd = client.get(f"{base_url}/_apis/graph/descriptors/{project_id}?api-version=7.0")
-        scope = (rd.json() or {}).get("value", "") if rd.is_success else ""
-        if not scope:
-            return ""
-        rg = client.get(
-            f"{base_url}/_apis/graph/groups?scopeDescriptor={quote(scope, safe='')}&api-version=7.0"
-        )
-        groups = (rg.json() or {}).get("value", []) if rg.is_success else []
-        for g in groups:
-            if (g.get("displayName") or "").strip().lower() == "project administrators":
-                return g.get("descriptor") or ""
-        return ""
-    except Exception as exc:
-        logging.warning("admins-group graph lookup failed for %s: %s", project_name, exc)
-        return ""
-
-
-def _resolve_admins_group(
-    client: httpx.Client, base_url: str, project_name: str
-) -> Dict[str, Any]:
-    """Resolve ``<project>``'s Project Administrators group, Identities API first.
-
-    On-prem the group's canonical name is ``[<project>]\\Project Administrators`` — the
-    square brackets are part of it. Returns ``identity_id``/``identity_descriptor`` when
-    found that way (what the classic membership route needs), or just a Graph
-    ``subject_descriptor`` from the fallback.
-    """
-    attempts: List[str] = []
-    for value in (
-        f"[{project_name}]\\Project Administrators",
-        f"{project_name}\\Project Administrators",
-    ):
-        rows, status_text = _identity_search(client, base_url, "General", value)
-        attempts.append(f"General:{value} -> {status_text}")
-        for row in rows:
-            name = str(
-                row.get("providerDisplayName") or row.get("customDisplayName") or ""
-            ).lower()
-            if "project administrators" not in name:
-                continue
-            # Guard against the same group name in another project: the display name
-            # carries the project in brackets, so require ours when it is present.
-            if "[" in name and project_name.lower() not in name:
-                continue
-            return {
-                "resolved": True, "via": "identities", "attempts": attempts,
-                "identity_id": str(row.get("id") or ""),
-                "identity_descriptor": row.get("descriptor") or "",
-                "subject_descriptor": row.get("subjectDescriptor") or "",
-            }
-
-    graph_desc = _project_admins_group_descriptor(client, base_url, project_name)
-    attempts.append(f"graph-scope->{'hit' if graph_desc else 'miss'}")
-    if graph_desc:
-        return {
-            "resolved": True, "via": "graph", "attempts": attempts,
-            "identity_id": "", "identity_descriptor": "", "subject_descriptor": graph_desc,
-        }
-    logging.warning(
-        "Project Administrators group not found for '%s' in %s. Tried: %s",
-        project_name, _collection_name(base_url), "; ".join(attempts),
-    )
-    return {
-        "resolved": False, "via": "", "attempts": attempts,
-        "identity_id": "", "identity_descriptor": "", "subject_descriptor": "",
-    }
-
-
-def _classic_membership_ok(response: httpx.Response) -> bool:
-    """The classic Identities membership route answers 200 with a JSON boolean.
-
-    A 200 carrying ``false`` means "not added" — treating any 200 as success is how a
-    refused membership gets reported as granted.
-    """
-    if response.status_code not in (200, 201, 204):
-        return False
-    body = (response.text or "").strip().strip('"').lower()
-    return body != "false"
 
 
 def _assign_project_admin(
@@ -2586,61 +2360,6 @@ def _assign_project_admin(
     }
 
 
-def _verify_group_membership(
-    client: httpx.Client, base_url: str, group: Dict[str, Any], identity: Dict[str, Any]
-) -> Optional[bool]:
-    """Read the group's members back and look for ours. ``None`` if unreadable.
-
-    A write that returns 200 and a group that actually contains the user are two
-    different claims. This checks the second one so "granted" means granted.
-    """
-    container = group.get("identity_id") or group.get("identity_descriptor") or ""
-    if not container:
-        return None
-    try:
-        r = client.get(
-            f"{base_url}/_apis/identities/{quote(container, safe='')}/members?api-version=6.0"
-        )
-        if not r.is_success:
-            return None
-        members = (r.json() or {}).get("value", r.json())
-        blob = str(members).lower()
-    except Exception:
-        return None
-    for needle in (identity.get("identity_descriptor"), identity.get("identity_id")):
-        if needle and str(needle).lower() in blob:
-            return True
-    return False
-
-
-def _describe_process_namespace(client: httpx.Client, base_url: str) -> Dict[str, Any]:
-    """Read-only: can we see the Process security namespace, and does it have Administer?
-
-    Diagnostics only. If this says the namespace is missing or the PAT cannot read the
-    namespace list, the process grant cannot work no matter what else is right — and
-    that is worth knowing before provisioning rather than after.
-    """
-    try:
-        r = client.get(f"{base_url}/_apis/securitynamespaces?api-version=6.0")
-    except Exception as exc:
-        return {"reachable": False, "detail": f"{type(exc).__name__}: {exc}"}
-    if not r.is_success:
-        return {"reachable": False, "detail": f"HTTP {r.status_code} {r.text[:120]}"}
-    ns = next(
-        (n for n in ((r.json() or {}).get("value") or []) if (n.get("name") or "") == "Process"),
-        None,
-    )
-    if not ns:
-        return {"reachable": True, "found": False, "detail": "no namespace named 'Process'"}
-    actions = [str(a.get("name")) for a in (ns.get("actions") or [])]
-    return {
-        "reachable": True,
-        "found": True,
-        "actions": actions,
-        "has_administer": any(a.lower() == "administer" for a in actions),
-    }
-
-
 def _grant_process_admin(
     client: httpx.Client, base_url: str, process: Dict[str, str], identity: Dict[str, Any]
 ) -> Dict[str, str]:
@@ -2723,15 +2442,8 @@ def _grant_process_admin(
     return {"status": "failed", "detail": f"token={token} ({how}); {result['detail']}"}
 
 
-# The four processes Azure DevOps ships with, lowercased for comparison. These are
-# exactly the options the request form offers (`automations-container.html`), and the
-# error message below spells them the way a person would type them.
-#
-# THIS WAS DEFINED ONCE AND LOST. The Terraform-era module declared it; the REST
-# rewrite kept the line that READS it and dropped the line that sets it, so every
-# approved project request raised NameError at the moment the approver approved it
-# -- after the request had been accepted, and nowhere near the form that collected
-# it. `check_imports.py` now refuses a build with a name nothing defines.
+# The four processes Azure DevOps ships with, lowercased for comparison: exactly the
+# options the request form offers (`automations-container.html`).
 VALID_PROCESS_TYPES = {"scrum", "agile", "cmmi", "basic"}
 
 

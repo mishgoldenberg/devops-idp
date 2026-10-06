@@ -1,8 +1,6 @@
 import json
 import logging
-import re
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 import httpx
@@ -11,17 +9,20 @@ from pydantic import BaseModel, field_validator
 import widget_registry
 from api.quick_links import (
     QuickLinkChild,
+    icon_or_blank,
+    link_or_blank,
+    required_text,
     normalize_children,
     normalize_kind as _normalize_kind,
     validate_quick_link_shape as _validate_quick_link_shape,
 )
+from common import now_iso, require_admin
 from db import execute, execute_returning, query_all, query_one
 from security import (
     PLATFORM_ADMIN_LEVEL,
     REGULAR_USER_LEVEL,
     AuthUser,
     get_current_user,
-    has_effective_admin_access_live,
     is_platform_admin_level,
 )
 from sso_config import (
@@ -32,22 +33,6 @@ from sso_config import (
 
 router = APIRouter()
 log = logging.getLogger(__name__)
-
-_EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
-
-
-class GrantRoleRequest(BaseModel):
-    email: str
-    role: Literal["Admin"]
-
-    @field_validator("email")
-    @classmethod
-    def normalize_email(cls, v: str) -> str:
-        s = (v or "").strip()
-        if not s or not _EMAIL_RE.match(s):
-            raise ValueError("Invalid email format")
-        return s.lower()
-
 
 class SsoConfigRequest(BaseModel):
     issuer_uri: str
@@ -64,11 +49,6 @@ class SsoConfigRequest(BaseModel):
         return s
 
 
-# The kinds, the child model and the shape rules now live in api/quick_links.py,
-# imported above: the dashboard widget writes personal quick links through that
-# module and cannot import this one without a cycle. One definition, two writers.
-
-
 class QuickLinkRequest(BaseModel):
     name: str
     # Optional at the schema level because a multi-link has no URL of its own;
@@ -82,18 +62,9 @@ class QuickLinkRequest(BaseModel):
     # answer that surprises nobody.
     admin_only: bool = False
 
-    @field_validator("name")
-    @classmethod
-    def required_string(cls, v: str) -> str:
-        s = (v or "").strip()
-        if not s:
-            raise ValueError("Required")
-        return s
-
-    @field_validator("url", "icon_url")
-    @classmethod
-    def optional_string(cls, v: Optional[str]) -> str:
-        return (v or "").strip()
+    check_name = field_validator("name")(required_text)
+    check_url = field_validator("url")(link_or_blank)
+    check_icon = field_validator("icon_url")(icon_or_blank)
 
 
 class QuickLinkPatchRequest(BaseModel):
@@ -109,18 +80,11 @@ class QuickLinkPatchRequest(BaseModel):
 
     @field_validator("name", "url", "icon_url")
     @classmethod
-    def normalize_optional_string(cls, v: Optional[str]) -> Optional[str]:
+    def unchanged_or_valid(cls, v: Optional[str], info) -> Optional[str]:
         if v is None:
             return None
-        return v.strip()
-
-
-def _require_app_admin(current_user: AuthUser) -> None:
-    if not has_effective_admin_access_live(current_user):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Insufficient permissions",
-        )
+        check = {"name": required_text, "url": link_or_blank, "icon_url": icon_or_blank}[info.field_name]
+        return check(v)
 
 
 def _quick_link_row(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -146,33 +110,16 @@ _QL_COLUMNS = (
 )
 
 
-def _platform_admin_role() -> Dict[str, Any]:
-    row = query_one(
-        "SELECT id, name, hierarchy_level FROM roles WHERE LOWER(TRIM(name)) = %s LIMIT 1",
-        ["platform admin"],
-    )
-    if not row:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Platform Admin role is not configured",
-        )
-    return row
-
-
-def _is_platform_admin_role_name(role_name: str) -> bool:
-    return (role_name or "").strip().lower() == "platform admin"
-
-
 @router.get("/sso/config")
 def get_sso_config(
     current_user: AuthUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Return SSO config metadata without the client secret."""
-    _require_app_admin(current_user)
+    require_admin(current_user)
     return {
         "success": True,
         "data": get_sso_config_redacted(),
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": now_iso(),
     }
 
 
@@ -182,19 +129,19 @@ def test_sso_connection(
     current_user: AuthUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Validate issuer discovery only; never stores or returns credentials."""
-    _require_app_admin(current_user)
+    require_admin(current_user)
     try:
         fetch_openid_configuration(body.issuer_uri)
         return {
             "success": True,
             "message": "OpenID configuration is reachable and valid.",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": now_iso(),
         }
     except (httpx.HTTPError, ValueError) as exc:
         return {
             "success": False,
             "message": f"Connection failed: {exc}",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": now_iso(),
         }
 
 
@@ -204,7 +151,7 @@ def save_admin_sso_config(
     current_user: AuthUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Encrypt and save the active SSO configuration."""
-    _require_app_admin(current_user)
+    require_admin(current_user)
     try:
         # Validate before saving so a typo cannot lock users into a bad provider.
         fetch_openid_configuration(body.issuer_uri)
@@ -223,7 +170,7 @@ def save_admin_sso_config(
         "success": True,
         "message": "SSO configuration saved.",
         "data": get_sso_config_redacted(),
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": now_iso(),
     }
 
 
@@ -239,7 +186,7 @@ def create_quick_link(
     returns the existing row instead of inserting a duplicate. The frontend
     also has an in-flight lock; this is the belt-and-suspenders backend half.
     """
-    _require_app_admin(current_user)
+    require_admin(current_user)
 
     name = body.name.strip()
     icon = (body.icon_url or "").strip() or None
@@ -282,7 +229,7 @@ def create_quick_link(
         return {
             "success": True,
             "data": _quick_link_row(existing),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": now_iso(),
         }
 
     max_order = query_one("SELECT COALESCE(MAX(sort_order), 0) AS n FROM quick_links")
@@ -309,7 +256,7 @@ def create_quick_link(
     return {
         "success": True,
         "data": _quick_link_row(rows[0]),
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": now_iso(),
     }
 
 
@@ -320,7 +267,7 @@ def update_quick_link(
     current_user: AuthUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Update a Quick Link without changing visibility. Admin-only."""
-    _require_app_admin(current_user)
+    require_admin(current_user)
     existing = query_one(
         "SELECT id FROM quick_links WHERE id = %s AND is_active = true",
         [quick_link_id],
@@ -370,7 +317,7 @@ def update_quick_link(
     return {
         "success": True,
         "data": _quick_link_row(rows[0]),
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": now_iso(),
     }
 
 
@@ -380,14 +327,14 @@ def delete_quick_link(
     current_user: AuthUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Soft-delete a Quick Link so existing IDs do not need to be reused."""
-    _require_app_admin(current_user)
+    require_admin(current_user)
     execute(
         "UPDATE quick_links SET is_active = false WHERE id = %s",
         [quick_link_id],
     )
     return {
         "success": True,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": now_iso(),
     }
 
 
@@ -399,7 +346,7 @@ def list_users(
     Return all active users who have logged in at least once.
     Excludes the current admin from the list. Admin-only.
     """
-    _require_app_admin(current_user)
+    require_admin(current_user)
 
     rows = query_all(
         """
@@ -407,10 +354,7 @@ def list_users(
                r.name AS role_name, u.is_active, r.hierarchy_level
         FROM users u
         JOIN roles r ON u.role_id = r.id
-        -- Inactive accounts are INCLUDED. They used to be filtered out, which was
-        -- correct while this list only fed a "grant admin" picker; now that the same
-        -- list is the management table, hiding them meant deactivating someone made
-        -- them unreachable and there was no way to ever reactivate them.
+        -- Inactive accounts are included: this is the table they are reactivated from.
         WHERE LOWER(u.email) != %s
         ORDER BY u.is_active DESC, u.email ASC
         """,
@@ -431,64 +375,7 @@ def list_users(
     return {
         "success": True,
         "data": users,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-
-
-@router.post("/grant-role")
-def grant_role(
-    body: GrantRoleRequest,
-    current_user: AuthUser = Depends(get_current_user),
-) -> Dict[str, Any]:
-    """
-    Promote an existing user to Admin (database role: Platform Admin).
-    Caller must be an Admin. Unknown emails return 404 (users are created on first SSO login).
-    """
-    _require_app_admin(current_user)
-
-    admin_role = _platform_admin_role()
-    target = query_one(
-        """
-        SELECT u.id, u.email, r.name AS role_name
-        FROM users u
-        JOIN roles r ON u.role_id = r.id
-        WHERE LOWER(u.email) = %s AND u.is_active = true
-        """,
-        [body.email],
-    )
-    if not target:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found for this email",
-        )
-
-    if _is_platform_admin_role_name(str(target.get("role_name", ""))):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="User already has Admin access",
-        )
-
-    updated = execute_returning(
-        """
-        UPDATE users
-        SET role_id = %s, updated_at = CURRENT_TIMESTAMP
-        WHERE id = %s
-        RETURNING id
-        """,
-        [admin_role["id"], str(target["id"])],
-    )
-
-    if not updated:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Role update failed — please try again",
-        )
-
-    return {
-        "success": True,
-        "message": f"Admin access granted to {target['email']}. They must sign out and sign back in for the change to take effect.",
-        "data": {"email": target["email"], "role": body.role},
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": now_iso(),
     }
 
 
@@ -517,11 +404,11 @@ class WidgetVisibilityRequest(BaseModel):
 @router.get("/dashboard-widgets")
 def list_dashboard_widgets(current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]:
     """The full widget catalogue with each one's current show/hide state."""
-    _require_app_admin(current_user)
+    require_admin(current_user)
     return {
         "success": True,
         "data": {"widgets": widget_registry.catalogue(is_admin=True, include_hidden=True)},
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": now_iso(),
     }
 
 
@@ -531,7 +418,7 @@ def set_dashboard_widget_visibility(
     current_user: AuthUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Show or hide one widget for every user."""
-    _require_app_admin(current_user)
+    require_admin(current_user)
 
     try:
         widget_registry.set_hidden(
@@ -556,7 +443,7 @@ def set_dashboard_widget_visibility(
     return {
         "success": True,
         "data": {"widgets": widget_registry.catalogue(is_admin=True, include_hidden=True)},
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": now_iso(),
     }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -665,7 +552,7 @@ def list_roles(current_user: AuthUser = Depends(get_current_user)) -> Dict[str, 
     are not deleted from a startup path), but handing one out would label an
     account "Branch Head" while granting it exactly what Regular User gets.
     """
-    _require_app_admin(current_user)
+    require_admin(current_user)
     rows = query_all(
         """
         SELECT name, hierarchy_level, description
@@ -686,7 +573,7 @@ def list_roles(current_user: AuthUser = Depends(get_current_user)) -> Dict[str, 
             }
             for r in (rows or [])
         ],
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": now_iso(),
     }
 
 
@@ -696,7 +583,7 @@ def set_user_role(
     current_user: AuthUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Set any user's role to any seeded role - promotion and demotion alike."""
-    _require_app_admin(current_user)
+    require_admin(current_user)
 
     role = query_one(
         "SELECT id, name, hierarchy_level FROM roles WHERE LOWER(TRIM(name)) = %s LIMIT 1",
@@ -738,7 +625,7 @@ def set_user_role(
                 if demoted else None
             ),
         },
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": now_iso(),
     }
 
 
@@ -755,7 +642,7 @@ def set_user_active(
     silently take history with it. A deactivated user cannot sign in and does not
     appear in pickers, which is what "remove them" actually means here.
     """
-    _require_app_admin(current_user)
+    require_admin(current_user)
 
     if body.email == str(current_user.get("email", "")).strip().lower():
         raise HTTPException(
@@ -791,5 +678,5 @@ def set_user_active(
             else f"{target['email']} deactivated — signed out of the portal within a minute."
         ),
         "data": {"email": target["email"], "is_active": bool(body.is_active)},
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": now_iso(),
     }
