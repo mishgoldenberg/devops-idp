@@ -129,7 +129,7 @@ def body(doc, text: str, bold: bool = False) -> None:
 # -- the round ---------------------------------------------------------------
 
 ROUND = "144"
-SUMMARY = ('Security fixes and a cleanup: icons and profile pictures checked by their bytes and links that would run a script refused; validation errors answered in one sentence, the API map no longer published, and no exception names in messages; the hard-coded database password removed from setup.sh; starlette, PyJWT and cryptography upgraded, three unused packages dropped, every page rendering on the new framework; DevBot and AdminBot told that fetched text is data, never instructions, and their links and ids checked; Confluence and GitLab action inputs constrained; the unused Terraform permissions removed from the chart and no cluster token in the backend pod; dead code, endpoints and documents removed, shared helpers in common.py, history comments rewritten, a hygiene guard in CI; support tickets carry the requester again; an expired Azure DevOps or Confluence token no longer signs people out')
+SUMMARY = ('Security fixes and a cleanup: icons and profile pictures checked by their bytes and links that would run a script refused; validation errors answered in one sentence, the API map no longer published, and no exception names in messages; the hard-coded database password removed from setup.sh; starlette, PyJWT and cryptography upgraded, three unused packages dropped, every page rendering on the new framework; DevBot and AdminBot told that fetched text is data, never instructions, and their links and ids checked; Confluence and GitLab action inputs constrained; the unused Terraform permissions removed from the chart and no cluster token in the backend pod; dead code, endpoints and documents removed, shared helpers in common.py, history comments rewritten, a hygiene guard in CI; support tickets carry the requester again; an expired Azure DevOps or Confluence token no longer signs people out; the new Python wheels travel in offline-deps/wheels and the pipeline uploads them to the internal PyPI')
 DELETES = [
     "backend/app/api/metrics.py",
     "backend/app/api/release_notes.py",
@@ -147,6 +147,7 @@ DELETES = [
 FILES = [
     ".dockerignore",
     ".github/workflows/ci.yml",
+    ".gitignore",
     "CLAUDE.md",
     "azure-pipelines.yml",
     "backend/app/Dockerfile",
@@ -218,6 +219,7 @@ FILES = [
     "backend/tests/test_security_fixes.py",
     "backend/tests/test_smoke.py",
     "backend/tests/test_ticket_caller.py",
+    "backend/tests/test_upload_wheels.py",
     "deployment/charts/backend/templates/deployment.yaml",
     "deployment/charts/backend/templates/service-accounts.yaml",
     "deployment/charts/backend/values.yaml",
@@ -227,6 +229,7 @@ FILES = [
     "docs/database.md",
     "docs/env.md",
     "docs/frontend.md",
+    "docs/offline-deployment.md",
     "docs/onboarding.md",
     "docs/self-service-flow.md",
     "docs/services/README.md",
@@ -244,12 +247,23 @@ FILES = [
     "frontend/templates/partials/components/platform-managing-container.html",
     "frontend/templates/partials/components/quick-link-children.html",
     "frontend/templates/partials/components/quick-links.html",
+    "offline-deps/wheels/README.md",
+    "offline-deps/wheels/SHA256SUMS",
+    "offline-deps/wheels/anyio-4.15.1-py3-none-any.whl",
+    "offline-deps/wheels/cryptography-50.0.2-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+    "offline-deps/wheels/fastapi-0.142.2-py3-none-any.whl",
+    "offline-deps/wheels/opentelemetry_api-1.45.0-py3-none-any.whl",
+    "offline-deps/wheels/pyjwt-2.15.1-py3-none-any.whl",
+    "offline-deps/wheels/starlette-1.7.0-py3-none-any.whl",
+    "offline-deps/wheels/typing_extensions-4.16.0-py3-none-any.whl",
+    "offline-deps/wheels/typing_inspection-0.4.4-py3-none-any.whl",
     "scripts/apply_docx.py",
     "scripts/check_code_hygiene.py",
     "scripts/check_imports.py",
     "scripts/gen_pentest_checklist.py",
     "scripts/gen_round_docx.py",
     "scripts/restore_backup.py",
+    "scripts/upload_wheels.py",
     "setup.sh",
 ]
 PREAMBLE = ""

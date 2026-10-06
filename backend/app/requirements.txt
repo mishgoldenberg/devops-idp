@@ -1,11 +1,11 @@
-# Backend dependencies, every one pinned. Upgrade them together and audit the
-# result (pip-audit -r requirements.txt) before shipping.
+# Backend dependencies. Upgrade them together, audit the result (pip-audit -r
+# requirements.txt), and put any wheel the closed network lacks in offline-deps/wheels/.
 
 # Web framework. fastapi pins its own starlette range; keep the two in step.
 fastapi==0.142.2
 starlette==1.7.0
 uvicorn[standard]==0.38.0
-python-multipart==0.0.32
+python-multipart
 jinja2==3.1.6
 
 # Storage

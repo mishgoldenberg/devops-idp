@@ -21,7 +21,9 @@ ARG PIP_TRUSTED_HOST
 ENV PIP_INDEX_URL=${PIP_INDEX_URL} \
     PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST}
 COPY backend/app/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+# Wheels the internal index may not have yet (offline-deps/wheels/README.md).
+COPY offline-deps/wheels /tmp/wheels
+RUN pip install --no-cache-dir --find-links /tmp/wheels -r requirements.txt && rm -rf /tmp/wheels
 
 # backend/app becomes /app
 COPY backend/app ./

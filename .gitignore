@@ -51,7 +51,9 @@ temp/
 
 # Docker
 .docker/
-offline-deps/
+# The bundle stays local, except the wheels the pipeline uploads (scripts/upload_wheels.py).
+offline-deps/*
+!offline-deps/wheels/
 
 # Database
 *.db

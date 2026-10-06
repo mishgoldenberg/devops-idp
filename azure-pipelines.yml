@@ -88,10 +88,21 @@ stages:
         displayName: backend-build
         steps:
           - checkout: self
+          # Wheels in offline-deps/wheels/ that the internal index lacks are uploaded to it
+          # once; never fails the build, because both installs also read that folder.
+          - script: |
+              set -uo pipefail
+              python3 scripts/upload_wheels.py
+            displayName: Upload new wheels to the internal PyPI
+            env:
+              PIP_INDEX_URL: $(PIP_INDEX_URL)
+              PIP_TRUSTED_HOST: $(PIP_TRUSTED_HOST)
+              ARTIFACTORY_ADMIN_USERNAME: $(ARTIFACTORY_ADMIN_USERNAME)
+              ARTIFACTORY_ADMIN_TOKEN: $(ARTIFACTORY_ADMIN_TOKEN)
           - script: |
               set -euo pipefail
               python3 -m pip install --upgrade pip
-              python3 -m pip install -r backend/app/requirements.txt
+              python3 -m pip install --find-links offline-deps/wheels -r backend/app/requirements.txt
             displayName: pip install requirements
 
           # frontend/static/css/output.css is committed and shipped as-is — nothing
