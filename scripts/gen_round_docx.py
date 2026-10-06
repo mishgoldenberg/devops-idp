@@ -128,21 +128,13 @@ def body(doc, text: str, bold: bool = False) -> None:
 
 # -- the round ---------------------------------------------------------------
 
-ROUND = "145"
-SUMMARY = ("Cleanup after round 144: the Python wheels it carried are deleted from offline-deps/wheels now that the internal PyPI repository has them; the upload step stays and does nothing while the folder has no wheels. APPLY ONLY AFTER a round 144 build has passed and showed every wheel as present or uploaded")
-DELETES = [
-    "offline-deps/wheels/anyio-4.15.1-py3-none-any.whl",
-    "offline-deps/wheels/cryptography-50.0.2-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
-    "offline-deps/wheels/fastapi-0.142.2-py3-none-any.whl",
-    "offline-deps/wheels/opentelemetry_api-1.45.0-py3-none-any.whl",
-    "offline-deps/wheels/pyjwt-2.15.1-py3-none-any.whl",
-    "offline-deps/wheels/starlette-1.7.0-py3-none-any.whl",
-    "offline-deps/wheels/typing_extensions-4.16.0-py3-none-any.whl",
-    "offline-deps/wheels/typing_inspection-0.4.4-py3-none-any.whl",
-    "offline-deps/wheels/SHA256SUMS",
-]
+ROUND = "146"
+SUMMARY = ("The backend installs uvicorn without its [standard] extras (uvloop, httptools, watchfiles, websockets): optional speed-ups whose Linux wheels the internal PyPI repository does not carry, which failed the round 144 build with \"Could not find a version that satisfies the requirement uvloop>=0.15.1\". Apply on top of round 144; round 145 still waits until a build passes")
+DELETES = []
 FILES = [
     "backend/app/changelog.py",
+    "backend/app/requirements.txt",
+    "scripts/check_imports.py",
     "scripts/gen_round_docx.py",
 ]
 PREAMBLE = ""

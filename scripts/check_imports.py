@@ -42,7 +42,6 @@ DIST_TO_MODULE = {
     "pyjwt": "jwt",
     "python-multipart": "multipart",
     "python-dotenv": "dotenv",
-    "uvicorn[standard]": "uvicorn",
 }
 
 # Imported by libraries we depend on, or optional extras that are present in

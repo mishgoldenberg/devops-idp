@@ -4,7 +4,9 @@
 # Web framework. fastapi pins its own starlette range; keep the two in step.
 fastapi==0.142.2
 starlette==1.7.0
-uvicorn[standard]==0.38.0
+# Without [standard]: its uvloop/httptools/watchfiles are optional speed-ups with
+# Linux-only wheels the internal index does not carry; uvicorn runs on asyncio and h11.
+uvicorn==0.38.0
 python-multipart
 jinja2==3.1.6
 
