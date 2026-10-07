@@ -49,6 +49,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
 import httpx
+from common import failure_text
+from resilient_http import far_message
 
 log = logging.getLogger(__name__)
 
@@ -97,8 +99,8 @@ def read_scoped_groups(
         url = f"{_legacy_base(base_url, project)}/{endpoint}?__v=5"
         try:
             r = client.get(url, headers=_LEGACY_HEADERS)
-        except Exception as exc:
-            last = f"{endpoint}:{type(exc).__name__}"
+        except Exception:
+            last = f"{endpoint}:not reachable"
             continue
         if not r.is_success:
             last = f"{endpoint}:HTTP {r.status_code}"
@@ -209,11 +211,11 @@ def add_identities(
     try:
         r = _post()
     except Exception as exc:
-        return {"status": "failed", "detail": f"{type(exc).__name__}: {exc}"}
+        return {"status": "failed", "detail": failure_text("Azure DevOps", exc)}
 
     # Retry once with the anti-forgery token if the first attempt was refused.
     if r.status_code in (400, 403) or not r.is_success:
-        attempts.append(f"no-token:HTTP {r.status_code} {r.text[:100]}")
+        attempts.append(f"no-token:HTTP {r.status_code} {far_message(r)}")
         token = _verification_token(client, base_url, project)
         if token:
             try:
@@ -221,14 +223,14 @@ def add_identities(
             except Exception as exc:
                 return {
                     "status": "failed",
-                    "detail": "; ".join(attempts + [f"with-token:{type(exc).__name__}: {exc}"]),
+                    "detail": "; ".join(attempts + [f"with-token:{failure_text('Azure DevOps', exc)}"]),
                 }
             attempts.append(f"with-token:HTTP {r.status_code}")
         else:
             attempts.append("no __RequestVerificationToken found on any page")
 
     if not r.is_success:
-        return {"status": "failed", "detail": "; ".join(attempts) or f"HTTP {r.status_code} {r.text[:150]}"}
+        return {"status": "failed", "detail": "; ".join(attempts) or f"HTTP {r.status_code} {far_message(r)}"}
 
     # A 200 is not success on its own: this endpoint reports failure in the body.
     try:
@@ -378,12 +380,12 @@ def set_acl(
                 f"{base_url}/_apis/accesscontrollists/{namespace_id}?api-version={api}",
                 json=body,
             )
-        except Exception as exc:
-            tried.append(f"{api}:{type(exc).__name__}")
+        except Exception:
+            tried.append(f"{api}:not reachable")
             continue
         if r.status_code in (200, 201, 204):
             return {"status": "granted", "detail": f"accesscontrollists@{api} token={token}"}
-        tried.append(f"{api}:HTTP {r.status_code} {r.text[:100]}")
+        tried.append(f"{api}:HTTP {r.status_code} {far_message(r)}")
         if r.status_code in (401, 403):
             break
     return {"status": "failed", "detail": " | ".join(tried)}

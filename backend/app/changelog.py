@@ -1,43 +1,19 @@
 """
-The changelog. Written by hand, on purpose.
-
-WHY THIS IS NOT GENERATED FROM COMMITS
---------------------------------------
-The first attempt at "What's New" read `git log` and grouped the subjects under
-Features and Fixes. It produced an accurate list of things nobody wanted to read:
-
-    fix: artifactory storage 403 UX + log SNow producer response
-    chore: surface SNow producer diagnostics at WARNING (root logger is WARNING)
-
-That tells a developer what changed in a file. It tells the person who opened the
-portal to raise a request precisely nothing -- they do not know what a producer is,
-they never saw the 403, and "root logger is WARNING" is a sentence about us. A commit
-subject is addressed to whoever reviews the diff. A changelog is addressed to whoever
-uses the thing. They are different documents and the second one has to be written.
-
-So this file IS the changelog. Every round adds an entry here, in plain language,
-describing what a user can now do or what stopped going wrong for them. The version
-is chosen deliberately at the same time:
+The changelog, written by hand. Every round adds an entry in plain language and
+chooses the version:
 
     major   something people have to relearn, or a request type that no longer works
     minor   a new capability -- a page, a form, a widget, a self-service action
     patch   fixes and refinements to things that already existed
 
-WHAT MAKES A GOOD LINE
-----------------------
-Write the user's half of the sentence, not ours. "The pipeline is now authorised for
-its variable group" is our half; "A scheduled cleaner starts on its own instead of
-waiting for someone to press Permit in Azure DevOps" is theirs. Name the symptom
-somebody actually saw. No file names, no function names, no HTTP status codes, no
-round numbers.
+Not generated from commits: a commit subject is addressed to whoever reviews the diff,
+a changelog to whoever uses the portal. Write the user's half of the sentence and name
+the symptom somebody saw -- no file names, function names, HTTP status codes or round
+numbers (scripts/check_changelog.py). A line may carry a lead and a detail separated by
+" -- "; the page renders the lead in bold.
 
-Each line may carry a lead and a detail separated by " -- ". The page renders the lead
-in bold and the rest after it, so a reader skimming only the leads still gets the
-list. A line without a separator is shown whole.
-
-The newest release is first. `version()` is what the running image calls itself: it is
-stamped onto the images at build time and shown on the What's New page, so "which
-version is test on" has an answer that does not involve reading a build number.
+The newest release is first. `version()` is what the running image calls itself; it is
+stamped onto the images at build time and shown on the What's New page.
 """
 
 from __future__ import annotations
@@ -56,6 +32,561 @@ GENERIC = "General fixes and improvements you would not see directly."
 
 # Newest first. See the module docstring before adding one.
 RELEASES: List[Dict[str, Any]] = [
+    {
+        "version": "1.22.6",
+        "date": "2026-10-07",
+        "headline": "General fixes.",
+        "features": [],
+        "fixes": [GENERIC],
+        "improvements": [],
+    },
+    {
+        "version": "1.22.5",
+        "date": "2026-10-07",
+        "headline": "DevBot prepares the changes you ask for again.",
+        "features": [],
+        "fixes": [
+            "DevBot prepares changes again -- asking it to run or cancel a pipeline, rerun a failed one or ask for "
+            "more quota got \"I can't change anything\" instead of the change ready for you to confirm.",
+            "Asking DevBot to \"run pipeline 12\" or \"kick off the build\" now prepares the run, like \"run the "
+            "pipeline\" already did.",
+        ],
+        "improvements": [],
+    },
+    {
+        "version": "1.22.4",
+        "date": "2026-10-07",
+        "headline": "General fixes.",
+        "features": [],
+        "fixes": [GENERIC],
+        "improvements": [],
+    },
+    {
+        "version": "1.22.3",
+        "date": "2026-10-06",
+        "headline": "General fixes.",
+        "features": [],
+        "fixes": [GENERIC],
+        "improvements": [],
+    },
+    {
+        "version": "1.22.2",
+        "date": "2026-10-06",
+        "headline": "General fixes.",
+        "features": [],
+        "fixes": [GENERIC],
+        "improvements": [],
+    },
+    {
+        "version": "1.22.1",
+        "date": "2026-10-06",
+        "headline": "Safer pictures and clearer messages.",
+        "features": [],
+        "fixes": [
+            "An expired Azure DevOps or Confluence token no longer looks like being signed out -- voting, "
+            "commenting or running a pipeline now says to reconnect the token, and you stay on the page.",
+        ],
+        "improvements": [
+            "Quick link icons and profile pictures accept real pictures only -- PNG, JPEG, GIF or WebP -- and "
+            "say so when a file is not one. An uploaded icon is resized for you.",
+            "A quick link can point at any web or network address, but never at a script.",
+            "When something you send is not accepted, the message says which field and why, in one sentence.",
+            "DevBot ignores instructions hidden in the pages, work items and logs it reads -- it tells you they are "
+            "there instead -- and only links to things it actually found.",
+            GENERIC,
+        ],
+    },
+    {
+        "version": "1.22.0",
+        "date": "2026-10-04",
+        "headline": "GitLab joins the Hub: your merge requests and pipelines, next to Azure DevOps.",
+        "features": [
+            "A GitLab page in the sidebar, with the merge requests you opened, the ones waiting for your "
+            "review, and your pipelines -- in GitLab orange, so you always know which system you are looking at.",
+            "The same three as dashboard widgets: switch them on from Customize.",
+            "Approve a merge request or take your approval back, and comment on one, without leaving the Hub. "
+            "Retry a failed pipeline, or run one again on the same branch with the same variables. Every one "
+            "of these asks GitLab first, shows you exactly what will happen, and waits for you to confirm; "
+            "GitLab records it under your name.",
+            "Merge requests waiting for your review appear in Needs You, with an Approve button beside them.",
+        ],
+        "fixes": [],
+        "improvements": [
+            "Search finds your GitLab merge requests and GitLab projects.",
+            "Your streak counts GitLab too: opening, approving or commenting on a merge request, and a pipeline "
+            "you started that passed.",
+            "To start, connect GitLab on the Connections page with a personal access token: the guide there "
+            "says exactly what to tick.",
+        ],
+    },
+    {
+        "version": "1.21.0",
+        "date": "2026-10-01",
+        "headline": "Every update now tells you what it brought.",
+        "features": [
+            "A short note on the dashboard for every update -- when a new version arrives, the top of the dashboard says "
+            "what changed, for two days, with a link to this page.",
+        ],
+        "fixes": [],
+        "improvements": [
+            "The sidebar rows have a little more room again, so the list is easier to read.",
+        ],
+    },
+    {
+        "version": "1.20.3",
+        "date": "2026-10-01",
+        "headline": "A tidier sidebar.",
+        "features": [],
+        "fixes": [GENERIC],
+        "improvements": [
+            "The sidebar is more compact and fits on the screen without scrolling. Search stays where it is, in the "
+            "box at the top of every page.",
+        ],
+    },
+    {
+        "version": "1.20.2",
+        "date": "2026-10-01",
+        "headline": "A faster, smoother Hub.",
+        "features": [],
+        "fixes": [
+            "The streak no longer counts a day you were away: a page that reloaded by itself, or a pipeline a "
+            "schedule started in your name, used to save it.",
+            "The logo in the top bar is sharp again.",
+            GENERIC,
+        ],
+        "improvements": [
+            "Moving between pages is a short fade instead of a flash, and a page you point at loads before you click it.",
+            "The whole dashboard is ready in a few seconds: the widgets further down used to wait 15 seconds before "
+            "loading.",
+            "Pages, the dashboard and the notifications ask the server for less, so everything answers faster when "
+            "many people use the Hub at once.",
+        ],
+    },
+    {
+        "version": "1.20.1",
+        "date": "2026-10-01",
+        "headline": "Clearer forms and clearer DevBot steps.",
+        "features": [],
+        "fixes": [
+            "A request form now tells you on the first step that a phone number takes digits only, instead of "
+            "refusing the request after the last step.",
+            "A question that is only asked for one answer (for example a pipeline link) is no longer required after "
+            "you change that answer.",
+            GENERIC,
+        ],
+        "improvements": [
+            "When one of DevBot's steps fails, the step now says why, right where it failed.",
+        ],
+    },
+    {
+        "version": "1.20.0",
+        "date": "2026-09-29",
+        "headline": "DevBot can prepare more changes for you, and every one ends in a clear confirmation.",
+        "features": [
+            "Run and cancel pipelines from DevBot -- ask it to run a pipeline on a branch, with the parameters you "
+            "name, or to cancel a run that is still going. You review it, and it is checked with Azure DevOps first.",
+            "Requests drafted for you -- ask DevBot for more Artifactory space, a cleaner or a new pipeline, and the "
+            "request form opens already filled in from the conversation. You complete it and send it; it still waits "
+            "for approval as usual.",
+            "A clear confirmation -- every change DevBot prepares ends in one big confirmation: what will happen, that "
+            "an AI drafted it, and that the decision is yours. Tick that you checked it, and only then does it go ahead.",
+        ],
+        "fixes": [GENERIC],
+        "improvements": [
+            "DevBot prepares at most 5 changes in one answer, so a long answer never buries you in cards.",
+        ],
+    },
+    {
+        "version": "1.19.0",
+        "date": "2026-09-29",
+        "headline": "DevBot checks what the Hub already knows before it answers.",
+        "features": [
+            "Every question first -- DevBot now looks up every question in the Confluence pages and the past fixes "
+            "the Hub keeps, before it answers, and answers from what it found, with where it came from. You no longer "
+            "have to ask \"has this happened before?\" for it to look. The first step of an answer shows what it found.",
+        ],
+        "fixes": [GENERIC],
+        "improvements": [
+            "More past fixes from bugs: DevBot now finds the fix wherever it was written -- in the Solution field, in "
+            "System Info, or in the bug's discussion.",
+            "A past fix that needs server or admin access is no longer given to you as steps to follow: DevBot says how "
+            "it was fixed and who can do it.",
+        ],
+    },
+    {
+        "version": "1.18.2",
+        "date": "2026-09-29",
+        "headline": "Behind-the-scenes fixes.",
+        "features": [],
+        "fixes": [GENERIC],
+        "improvements": [],
+    },
+    {
+        "version": "1.18.1",
+        "date": "2026-09-28",
+        "headline": "Ask DevBot appears sooner, stands out, and works from the keyboard.",
+        "features": [],
+        "fixes": [GENERIC],
+        "improvements": [
+            "Ask DevBot on hover shows up after a moment's rest instead of a second and a half, outlines the row it will "
+            "ask about, and is larger and easier to spot.",
+            "From the keyboard: Tab onto a row in a widget and press Alt+A to ask DevBot about it.",
+        ],
+    },
+    {
+        "version": "1.18.0",
+        "date": "2026-09-28",
+        "headline": "Ask DevBot about anything on your dashboard.",
+        "features": [
+            "Ask DevBot on hover -- rest the pointer on a run, work item, pull request, SonarQube project, repository or "
+            "page in a widget for a moment, and an Ask DevBot button appears on it. One click opens DevBot, already "
+            "asking about that item. Settings can turn it off.",
+        ],
+        "fixes": [],
+        "improvements": [],
+    },
+    {
+        "version": "1.17.0",
+        "date": "2026-09-28",
+        "headline": "Past fixes you could not open before, written clearly, and why a streak ended.",
+        "features": [
+            "Fixed before, for everyone -- DevBot now shows the fix of a similar closed bug even when it was written in "
+            "a project you cannot open: the problem in one sentence and the fix, rewritten clearly with its commands "
+            "kept. The link to the bug is there when you can open it.",
+        ],
+        "fixes": [GENERIC],
+        "improvements": [
+            "Your streak says why it went back down: which day ended it, and that the month's freezes were already "
+            "used on the days it lists. That day is marked in the two weeks, and it says when the freezes come back.",
+        ],
+    },
+    {
+        "version": "1.16.0",
+        "date": "2026-09-28",
+        "headline": "Ask DevBot from the widgets, and find the same problem fixed before.",
+        "features": [
+            "Explain -- a failed run in the Pipelines widget has an Explain button, and a work item has Ask DevBot: "
+            "DevBot opens and looks into it straight away.",
+            "Fixed before -- DevBot finds the same problem fixed before in closed Bugs and alerts that have a "
+            "resolution written, by meaning, and quotes the fix with a link to the work item. Ask \"Has this "
+            "happened before?\", or let it check on its own when it looks into a failure. It only shows work items "
+            "you can open.",
+            "Save the fix -- when nothing had a fix written down, DevBot offers to save its answer as a Confluence "
+            "page, so the next person who hits the error finds it. You check and change it before anything is created.",
+            "Good or bad answer -- rate each answer with a thumbs up or down, and say what was wrong. It goes to the "
+            "Hub's admins with the question and the answer, so they can see what to fix; the pages behind well-rated "
+            "answers come up a little sooner next time.",
+        ],
+        "fixes": [],
+        "improvements": [
+            "A question about what a lookup is for, such as \"has this happened before?\", reaches that lookup even "
+            "when it names no system.",
+        ],
+    },
+    {
+        "version": "1.15.0",
+        "date": "2026-09-28",
+        "headline": "DevBot finds Confluence pages by what they mean, and reads pull request comments.",
+        "features": [
+            "Search by meaning -- DevBot finds the page that fixes a problem even when it is worded differently or "
+            "written in Hebrew while the error is in English. It covers the Confluence spaces the Hub indexes, and "
+            "the DevBot AI page says which ones. It still only shows you pages you can open yourself.",
+            "Pull request comments -- ask DevBot what the comments on a pull request say and it reads the threads: "
+            "who wrote what, on which file and line, and which are still open. Looking into a pull request now "
+            "quotes its open comments too, instead of only counting them.",
+        ],
+        "fixes": [
+            "Your AI key's limits -- the key panel showed \"not reported\" when the limits were set on your team, "
+            "per model or in a budget rather than on the key itself. It now shows them and says where they come "
+            "from, and \"none set\" when the AI service says there are none.",
+            "A question that names Confluence keeps DevBot's Confluence search even when it also mentions a build or "
+            "a pipeline.",
+            "The DevBot icon in the sidebar is centred again.",
+            "The browser tab shows the Hub's icon on every page, including the sign-in page.",
+        ],
+        "improvements": [
+            "When DevBot looks into a failed run, failing tests or a work item, it searches Confluence by meaning as "
+            "well as by the error's words, and puts the page that names the exact error first.",
+            "The Hub's logo is sharper in the header and on the sign-in page, in both light and dark themes.",
+            "When a model turns down a question as too long, DevBot remembers how much that model really takes, "
+            "so it does not happen again and the model picker shows its real size.",
+        ],
+    },
+    {
+        "version": "1.14.0",
+        "date": "2026-09-24",
+        "headline": "Know what DevBot can do, and what it costs you.",
+        "features": [
+            "Usage -- what your questions to DevBot have cost, per model, today and over the last 30 days, next "
+            "to your AI key's limits, budget and expiry. Open it from the AI key panel on the DevBot AI page.",
+            "A tour of DevBot -- the first time you open the DevBot AI page it shows you around: picking a model, "
+            "what your key allows, your conversations, and how DevBot shows its work. Replay it any time from "
+            "What can it do?.",
+            "DevBot in the portal tour -- if you have already taken the tour, it shows you the one new stop, once.",
+        ],
+        "fixes": [],
+        "improvements": [
+            "When your AI key hits its per-minute limit, DevBot waits a few seconds and carries on by itself; for "
+            "a longer wait it says how long and offers Ask again when the time is up.",
+            "A question that could not be answered stays in the conversation with the reason, and asking it again "
+            "does not count it twice.",
+        ],
+    },
+    {
+        "version": "1.13.0",
+        "date": "2026-09-24",
+        "headline": "DevBot can prepare changes for you -- you check and confirm every one.",
+        "features": [
+            "Next steps after a failure -- when DevBot explains a failed run or failed tests, it offers to run "
+            "the pipeline again and to open a bug that already contains the error, the log excerpt, the run and "
+            "the Confluence page with the fix.",
+            "Ask DevBot to change things -- run a pipeline again, open or comment on a work item, move or assign "
+            "it, review or comment on a pull request, or write a fix up as a Confluence page.",
+            "Nothing happens until you confirm -- each change opens the same dialog the widgets use, filled with "
+            "DevBot's draft for you to edit. The system checks it first, you confirm it, and it is done in your "
+            "name. Dismiss a suggestion to turn it down; DevBot remembers either way.",
+        ],
+        "fixes": [],
+        "improvements": [],
+    },
+    {
+        "version": "1.12.0",
+        "date": "2026-09-24",
+        "headline": "Ask DevBot why something failed -- it follows the trail through every system.",
+        "features": [
+            "Why did my pipeline fail? -- DevBot finds the run, reads the error out of the failed step's log, and "
+            "looks in Confluence for a page with the fix. When it finds one it quotes the fix and links the page; "
+            "when it does not, it says so and offers its own suggestion, marked as its own.",
+            "The whole picture of a failure -- open bugs that already mention the error, whether the missing "
+            "package is in Artifactory, the failing SonarQube conditions when the quality gate stopped the run, and "
+            "when the pipeline last passed.",
+            "Failed tests -- which tests failed and why, and which of them are new and which kept failing in "
+            "earlier runs.",
+            "Is my pull request ready? -- reviews, required reviewers, policies, conflicts, open comments, its "
+            "build and its quality gate, and exactly what still blocks it.",
+            "A work item at a glance, a project's health, and where an image came from -- the run, the commit and "
+            "the work items that built it.",
+            "Watch DevBot work -- each step of an investigation appears as it happens, under the lookup it belongs to.",
+        ],
+        "fixes": [],
+        "improvements": [],
+    },
+    {
+        "version": "1.11.0",
+        "date": "2026-09-24",
+        "headline": "DevBot reads your systems.",
+        "features": [
+            "DevBot answers from your systems -- pipeline runs, work items, pull requests and repositories in "
+            "every Azure DevOps collection, SonarQube quality gates, issues and coverage, Artifactory artifacts and "
+            "Docker tags, and Confluence pages, all read with your own access.",
+            "Every answer shows what DevBot looked up -- each lookup appears while it runs, and afterwards the "
+            "answer lists and links every source it used.",
+            "Models that can read your systems are marked Live data -- in the model picker, found out the first "
+            "time you ask one something, or at once with Check now.",
+        ],
+        "fixes": [],
+        "improvements": [
+            "Without a SonarQube token, DevBot still answers about public projects and tells you that is all it "
+            "can see.",
+        ],
+    },
+    {
+        "version": "1.10.0",
+        "date": "2026-09-24",
+        "headline": "Meet DevBot AI, a chat assistant inside the Hub.",
+        "features": [
+            "DevBot AI -- a new page in the sidebar where you can ask questions in your own words, in "
+            "English or Hebrew, and watch the answer being written. Your conversations are listed on the "
+            "left and kept for 30 days after you last use them.",
+            "Connect your own AI model key -- on the DevBot AI page or on Connections. DevBot offers exactly "
+            "the models your key may use, and you can switch model in the middle of a conversation.",
+            "See what your AI key allows -- requests and tokens a minute, its budget and when it expires, "
+            "and under every answer what it cost.",
+        ],
+        "fixes": [
+            "The ? next to a token box on Connections now names the system it explains.",
+        ],
+        "improvements": [],
+    },
+    {
+        "version": "1.9.2",
+        "date": "2026-09-24",
+        "headline": "General fixes.",
+        "features": [],
+        "fixes": [GENERIC],
+        "improvements": [],
+    },
+    {
+        "version": "1.9.1",
+        "date": "2026-09-24",
+        "headline": "A flame that looks like a flame.",
+        "features": [],
+        "fixes": [
+            "The bell no longer shows a red 0 when you have nothing unread.",
+        ],
+        "improvements": [
+            "The streak flame beside the bell has a new icon.",
+            "You will be asked to sign in once more after this update.",
+        ],
+    },
+    {
+        "version": "1.9.0",
+        "date": "2026-09-24",
+        "headline": "Review pull requests, run pipelines again and move work items without leaving the Hub.",
+        "features": [
+            "Review a pull request from the Hub: approve, approve with suggestions, send it "
+            "back to the author or reject it, with an optional comment. The Review button is "
+            "on the pull requests waiting for you, and in Needs You.",
+            "Run a finished pipeline again, on the same branch with the same parameters, "
+            "from the pipelines widget.",
+            "Open a work item to move it to another state, assign it to yourself or someone "
+            "else, add a paragraph to its description, or comment on it.",
+            "Every one of these asks Azure DevOps first and shows you exactly what will "
+            "happen. Nothing is sent until you confirm, and it is recorded under your name.",
+            "A streak: the small flame beside the bell counts the workdays in a row you have "
+            "done something in the Hub. Fridays and Saturdays never count or break it, and "
+            "five freezes a month cover holidays. Settings can hide it.",
+            "Rate a finished request from My Requests, and see when one has been waiting "
+            "longer than usual.",
+        ],
+        "fixes": [
+            "Pull requests in Needs You show how long they have been waiting.",
+        ],
+        "improvements": [
+            "Search in the work items, pull request and pipelines widgets.",
+            "To use the new actions, create a new Azure DevOps token with write access: the "
+            "guide on the Connections page lists exactly what to tick. Your current token "
+            "keeps working for everything you can see today.",
+        ],
+    },
+    {
+        "version": "1.8.2",
+        "date": "2026-09-24",
+        "headline": "A smoother sidebar, and the Azure DevOps page gets room to breathe.",
+        "features": [],
+        "fixes": [
+            "Opening and closing the sidebar no longer stutters on a busy dashboard: "
+            "the page now slides into place instead of being redrawn on every frame.",
+            "Scrolling to the end of a long SonarQube list no longer slows the page "
+            "down: however far you scroll, only the part you are near is drawn.",
+            "The reload button on the SonarQube widgets has moved next to Sort, away "
+            "from the corner where the move and resize handles appear, so reaching for "
+            "one no longer risks the other.",
+        ],
+        "improvements": [
+            "The Azure DevOps page uses the width like the SonarQube page: your work "
+            "items across the top, your pull requests and the ones waiting for your "
+            "review side by side, and pipelines across the bottom, all taller.",
+        ],
+    },
+    {
+        "version": "1.8.1",
+        "date": "2026-09-24",
+        "headline": "SonarQube widgets open in a moment and no longer freeze the dashboard.",
+        "features": [],
+        "fixes": [
+            "The SonarQube widgets no longer freeze the page while they load, however "
+            "many projects your SonarQube holds.",
+            "The SonarQube widgets no longer take long enough to give up with an "
+            "error on a large SonarQube.",
+        ],
+        "improvements": [
+            "SonarQube widgets show the numbers from the last few minutes straight "
+            "away and bring themselves up to date a few seconds later. The reload "
+            "button on a widget, and Refresh, always fetch the newest.",
+            "Long SonarQube lists show forty at a time and add more as you scroll; "
+            "search, filter and sort still cover every project.",
+            "Every page and widget arrives faster: the Hub now sends them compressed, "
+            "a fraction of the size they were.",
+        ],
+    },
+    {
+        "version": "1.8.0",
+        "date": "2026-09-23",
+        "headline": "Search, filter and pin in every SonarQube widget, and SonarQube has its own page again.",
+        "features": [
+            "SonarQube is back in the sidebar -- one page with all six SonarQube "
+            "views together, including any you have hidden from your dashboard.",
+            "Open a project in any SonarQube widget to see its analysis properly -- "
+            "the gate result and exactly why it failed, bugs, vulnerabilities, code "
+            "smells and hotspots with their A-to-E ratings, coverage and duplication, "
+            "unit tests, and a link straight to the project in SonarQube.",
+            "Open one of your pull requests in PR Quality Gates to see its own "
+            "analysis -- the issues it adds, coverage and duplication with the "
+            "estimate after merge, and its unit tests: the same summary SonarQube "
+            "writes on the pull request.",
+            "A dot next to My Requests and Suggestions in the sidebar tells you "
+            "something changed there since you last looked -- a request approved or "
+            "rejected, a vote, a reply. Opening the page clears it.",
+            "Needs You shows your requests that were just approved or rejected, with "
+            "who decided and why, for three days or until you mark them done.",
+        ],
+        "fixes": [
+            "Two SonarQube projects with the same name no longer look like one "
+            "project listed twice -- each shows its key underneath.",
+            "A SonarQube project whose name is only punctuation shows its key "
+            "instead of a lone full stop.",
+            "\"View in SonarQube\" on a pull request opens its analysis in SonarQube, "
+            "not the pull request again.",
+        ],
+        "improvements": [
+            "Every SonarQube widget has the same search, filter, sort and pins as the "
+            "Azure DevOps widgets, and remembers your filter and sort. A link you "
+            "send carries them too.",
+            "Failed gate conditions read as sentences -- coverage 0.0%, needs at "
+            "least 80% -- instead of a raw comparison you had to work out.",
+            "The last coloured ovals are gone. Suggestion statuses, the What's New "
+            "section labels and the reasons in Needs You use the same quiet dot and "
+            "word as everything else.",
+        ],
+    },
+    {
+        "version": "1.7.0",
+        "date": "2026-09-17",
+        "headline": "Five new SonarQube widgets for your dashboard.",
+        "features": [
+            "Quality Gates -- see which projects are failing and which check failed, "
+            "with the number beside the threshold it missed, instead of opening each "
+            "project to find out.",
+            "New Code -- only what landed in the current period, worst first. The "
+            "years of history behind a project stay out of the way.",
+            "Security Hotspots -- projects with reviews still outstanding; open one "
+            "to see the hotspots themselves.",
+            "Your issues -- open findings on lines you last touched, matched by the "
+            "author recorded in the commit. If nothing matches, the widget tells you "
+            "which names it searched for, so you can see why.",
+            "Your pull requests -- the quality gate on each of your open pull "
+            "requests, failing ones first, and it says plainly when a pull request "
+            "has not been analysed rather than leaving it blank.",
+        ],
+        "fixes": [
+            "The SonarQube project list works for everyone -- it was asking for "
+            "something only an administrator is allowed to ask, so most people got "
+            "an error telling them to reconnect an account that was never the "
+            "problem.",
+            "Connections no longer tells you your Azure DevOps token has expired "
+            "while your widgets are plainly working with it. It was only asking one "
+            "collection whether the token was good; now it asks everywhere your "
+            "widgets actually look, and only calls a token dead when nothing "
+            "accepts it.",
+            "A long run of text with no spaces in it -- a pasted path, a token, a "
+            "link -- stays inside its box instead of running off the side of the "
+            "page. That applies everywhere you can type, not just where it was "
+            "noticed.",
+        ],
+        "improvements": [
+            "The SonarQube widgets share one read, so adding four of them costs no "
+            "extra waiting, and they work without connecting anything when the "
+            "server lets you browse projects already.",
+            "SonarQube Projects now behaves like Artifactory Repos -- search, pin, "
+            "and a button that opens the numbers inside the row. They used to "
+            "appear on hover, over the name you were reading, and could not be "
+            "opened from the keyboard at all.",
+            "Status labels across the portal are quieter. Same colours and the same "
+            "meanings, without a block of solid colour on every row competing with "
+            "the thing you opened the page to read.",
+        ],
+    },
     {
         "version": "1.6.18",
         "date": "2026-09-16",
@@ -644,6 +1175,26 @@ def find(wanted: str) -> Optional[Dict[str, Any]]:
         if entry["version"] == str(wanted or ""):
             return entry
     return None
+
+
+def teaser(entry: Dict[str, Any], limit: int = 240) -> str:
+    """A release in a sentence or two, for the announcement a deploy posts.
+
+    The headline, then the bold lead (or the first sentence) of the first lines
+    with something in them, until the limit. Never the generic line: a release
+    with nothing else has nothing to announce (`is_generic`)."""
+    parts = [str(entry.get("headline") or "").strip()]
+    for key, _label in SECTIONS:
+        for line in entry.get(key) or []:
+            if line == GENERIC:
+                continue
+            piece = split_line(line)
+            text = piece["lead"] or piece["rest"].split(". ")[0]
+            text = text.rstrip(".") + "."
+            if len(" ".join(parts + [text])) > limit:
+                return " ".join(p for p in parts if p)
+            parts.append(text)
+    return " ".join(p for p in parts if p)
 
 
 def split_line(line: str) -> Dict[str, str]:

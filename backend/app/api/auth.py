@@ -5,16 +5,16 @@ import secrets
 import ssl
 from urllib.parse import urlencode
 
-import httpx
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 
 from db import query_one, sync_bootstrap_admin_role_for_email
+import identity
 from resilient_http import tls_verify
 from security import (
     REGULAR_USER_LEVEL,
+    SSO_NAME_CLAIM,
     create_access_token,
-    decode_access_token,
     is_platform_admin_level,
 )
 from sso_config import (
@@ -22,6 +22,7 @@ from sso_config import (
     fetch_openid_configuration,
     get_enabled_sso_config,
 )
+import resilient_http
 
 
 def _jwks_ssl_context() -> Optional[ssl.SSLContext]:
@@ -37,12 +38,6 @@ def _jwks_ssl_context() -> Optional[ssl.SSLContext]:
 
 
 router = APIRouter()
-
-
-def _now_iso() -> str:
-    from datetime import datetime, timezone
-
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _map_role_to_effective(
@@ -271,7 +266,7 @@ async def sso_callback(request: Request, code: Optional[str] = None, state: Opti
     except ValueError:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="SSO secret is unavailable")
 
-    async with httpx.AsyncClient(timeout=10, verify=tls_verify()) as client:
+    async with resilient_http.AsyncClient(timeout=10) as client:
         token_resp = await client.post(
             discovery["token_endpoint"],
             data={
@@ -310,11 +305,17 @@ async def sso_callback(request: Request, code: Optional[str] = None, state: Opti
 
     email = str(payload.get("email") or "").strip().lower()
     username = str(payload.get("preferred_username") or email).strip()
-    full_name = payload.get("name") or username or email
+    # One rule names a new account AND is kept as the provider's name, so a ticket
+    # carries exactly the name the Hub first gave the person.
+    provider_name = identity.sso_name_from_claims(payload)
     if not email:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Email not present in ID token")
 
-    user_row = _get_or_create_user_by_email(email, str(full_name))
+    user_row = _get_or_create_user_by_email(email, provider_name)
+    # The provider's name, kept apart from the editable display name, at EVERY sign-in:
+    # it is what tickets carry (identity.trusted_name), and a name changed at the
+    # provider has to reach them too.
+    identity.record_sso_name(str(user_row["id"]), provider_name)
     if username and username != user_row.get("username"):
         # Best-effort username refresh from the provider. Do not fail login for it.
         try:
@@ -325,16 +326,9 @@ async def sso_callback(request: Request, code: Optional[str] = None, state: Opti
             user_row["username"] = username
         except Exception:
             pass
-    token = create_access_token(_auth_user_from_db_row(user_row))
+    token = create_access_token({**_auth_user_from_db_row(user_row), SSO_NAME_CLAIM: 1})
     response = RedirectResponse(url="/ui/", status_code=status.HTTP_303_SEE_OTHER)
     response.delete_cookie("sso_state", path="/")
     return _set_auth_cookie(response, request, token)
-
-
-# NOTE: a POST /verify endpoint that decoded an arbitrary token (passed as a query
-# param) and echoed its payload used to live here. It had no caller, and it was both a
-# JWT-decode oracle for anyone who could reach it and a token-in-URL leak (query strings
-# land in nginx access logs and Referer headers). Removed — token validation happens in
-# get_current_user for every real request; there is no need for a standalone endpoint.
 
 

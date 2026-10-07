@@ -107,37 +107,22 @@
 	}
 
 	/*
-	   The width transition is back, by request — the instant toggle was correct about
-	   the cost and wrong about the feel.
+	   Open/close does NOT animate the sidebar's width. It did, and every frame of that
+	   animation gave the page beside it a new width: the browser laid out every widget
+	   again and repainted the whole window, sixty times a second. Measured on a full
+	   dashboard without a GPU, that was about a fifth of a second of work per toggle,
+	   which is the stutter people saw.
 
-	   Animating width does re-run layout for the page each frame, so it is kept cheap
-	   rather than removed: 160ms (short enough that a dropped frame is not readable as
-	   a stutter), and `contain: layout paint` on the sidebar so its own subtree is not
-	   re-laid-out as part of every frame. The transition is scoped to `width` alone —
-	   never `all` — so nothing else animates by accident.
+	   Instead the sidebar takes its new width at once (one layout), and the PAGE slides
+	   from where it was to where it now is on a transform, which the compositor moves
+	   without laying out or painting anything (slidePane, below). Opening, the page
+	   slides off the labels; closing, it slides over to meet the rail.
 
-	   The collapsed labels stay `display: none` rather than fading: they have to stop
-	   taking horizontal space for the rail to be a rail, and an element cannot both
-	   fade and stop occupying width. The width animation is the part that reads as
-	   smooth anyway.
+	   The collapsed labels stay `display: none`: they have to stop taking horizontal
+	   space for the rail to be a rail.
 	*/
 	[data-portal-sidebar] {
 		contain: layout paint;
-		transition: width 160ms cubic-bezier(0.4, 0, 0.2, 1);
-	}
-
-	/* Dragging the sidebar wider must track the pointer exactly — a transition there
-	   would make the edge lag behind the cursor. `data-portal-dragging` is what the
-	   resize handle already sets on <body> for the duration of a drag. */
-	body[data-portal-dragging] [data-portal-sidebar] {
-		transition: none;
-	}
-
-	/* Anyone who has asked their OS for less motion gets the instant toggle back. */
-	@media (prefers-reduced-motion: reduce) {
-		[data-portal-sidebar] {
-			transition: none;
-		}
 	}
 
 	/* ─────────────────────────────────────────────────────────────────────
@@ -147,7 +132,7 @@
 	   spinners are the one piece of motion that carries information ("this is
 	   still working"), they are tiny in area, and freezing them makes a widget
 	   look hung rather than calm. What this kills is the expensive category —
-	   the sidebar's width animation, the widget reflow, panel and toast
+	   the sidebar's slide, the widget reflow, panel and toast
 	   transitions — all of which move large areas and, without a GPU, are
 	   composited by the CPU one frame at a time.
 	   ───────────────────────────────────────────────────────────────────── */
@@ -185,12 +170,12 @@
 	   noticeably tighter than before. The separation between GROUPS does the structural
 	   work, so the gaps between rows within a group stay small. */
 	.portal-nav-link {
-		padding-top: 0.6rem;
-		padding-bottom: 0.6rem;
+		padding-top: 0.4rem;
+		padding-bottom: 0.4rem;
 	}
 
 	.portal-nav-list > li + li {
-		margin-top: 0.28rem;
+		margin-top: 0.12rem;
 	}
 
 	/* The unread mark beside What's New. Pushed to the end of the row by margin
@@ -220,11 +205,21 @@
 	/* First heading hugs the top; every later one gets air above it, so the sections
 	   read as groups rather than as one long list. */
 	.portal-nav-heading + .portal-nav-list {
-		margin-bottom: 0.45rem;
+		margin-bottom: 0.25rem;
 	}
 
 	.portal-nav-group + .portal-nav-group {
-		margin-top: 1.2rem;
+		margin-top: 0.8rem;
+	}
+
+	/* Fifth pass: the fourth was too cramped, so the rows got some of their air back.
+	   The admin list still fits a window about 900px tall without scrolling. */
+	.portal-nav-heading {
+		margin-bottom: 0.35rem !important;
+	}
+	[data-portal-sidebar] > nav {
+		padding-top: 0.75rem !important;
+		padding-bottom: 0.75rem !important;
 	}
 
 	/* ── Centring the icon rail ───────────────────────────────────────────────
@@ -1051,6 +1046,63 @@
 			return String(event.key || "").toLowerCase() === character;
 		};
 
+		/* ── Identical reads, asked for at the same moment, share one answer ────
+		   Widgets that load together ask for the same lists: the pull requests, the
+		   pipelines and the work items each read the Azure DevOps collections and
+		   projects, and the SonarQube widgets each read the pins -- a dashboard sent
+		   the same GET up to six times at once. Here a same-origin GET under /api/ that
+		   is already in flight, or came back in the last 4 seconds, is answered with a
+		   copy of that response. Anything else goes straight through: another method, a
+		   body, ?fresh=1, cache "no-store". Any write empties the shared answers, so a
+		   read after a change is never one from before it. A caller's own abort still
+		   ends its own wait. */
+		(function () {
+			if (window.__portalFetchShared || !window.fetch) return;
+			window.__portalFetchShared = true;
+			const nativeFetch = window.fetch.bind(window);
+			const shared = new Map();
+			const KEEP_MS = 4000;
+			// A refresh (the button, the timer) must reach the server: it forgets first.
+			window.__portalFetchForget = function () { shared.clear(); };
+			function sweep(now) {
+				shared.forEach((hit, key) => { if (hit.done && now - hit.done > KEEP_MS) shared.delete(key); });
+			}
+			window.fetch = function (input, init) {
+				let key = "";
+				try {
+					const method = String((init && init.method) || (typeof input !== "string" && input && input.method) || "GET").toUpperCase();
+					if (method !== "GET") { shared.clear(); return nativeFetch(input, init); }
+					if (typeof input !== "string" || (init && (init.body || init.cache === "no-store"))) return nativeFetch(input, init);
+					const url = new URL(input, location.href);
+					if (url.origin !== location.origin || url.pathname.indexOf("/api/") !== 0 || url.searchParams.get("fresh") === "1") {
+						return nativeFetch(input, init);
+					}
+					key = url.href;
+				} catch (_) {
+					return nativeFetch(input, init);
+				}
+				const now = Date.now();
+				sweep(now);
+				let hit = shared.get(key);
+				if (!hit) {
+					const clean = Object.assign({}, init || {});
+					delete clean.signal;
+					hit = { promise: nativeFetch(input, clean), done: 0 };
+					hit.promise.then(() => { hit.done = Date.now(); }, () => { shared.delete(key); });
+					shared.set(key, hit);
+				}
+				const copy = hit.promise.then((res) => res.clone());
+				const signal = init && init.signal;
+				if (!signal) return copy;
+				return new Promise((resolve, reject) => {
+					const abort = () => reject(new DOMException("The operation was aborted.", "AbortError"));
+					if (signal.aborted) return abort();
+					signal.addEventListener("abort", abort, { once: true });
+					copy.then(resolve, reject);
+				});
+			};
+		})();
+
 		/* ── portalFetch: a fetch that always finishes ──────────────────────
 		   Every widget draws a spinner, calls fetch, and shows an error in .catch().
 		   That is only safe if the fetch is guaranteed to settle — and it is not. A
@@ -1127,10 +1179,46 @@
 		}
 		paintSidebarToggle();
 
+		// Open/close is a SLIDE, not a width animation. See the sidebar section of the
+		// styles above for the measurements behind it.
+		let slideTimer = null;
+		function slidePane(apply) {
+			const aside = document.querySelector("[data-portal-sidebar]");
+			// The page is the next sibling that is a real box. Between the two sit
+			// sidebar.html's <script> and its zero-size icon sprite (<svg>).
+			let pane = aside && aside.nextElementSibling;
+			while (pane && (!(pane instanceof HTMLElement) || /^(SCRIPT|STYLE|TEMPLATE|LINK)$/.test(pane.tagName))) {
+				pane = pane.nextElementSibling;
+			}
+			const still = root.getAttribute("data-motion") === "reduced" ||
+				(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+			if (!pane || still) { apply(); return; }
+			const before = aside.getBoundingClientRect().width;
+			apply();
+			// The one layout: the page takes its final width and place at once.
+			const delta = before - aside.getBoundingClientRect().width;
+			if (!delta) return;
+			clearTimeout(slideTimer);
+			// Drawn where it WAS, then slid to where it is, by the compositor alone.
+			// Above the sidebar while it moves, so opening reveals the labels from under
+			// the page's edge instead of the page jumping away from them.
+			pane.style.transition = "none";
+			pane.style.position = "relative";
+			pane.style.zIndex = "5";
+			pane.style.willChange = "transform";
+			pane.style.transform = "translateX(" + delta + "px)";
+			void getComputedStyle(pane).transform;
+			pane.style.transition = "transform 180ms cubic-bezier(0.4, 0, 0.2, 1)";
+			pane.style.transform = "";
+			slideTimer = setTimeout(() => {
+				["transition", "position", "zIndex", "willChange", "transform"].forEach((p) => { pane.style[p] = ""; });
+			}, 260);
+		}
+
 		function toggleSidebar() {
 			const next =
 				root.getAttribute("data-sidebar") === "collapsed" ? "expanded" : "collapsed";
-			root.setAttribute("data-sidebar", next);
+			slidePane(() => root.setAttribute("data-sidebar", next));
 			LS.set(SIDEBAR_STATE_KEY, next);
 			paintSidebarToggle();
 		}
@@ -1352,15 +1440,53 @@
 				return now - last >= secs * 1000 && !isBusy(el);
 			});
 
+			if (due.length) window.__portalFetchForget?.();
 			due.forEach((el, index) => {
 				// Staggered: ten simultaneous requests is what made it a "reload".
 				setTimeout(() => {
 					if (isBusy(el) || anyDialogOpen()) return;
+					// Never drawn yet (below the fold, never scrolled to): draw it the way
+					// scrolling would, which also uses up its one "intersect" -- otherwise
+					// reaching it later would load it a second time.
+					if (!lastRefreshed.get(el)) { loadNow(el); return; }
 					el.setAttribute("data-refresh-quiet", "");
+					el.setAttribute("data-refresh-pending", "");
 					lastRefreshed.set(el, Date.now());
 					window.htmx?.trigger(el, "refresh");
 				}, index * STAGGER_MS);
 			});
+		}
+
+		// A widget waiting for "intersect once" (below the fold): load it now, once.
+		function loadNow(el) {
+			if (lastRefreshed.get(el) || el.hasAttribute("data-prefetched")) return;
+			el.setAttribute("data-prefetched", "");
+			window.htmx?.trigger(el, "intersect");
+		}
+
+		/* The widgets below the fold, drawn once the page has settled, so that scrolling
+		   down finds them ready. They used to wait for the first refresh tick, 15 seconds
+		   in, and then all arrive at once. One at a time, when the browser is idle, after
+		   the ones on screen have had the network to themselves. */
+		function prefetchBelowTheFold() {
+			if (document.visibilityState !== "visible") return;
+			const waiting = targets().filter((el) => !lastRefreshed.get(el) && !el.hasAttribute("data-prefetched")
+				&& !el.classList.contains("htmx-request"));
+			const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 50));
+			waiting.forEach((el, index) => {
+				setTimeout(() => idle(() => loadNow(el), { timeout: 1000 }), index * 120);
+			});
+		}
+		window.addEventListener("load", () => setTimeout(prefetchBelowTheFold, 1200));
+
+		// "portal:refreshed" is "the page was refreshed": once, after the last widget of a
+		// refresh (the timer's, or the Refresh button's) is back. It was sent after EVERY
+		// request -- forty on a dashboard load -- and the inbox reloaded on each one.
+		let refreshedTimer = null;
+		function refreshFinished() {
+			if (document.querySelector("[data-refresh-pending]")) return;
+			clearTimeout(refreshedTimer);
+			refreshedTimer = setTimeout(() => window.dispatchEvent(new CustomEvent("portal:refreshed")), 150);
 		}
 
 		// A widget that has just been swapped in is current by definition.
@@ -1368,20 +1494,45 @@
 			const el = event.target.closest?.("[data-autorefresh]");
 			if (el) lastRefreshed.set(el, Date.now());
 		});
+		// A widget's new content fades in. Not on a quiet background refresh (the
+		// content was already there and only changed), and not for anyone who asked
+		// their system for less motion.
+		const calm = window.matchMedia ? window.matchMedia("(prefers-reduced-motion: reduce)") : null;
+		document.body.addEventListener("htmx:afterSwap", (event) => {
+			const target = event.target;
+			if (!target || !target.animate || (calm && calm.matches)) return;
+			const shell = target.closest?.("[data-autorefresh]");
+			if (!shell || shell.hasAttribute("data-refresh-quiet")) return;
+			target.animate([{ opacity: 0, transform: "translateY(4px)" }, { opacity: 1, transform: "none" }],
+				{ duration: 220, easing: "cubic-bezier(0.2, 0.7, 0.2, 1)" });
+		});
+
 		document.body.addEventListener("htmx:afterRequest", (event) => {
 			const el = event.target.closest?.("[data-autorefresh]");
-			if (el) el.removeAttribute("data-refresh-quiet");
-			window.dispatchEvent(new CustomEvent("portal:refreshed"));
+			if (!el) return;
+			el.removeAttribute("data-refresh-quiet");
+			if (el.hasAttribute("data-refresh-pending")) {
+				el.removeAttribute("data-refresh-pending");
+				refreshFinished();
+			}
 		});
 
 		// The Refresh button is an explicit ask: it is loud (skeletons show), it
 		// hits everything, and it restarts the clock.
 		document.addEventListener("click", (event) => {
 			if (!event.target.closest("#refresh-btn")) return;
+			// When somebody last ASKED. A widget redrawn by the timer and one redrawn by
+			// this button look identical from inside; a widget that keeps a server-side
+			// cache reads this to decide whether to go past it (sonarqube-widget.html).
+			window.__portalRefreshAskedAt = Date.now();
+			window.__portalFetchForget?.();
 			targets().forEach((el) => {
 				el.removeAttribute("data-refresh-quiet");
+				el.setAttribute("data-refresh-pending", "");
 				lastRefreshed.set(el, Date.now());
 			});
+			// A page with no widgets still refreshed: say so once.
+			setTimeout(refreshFinished, 0);
 		});
 
 		window.portalRefresh = {
@@ -1418,6 +1569,26 @@
 			});
 		}
 
+		/* ── A page that came from a prefetch ─────────────────────────────────
+		   Hovering a link fetches the page ahead of the click (banner.html), and the
+		   click then shows that copy without asking the server again. A dotted page
+		   (Support, My Requests, Suggestions) clears its dot when the server serves it,
+		   so a copy served from the prefetch says "I was opened" itself. */
+		(function () {
+			const SEEN = {{ (seen_sections | default({}, true)) | tojson }};
+			const section = SEEN[location.pathname];
+			if (!section) return;
+			let viaPrefetch = false;
+			try {
+				const nav = performance.getEntriesByType("navigation")[0];
+				viaPrefetch = !!nav && /prefetch/.test(String(nav.deliveryType || ""));
+			} catch (_) {}
+			if (!viaPrefetch) return;
+			fetch("/api/notifications/sections/" + encodeURIComponent(section) + "/seen", {
+				method: "POST", credentials: "same-origin", keepalive: true,
+			}).catch(() => {});
+		})();
+
 		/* ── Boot ───────────────────────────────────────────────────────────── */
 		function boot() {
 			initSidebarResizer();
@@ -1429,8 +1600,15 @@
 		} else {
 			boot();
 		}
-		// Panes and sidebars can arrive with an htmx swap.
-		document.body.addEventListener("htmx:afterSettle", boot);
+		// Panes and sidebars can arrive with an htmx swap. Only what arrived is looked at:
+		// re-scanning the whole page after each of forty widget swaps was the dashboard's
+		// main-thread time.
+		document.body.addEventListener("htmx:afterSettle", (event) => {
+			const scope = event.target && event.target.querySelectorAll ? event.target : document;
+			stampDirAuto(scope);
+			if (scope.querySelector(".portal-splitter:not([data-bound])")) initSplitters();
+			if (!document.querySelector("[data-portal-sidebar] .portal-sidebar-resizer")) initSidebarResizer();
+		});
 	})();
 </script>
 
@@ -1455,21 +1633,23 @@
 
 			    frontend/static/images/credits.png
 
-			and it appears here. Nothing else to change: if the file is not there the
-			<img> removes itself on the error event, so the card is exactly as it is
-			now. PNG, JPG or GIF all work; rename whatever you use to credits.png.
+			and it appears here after the next restart (main.py checks for it once, so a
+			missing picture is not a failed request on every page). PNG, JPG or GIF all work; rename whatever you use to credits.png.
 
 			Anything roughly 3:2 and at least 600px wide looks right — it is capped at
 			180px tall and the full width of the card, so a very tall image is scaled
 			down rather than cropped.
 		#}
+		{% if credits_image %}
 		<img
 			data-credits-image
 			src="/static/images/credits.png"
 			alt=""
+			loading="lazy"
 			class="mx-auto rounded-lg"
 			style="max-width: 100%; max-height: 180px; margin-bottom: 0.75rem"
 		/>
+		{% endif %}
 		<h3 class="text-base font-bold">DevOps Hub</h3>
 		<p class="mt-1 text-xs text-base-content/60">Built by</p>
 		<p class="mt-3 font-bold">Michael Goldenberg</p>
@@ -1636,5 +1816,86 @@
 				}
 			} catch (_) {}
 		});
+	})();
+</script>
+
+<script>
+	// ── Usage beat ─────────────────────────────────────────────────────────
+	// How long people actually use the portal, for the admin Users page. A second
+	// counts only while this tab is VISIBLE and somebody has touched the mouse or
+	// keyboard in the last two minutes: an open tab is not a person using it. The
+	// server clamps every beat to real elapsed time as well (usage_tracking.py), so
+	// several open tabs cannot add up to more than the clock allows.
+	(function () {
+		if (window.__portalUsageBeat) return;
+		window.__portalUsageBeat = true;
+		// "Signed in" is read once the page has PARSED. This script is in the banner,
+		// which comes before the sidebar, so an immediate check always found no sidebar
+		// and returned -- the beat never ran, and every figure on the Users page stayed
+		// at zero from the day it shipped.
+		if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);
+		else start();
+
+		function start() {
+		if (!document.querySelector("[data-portal-sidebar]")) return; // not signed in
+
+		const PAGE = {{ (current_page | default('', true)) | tojson }} || "other";
+		const IDLE_MS = 120000;
+		const TICK_MS = 15000;
+		const BEAT_MS = 60000;
+		let lastInput = Date.now();
+		let lastTick = Date.now();
+		let pending = 0;
+		let viewSent = false;
+		// Whether a PERSON has touched this page since it loaded. Only then does the day
+		// count toward the streak (api/usage.py): a tab the browser restored, or a page
+		// that reloaded itself, sends beats too, and a day nobody was here must not be
+		// saved by them.
+		let human = false;
+
+		function touched() { lastInput = Date.now(); }
+		function byHand() { human = true; touched(); }
+		["pointerdown", "pointermove", "keydown", "wheel", "touchstart"].forEach(function (name) {
+			window.addEventListener(name, byHand, { passive: true, capture: true });
+		});
+		// A scroll can be the page's own; it keeps the minute active but proves nobody.
+		window.addEventListener("scroll", touched, { passive: true, capture: true });
+
+		function tick() {
+			const now = Date.now();
+			const elapsed = Math.min(now - lastTick, TICK_MS * 2) / 1000;
+			lastTick = now;
+			if (document.visibilityState === "visible" && now - lastInput < IDLE_MS) pending += elapsed;
+		}
+
+		function beat() {
+			tick();
+			const seconds = Math.round(pending);
+			if (!seconds && viewSent) return;
+			pending = 0;
+			const body = JSON.stringify({ page: PAGE, active_seconds: seconds, view: !viewSent, human: human });
+			viewSent = true;
+			try {
+				// keepalive, so the last beat still arrives when the tab is closing.
+				fetch("/api/usage/heartbeat", {
+					method: "POST",
+					credentials: "same-origin",
+					keepalive: true,
+					headers: { "Content-Type": "application/json" },
+					body: body,
+				}).catch(function () {});
+			} catch (_) {}
+		}
+
+		setInterval(tick, TICK_MS);
+		setInterval(function () { if (document.visibilityState === "visible") beat(); }, BEAT_MS);
+		document.addEventListener("visibilitychange", function () {
+			if (document.visibilityState === "hidden") beat();
+			else { lastTick = Date.now(); touched(); }
+		});
+		window.addEventListener("pagehide", beat);
+		// The page view, straight away: a visit that lasts ten seconds is still a visit.
+		beat();
+		}
 	})();
 </script>

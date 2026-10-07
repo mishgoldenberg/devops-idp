@@ -18,11 +18,11 @@ config.
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 
-from security import AuthUser, get_current_user
+import gitlab_client
 
 
 router = APIRouter()
@@ -58,15 +58,9 @@ def _resolve_system_urls() -> Dict[str, Optional[str]]:
         "sonarqube": _strip_api_suffix(sonar) if sonar else None,
         "artifactory": _strip_api_suffix(artifactory) if artifactory else None,
         "confluence": _strip_api_suffix(confluence) if confluence else None,
+        # gitlab_client.base_url already strips /api/v4 and ignores an undefined macro.
+        "gitlab": gitlab_client.base_url() or None,
     }
-
-
-@router.get("/system-urls")
-def get_system_urls(
-    _current_user: AuthUser = Depends(get_current_user),
-) -> Dict[str, Any]:
-    """Return the configured external console URL for each system."""
-    return {"success": True, "data": _resolve_system_urls()}
 
 
 def get_system_urls_for_template() -> Dict[str, Optional[str]]:

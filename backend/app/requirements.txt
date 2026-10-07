@@ -1,64 +1,27 @@
-# DevOps Control Center - Python Backend Dependencies
-# 
-# This file lists all Python packages required for the FastAPI backend.
-# Install with: pip install -r requirements.txt
-#
-# CORE FRAMEWORK:
-#   - fastapi: Modern async web framework with automatic OpenAPI documentation
-#   - uvicorn: ASGI server for running FastAPI applications
-# 
-# DATABASE:
-#   - psycopg2-binary: PostgreSQL adapter (binary build, no compilation needed)
-# 
-# CACHING & SESSIONS:
-#   - redis: Python client for Redis cache and session store
-# 
-# AUTHENTICATION:
-#   - PyJWT: JWT token generation and validation for auth endpoints
-# 
-# VALIDATION & TYPES:
-#   - pydantic: Data validation using Python type hints
-# 
-# HTTP REQUESTS:
-#   - httpx: Async HTTP client for calling Azure DevOps and other APIs
-#
-# EXTERNAL INTEGRATIONS:
-#   All external system calls (Azure DevOps, SonarQube, Artifactory, ServiceNow)
-#   go through httpx. Use HTTPS everywhere. Credentials via environment variables.
-#
+# Backend dependencies. Upgrade them together, audit the result (pip-audit -r
+# requirements.txt), and put any wheel the closed network lacks in offline-deps/wheels/.
 
-# Core framework
-fastapi==0.120.4
-starlette==0.49.1
-uvicorn[standard]==0.38.0
+# Web framework. fastapi pins its own starlette range; keep the two in step.
+fastapi==0.142.2
+starlette==1.7.0
+# Without [standard]: its uvloop/httptools/watchfiles are optional speed-ups with
+# Linux-only wheels the internal index does not carry; uvicorn runs on asyncio and h11.
+uvicorn==0.38.0
+# Parses uploads; 0.0.18 fixed a denial of service in form parsing.
+python-multipart>=0.0.18
+jinja2==3.1.6
 
-# Database
+# Storage
 psycopg2-binary==2.9.9
-
-# Caching
 redis==5.0.4
 
-# Authentication & JWT
-PyJWT==2.12.0
-cryptography==46.0.7
+# Sign-in, tokens and encrypted credentials
+PyJWT==2.15.1
+cryptography==50.0.2
 bcrypt==4.1.3
 
-# Data validation
 pydantic==2.9.0
-
-# HTTP client for external APIs
 httpx==0.28.1
 
-# Template rendering + static files (for htmx-based frontend)
-jinja2==3.1.6
-aiofiles==23.2.1
-python-multipart
-
-# Optional: load .env file when running locally
+# Reads a local .env when running outside the cluster
 python-dotenv==1.2.2
-
-# GCP Storage - saves Terraform logs to gs://devops-control-center-tfstate
-google-cloud-storage==2.18.0
-
-# Kubernetes client - creates/monitors Terraform runner Jobs
-kubernetes==29.0.0

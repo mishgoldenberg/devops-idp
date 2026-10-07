@@ -25,7 +25,7 @@ from docx import Document
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Pt, RGBColor
+from docx.shared import Pt
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -37,7 +37,6 @@ END = _TAG + "END##"
 
 APPLY_SHADE = "FFF4CE"
 CODE_SHADE = "F4F5F7"
-PAYLOAD_SHADE = "EEF2F7"
 
 
 # ── docx helpers ───────────────────────────────────────────────────────────
@@ -129,23 +128,29 @@ def body(doc, text: str, bold: bool = False) -> None:
 
 # -- the round ---------------------------------------------------------------
 
-ROUND = "117"
-
-SUMMARY = ("The image the Artifactory cleaner's CronJob runs, and the console its objects "
-           "live in, move out of the source and into the variable group -- they describe "
-           "this installation rather than the product, and the repository is public")
-
+ROUND = "150"
+SUMMARY = ('An on/off switch for DevBot and AdminBot per environment (HUB_AI_ENABLED, global.aiEnabled): off in values-prod.yaml, on in values-test.yaml, and the pipeline variable HUB_AI_ENABLED overrides both. Off, their API routes are not mounted, their pages answer 404, their links, Monitoring tab and index card are not drawn and the index is not built; the code stays in the image and conversations, keys and the index stay in the database. Apply after round 149')
 DELETES = []
-
 FILES = [
-    "backend/app/artifactory_cleaner.py",
-    "frontend/templates/partials/components/approvals-container.html",
+    "CLAUDE.md",
     "azure-pipelines.yml",
-    "deployment/charts/backend/templates/secrets.yaml",
-    "deployment/charts/backend/templates/deployment.yaml",
+    "backend/app/api/__init__.py",
     "backend/app/changelog.py",
+    "backend/app/devbot/config.py",
+    "backend/app/main.py",
+    "backend/app/ui.py",
+    "backend/tests/test_ai_switch.py",
+    "deployment/charts/backend/templates/infra-config.yaml",
+    "deployment/values-prod.yaml",
+    "deployment/values-test.yaml",
+    "deployment/values.yaml",
+    "docs/devbot.md",
+    "docs/env.md",
+    "frontend/templates/partials/components/monitoring-tabs.html",
+    "frontend/templates/partials/components/platform-managing-container.html",
+    "frontend/templates/partials/components/sidebar.html",
+    "scripts/gen_round_docx.py",
 ]
-
 PREAMBLE = ""
 
 

@@ -31,15 +31,15 @@ Design notes that are easy to get wrong
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 import audit
 from db import execute, execute_returning, query_all, query_one
-from security import AuthUser, get_current_user, has_effective_admin_access_live
+from security import AuthUser, get_current_user
+from common import admin_user, now_iso
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -62,19 +62,6 @@ _COLUMNS = (
     "id, title, body, kind, link_url, link_label, starts_at, ends_at, "
     f"is_active, created_by, created_at, updated_at, {_STAMP_SQL} AS stamp"
 )
-
-
-def _require_admin(user: AuthUser = Depends(get_current_user)) -> AuthUser:
-    if not has_effective_admin_access_live(user):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required to manage announcements.",
-        )
-    return user
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _serialize(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -112,7 +99,7 @@ def _clean(body: AnnouncementBody) -> Dict[str, Any]:
     if kind not in KINDS:
         kind = "info"
     link_url = (body.link_url or "").strip() or None
-    if link_url and not link_url.lower().startswith(("http://", "https://", "/")):
+    if link_url and (not link_url.lower().startswith(("http://", "https://", "/")) or link_url.startswith("//")):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="The link must start with http://, https:// or / .",
@@ -175,12 +162,12 @@ def active_announcements(current_user: AuthUser = Depends(get_current_user)) -> 
     except Exception as exc:
         # Decoration must never break the dashboard it decorates.
         log.debug("announcements: active query failed: %s", exc)
-        return {"success": True, "data": [], "timestamp": _now_iso()}
+        return {"success": True, "data": [], "timestamp": now_iso()}
 
     return {
         "success": True,
         "data": [_serialize(row) for row in rows],
-        "timestamp": _now_iso(),
+        "timestamp": now_iso(),
     }
 
 
@@ -226,7 +213,7 @@ def dismiss(
 
 
 @router.get("")
-def list_announcements(_admin: AuthUser = Depends(_require_admin)) -> Dict[str, Any]:
+def list_announcements(_admin: AuthUser = Depends(admin_user)) -> Dict[str, Any]:
     """Everything, including retired and scheduled rows, newest first."""
     rows = query_all(
         f"SELECT {_COLUMNS} FROM announcements ORDER BY created_at DESC, id DESC LIMIT 200"
@@ -247,13 +234,13 @@ def list_announcements(_admin: AuthUser = Depends(_require_admin)) -> Dict[str, 
     for item in data:
         item["dismissed_by"] = counts.get(item["id"], 0)
 
-    return {"success": True, "data": data, "timestamp": _now_iso()}
+    return {"success": True, "data": data, "timestamp": now_iso()}
 
 
 @router.post("", status_code=201)
 def create_announcement(
     body: AnnouncementBody,
-    admin: AuthUser = Depends(_require_admin),
+    admin: AuthUser = Depends(admin_user),
 ) -> Dict[str, Any]:
     fields = _clean(body)
     rows = execute_returning(
@@ -293,7 +280,7 @@ def create_announcement(
 def update_announcement(
     announcement_id: int,
     body: AnnouncementBody,
-    admin: AuthUser = Depends(_require_admin),
+    admin: AuthUser = Depends(admin_user),
 ) -> Dict[str, Any]:
     """Edit an announcement.
 
@@ -346,7 +333,7 @@ def update_announcement(
 @router.delete("/{announcement_id}", status_code=204)
 def delete_announcement(
     announcement_id: int,
-    admin: AuthUser = Depends(_require_admin),
+    admin: AuthUser = Depends(admin_user),
 ):
     """Remove an announcement outright.
 

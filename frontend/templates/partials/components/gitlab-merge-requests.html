@@ -1,0 +1,10 @@
+{#
+	GitLab: the merge requests the signed-in person opened. The shared pull-request
+	widget with the GitLab provider (pull-requests-widget.html).
+#}
+{% set pr_role = "created" %}
+{% set pr_title = "My Merge Requests" %}
+{% set pr_empty_title = "No open merge requests" %}
+{% set pr_empty_hint = "merge requests you open in GitLab show up here" %}
+{% set pr_provider = "gitlab" %}
+{% include "partials/components/pull-requests-widget.html" %}

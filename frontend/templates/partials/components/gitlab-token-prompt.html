@@ -1,0 +1,55 @@
+{#
+	Connect GitLab, in place, on a GitLab widget that has no token yet. Saves through the
+	same endpoint as the Connections page (/api/integrations/gitlab/token), which checks
+	the token with GitLab before keeping it.
+#}
+<div class="w-full rounded-xl border border-primary/30 bg-primary/5 p-4 text-left" data-gl-token-prompt>
+	<div class="flex items-center gap-1.5">
+		<h4 class="font-semibold text-sm flex-1">Connect to GitLab</h4>
+		<button type="button" class="btn btn-ghost btn-xs btn-circle text-primary" data-pat-help="gitlab"
+			title="How do I create this token?" aria-label="How do I create this token?">?</button>
+	</div>
+	<p class="mt-1 text-xs text-base-content/60">
+		Create a Personal Access Token in GitLab: your avatar → Edit profile → Access Tokens. Not sure
+		how? Click the <b>?</b> above for the full walkthrough.
+	</p>
+	<input type="password" placeholder="Paste your GitLab Personal Access Token" class="input input-bordered input-sm mt-3 w-full" data-gl-token-input autocomplete="off" />
+	<div class="mt-3 flex gap-2">
+		<button type="button" class="btn btn-primary btn-xs rounded-full px-4" data-gl-token-save>Save</button>
+	</div>
+</div>
+
+<script>
+	(function () {
+		if (window.__glTokenBinderAttached) return;
+		window.__glTokenBinderAttached = true;
+		document.addEventListener("click", async function (e) {
+			const btn = e.target.closest("[data-gl-token-save]");
+			if (!btn) return;
+			const wrap = btn.closest("[data-gl-token-prompt]");
+			const input = wrap && wrap.querySelector("[data-gl-token-input]");
+			const token = ((input && input.value) || "").trim();
+			if (!token) return;
+			btn.disabled = true;
+			try {
+				const res = await fetch("/api/integrations/gitlab/token", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ token: token }),
+					credentials: "same-origin",
+				});
+				if (res.ok) {
+					if (input) input.value = "";
+					window.portalToast?.({ kind: "success", message: "GitLab connected." });
+					document.getElementById("refresh-btn")?.click();
+				} else {
+					let detail = "GitLab did not accept that token.";
+					try { detail = (await res.json()).detail || detail; } catch (_) {}
+					window.portalToast?.({ kind: "error", message: detail });
+				}
+			} finally {
+				btn.disabled = false;
+			}
+		});
+	})();
+</script>

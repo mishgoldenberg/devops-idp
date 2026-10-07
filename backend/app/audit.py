@@ -9,7 +9,7 @@ WHAT GETS IN HERE
 Three sources, and the distinction matters when you are reading the page:
 
   * ``app``    — business events, named by hand at the point they happen:
-                 a request approved, a Terraform run, a login. These are the
+                 a request approved, a project provisioned, a login. These are the
                  events an auditor cares about.
   * ``http``   — every state-changing API call, recorded automatically by the
                  middleware in request_audit.py. This is what "log everything"
@@ -78,13 +78,10 @@ class Action:
     REQUEST_APPROVED = "self_service.request_approved"
     REQUEST_REJECTED = "self_service.request_rejected"
 
-    # Terraform lifecycle
-    TERRAFORM_STARTED = "terraform.started"
-    TERRAFORM_COMPLETED = "terraform.completed"
-    TERRAFORM_FAILED = "terraform.failed"
-
-    # ServiceNow
-    TICKET_CREATED = "servicenow.ticket_created"
+    # Self-service execution (an approved request being carried out)
+    PROVISIONING_STARTED = "provisioning.started"
+    PROVISIONING_COMPLETED = "provisioning.completed"
+    PROVISIONING_FAILED = "provisioning.failed"
 
     # Artifactory self-service. Named for what changed, not for the code path:
     # "settings updated" told an auditor nothing about which project's quota moved.
@@ -99,6 +96,10 @@ class Action:
     # Safe Mode
     SAFE_MODE_ENABLED = "admin.safe_mode_enabled"
     SAFE_MODE_DISABLED = "admin.safe_mode_disabled"
+    # A change an admin confirmed in AdminBot. The change also writes its own event
+    # (request approved, and so on); this one says it came through AdminBot, with what
+    # was proposed, so "who approved that, and how" has an answer.
+    ADMINBOT_ACTION = "admin.adminbot_action"
 
     # Authentication. A portal with no record of who signed in — and of who TRIED
     # and failed — is missing the first thing anyone asks for after an incident.
@@ -121,8 +122,8 @@ def ensure_table() -> None:
             )
             """
         )
-        # Added after the table shipped, so they arrive as ALTERs. Existing rows get
-        # the defaults, which is the truth about them: they were all app-level INFO.
+        # Added after the table existed, as ALTERs; the rows before them were all
+        # app-level INFO, which the defaults say.
         for ddl in (
             "ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS level VARCHAR(16) NOT NULL DEFAULT 'INFO'",
             "ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS source VARCHAR(16) NOT NULL DEFAULT 'app'",
@@ -341,16 +342,6 @@ def delete_events(**filters: Any) -> int:
         return 0
 
 
-def count_events(**filters: Any) -> int:
-    """How many rows match — what the Clear confirmation quotes before deleting."""
-    where, params, _has = _filter_sql(**filters)
-    try:
-        row = query_one(f"SELECT COUNT(*)::bigint AS n FROM audit_events{where}", params)
-        return int((row or {}).get("n") or 0)
-    except Exception:
-        return 0
-
-
 def level_counts(**filters: Any) -> Dict[str, int]:
     """How many rows sit at each level, under the CURRENT filters.
 
@@ -404,11 +395,7 @@ def level_counts(**filters: Any) -> Dict[str, int]:
 
 
 def distinct_actions() -> List[str]:
-    """Every action string present in the table (for the filter dropdown).
-
-    Capped: with HTTP calls logged, this is one row per route rather than the
-    handful it used to be, and an unbounded dropdown is not a filter.
-    """
+    """Every action string present in the table, for the filter dropdown (capped)."""
     try:
         rows = query_all(
             "SELECT action, COUNT(*)::bigint AS n FROM audit_events "

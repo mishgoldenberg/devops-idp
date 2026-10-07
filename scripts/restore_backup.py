@@ -47,7 +47,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, NoReturn, Tuple
 
 FP_LABEL = "devops-hub-backup-fingerprint-v1:"
 REPO = "devops-hub-backups"
@@ -56,7 +56,7 @@ PATH_ = "postgres"
 
 # ── plumbing ────────────────────────────────────────────────────────────────
 
-def die(msg: str) -> "NoReturn":  # type: ignore[valid-type]
+def die(msg: str) -> NoReturn:
     print("\nFAILED: " + msg, file=sys.stderr)
     sys.exit(1)
 

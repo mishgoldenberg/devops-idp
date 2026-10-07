@@ -629,7 +629,11 @@
 			params.delete("new");
 			const qs = params.toString();
 			window.history.replaceState({}, "", window.location.pathname + (qs ? "?" + qs : ""));
-			openTicketWizard();
+			// After the page is parsed: the form (catalog-form.html) is included BELOW this
+			// script, so opening it now found no window.portalCatalogForm and the optional
+			// call did nothing -- the + menu's Open a Ticket still landed and stopped.
+			if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", openTicketWizard, { once: true });
+			else openTicketWizard();
 		})();
 
 

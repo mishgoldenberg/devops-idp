@@ -2,57 +2,30 @@
 
 File: `backend/app/resilient_http.py`
 
-## Purpose
+Every outbound HTTP call the backend makes goes through this module's client;
+`scripts/check_security_rules.py` fails the build on an `httpx.Client`, `httpx.AsyncClient`
+or module-level `httpx.get/post/...` anywhere else.
 
-One module that every external-integration caller uses to get:
+- `Client(**kwargs)` / `AsyncClient(**kwargs)` — `httpx.Client` / `httpx.AsyncClient`
+  that verify TLS as configured (unless `verify=` is passed) and refuse, before
+  anything is sent, an address whose path holds a `.` or `..` segment, raw or
+  percent-encoded (`%2e%2e`, `..%2F`, `%252e%252e`). httpx itself collapses
+  `/table/incident/../../sys_user` to `/sys_user` without a word, so a value placed in
+  a path could otherwise reach any endpoint the account can. The query string is not
+  checked: a path inside a query parameter is data. A refusal raises `UnsafeURL`
+  (a `ValueError`) and is logged at WARNING with the address.
+- `far_message(resp) -> str` — the other system's own error message from a JSON answer
+  (`message`, `error.message`, `errors[0].message`), at most 200 characters, or `""`.
+  Never the raw body, which can be an HTML page or echo the request.
+- `tls_verify() -> bool` — whether outbound calls verify certificates
+  (`INTEGRATION_TLS_VERIFY`, default true).
+- `explain_integration_failure(integration, exc) -> str` — one sentence a person can
+  act on: the system, the host where known, the likely cause (credentials, wrong
+  address, DNS, certificate, firewall, timeout) and who can fix it. Never the
+  exception's class or text. Callers use it through `common.failure_text`, which logs
+  the class and text at WARNING.
 
-- Sane **timeouts** (connect 5 s, read 10 s) — so a dead external system
-  can't hold a request thread forever.
-- A **single retry** on transient failures (5xx, network errors) — so a
-  Wi-Fi blip doesn't break a dashboard render.
-- A **try/except wrapper** (`safe_integration`, `safe_call`) that turns
-  transport exceptions into a user-friendly 502
-  (`"Service temporarily unavailable"`) instead of leaking stack traces.
-
-## Public API
-
-- `default_timeout() -> httpx.Timeout`
-
-  Default `(connect=5.0, read=10.0, write=10.0, pool=5.0)`. Callers can
-  override per-request.
-
-- `resilient_request(method, url, ..., retries=2) -> httpx.Response`
-
-  `httpx.request` with timeouts + retries. Raises on non-2xx so callers
-  can decide what to do.
-
-- `resilient_get(url, **kw)` / `resilient_post(...)` — convenience
-  wrappers.
-
-- `safe_integration(label: str) -> contextmanager`
-
-  Drop a block of code inside `with safe_integration("azure-devops"):`
-  — any exception raised inside becomes an `HTTPException(502, "Service
-  temporarily unavailable")` with the label recorded in server logs.
-
-- `safe_call(fn, *args, default=None, label="") -> Any`
-
-  Best-effort helper: run `fn()`, log on failure, return `default`.
-  Useful when a partial UI (e.g. one widget out of ten) should still
-  render if a non-critical upstream is down.
-
-## Usage guidance
-
-- Use `resilient_request` for **writes** (create ticket, create project)
-  — you want the caller to handle failures.
-- Use `safe_integration` around the whole handler body for **reads**
-  where the UI should show "service unavailable" on failure.
-- Use `safe_call` when building a widget that aggregates multiple
-  sources and missing one shouldn't nuke the others.
-
-## Why not a 3rd-party lib?
-
-`tenacity` + `httpx` already exists, but we intentionally keep this
-module small so the behavior is grep-able and the retry policy is
-documented in one place. If you need anything fancier (circuit breakers,
-jitter), add it here rather than inline in a router.
+Values that go INTO another system's query language have their own helpers in
+`common.py`: `wiql_text` (Azure DevOps WIQL), `quoted_text` (Confluence CQL,
+Artifactory AQL) and `snow_catalog.query_value` (ServiceNow encoded queries, where `^`
+would add a condition).

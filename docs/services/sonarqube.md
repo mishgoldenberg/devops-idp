@@ -1,27 +1,35 @@
-# `sonarqube` router
+# SonarQube integration
 
-File: `backend/app/api/sonarqube.py` · Prefix: `/api/sonarqube`
+File: `backend/app/api/integrations.py` (with `sonar_insights.py`) · Prefix: `/api/integrations/sonarqube`
 
 ## Purpose
 
-Currently **mock-only**. Serves canned SonarQube project and
-quality-gate data to the frontend widgets so the UI can be developed and
-demoed without a real SonarQube instance.
+Real reads of a SonarQube server, for the six SonarQube dashboard widgets (Projects,
+Quality Gates, New Code, Security Hotspots, Issues (yours), Gate on my pull requests),
+the SonarQube page, and DevBot's SonarQube tools.
+
+Each person's own token (Connections page, stored encrypted in `user_integrations`,
+system `sonarqube`). Without one, the instance's **public** projects are still read,
+and the page says it is only those.
 
 ## Main endpoints
 
-| Method | Path                                | Description                          |
-| ------ | ----------------------------------- | ------------------------------------ |
-| GET    | `/api/sonarqube/projects`           | List of fake projects                |
-| GET    | `/api/sonarqube/projects/{key}`     | Fake detail + quality gate           |
-| POST   | `/api/sonarqube/pr-scanning/enable` | No-op success (goes through approvals in the future) |
+| Method | Path | What it returns |
+|---|---|---|
+| GET | `/sonarqube/projects` | the projects the token can see |
+| GET | `/sonarqube/overview` | every project with its quality gate and numbers, in one read (four widgets are views over it) |
+| GET | `/sonarqube/project-details` | one project's conditions and measures, for an expanded row |
+| GET | `/sonarqube/hotspots` | hotspots still to review on one project |
+| GET | `/sonarqube/my-issues` | open issues on lines this person last touched |
+| GET | `/sonarqube/pull-requests` · `/pull-request-details` | the quality gate on the pull requests this person opened |
+| GET/POST/DELETE | `/sonarqube/pins` | pinned projects |
 
-## External APIs used
+## External calls
 
-None today. When this graduates to real, it should use
-`resilient_http.resilient_get` and wrap reads with
-`integrations_cache.cached_external("sonar", owner, …, ttl=60)`.
+SonarQube Web API (`/api/components/search_projects`, `/api/measures/*`,
+`/api/qualitygates/project_status`, `/api/issues/search`, `/api/hotspots/search`),
+cached per person in `integrations_cache` and answered stale while it refreshes.
 
-## Environment variables
+## Environment
 
-- `SONARQUBE_BASE_URL` — SonarQube base URL used by connected widgets.
+`SONARQUBE_BASE_URL`. `INTEGRATION_TLS_VERIFY` for an internal CA.

@@ -41,4 +41,4 @@ prompt without leaking provider-specific error shapes.
 
 - `CONFLUENCE_BASE_URL` — Confluence base URL used by the widget. Same
   variable also drives the "Open" button on the Confluence system page
-  (`/api/system-urls`).
+  (`system_urls.get_system_urls_for_template`).

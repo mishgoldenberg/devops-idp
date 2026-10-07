@@ -2,7 +2,7 @@
 
 <!-- GENERATED:API — do not edit by hand; run scripts/gen_docs.py -->
 
-193 endpoints across 26 groups, generated from the running application's OpenAPI schema.
+256 endpoints across 29 groups, generated from the running application's OpenAPI schema.
 
 Everything under `/api/…` returns JSON. Everything under `/ui/…` returns HTML fragments for HTMX and is not part of this reference — those are not an API, they are the pages.
 
@@ -21,7 +21,6 @@ Authentication is the `auth_token` cookie (HS256 JWT) on every route except `/ap
 | --- | --- | --- |
 | `GET` | `/api/admin/dashboard-widgets` | List Dashboard Widgets |
 | `PUT` | `/api/admin/dashboard-widgets` | Set Dashboard Widget Visibility |
-| `POST` | `/api/admin/grant-role` | Grant Role |
 | `POST` | `/api/admin/quick-links` | Create Quick Link |
 | `DELETE` | `/api/admin/quick-links/{quick_link_id}` | Delete Quick Link |
 | `PATCH` | `/api/admin/quick-links/{quick_link_id}` | Update Quick Link |
@@ -50,10 +49,12 @@ Authentication is the `auth_token` cookie (HS256 JWT) on every route except `/ap
 | --- | --- | --- |
 | `GET` | `/api/approvals/requests` | Get Requests |
 | `POST` | `/api/approvals/requests` | Create Request |
+| `GET` | `/api/approvals/requests-summary` | Requests Summary |
 | `DELETE` | `/api/approvals/requests/{request_id}` | Delete Request |
 | `GET` | `/api/approvals/requests/{request_id}` | Get Request |
 | `POST` | `/api/approvals/requests/{request_id}/approve` | Approve Request |
 | `POST` | `/api/approvals/requests/{request_id}/force-fail` | Force Fail Request |
+| `POST` | `/api/approvals/requests/{request_id}/rating` | Rate Request |
 | `POST` | `/api/approvals/requests/{request_id}/reject` | Reject Request |
 | `POST` | `/api/approvals/requests/{request_id}/servicenow-retry` | Retry Servicenow |
 
@@ -65,7 +66,6 @@ Authentication is the `auth_token` cookie (HS256 JWT) on every route except `/ap
 | `GET` | `/api/audit-logs` | List Audit Events |
 | `GET` | `/api/audit-logs/actions` | List Actions |
 | `GET` | `/api/audit-logs/export` | Export Audit Events |
-| `GET` | `/api/audit-logs/levels` | List Levels |
 
 ## auth
 
@@ -78,6 +78,18 @@ Authentication is the `auth_token` cookie (HS256 JWT) on every route except `/ap
 
 | Method | Path | What it does |
 | --- | --- | --- |
+| `GET` | `/api/azure-devops/actions/people` | People |
+| `POST` | `/api/azure-devops/actions/pipeline-cancel` | Pipeline Cancel |
+| `POST` | `/api/azure-devops/actions/pipeline-rerun` | Pipeline Rerun |
+| `POST` | `/api/azure-devops/actions/pipeline-run` | Pipeline Run |
+| `POST` | `/api/azure-devops/actions/pr-comment` | Pr Comment |
+| `POST` | `/api/azure-devops/actions/pr-vote` | Pr Vote |
+| `GET` | `/api/azure-devops/actions/work-item` | Work Item |
+| `POST` | `/api/azure-devops/actions/work-item-assign` | Work Item Assign |
+| `POST` | `/api/azure-devops/actions/work-item-comment` | Work Item Comment |
+| `POST` | `/api/azure-devops/actions/work-item-create` | Work Item Create |
+| `POST` | `/api/azure-devops/actions/work-item-description` | Work Item Description |
+| `POST` | `/api/azure-devops/actions/work-item-state` | Work Item State |
 | `GET` | `/api/azure-devops/area-paths` | Get Area Paths |
 | `GET` | `/api/azure-devops/collections` | Get Collections |
 | `GET` | `/api/azure-devops/iterations` | Get Iterations |
@@ -106,29 +118,66 @@ Authentication is the `auth_token` cookie (HS256 JWT) on every route except `/ap
 | --- | --- | --- |
 | `GET` | `/api/catalog/artifactory-diagnostics` | Artifactory Diagnostics |
 | `GET` | `/api/catalog/cleaners` | List Cleaners |
+| `POST` | `/api/catalog/cleaners/{cleaner_id}/cluster-cleared` | Confirm Cluster Cleared |
 | `POST` | `/api/catalog/cleaners/{cleaner_id}/edit` | Edit Cleaner |
 | `POST` | `/api/catalog/cleaners/{cleaner_id}/remove` | Remove Cleaner |
+| `POST` | `/api/catalog/cleaners/{cleaner_id}/withdraw` | Withdraw Cleaner |
 | `GET` | `/api/catalog/forms` | List Forms |
 | `GET` | `/api/catalog/forms/{key}` | Get Form |
 | `GET` | `/api/catalog/options/{source}` | Options |
 | `GET` | `/api/catalog/quota-preview` | Quota Preview |
 | `GET` | `/api/catalog/servicenow-diagnostics` | Servicenow Diagnostics |
-| `GET` | `/api/catalog/submissions` | List Submissions |
 | `POST` | `/api/catalog/submit/{key}` | Submit |
+
+## confluence
+
+| Method | Path | What it does |
+| --- | --- | --- |
+| `POST` | `/api/confluence/actions/page-append` | Page Append |
+| `POST` | `/api/confluence/actions/page-create` | Page Create |
 
 ## dashboards
 
 | Method | Path | What it does |
 | --- | --- | --- |
-| `GET` | `/api/dashboards/` | Get Dashboards |
-| `POST` | `/api/dashboards/` | Create Dashboard |
-| `GET` | `/api/dashboards/ado-items` | Get Ado Items |
-| `GET` | `/api/dashboards/default` | Get Default Dashboard |
-| `GET` | `/api/dashboards/snow-items` | Get Snow Items |
-| `GET` | `/api/dashboards/widget-types` | Get Widget Types |
-| `POST` | `/api/dashboards/widgets/sync` | Sync User Widgets |
-| `DELETE` | `/api/dashboards/{dashboard_id}` | Delete Dashboard |
-| `PUT` | `/api/dashboards/{dashboard_id}` | Update Dashboard |
+| `GET` | `/api/dashboard/ado-items` | Get Ado Items |
+| `GET` | `/api/dashboard/snow-items` | Get Snow Items |
+| `POST` | `/api/dashboard/widgets/sync` | Sync User Widgets |
+
+## devbot
+
+| Method | Path | What it does |
+| --- | --- | --- |
+| `POST` | `/api/adminbot/chat` | Chat |
+| `GET` | `/api/adminbot/conversations` | Conversations |
+| `DELETE` | `/api/adminbot/conversations/{conversation_id}` | Delete |
+| `GET` | `/api/adminbot/conversations/{conversation_id}` | Conversation |
+| `PATCH` | `/api/adminbot/conversations/{conversation_id}` | Rename |
+| `POST` | `/api/adminbot/conversations/{conversation_id}/actions/{action_id}` | Action Outcome |
+| `POST` | `/api/adminbot/conversations/{conversation_id}/actions/{action_id}/run` | Run Action |
+| `POST` | `/api/adminbot/models/check` | Check Model |
+| `GET` | `/api/adminbot/status` | Bot Status |
+| `GET` | `/api/devbot/admin/feedback` | Feedback |
+| `GET` | `/api/devbot/admin/overview` | Overview |
+| `GET` | `/api/devbot/admin/people` | People |
+| `POST` | `/api/devbot/chat` | Chat |
+| `GET` | `/api/devbot/conversations` | Conversations |
+| `DELETE` | `/api/devbot/conversations/{conversation_id}` | Delete |
+| `GET` | `/api/devbot/conversations/{conversation_id}` | Conversation |
+| `PATCH` | `/api/devbot/conversations/{conversation_id}` | Rename |
+| `POST` | `/api/devbot/conversations/{conversation_id}/actions/{action_id}` | Action Outcome |
+| `POST` | `/api/devbot/conversations/{conversation_id}/messages/{message_id}/feedback` | Feedback |
+| `GET` | `/api/devbot/index` | Index Status |
+| `POST` | `/api/devbot/index/build` | Build Now |
+| `GET` | `/api/devbot/index/fixes` | Past Fixes |
+| `POST` | `/api/devbot/index/fixes/hide` | Hide Fix |
+| `POST` | `/api/devbot/index/fixes/review` | Review Fix Again |
+| `POST` | `/api/devbot/index/models` | Embedding Models |
+| `PUT` | `/api/devbot/index/settings` | Save Settings |
+| `POST` | `/api/devbot/index/stop` | Stop Build |
+| `POST` | `/api/devbot/models/check` | Check Model |
+| `GET` | `/api/devbot/status` | Status |
+| `GET` | `/api/devbot/usage` | Usage |
 
 ## favorites
 
@@ -137,6 +186,20 @@ Authentication is the `auth_token` cookie (HS256 JWT) on every route except `/ap
 | `DELETE` | `/api/favorites` | Remove Favorite |
 | `GET` | `/api/favorites` | List Favorites |
 | `POST` | `/api/favorites` | Add Favorite |
+
+## gitlab
+
+| Method | Path | What it does |
+| --- | --- | --- |
+| `POST` | `/api/gitlab/actions/mr-approve` | Mr Approve |
+| `POST` | `/api/gitlab/actions/mr-comment` | Mr Comment |
+| `POST` | `/api/gitlab/actions/pipeline-retry` | Pipeline Retry |
+| `POST` | `/api/gitlab/actions/pipeline-run` | Pipeline Run |
+| `GET` | `/api/gitlab/actions/pipeline-variables` | Pipeline Variables |
+| `GET` | `/api/gitlab/groups` | Groups |
+| `GET` | `/api/gitlab/merge-requests` | Merge Requests |
+| `GET` | `/api/gitlab/pipelines` | Pipelines |
+| `GET` | `/api/gitlab/projects` | Projects |
 
 ## health
 
@@ -165,8 +228,12 @@ Authentication is the `auth_token` cookie (HS256 JWT) on every route except `/ap
 | `GET` | `/api/integrations/confluence/recent` | Confluence Recent |
 | `GET` | `/api/integrations/confluence/search` | Confluence Search |
 | `GET` | `/api/integrations/health` | Integrations Health |
-| `GET` | `/api/integrations/sonarqube/project-details` | Sonarqube Project Details |
+| `GET` | `/api/integrations/sonarqube/hotspots` | Sonarqube Hotspots |
+| `GET` | `/api/integrations/sonarqube/my-issues` | Sonarqube My Issues |
+| `GET` | `/api/integrations/sonarqube/overview` | Sonarqube Overview |
 | `GET` | `/api/integrations/sonarqube/projects` | Sonarqube Projects |
+| `GET` | `/api/integrations/sonarqube/pull-request-details` | Sonarqube Pull Request Details |
+| `GET` | `/api/integrations/sonarqube/pull-requests` | Sonarqube Pull Requests |
 | `DELETE` | `/api/integrations/{system}/pins` | Remove Pin |
 | `GET` | `/api/integrations/{system}/pins` | List Pins |
 | `POST` | `/api/integrations/{system}/pins` | Add Pin |
@@ -174,20 +241,14 @@ Authentication is the `auth_token` cookie (HS256 JWT) on every route except `/ap
 | `GET` | `/api/integrations/{system}/token` | Get Token Status |
 | `POST` | `/api/integrations/{system}/token` | Save Token |
 
-## metrics
-
-| Method | Path | What it does |
-| --- | --- | --- |
-| `GET` | `/api/metrics/approvals` | Get Approval Metrics |
-| `GET` | `/api/metrics/services` | Get Service Metrics |
-| `GET` | `/api/metrics/usage` | Get Usage Metrics |
-
 ## notifications
 
 | Method | Path | What it does |
 | --- | --- | --- |
 | `GET` | `/api/notifications` | List Notifications |
 | `POST` | `/api/notifications/read-all` | Mark All Read |
+| `GET` | `/api/notifications/sections` | Section News |
+| `POST` | `/api/notifications/sections/{section}/seen` | Section Seen |
 | `GET` | `/api/notifications/unread-count` | Unread Count |
 | `POST` | `/api/notifications/{notification_id}/read` | Mark Read |
 
@@ -197,6 +258,7 @@ Authentication is the `auth_token` cookie (HS256 JWT) on every route except `/ap
 | --- | --- | --- |
 | `GET` | `/api/observability/azure-projects` | List Azure Projects |
 | `DELETE` | `/api/observability/data` | Clear Observability Data |
+| `GET` | `/api/observability/requests` | List Requests |
 | `GET` | `/api/observability/self-services` | List Self Service Usage |
 | `GET` | `/api/observability/summary` | Get Observability Summary |
 | `GET` | `/api/observability/tickets` | List Portal Tickets |
@@ -238,6 +300,13 @@ Authentication is the `auth_token` cookie (HS256 JWT) on every route except `/ap
 | --- | --- | --- |
 | `GET` | `/api/search` | Search |
 
+## streaks
+
+| Method | Path | What it does |
+| --- | --- | --- |
+| `GET` | `/api/streaks/me` | My Streak |
+| `POST` | `/api/streaks/me/notice-seen` | Notice Seen |
+
 ## suggestions
 
 | Method | Path | What it does |
@@ -256,26 +325,19 @@ Authentication is the `auth_token` cookie (HS256 JWT) on every route except `/ap
 
 | Method | Path | What it does |
 | --- | --- | --- |
-| `GET` | `/api/support/stats` | Get Stats |
-| `GET` | `/api/support/status` | Get Status |
+| `GET` | `/api/support/ticket-form` | Ticket Form Diagnostics |
 | `GET` | `/api/support/tickets` | Get Tickets |
-| `POST` | `/api/support/tickets` | Create Ticket |
 | `POST` | `/api/support/tickets/create-flow` | Create Ticket Flow |
 | `POST` | `/api/support/tickets/reply` | Reply To Ticket |
 | `GET` | `/api/support/tickets/{sys_id}` | Get Ticket Detail |
 | `GET` | `/api/support/tickets/{sys_id}/attachments/{attachment_id}` | Get Attachment |
-
-## system-urls
-
-| Method | Path | What it does |
-| --- | --- | --- |
-| `GET` | `/api/system-urls` | Get System Urls |
 
 ## untagged
 
 | Method | Path | What it does |
 | --- | --- | --- |
 | `GET` | `/ui/` | Ui Index |
+| `GET` | `/ui/adminbot` | Ui Adminbot Page |
 | `GET` | `/ui/approvals` | Ui Approvals Page |
 | `GET` | `/ui/artifactory` | Ui Artifactory Page |
 | `GET` | `/ui/audit-logs` | Ui Audit Logs Page |
@@ -288,28 +350,35 @@ Authentication is the `auth_token` cookie (HS256 JWT) on every route except `/ap
 | `DELETE` | `/ui/azure-devops/pat` | Ui Delete Ado Pat |
 | `GET` | `/ui/azure-devops/pat` | Ui Get Ado Pat Status |
 | `POST` | `/ui/azure-devops/pat` | Ui Save Ado Pat |
+| `GET` | `/ui/changelog` | Ui Changelog Page |
 | `GET` | `/ui/components/artifactory-repos` | Ui Artifactory Repos Component |
 | `GET` | `/ui/components/artifactory-storage` | Ui Artifactory Storage Component |
 | `GET` | `/ui/components/azure-devops-tasks` | Ui Azure Devops Tasks Component |
-| `GET` | `/ui/components/banner` | Ui Banner Component |
 | `GET` | `/ui/components/confluence-pages` | Ui Confluence Pages Component |
+| `GET` | `/ui/components/gitlab-merge-requests` | Ui Gitlab Merge Requests Component |
+| `GET` | `/ui/components/gitlab-merge-requests-review` | Ui Gitlab Merge Requests Review Component |
+| `GET` | `/ui/components/gitlab-pipelines` | Ui Gitlab Pipelines Component |
 | `GET` | `/ui/components/pipelines` | Ui Pipelines Component |
 | `GET` | `/ui/components/pull-requests` | Ui Pull Requests Component |
 | `GET` | `/ui/components/pull-requests-review` | Ui Pull Requests Review Component |
 | `GET` | `/ui/components/quick-links` | Ui Quick Links Component |
 | `GET` | `/ui/components/recent-activity` | Ui Recent Activity Component |
 | `GET` | `/ui/components/servicenow-tickets` | Ui Servicenow Tickets Component |
-| `GET` | `/ui/components/sidebar` | Ui Sidebar Component |
+| `GET` | `/ui/components/sonarqube-gates` | Ui Sonarqube Gates Component |
+| `GET` | `/ui/components/sonarqube-hotspots` | Ui Sonarqube Hotspots Component |
+| `GET` | `/ui/components/sonarqube-my-issues` | Ui Sonarqube My Issues Component |
+| `GET` | `/ui/components/sonarqube-new-code` | Ui Sonarqube New Code Component |
+| `GET` | `/ui/components/sonarqube-pr-gates` | Ui Sonarqube Pr Gates Component |
 | `GET` | `/ui/components/sonarqube-projects` | Ui Sonarqube Projects Component |
 | `GET` | `/ui/confluence` | Ui Confluence Page |
 | `GET` | `/ui/connections` | Ui Connections Page |
 | `GET` | `/ui/dashboard/preferences` | Ui Dashboard Preferences |
 | `POST` | `/ui/dashboard/preferences` | Ui Dashboard Preferences Save |
-| `GET` | `/ui/grafana` | Ui Grafana Page |
-| `GET` | `/ui/internal-aws` | Ui Internal Aws Page |
+| `GET` | `/ui/devbot` | Ui Devbot Page |
+| `GET` | `/ui/devbot-monitor` | Ui Devbot Monitor Page |
+| `GET` | `/ui/gitlab` | Ui Gitlab Page |
 | `GET` | `/ui/my-requests` | Ui My Requests Page |
 | `GET` | `/ui/observability` | Ui Observability Page |
-| `GET` | `/ui/openshift` | Ui Openshift Page |
 | `GET` | `/ui/platform-managing` | Ui Platform Managing Page |
 | `GET` | `/ui/profile` | Ui Profile Page |
 | `POST` | `/ui/profile` | Ui Profile Update |
@@ -319,6 +388,16 @@ Authentication is the `auth_token` cookie (HS256 JWT) on every route except `/ap
 | `GET` | `/ui/sonarqube` | Ui Sonarqube Page |
 | `GET` | `/ui/suggestions` | Ui Suggestions Page |
 | `GET` | `/ui/support` | Ui Support Page |
+| `GET` | `/ui/users` | Ui Users Page |
+
+## usage
+
+| Method | Path | What it does |
+| --- | --- | --- |
+| `POST` | `/api/usage/heartbeat` | Heartbeat |
+| `GET` | `/api/usage/summary` | Usage Summary |
+| `GET` | `/api/usage/users` | Usage Users |
+| `GET` | `/api/usage/users/detail` | Usage User Detail |
 
 ## user-prefs
 
@@ -328,7 +407,6 @@ Authentication is the `auth_token` cookie (HS256 JWT) on every route except `/ap
 | `DELETE` | `/api/me/avatar` | Clear Avatar |
 | `POST` | `/api/me/avatar` | Set Avatar |
 | `PUT` | `/api/me/density` | Set Density |
-| `PUT` | `/api/me/display-name` | Set Display Name |
 | `PUT` | `/api/me/theme` | Set Theme |
 
 <!-- /GENERATED:API -->

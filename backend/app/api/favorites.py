@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 
 from db import execute, query_all
 from security import AuthUser, get_current_user
+from common import caller_email
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -43,16 +44,6 @@ class FavoriteRefBody(BaseModel):
     item_id: str = Field(..., min_length=1, max_length=255)
 
 
-def _caller_email(user: AuthUser) -> str:
-    email = (user.get("email") or "").strip().lower()
-    if not email:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User email missing from auth context",
-        )
-    return email
-
-
 def _validate_type(item_type: str) -> str:
     t = (item_type or "").strip().lower()
     if t not in ALLOWED_ITEM_TYPES:
@@ -68,7 +59,7 @@ def _validate_type(item_type: str) -> str:
 def list_favorites(
     current_user: AuthUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    email = _caller_email(current_user)
+    email = caller_email(current_user)
     try:
         rows = query_all(
             """
@@ -95,7 +86,7 @@ def add_favorite(
     body: FavoriteBody,
     current_user: AuthUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    email = _caller_email(current_user)
+    email = caller_email(current_user)
     item_type = _validate_type(body.item_type)
     item_id = body.item_id.strip()
     if not item_id:
@@ -124,7 +115,7 @@ def remove_favorite(
     body: FavoriteRefBody,
     current_user: AuthUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    email = _caller_email(current_user)
+    email = caller_email(current_user)
     item_type = _validate_type(body.item_type)
     item_id = body.item_id.strip()
     if not item_id:

@@ -88,10 +88,21 @@ stages:
         displayName: backend-build
         steps:
           - checkout: self
+          # Wheels in offline-deps/wheels/ that the internal index lacks are uploaded to it
+          # once; never fails the build, because both installs also read that folder.
+          - script: |
+              set -uo pipefail
+              python3 scripts/upload_wheels.py
+            displayName: Upload new wheels to the internal PyPI
+            env:
+              PIP_INDEX_URL: $(PIP_INDEX_URL)
+              PIP_TRUSTED_HOST: $(PIP_TRUSTED_HOST)
+              ARTIFACTORY_ADMIN_USERNAME: $(ARTIFACTORY_ADMIN_USERNAME)
+              ARTIFACTORY_ADMIN_TOKEN: $(ARTIFACTORY_ADMIN_TOKEN)
           - script: |
               set -euo pipefail
               python3 -m pip install --upgrade pip
-              python3 -m pip install -r backend/app/requirements.txt
+              python3 -m pip install --find-links offline-deps/wheels -r backend/app/requirements.txt
             displayName: pip install requirements
 
           # frontend/static/css/output.css is committed and shipped as-is — nothing
@@ -154,6 +165,18 @@ stages:
               set -euo pipefail
               python3 scripts/check_changelog.py
             displayName: Check the changelog
+
+          # Unused imports, private helpers nothing calls, functions copied between
+          # modules, and comments that narrate rounds instead of describing the code.
+          - script: |
+              set -euo pipefail
+              python3 scripts/check_code_hygiene.py
+            displayName: Check for dead and duplicated code
+
+          - script: |
+              set -euo pipefail
+              python3 scripts/check_security_rules.py
+            displayName: Check outbound calls, error messages and secrets
 
 
       - job: docker_build_and_push
@@ -390,6 +413,9 @@ stages:
                   "openshiftConsoleUrl": _clean("OPENSHIFT_CONSOLE_URL"),
                   "sonarqubeBaseUrl": os.environ.get("SONARQUBE_BASE_URL", ""),
                   "confluenceBaseUrl": os.environ.get("CONFLUENCE_BASE_URL", ""),
+                  # GitLab's web address. Optional: unset leaves the macro text, which
+                  # _clean() reads as empty, and the Hub says GitLab is not set up.
+                  "gitlabBaseUrl": _clean("GITLAB_BASE_URL"),
               }
 
               # Backups are enabled by the presence of a credential to take them
@@ -472,6 +498,13 @@ stages:
               # literal $(NAME) text, and that is not a hostname. An empty alias must
               # stay empty rather than becoming a rule with no host, which matches
               # EVERY hostname and hijacks the other environment.
+              # DevBot and AdminBot on or off: the values file decides unless the
+              # variable group sets HUB_AI_ENABLED ("true"/"false").
+              AI_ENABLED="$(HUB_AI_ENABLED)"
+              case "$AI_ENABLED" in
+                "$"*"("*) AI_ENABLED="" ;;
+              esac
+              echo "Assistants: ${AI_ENABLED:-as set in $(helmValuesFile)}"
               HOST_ALIAS="$(deployHostAlias)"
               case "$HOST_ALIAS" in
                 "$"*"("*) HOST_ALIAS="" ;;
@@ -516,6 +549,9 @@ stages:
                 ${HOST_ALIAS:+--set-string frontend.ingress.aliasHosts[0]="${HOST_ALIAS}"} \
                 --set-string global.integrationTlsVerify="false" \
                 --set-string global.artifactoryDiskTotal="$(ARTIFACTORY_DISK_TOTAL)" \
+                --set-string global.devbotLlmBaseUrl="$(DEVBOT_LLM_BASE_URL)" \
+                --set-string global.devbotDefaultModel="$(DEVBOT_DEFAULT_MODEL)" \
+                --set-string global.devbotKeyHelpUrl="$(DEVBOT_KEY_HELP_URL)"                 ${AI_ENABLED:+--set-string global.aiEnabled="${AI_ENABLED}"} \
                 | oc apply -n "$(OPENSHIFT_NAMESPACE)" -f -
             displayName: Deploy with Helm
             # ── DO NOT MOVE, AND DO NOT APPEND A STEP BETWEEN THIS AND THE SCRIPT ABOVE.
@@ -566,6 +602,7 @@ stages:
               OPENSHIFT_CONSOLE_URL: $(OPENSHIFT_CONSOLE_URL)
               SONARQUBE_BASE_URL: $(SONARQUBE_BASE_URL)
               CONFLUENCE_BASE_URL: $(CONFLUENCE_BASE_URL)
+              GITLAB_BASE_URL: $(GITLAB_BASE_URL)
 
           - script: |
               set -euo pipefail

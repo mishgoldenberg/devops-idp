@@ -53,21 +53,31 @@
 		opacity: 0.75;
 	}
 
+	/* A dot and a word, not a filled oval: a block of saturated colour on every card
+	   shouts the same volume whatever the status says, and the title stops being the
+	   loudest thing on its own card. The dot carries the colour, the word the meaning. */
 	.sugg-status {
-		display: inline-block;
-		padding: 0.1rem 0.5rem;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+		font-size: 0.7rem;
+		font-weight: 600;
+		white-space: nowrap;
+	}
+	.sugg-status::before {
+		content: "";
+		width: 0.45rem;
+		height: 0.45rem;
 		border-radius: 9999px;
-		font-size: 0.65rem;
-		font-weight: 700;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
+		background-color: currentColor;
+		flex: none;
 	}
 
-	.sugg-status[data-status="new"]         { background: hsl(var(--bc) / 0.12); color: hsl(var(--bc) / 0.75); }
-	.sugg-status[data-status="planned"]     { background: hsl(var(--in) / 0.18); color: hsl(var(--in)); }
-	.sugg-status[data-status="in_progress"] { background: hsl(var(--wa) / 0.2);  color: hsl(var(--wa)); }
-	.sugg-status[data-status="completed"]   { background: hsl(var(--su) / 0.2);  color: hsl(var(--su)); }
-	.sugg-status[data-status="declined"]    { background: hsl(var(--er) / 0.18); color: hsl(var(--er)); }
+	.sugg-status[data-status="new"]         { color: hsl(var(--bc) / 0.6); }
+	.sugg-status[data-status="planned"]     { color: hsl(var(--in)); }
+	.sugg-status[data-status="in_progress"] { color: hsl(var(--wa)); }
+	.sugg-status[data-status="completed"]   { color: hsl(var(--su)); }
+	.sugg-status[data-status="declined"]    { color: hsl(var(--er)); }
 
 	/* The admin's answer. Set apart deliberately: it is the portal speaking, not another
 	   user, and the difference should be visible before you read a word of it. */

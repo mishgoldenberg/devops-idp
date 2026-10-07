@@ -1,0 +1,165 @@
+{#
+	"Ask DevBot" on hover. Rest the pointer on a row of a widget for a moment and the
+	row lights up with an Ask DevBot chip on its top edge; clicking the chip opens
+	DevBot with a question about that row, which it asks at once (window.portalDevbot.ask).
+
+	From the keyboard: Tab onto anything in a row and the chip appears the same way;
+	Alt+A asks it (matched on the physical key, so it works in a Hebrew layout too).
+
+	A row takes part by carrying the question: data-devbot-ask, written by the widget
+	through window.portalDevbot.attr(question), which escapes it and writes nothing
+	when DevBot is not set up. The engine below knows no widget: a new widget joins by
+	adding that one attribute to its rows.
+
+	The chip is a quick way in, never the only one: the rows that matter most (a failed
+	run, a work item) keep their own Explain and Ask DevBot buttons, which work on touch.
+	Settings can switch the chip off (portal-devbot-hover). Included from banner.html
+	only where DevBot is set up.
+#}
+<style>
+	.devbot-hover-chip {
+		position: fixed;
+		z-index: 60;
+		display: none;
+		align-items: center;
+		gap: 0.35rem;
+		padding: 0.32rem 0.8rem 0.32rem 0.6rem;
+		border: 0;
+		border-radius: 999px;
+		background: hsl(var(--p));
+		color: hsl(var(--pc));
+		font-size: 0.8rem;
+		font-weight: 700;
+		line-height: 1.2;
+		white-space: nowrap;
+		cursor: pointer;
+		box-shadow: 0 6px 18px hsl(var(--p) / 0.45), 0 0 0 3px hsl(var(--b1));
+	}
+	.devbot-hover-chip[data-on] { display: inline-flex; animation: devbot-chip-in 180ms ease-out; }
+	.devbot-hover-chip:hover { filter: brightness(1.08); }
+	.devbot-hover-chip:focus-visible { outline: 2px solid hsl(var(--p)); outline-offset: 3px; }
+	.devbot-hover-chip svg { width: 0.95rem; height: 0.95rem; flex: none; }
+	.devbot-hover-chip kbd {
+		font: inherit;
+		font-size: 0.68rem;
+		font-weight: 600;
+		padding: 0 0.3rem;
+		border-radius: 0.25rem;
+		background: hsl(var(--pc) / 0.2);
+	}
+	/* The row the chip belongs to, so it is plain which one it will ask about. */
+	[data-devbot-armed] {
+		outline: 2px solid hsl(var(--p) / 0.6);
+		outline-offset: -1px;
+	}
+	/* From slightly smaller and lower to its place: the eye catches the movement. The
+	   end state is the element's own, so with no animation it is simply there. */
+	@keyframes devbot-chip-in {
+		from { transform: translateY(4px) scale(0.85); }
+		to { transform: none; }
+	}
+	:root[data-motion="reduced"] .devbot-hover-chip[data-on] { animation: none; }
+	@media (prefers-reduced-motion: reduce) {
+		.devbot-hover-chip[data-on] { animation: none; }
+	}
+</style>
+<script>
+	(function () {
+		// How long the pointer rests on a row before the chip appears: long enough that
+		// sweeping across the dashboard shows nothing, short enough to feel immediate.
+		var DWELL_MS = 600;
+		var OFF_KEY = "portal-devbot-hover";
+		var SPARKLE = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3.5Q13.1 10.9 20.5 12Q13.1 13.1 12 20.5Q10.9 13.1 3.5 12Q10.9 10.9 12 3.5Z"/></svg>';
+
+		function start() {
+			var pd = window.portalDevbot;
+			if (!pd || !pd.enabled) return;
+			var chip = document.createElement("button");
+			chip.type = "button";
+			chip.className = "devbot-hover-chip";
+			document.body.appendChild(chip);
+
+			var timer = 0;
+			var row = null; // the row the pointer (or the keyboard) is on now
+			var shown = null; // the row the chip belongs to
+
+			function off() {
+				try { return localStorage.getItem(OFF_KEY) === "off"; } catch (_) { return false; }
+			}
+			function hide() {
+				clearTimeout(timer);
+				timer = 0;
+				if (shown) shown.removeAttribute("data-devbot-armed");
+				shown = null;
+				chip.removeAttribute("data-on");
+			}
+			function show(el, byKeyboard) {
+				if (off() || !el.isConnected || document.querySelector("dialog[open]")) return;
+				if (shown && shown !== el) shown.removeAttribute("data-devbot-armed");
+				shown = el;
+				el.setAttribute("data-devbot-armed", "");
+				chip.innerHTML = SPARKLE + "<span>Ask DevBot</span>" + (byKeyboard ? "<kbd>Alt+A</kbd>" : "");
+				chip.title = el.getAttribute("data-devbot-ask");
+				chip.setAttribute("aria-label", "Ask DevBot: " + chip.title);
+				chip.style.visibility = "hidden";
+				chip.setAttribute("data-on", "");
+				var r = el.getBoundingClientRect();
+				var w = chip.offsetWidth;
+				var h = chip.offsetHeight;
+				// On the row's top edge at its right, so it covers none of the row's own
+				// buttons and reads as belonging to that row.
+				chip.style.left = Math.max(8, Math.min(window.innerWidth - w - 8, r.right - w - 10)) + "px";
+				chip.style.top = Math.max(4, r.top - h / 2) + "px";
+				chip.style.visibility = "";
+			}
+			function arm(el, byKeyboard) {
+				clearTimeout(timer);
+				if (shown && shown !== el) hide();
+				if (!el || shown === el) return;
+				timer = setTimeout(function () { if (row === el) show(el, byKeyboard); }, DWELL_MS);
+			}
+			function ask() {
+				var question = shown && shown.getAttribute("data-devbot-ask");
+				hide();
+				if (question) pd.ask(question);
+			}
+
+			document.addEventListener("pointerover", function (e) {
+				if (e.pointerType === "touch" || chip.contains(e.target)) return;
+				var el = e.target.closest ? e.target.closest("[data-devbot-ask]") : null;
+				if (el === row) return;
+				row = el;
+				arm(el, false);
+			});
+			document.addEventListener("focusin", function (e) {
+				if (e.target === chip || !e.target.matches || !e.target.matches(":focus-visible")) return;
+				var el = e.target.closest("[data-devbot-ask]");
+				if (el === row) return;
+				row = el;
+				arm(el, true);
+			});
+			// Pressing on a row means the person is doing something with it already.
+			document.addEventListener("pointerdown", function (e) {
+				if (!chip.contains(e.target)) hide();
+			});
+			document.documentElement.addEventListener("mouseleave", function () { row = null; hide(); });
+			// A chip on screen would drift off its row, so scrolling hides it; a chip still
+			// waiting to appear is left waiting, and placed where the row is when it does.
+			// (Tabbing onto a row scrolls its list, so cancelling here would make the
+			// keyboard never see a chip.)
+			window.addEventListener("scroll", function () { if (shown) hide(); }, true);
+			window.addEventListener("resize", hide);
+			document.addEventListener("keydown", function (e) {
+				if (e.key === "Escape") { hide(); return; }
+				if (shown && e.altKey && !e.ctrlKey && !e.metaKey && (e.code === "KeyA" || e.key === "a" || e.key === "A")) {
+					e.preventDefault();
+					ask();
+				}
+			});
+			chip.addEventListener("click", ask);
+		}
+
+		if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);
+		else start();
+	})();
+</script>

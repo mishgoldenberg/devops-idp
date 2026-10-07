@@ -23,6 +23,9 @@ redis:
 
 # --- REFACTORED GLOBAL BLOCK (Added for cross-chart communication) ---
 global:
+  # DevBot and AdminBot: "true" or "false" per environment (values-test/values-prod);
+  # the pipeline variable HUB_AI_ENABLED overrides it when set.
+  aiEnabled: "true"
   # This makes your image repo available to everyone
   customImage:
     repository: "your-registry.example.com/your-org/devops-hub"
@@ -59,6 +62,18 @@ global:
   # empty to have the widget report the capacity as unknown rather than guess.
   # Overridden per-environment from the pipeline (ARTIFACTORY_DISK_TOTAL).
   artifactoryDiskTotal: ""
+
+  # DevBot, the chat assistant. The AI model gateway's OpenAI-compatible base URL
+  # (ending in /v1) switches it on; empty leaves the DevBot page saying it is not set
+  # up. The default model is used when a person's key may use it. The help URL is where
+  # people create their own model key, linked from the key guide. All three come from
+  # the pipeline (DEVBOT_LLM_BASE_URL, DEVBOT_DEFAULT_MODEL, DEVBOT_KEY_HELP_URL).
+  devbotLlmBaseUrl: ""
+  devbotDefaultModel: ""
+  devbotKeyHelpUrl: ""
+  # "false" only if scripts/check_llm_endpoint.py reports "stream FAIL" for the models:
+  # answers then arrive whole instead of as they are written.
+  devbotStream: "true"
 
   # This makes DB connection details available to backend/frontend
   endpoints:

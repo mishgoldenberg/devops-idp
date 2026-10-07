@@ -12,7 +12,7 @@ API; it just means every request hits the upstream service directly.
 """
 
 import json
-from typing import Any, Callable, TypeVar
+from typing import Callable, TypeVar
 
 from redis_client import get_redis
 

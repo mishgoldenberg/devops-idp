@@ -43,6 +43,8 @@ spec:
         tier: backend
     spec:
       serviceAccountName: backend-sa{{ .Values.global.nameSuffix }}
+      # The backend never calls the cluster API, so its pod carries no API token.
+      automountServiceAccountToken: false
       containers:
         - name: {{ .Chart.Name }}{{ .Values.global.nameSuffix }}
           image: {{ .Values.global.customImage.repository }}/{{ .Chart.Name }}:{{ .Values.image.tag }}
@@ -172,6 +174,11 @@ spec:
                 secretKeyRef:
                   name: all-secrets{{ .Values.global.nameSuffix }}
                   key: CONFLUENCE_BASE_URL
+            - name: GITLAB_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: all-secrets{{ .Values.global.nameSuffix }}
+                  key: GITLAB_BASE_URL
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:

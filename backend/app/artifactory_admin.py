@@ -44,7 +44,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
-from resilient_http import tls_verify
+import resilient_http
+from common import failure_text
 
 log = logging.getLogger(__name__)
 
@@ -220,8 +221,7 @@ def _call(
     for shape in order:
         auth = httpx.BasicAuth(user, secret) if shape == "basic" else None
         try:
-            with httpx.Client(
-                verify=tls_verify(),
+            with resilient_http.Client(
                 auth=auth,
                 headers=_headers(shape, secret),
                 timeout=httpx.Timeout(timeout, connect=5.0),
@@ -231,7 +231,7 @@ def _call(
         except Exception as exc:
             log.warning("Artifactory %s: %s unreachable: %s", label, url, exc)
             raise ArtifactoryProbeError(
-                label, url, 0, f"{type(exc).__name__}: {exc}", user, ", ".join(order)
+                label, url, 0, failure_text("Artifactory", exc), user, ", ".join(order)
             ) from exc
 
         log.warning(
@@ -311,20 +311,14 @@ def parse_size(text: str) -> int:
 # ── Projects ─────────────────────────────────────────────────────────────────
 
 def _storage() -> Dict[str, Any]:
-    """One read of /api/storageinfo, giving both numbers it reports.
+    """One read of /api/storageinfo, giving both numbers it reports:
 
-    They are NOT the same number and the difference is not a rounding error:
+      * per repository (``usedSpaceInBytes``) is LOGICAL size -- what a project quota is
+        measured against;
+      * ``fileStoreSummary`` is PHYSICAL disk after de-duplication, so the logical total
+        is routinely larger. The two never share an axis.
 
-      * per repository (``usedSpaceInBytes``) is LOGICAL size -- what the repositories
-        contain. This is what a project quota is measured against, so it is the right
-        number for "how full is this project".
-      * ``fileStoreSummary`` is PHYSICAL disk, after de-duplication. Artifactory keeps
-        one copy of a binary however many repositories reference it, so the logical
-        total is routinely larger -- which is how an estate reported 7.2 TB "used" on
-        a 6 TB disk. Neither number was wrong; putting them on one axis was.
-
-    The filestore also knows the disk's real size, which is a better answer than a
-    configured one that nobody updates.
+    The filestore also knows the disk's real size.
     """
     payload = _probe(f"{_base()}/api/storageinfo", "storage usage") or {}
     repo_bytes: Dict[str, float] = {}

@@ -4,40 +4,40 @@ File: `backend/app/api/azure_devops.py` · Prefix: `/api/azure-devops`
 
 ## Purpose
 
-Everything related to Azure DevOps:
+Everything related to Azure DevOps that reads with the person's own token, plus the
+project provisioning an approved request runs:
 
-- Per-user PAT storage and "connect / disconnect your ADO account".
-- Read endpoints that power the ADO dashboard widgets
-  (`work items`, `pull requests`, `pipelines`).
-- `POST /projects/create` — the self-service entry point for creating a
-  new project (the row lives in `approval_requests`; this endpoint also
-  handles the direct-provisioning path when approvals aren't required).
+- Per-user PAT storage, encrypted at rest (`secrets_manager`), and its status.
+- The reads behind the Azure DevOps widgets and pickers.
+- `provision_ado_project`, which `approvals.py` calls to create an approved project
+  in the one collection the request names (no endpoint of its own).
 
-## Main endpoints (selected)
+## Main endpoints
 
-| Method | Path                                   | Description                                          |
-| ------ | -------------------------------------- | ---------------------------------------------------- |
-| GET    | `/api/azure-devops/pat`                | Is the current user's PAT configured?                |
-| POST   | `/api/azure-devops/pat`                | Store a user PAT (Vault or `system_config`)          |
-| DELETE | `/api/azure-devops/pat`                | Remove the stored PAT                                |
-| GET    | `/api/azure-devops/work-items`         | Work items assigned to the user (60 s cache)         |
-| GET    | `/api/azure-devops/pull-requests`      | Open PRs across accessible repos (60 s cache)        |
-| GET    | `/api/azure-devops/pipelines`          | Recent pipeline runs across projects (60 s cache)    |
-| GET    | `/api/azure-devops/projects`           | List of accessible projects                          |
-| POST   | `/api/azure-devops/projects/create`    | Create project + custom process (Safe-Mode aware)    |
-| GET    | `/api/azure-devops/projects/create/{job_id}` | Poll the Terraform-backed creation job         |
+| Method          | Path                                         | Description                                   |
+| --------------- | -------------------------------------------- | --------------------------------------------- |
+| GET, POST, DELETE | `/api/azure-devops/pat`                    | The person's PAT: status, save, remove        |
+| GET             | `/api/azure-devops/work-items`               | Work items assigned to the person             |
+| GET             | `/api/azure-devops/workitem-tasks`           | Child tasks of a work item                    |
+| GET             | `/api/azure-devops/work-item-types`, `/area-paths`, `/iterations` | Pickers for the work-items widget |
+| GET             | `/api/azure-devops/pull-requests`            | Open PRs across the person's repositories     |
+| GET             | `/api/azure-devops/pipelines`                | Recent pipeline runs                          |
+| GET             | `/api/azure-devops/projects`, `/repositories`, `/collections` | What the person can see     |
+| GET             | `/api/azure-devops/provisioning/collections` | Collections a project request may target      |
+| GET             | `/api/azure-devops/provisioning/name-check`  | Is a project name free there (admin PAT)      |
+
+Writes made in the person's name (votes, comments, pipeline runs, work-item edits)
+are in `ado_actions.py`, under `/api/azure-devops/actions`.
 
 ## External APIs used
 
-- `GET {base}/_apis/projects` — list projects.
-- `POST {base}/_apis/wit/wiql` + `GET {base}/_apis/wit/workitems` — work
-  items.
+- `GET {base}/_apis/projects` — projects.
+- `POST {base}/_apis/wit/wiql` + `GET {base}/_apis/wit/workitems` — work items.
 - `GET {base}/{project}/_apis/git/repositories` + per-repo PR endpoints.
 - `GET {base}/{project}/_apis/build/builds` — pipelines.
-- `GET/POST {base}/_apis/work/processes` — custom inherited process used
-  by self-service.
-- `GET {base}/_apis/graph/users` — resolve admin user to add on project
-  creation.
+- `GET/POST {base}/_apis/work/processes` — the inherited process a new project uses.
+- The web UI's `/_api/_identity/` endpoints and `_apis/accesscontrollists` — resolve
+  the requested admin and grant them (`_apis/graph` is not routed on this server).
 
 Authentication is PAT + HTTP Basic (`httpx.BasicAuth("", pat)`).
 
@@ -49,28 +49,23 @@ Authentication is PAT + HTTP Basic (`httpx.BasicAuth("", pat)`).
 - Heavy fan-out endpoints (`pull-requests`, `pipelines`) use a
   `ThreadPoolExecutor` so per-project and per-repo requests happen
   concurrently instead of serially.
-- On successful `projects/create`, `invalidate_owner("ado", owner)`
-  drops every cached ADO read for that user so the new project shows up
-  immediately.
+- After a project is provisioned, `invalidate_owner("ado", owner)` drops every
+  cached Azure DevOps read for that person, so the new project shows at once.
 
 ## Environment variables
 
-- `AZURE_DEVOPS_BASE_URL` — Azure DevOps organization URL.
+- `AZURE_DEVOPS_BASE_URL` — one collection's URL; the others are discovered from it.
 - `AZURE_DEVOPS_ADMIN_PAT` — PAT with project/process permissions used by
   self-service write actions.
 
 ## Failure handling
 
-- Each outbound call is wrapped by `resilient_http.safe_integration`,
-  which normalizes transport errors (timeouts, DNS failures, 5xx) to
-  `HTTPException(502)` with `"Service temporarily unavailable"`.
-- Widget endpoints use `resilient_http.safe_call` where partial results
-  are preferred over failing the whole page.
-- 401 from ADO (expired PAT) is forwarded as a structured 401 so the UI
-  can prompt the user to reconnect.
+- A transport failure becomes a 502 whose detail says what went wrong and who can
+  fix it (`resilient_http.explain_integration_failure`).
+- A rejected personal token is answered as 424 (never 401, which the Hub would read
+  as its own session ending), with a detail that says to reconnect it.
 
 ## Safe Mode
 
-`POST /projects/create` checks `safe_mode.is_enabled()` first. If on, it
-returns a fake job ID and records an audit event with
-`metadata.safe_mode=true` — no ADO API call happens.
+With Safe Mode on, the approval executor returns a simulated success and nothing is
+sent to Azure DevOps.

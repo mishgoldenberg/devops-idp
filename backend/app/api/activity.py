@@ -16,19 +16,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from activity import clear_for_user, recent_for_user
 from security import AuthUser, get_current_user
+from common import caller_email
 
 log = logging.getLogger(__name__)
 router = APIRouter()
-
-
-def _caller_email(user: AuthUser) -> str:
-    email = (user.get("email") or "").strip().lower()
-    if not email:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User email missing from auth context",
-        )
-    return email
 
 
 @router.get("")
@@ -41,7 +32,7 @@ def list_activity(
     first. Shape mirrors the rest of the portal's JSON APIs so the widget
     can reuse the same response handling.
     """
-    email = _caller_email(current_user)
+    email = caller_email(current_user)
     rows = recent_for_user(email, limit=limit)
     return {"success": True, "data": rows}
 
@@ -58,7 +49,7 @@ def clear_activity(
     caller's email comes from the auth token and is never accepted from the
     request — that is what stops this becoming a way to wipe someone else's feed.
     """
-    email = _caller_email(current_user)
+    email = caller_email(current_user)
     try:
         removed = clear_for_user(email)
     except HTTPException:

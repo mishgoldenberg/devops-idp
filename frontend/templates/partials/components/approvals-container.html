@@ -1,8 +1,16 @@
+<style>
+	/* Waiting past the usual time, and a requester's rating: a dot and words. */
+	.appr-late { display: inline-flex; align-items: center; gap: 0.4rem; color: hsl(var(--wa)); font-weight: 600; }
+	.appr-late::before { content: ""; width: 0.45rem; height: 0.45rem; border-radius: 9999px; background: currentColor; flex: none; }
+	.appr-stars { color: hsl(var(--wa)); letter-spacing: 0.05em; }
+</style>
 <div class="page-shell">
 	<header class="page-header">
 		<div>
 			<h1 class="page-title">Approvals</h1>
 			<p class="page-subtitle">Review and act on self-service requests</p>
+			{# How long things wait and how requesters rated them, from /requests-summary. #}
+			<p class="text-xs text-base-content/60 mt-1" data-approvals-summary></p>
 		</div>
 		<div class="flex items-center gap-2">
 			{#
@@ -143,6 +151,8 @@
 							<span><span class="font-medium text-base-content/80">Requested by:</span> ${escapeHtml(requester)}</span>
 							<span><span class="font-medium text-base-content/80">Created:</span> ${fmtDate(r.created_at)}</span>
 							${summary ? `<span class="line-clamp-1">${escapeHtml(summary)}</span>` : ""}
+							${r.overdue ? `<span class="appr-late">Waiting ${r.waiting_days} days (usual: ${r.sla_days})</span>` : ""}
+							${r.rating ? `<span>Rated <span class="appr-stars" aria-label="${r.rating} of 5">${"★".repeat(r.rating)}${"☆".repeat(5 - r.rating)}</span></span>` : ""}
 						</div>
 						<div class="text-xs text-base-content/40 mt-1">${escapeHtml(r.request_type || "")}</div>
 					</div>
@@ -163,7 +173,29 @@
 			return rows.filter((r) => ["COMPLETED", "EXECUTED", "FAILED", "REJECTED"].includes(r.status));
 		}
 
+		// One line under the heading: what is waiting, what has waited too long, and how
+		// requesters rated the last 90 days. Best-effort; the list works without it.
+		async function loadSummary() {
+			const el = document.querySelector("[data-approvals-summary]");
+			if (!el) return;
+			try {
+				const res = await fetch("/api/approvals/requests-summary", { credentials: "same-origin" });
+				if (!res.ok) throw new Error("HTTP " + res.status);
+				const d = (await res.json()).data || {};
+				const parts = [(d.pending || 0) + " waiting for a decision"];
+				if (d.overdue) parts.push(d.overdue + " for longer than " + d.sla_days + " days");
+				const rt = d.ratings || {};
+				parts.push(rt.count
+					? "rated " + rt.average + " of 5 by requesters (" + rt.count + " in 90 days" + (rt.low ? ", " + rt.low + " low" : "") + ")"
+					: "no ratings yet");
+				el.textContent = parts.join(" · ");
+			} catch (_) {
+				el.textContent = "";
+			}
+		}
+
 		async function load() {
+			loadSummary();
 			showStatus("Loading requests…", false);
 			try {
 				const res = await fetch("/api/approvals/requests?scope=all", { credentials: "same-origin" });
@@ -448,6 +480,12 @@
 							<dt class="text-base-content/60">Approved at</dt>
 							<dd>${fmtDate(r.approved_at)}</dd>
 						` : ""}
+						${r.overdue ? `
+							<dt class="text-base-content/60">Waiting</dt>
+							<dd><span class="appr-late">${r.waiting_days} days, longer than the usual ${r.sla_days}</span></dd>` : ""}
+						${r.rating ? `
+							<dt class="text-base-content/60">Requester's rating</dt>
+							<dd><span class="appr-stars">${"★".repeat(r.rating)}${"☆".repeat(5 - r.rating)}</span>${r.rating_comment ? ` <span dir="auto">“${escapeHtml(r.rating_comment)}”</span>` : ""}</dd>` : ""}
 						${r.rejection_reason ? `
 							<dt class="text-base-content/60">Rejection reason</dt>
 							<dd class="text-error">${escapeHtml(r.rejection_reason)}</dd>

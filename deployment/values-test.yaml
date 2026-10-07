@@ -10,6 +10,8 @@
 
 global:
   nameSuffix: "-test"
+  # The assistants run here, where they are being reviewed.
+  aiEnabled: "true"
 
   # One of each. Test does not need to survive a node drain, and halving the pod
   # count keeps the second environment cheap. Note the PodDisruptionBudgets are

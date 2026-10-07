@@ -20,18 +20,21 @@ import base64
 import binascii
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 import artifactory_admin
 import artifactory_cleaner
 import catalog_forms
 import cleaner_store
+import identity
 import snow_catalog
 from db import execute_returning, query_all
 from request_types import CLEANER_REQUEST_TYPES
+from common import failure_text, safe_attachment
+from resilient_http import explain_integration_failure
 from security import AuthUser, get_current_user, has_effective_admin_access_live
 
 log = logging.getLogger(__name__)
@@ -212,7 +215,7 @@ def options(
         return {
             "success": True,
             "data": [],
-            "unavailable": f"Artifactory could not be read: {type(exc).__name__}: {exc}",
+            "unavailable": failure_text("Artifactory", exc),
         }
 
     return {"success": True, "data": data, "note": note, "unavailable": empty_reason}
@@ -468,7 +471,7 @@ def servicenow_diagnostics(current_user: AuthUser = Depends(get_current_user)) -
             entry["sys_id"] = snow_catalog.resolve_item(name, env_var)
             entry["ok"] = bool(entry["sys_id"])
         except Exception as exc:
-            entry["detail"] = f"{type(exc).__name__}: {exc}"
+            entry["detail"] = failure_text("ServiceNow", exc)
         if entry["ok"]:
             try:
                 specs = snow_catalog.item_variables(entry["sys_id"])
@@ -514,18 +517,12 @@ def servicenow_diagnostics(current_user: AuthUser = Depends(get_current_user)) -
                 # variables had just failed to read -- the single sentence an admin
                 # relies on, saying the opposite of what happened.
                 entry["ok"] = False
-                entry["detail"] = f"variables unreadable: {type(exc).__name__}: {exc}"
+                entry["detail"] = "variables unreadable: " + failure_text("ServiceNow", exc)
         seen[key] = entry
         items.append(entry)
 
-    # What actually happened the last few times, which beats any probe. Every attempt
-    # already stores its own reason here; nothing has ever shown it, so a request that
-    # quietly reached no queue looked exactly like one that did.
-    #
-    # Bounded two ways, because unbounded it becomes a permanent accusation. It was
-    # reporting five failures from a form that no longer orders anything at all, in
-    # wording from a version of the code that had since been replaced -- so the strip
-    # went on describing a fixed problem with no way for anybody to make it stop.
+    # What actually happened the last few times, which beats any probe -- bounded by age
+    # and by whether the form still orders anything, so a fixed problem stops showing.
     ordering_kinds = sorted(
         spec["key"] for spec in catalog_forms.all_forms() if spec.get("snow_item")
     )
@@ -593,7 +590,8 @@ def servicenow_diagnostics(current_user: AuthUser = Depends(get_current_user)) -
 
 # ── Submitting ───────────────────────────────────────────────────────────────
 
-def _decode(attachment: Attachment) -> bytes:
+def _decode(attachment: Attachment) -> tuple:
+    """(file name, media type, bytes) of one attachment, checked by common.safe_attachment."""
     raw = attachment.data_base64 or ""
     # A browser FileReader hands back a data: URL; keep only the payload.
     if "," in raw and raw.strip().startswith("data:"):
@@ -602,12 +600,11 @@ def _decode(attachment: Attachment) -> bytes:
         blob = base64.b64decode(raw, validate=False)
     except (binascii.Error, ValueError):
         raise HTTPException(status_code=400, detail=f"'{attachment.filename}' could not be read.")
-    if len(blob) > _MAX_ATTACHMENT_BYTES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"'{attachment.filename}' is larger than 5 MB.",
-        )
-    return blob
+    try:
+        name, media_type = safe_attachment(attachment.filename, blob, _MAX_ATTACHMENT_BYTES)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return name, media_type, blob
 
 
 @router.post("/submit/{key}")
@@ -634,6 +631,7 @@ def submit(
     if errors:
         first = next(iter(errors.values()))
         raise HTTPException(status_code=400, detail=first)
+    files = [_decode(a) for a in body.attachments or [] if a.data_base64]
 
     # Any failure below is reported WITH its reason. Letting it reach the app's
     # global handler turns every one of them into "Something went wrong. Please try
@@ -642,14 +640,14 @@ def submit(
     try:
         if spec.get("request_type"):
             return _submit_as_approval(spec, answers, current_user)
-        return _submit_to_servicenow(spec, answers, body.attachments or [], current_user)
+        return _submit_to_servicenow(spec, answers, files, current_user)
     except HTTPException:
         raise
     except Exception as exc:
         log.exception("catalog submit %s failed", key)
         raise HTTPException(
             status_code=500,
-            detail=f"The request could not be submitted: {type(exc).__name__}: {exc}",
+            detail="The request could not be submitted. Try again; if it keeps failing, an admin can see why on the Logs page.",
         ) from exc
 
 
@@ -677,6 +675,12 @@ def _submit_as_approval(
         for section in spec["sections"] if section.get("key") == "requester"
         for field in section.get("fields") or []
     }
+    # The name is the identity provider's, whatever the browser sent: this is what a
+    # ticket for the request will carry, and a display name can be anything.
+    if "full_name" in payload["requester_details"]:
+        payload["requester_details"]["full_name"] = identity.trusted_name(
+            user_id=str(current_user.get("id") or ""), email=str(current_user.get("email") or ""),
+        )
 
     result = create_request(
         CreateApprovalRequest(request_type=request_type, request_title=title, request_payload=payload),
@@ -717,6 +721,10 @@ def order_catalog_item(
         return {"number": "", "error": "", "skipped": True}
 
     payload = dict(fields)
+    # Whatever was stored with the request, the item carries the identity provider's
+    # name for its requester: a display name can be changed to anything at all.
+    if "full_name" in payload:
+        payload["full_name"] = identity.trusted_name(user_id=str(requester_id or ""), email=str(requester_email or ""))
 
     number = sys_id = error = ""
     try:
@@ -728,8 +736,7 @@ def order_catalog_item(
         number = ordered.get("number") or ""
         sys_id = ordered.get("ritm_sys_id") or ordered.get("request_sys_id") or ""
     except Exception as exc:
-        error = f"{type(exc).__name__}: {exc}"
-        log.warning("catalog item %r not ordered: %s", spec.get("snow_item"), error)
+        error = failure_text("ServiceNow", exc)
 
     try:
         execute_returning(
@@ -901,7 +908,7 @@ def quota_preview(
         chosen = artifactory_admin.project(project) if project else None
     except Exception as exc:
         log.warning("quota preview failed: %s: %s", type(exc).__name__, exc)
-        raise HTTPException(status_code=502, detail=f"Artifactory did not answer ({type(exc).__name__}).")
+        raise HTTPException(status_code=502, detail=explain_integration_failure("Artifactory", exc))
 
     added = 0
     if add:
@@ -1056,7 +1063,7 @@ def edit_cleaner(
 def _submit_to_servicenow(
     spec: Dict[str, Any],
     answers: Dict[str, Any],
-    attachments: List[Attachment],
+    files: List[tuple],
     current_user: AuthUser,
 ) -> Dict[str, Any]:
     """Record it here, then order the catalog item.
@@ -1099,18 +1106,12 @@ def _submit_to_servicenow(
         sys_id = result.get("ritm_sys_id") or result.get("request_sys_id") or ""
         unmapped_fields = list(result.get("unmapped_fields") or [])
         target_table = "sc_req_item" if result.get("ritm_sys_id") else "sc_request"
-        for attachment in attachments:
-            if not attachment.data_base64 or not sys_id:
-                continue
-            snow_catalog.attach(
-                sys_id, target_table,
-                attachment.filename, attachment.content_type, _decode(attachment),
-            )
+        for name, media_type, blob in files if sys_id else []:
+            snow_catalog.attach(sys_id, target_table, name, media_type, blob)
     except HTTPException:
         raise
     except Exception as exc:
-        snow_error = f"{type(exc).__name__}: {exc}"
-        log.warning("catalog submission %s did not reach ServiceNow: %s", submission_id, snow_error)
+        snow_error = failure_text("ServiceNow", exc)
 
     execute_returning(
         """
@@ -1141,35 +1142,3 @@ def _submit_to_servicenow(
 
 # ── Reading them back ────────────────────────────────────────────────────────
 
-@router.get("/submissions")
-def list_submissions(
-    kind: Optional[str] = None,
-    current_user: AuthUser = Depends(get_current_user),
-) -> Dict[str, Any]:
-    """Your own submissions, or everybody's for a platform admin.
-
-    Filtered in the query, never in the template: this is the only place that decides
-    whose answers a caller can read.
-    """
-    is_admin = has_effective_admin_access_live(current_user)
-    clauses = []
-    params: List[Any] = []
-    if not is_admin:
-        clauses.append("requester_id = %s")
-        params.append(str(current_user["id"]))
-    if kind:
-        clauses.append("kind = %s")
-        params.append(kind)
-    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-
-    rows = query_all(
-        f"""
-        SELECT id, kind, requester_email, title, answers, snow_number, snow_error, created_at
-          FROM catalog_submissions
-          {where}
-         ORDER BY created_at DESC
-         LIMIT 200
-        """,
-        params,
-    )
-    return {"success": True, "data": rows or [], "is_admin": is_admin}

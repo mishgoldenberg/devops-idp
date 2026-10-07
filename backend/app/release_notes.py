@@ -1,27 +1,10 @@
 """
-When each release actually arrived, per environment.
+When each release arrived, per environment.
 
-WHAT CHANGED HERE AND WHY
--------------------------
-This module used to BE the changelog: it read the commits baked into the image,
-worked out which were new, and derived both the version and the text from them. The
-text that came out was a list of commit subjects, which is a document written for
-whoever reviews the diff and not for anybody using the portal.
-
-So the writing moved to `changelog.py`, where a person writes it and chooses the
-version. What is left here is the half a person cannot write: WHEN a version reached
-THIS environment. The image knows what it is (`changelog.version()`); only the
-database knows that test got 1.3.0 on Monday and production got it on Thursday.
-
-That is why the row is still written at start-up and still keyed on the environment.
-It is a deployment record, not a changelog -- one row the first time a version is
-seen here, and nothing at all on a restart, a scale-up or a rollback.
-
-TEST AND PRODUCTION
--------------------
-Versioned separately, keyed on the environment name, because they are deployed from
-different branches at different times. A single counter would have production
-announcing a version it does not have.
+The changelog's text and version live in `changelog.py`. This records the half a person
+cannot write: WHEN a version reached THIS environment -- one row the first time a version
+is seen here, keyed on the environment (test and production are deployed from different
+branches at different times), and nothing on a restart, a scale-up or a rollback.
 """
 
 from __future__ import annotations
@@ -32,7 +15,10 @@ import os
 import pathlib
 from typing import Any, Dict, List, Optional
 
-from db import execute, query_all, query_one
+# How long the announcement a new version posts stays up.
+ANNOUNCE_DAYS = 2
+
+from db import execute, execute_returning, query_all, query_one
 
 log = logging.getLogger(__name__)
 
@@ -113,20 +99,56 @@ def record_current_deploy() -> Optional[Dict[str, Any]]:
             log.warning("release %s is already recorded for %s", version, env)
             return None
 
-        execute(
+        # RETURNING says whether THIS pod's insert is the one that landed: every pod of
+        # a rollout runs this, and only one of them may post the announcement.
+        inserted = execute_returning(
             """
             INSERT INTO release_notes (environment, version, build_id, branch, commit_sha)
             VALUES (%s, %s, %s, %s, %s)
             ON CONFLICT (environment, version) DO NOTHING
+            RETURNING id
             """,
             [env, version, str(info.get("build_id") or ""),
              str(info.get("branch") or ""), str(info.get("commit_sha") or "")],
         )
+        if not inserted:
+            return None
         log.warning("release %s recorded for %s (build %s, branch %s)",
                     version, env, info.get("build_id") or "?", info.get("branch") or "?")
+        announce_release(changelog.current())
         return latest(env)
     except Exception as exc:
         log.warning("release not recorded: %s: %s", type(exc).__name__, exc)
+        return None
+
+
+def announce_release(entry: Dict[str, Any]) -> Optional[int]:
+    """Post "what's new in <version>" on the billboard for ANNOUNCE_DAYS. Never raises.
+
+    Called once per version per environment, by the pod whose deployment record
+    landed. A release with only the generic line changed nothing anyone can see,
+    so it posts nothing; the What's New page still lists it."""
+    import changelog
+
+    try:
+        if not entry or changelog.is_generic(entry):
+            return None
+        version = str(entry.get("version") or "")
+        rows = execute_returning(
+            """
+            INSERT INTO announcements
+                (title, body, kind, link_url, link_label, starts_at, ends_at, created_by)
+            VALUES (%s, %s, 'success', '/ui/changelog', %s,
+                    NOW(), NOW() + make_interval(days => %s), 'DevOps Hub')
+            RETURNING id
+            """,
+            [f"New in version {version}", changelog.teaser(entry),
+             "See what's new", ANNOUNCE_DAYS],
+        )
+        log.warning("release %s announced for %s days", version, ANNOUNCE_DAYS)
+        return int(rows[0]["id"]) if rows else None
+    except Exception as exc:
+        log.warning("release not announced: %s: %s", type(exc).__name__, exc)
         return None
 
 

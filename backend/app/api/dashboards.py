@@ -2,27 +2,17 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
-from pydantic import BaseModel
-from uuid import uuid4
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 import db
-from db import query_all, query_one, execute_returning, execute
 from security import AuthUser, get_current_user
+from widget_registry import ALL_KEYS as _ALLOWED_WIDGET_KEYS
 from .notifications import notify_once
 from .pins import load_pin_index, load_seen_index
-
+from common import now_iso
 
 log = logging.getLogger(__name__)
-
-
 router = APIRouter()
-
-
-# Stable set of widget keys that may appear on the home dashboard. This used to be
-# a second hand-written copy of the list, annotated "kept in-sync with ui.py" — which
-# is a comment asking a human to do what an import does reliably.
-from widget_registry import ALL_KEYS as _ALLOWED_WIDGET_KEYS  # noqa: E402
 
 
 @router.post("/widgets/sync")
@@ -56,247 +46,24 @@ def sync_user_widgets(
 
     try:
         db.ensure_observability_tables_once()
-        execute("DELETE FROM user_widgets WHERE user_id = %s", [user_id])
-        for key in keys:
-            execute(
-                """
-                INSERT INTO user_widgets (user_id, widget_key, session_id, created_at)
-                VALUES (%s, %s, %s, NOW())
-                ON CONFLICT (user_id, widget_key) DO NOTHING
-                """,
-                [user_id, key, session_id],
-            )
+        # One transaction, two statements. It was a DELETE and then an INSERT per widget,
+        # each its own round trip and commit (600 ms for sixteen widgets), and a reader
+        # between them saw this person with no widgets at all.
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM user_widgets WHERE user_id = %s", [user_id])
+                if keys:
+                    cur.execute(
+                        """
+                        INSERT INTO user_widgets (user_id, widget_key, session_id, created_at)
+                        SELECT %s, k, %s, NOW() FROM unnest(%s::text[]) AS k
+                        ON CONFLICT (user_id, widget_key) DO NOTHING
+                        """,
+                        [user_id, session_id, list(dict.fromkeys(keys))],
+                    )
     except Exception:
-        pass
+        log.warning("dashboard: widget list not synced for %s", user_id, exc_info=True)
     return {"success": True, "data": {"widgets": keys}}
-
-
-class DashboardUpdateRequest(BaseModel):
-    name: Optional[str] = None
-    layout: Optional[List[Dict[str, Any]]] = None
-    widgets: Optional[List[Dict[str, Any]]] = None
-
-
-class DashboardCreateRequest(BaseModel):
-    name: Optional[str] = None
-    layout: Optional[List[Dict[str, Any]]] = None
-    widgets: Optional[List[Dict[str, Any]]] = None
-
-
-@router.get("/")
-def get_dashboards(current_user: AuthUser = Depends(get_current_user)):
-    rows = query_all(
-        """
-        SELECT id, user_id, name, is_default, layout, widgets, created_at, updated_at
-        FROM dashboards
-        WHERE user_id = %s
-        ORDER BY is_default DESC, name ASC
-        """,
-        [current_user["id"]],
-    )
-    return {
-        "success": True,
-        "data": rows,
-        "timestamp": _now_iso(),
-    }
-
-
-@router.get("/default")
-def get_default_dashboard(current_user: AuthUser = Depends(get_current_user)):
-    dashboard = query_one(
-        """
-        SELECT id, user_id, name, is_default, layout, widgets, created_at, updated_at
-        FROM dashboards
-        WHERE user_id = %s AND is_default = true
-        LIMIT 1
-        """,
-        [current_user["id"]],
-    )
-    if not dashboard:
-        dashboard = _create_default_dashboard(current_user["id"], int(current_user["hierarchy_level"]))
-    return {
-        "success": True,
-        "data": dashboard,
-        "timestamp": _now_iso(),
-    }
-
-
-@router.put("/{dashboard_id}")
-def update_dashboard(
-    dashboard_id: str = Path(..., alias="id"),
-    body: DashboardUpdateRequest = None,
-    current_user: AuthUser = Depends(get_current_user),
-):
-    if body is None:
-        body = DashboardUpdateRequest()
-
-    rows = execute_returning(
-        """
-        UPDATE dashboards
-        SET name = COALESCE(%s, name),
-            layout = COALESCE(%s, layout),
-            widgets = COALESCE(%s, widgets),
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = %s AND user_id = %s
-        RETURNING *
-        """,
-        [
-            body.name,
-            body.layout,
-            body.widgets,
-            dashboard_id,
-            current_user["id"],
-        ],
-    )
-    if not rows:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Dashboard not found",
-        )
-
-    return {
-        "success": True,
-        "data": rows[0],
-        "timestamp": _now_iso(),
-    }
-
-
-@router.post("/")
-def create_dashboard(
-    body: DashboardCreateRequest,
-    current_user: AuthUser = Depends(get_current_user),
-):
-    rows = execute_returning(
-        """
-        INSERT INTO dashboards (user_id, name, layout, widgets)
-        VALUES (%s, %s, %s, %s)
-        RETURNING *
-        """,
-        [
-            current_user["id"],
-            body.name or "New Dashboard",
-            body.layout or [],
-            body.widgets or [],
-        ],
-    )
-    if not rows:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create dashboard")
-    return {
-        "success": True,
-        "data": rows[0],
-        "timestamp": _now_iso(),
-    }
-
-
-@router.delete("/{dashboard_id}")
-def delete_dashboard(
-    dashboard_id: str = Path(..., alias="id"),
-    current_user: AuthUser = Depends(get_current_user),
-):
-    rows = execute_returning(
-        """
-        DELETE FROM dashboards
-        WHERE id = %s AND user_id = %s AND is_default = false
-        RETURNING id
-        """,
-        [dashboard_id, current_user["id"]],
-    )
-    if not rows:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Dashboard not found or cannot delete default dashboard",
-        )
-
-    return {
-        "success": True,
-        "message": "Dashboard deleted successfully",
-        "timestamp": _now_iso(),
-    }
-
-
-@router.get("/widget-types")
-def get_widget_types(current_user: AuthUser = Depends(get_current_user)):
-    widgets = query_all(
-        """
-        SELECT id, widget_key, name, description, category, min_role_level, default_config, icon
-        FROM widget_types
-        WHERE min_role_level >= %s
-        ORDER BY category, name
-        """,
-        [int(current_user["hierarchy_level"])],
-    )
-    return {
-        "success": True,
-        "data": widgets,
-        "timestamp": _now_iso(),
-    }
-
-
-def _create_default_dashboard(user_id: str, role_level: int) -> Dict[str, Any]:
-    default_widgets = _get_default_widgets_for_role(role_level)
-    default_layout = _generate_default_layout(len(default_widgets))
-    rows = execute_returning(
-        """
-        INSERT INTO dashboards (user_id, name, is_default, layout, widgets)
-        VALUES (%s, %s, true, %s, %s)
-        RETURNING *
-        """,
-        [user_id, "My Dashboard", default_layout, default_widgets],
-    )
-    if not rows:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create default dashboard")
-    return rows[0]
-
-
-def _get_default_widgets_for_role(role_level: int) -> List[Dict[str, Any]]:
-    common_widgets = [
-        {"id": str(uuid4()), "widget_key": "ado_my_work_items", "config": {}},
-        {"id": str(uuid4()), "widget_key": "ado_my_pull_requests", "config": {}},
-        {"id": str(uuid4()), "widget_key": "sonar_projects", "config": {}},
-        {"id": str(uuid4()), "widget_key": "artifactory_repos", "config": {}},
-        {"id": str(uuid4()), "widget_key": "snow_my_tickets", "config": {}},
-    ]
-
-    if role_level <= 3:
-        return [
-            *common_widgets,
-            {"id": str(uuid4()), "widget_key": "executive_branch_dashboard", "config": {}},
-            {"id": str(uuid4()), "widget_key": "executive_deployment_frequency", "config": {}},
-        ]
-    if role_level <= 6:
-        return [
-            *common_widgets,
-            {"id": str(uuid4()), "widget_key": "ado_sprint_progress", "config": {}},
-            {"id": str(uuid4()), "widget_key": "snow_team_tickets", "config": {}},
-        ]
-    return common_widgets
-
-
-def _generate_default_layout(widget_count: int) -> List[Dict[str, Any]]:
-    layout: List[Dict[str, Any]] = []
-    x = 0
-    y = 0
-    for i in range(widget_count):
-        layout.append(
-            {
-                "i": str(i),
-                "x": x * 6,
-                "y": y * 4,
-                "w": 6,
-                "h": 4,
-                "minW": 3,
-                "minH": 3,
-            }
-        )
-        x += 1
-        if x >= 2:
-            x = 0
-            y += 1
-    return layout
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -390,13 +157,8 @@ def get_ado_items(
     area_path: Optional[str] = Query(None),
     current_user: AuthUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    """Latest Azure DevOps work items assigned to the current user, normalized.
-
-    The type/iteration/area filters are passed straight through so the widget can scope
-    the list to one work item type, sprint or area path. ``area_path`` was previously
-    dropped here — the widget sent it, this proxy never forwarded it, and the filter did
-    nothing.
-    """
+    """Latest Azure DevOps work items assigned to the current user, normalized. The
+    type, iteration and area filters are passed straight through."""
     from api.azure_devops import get_work_items as _ado_work_items
 
     uid = _user_id(current_user)
@@ -429,6 +191,7 @@ def get_ado_items(
                         "id_display": f"#{wi.get('id', '')}" if wi.get("id") else "",
                         "type": wi.get("type") or "",
                         "project": wi.get("project") or "",
+                        "collection": wi.get("collection") or "",
                         "iteration": wi.get("iteration") or "",
                         "area_path": wi.get("area_path") or "",
                         "state_category": wi.get("state_category") or "",
@@ -452,7 +215,7 @@ def get_ado_items(
         "data": items,
         "error": error,
         "source": "azure_devops",
-        "timestamp": _now_iso(),
+        "timestamp": now_iso(),
     }
 
 
@@ -482,9 +245,8 @@ def get_snow_items(current_user: AuthUser = Depends(get_current_user)) -> Dict[s
                     # picks up ?ticket=<sys_id> and auto-opens the conversation.
                     "url": f"/ui/support?ticket={sys_id}" if sys_id else "/ui/support",
                     "source": "servicenow",
-                    # The widgets show SEVERITY as a word (Urgent/High/Medium/Low).
-                    # Priority is a derived number and is not what anyone asked for, so
-                    # it is carried but no longer displayed.
+                    # Shown as a severity word; the derived priority number is carried,
+                    # not shown.
                     "urgency": t.get("urgency") or "",
                     # Whether THIS user has an update they haven't opened — computed in
                     # servicenow.py against their read receipts.
@@ -529,6 +291,6 @@ def get_snow_items(current_user: AuthUser = Depends(get_current_user)) -> Dict[s
         "data": items,
         "error": error,
         "source": "servicenow",
-        "timestamp": _now_iso(),
+        "timestamp": now_iso(),
     }
 
