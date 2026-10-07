@@ -29,6 +29,7 @@ before designing against an assumption.
 - **GitLab is one instance at `GITLAB_BASE_URL`**, used only with each person's own token; its widgets are the Azure DevOps ones with a provider (`.provider-gitlab` is the orange).
 - **The changelog is `backend/app/changelog.py`**, by hand; CI stamps `build_info.json` and tags images `<version>-test`/`-prod`.
 - **DevBot's gateway is LiteLLM over vLLM**, one key per person: `/v1/models` lists embedding models too, tool calls need vLLM's `--enable-auto-tool-choice`/`--tool-call-parser`, limits arrive as `x-ratelimit-*` headers (`scripts/check_llm_endpoint.py`).
+- **The assistants are off in production** (`aiEnabled: "false"` in `values-prod.yaml`, on in test; `HUB_AI_ENABLED` overrides): gate any new AI surface on `ai_enabled` / `devbot.config.switched_on()`.
 - **Postgres here has no pgvector**: DevBot's search keeps int8 vectors in BYTEA and ranks them in Python per pod (`devbot/knowledge.py`).
 - **Past fixes** live in a work item field named "Solution" (a `Custom.<GUID>` found by display name) and in ServiceNow `close_notes` (some rude), and are shown to everyone only as the Hub key's review of them (`knowledge.review_fix`).
 - **`scripts/apply_docx.py`** applies a round, runs the checks, commits (`git add -A`) and pushes (`--no-commit`/`--no-push`/`--no-verify` opt out); a failing check refuses the commit. `*.docx` stays gitignored.

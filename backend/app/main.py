@@ -237,6 +237,9 @@ def _start_background_work(app: FastAPI) -> None:
 
     # DevBot's page index catches up with edits by itself; a Redis lock lets one pod
     # build at a time, and nothing happens until an admin has set the index up.
+    if not devbot_config.switched_on():
+        _log.warning("HUB_AI_ENABLED is false: DevBot and AdminBot are off in this deployment")
+        return
     try:
         threading.Thread(target=devbot_knowledge.schedule_loop, name="devbot-index-schedule", daemon=True).start()
     except Exception as exc:
@@ -275,6 +278,7 @@ def create_app() -> FastAPI:
     templates_env.globals["portal_quick_actions"] = catalog_forms.quick_actions()
     templates_env.globals["devbot_key_help_url"] = devbot_config.key_help_url()
     templates_env.globals["devbot_enabled"] = devbot_config.enabled()
+    templates_env.globals["ai_enabled"] = devbot_config.switched_on()
     static_dir = base_dir / "static"
     templates_env.globals["asset_v"] = static_fingerprint(static_dir)
     # The dotted sidebar pages by path, so a page that came from a prefetch can say it

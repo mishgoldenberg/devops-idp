@@ -102,7 +102,7 @@
 		{% include "partials/components/backup-status-admin.html" %}
 
 		{# DevBot's page search index: which Confluence spaces it searches by meaning. #}
-		{% include "partials/components/devbot-index-admin.html" %}
+		{% if ai_enabled %}{% include "partials/components/devbot-index-admin.html" %}{% endif %}
 
 		<section class="section-card">
 			<div class="card-body p-5 gap-4">

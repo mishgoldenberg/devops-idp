@@ -12,6 +12,8 @@ Adding a new domain: create ``backend/app/api/<name>.py`` with
 
 from fastapi import APIRouter
 
+from devbot import config as devbot_config
+
 from . import (
     admin,
     announcements,
@@ -133,15 +135,18 @@ api_router.include_router(streak.router, prefix="/streaks", tags=["streaks"])
 
 # DevBot, the chat assistant: conversations, and questions answered from every
 # connected system with the person's own tokens and their own model key.
-api_router.include_router(devbot.router, prefix="/devbot", tags=["devbot"])
-api_router.include_router(devbot_index.router, prefix="/devbot/index", tags=["devbot"])
-api_router.include_router(devbot_admin.router, prefix="/devbot/admin", tags=["devbot"])
+# Not mounted at all when HUB_AI_ENABLED is false (devbot.config.switched_on).
+if devbot_config.switched_on():
+    api_router.include_router(devbot.router, prefix="/devbot", tags=["devbot"])
+    api_router.include_router(devbot_index.router, prefix="/devbot/index", tags=["devbot"])
+    api_router.include_router(devbot_admin.router, prefix="/devbot/admin", tags=["devbot"])
 # GitLab, with the person's own token: merge requests and pipelines for the widgets,
 # and the actions on them, checked and confirmed first like the Azure DevOps ones.
 api_router.include_router(gitlab.router, prefix="/gitlab", tags=["gitlab"])
 api_router.include_router(gitlab_actions.router, prefix="/gitlab/actions", tags=["gitlab"])
 # AdminBot: the same assistant over the Hub's own records, for admins, on the Hub's AI key.
-api_router.include_router(adminbot.router, prefix="/adminbot", tags=["devbot"])
+if devbot_config.switched_on():
+    api_router.include_router(adminbot.router, prefix="/adminbot", tags=["devbot"])
 # Writes to Confluence as the signed-in person, checked and confirmed first -- the same
 # dialog and the same rules as the Azure DevOps actions above.
 api_router.include_router(confluence_actions.router, prefix="/confluence/actions", tags=["confluence"])

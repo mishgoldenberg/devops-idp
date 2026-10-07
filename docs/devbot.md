@@ -389,6 +389,18 @@ and what the lookups returned. Tokens and keys never leave the Hub's server.
 
 ## 7. Setting it up
 
+### On or off per environment
+
+`HUB_AI_ENABLED` (`global.aiEnabled` in the values files: `"true"` in
+`values-test.yaml`, `"false"` in `values-prod.yaml`; the pipeline variable
+`HUB_AI_ENABLED` overrides both) decides whether this deployment has the assistants at
+all (`devbot.config.switched_on`). Off, the `/api/devbot*` and `/api/adminbot` routers
+are not mounted, `/ui/devbot`, `/ui/adminbot` and `/ui/devbot-monitor` answer 404, their
+sidebar links, the Monitoring tab and the index card are not drawn, the widgets' Ask
+DevBot buttons are gone, and the index is not built. The code ships in the same image,
+and conversations, keys and the index stay in the database, so turning it back on is a
+redeploy with the value changed. Old conversations are still purged on schedule.
+
 1. Set `DEVBOT_LLM_BASE_URL` (the gateway's OpenAI-compatible `/v1`) and
    `DEVBOT_DEFAULT_MODEL` in the pipeline's variables, and deploy.
    `scripts/check_llm_endpoint.py` shows what a key sees: models, limits, tool calling,

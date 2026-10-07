@@ -33,6 +33,27 @@ GENERIC = "General fixes and improvements you would not see directly."
 # Newest first. See the module docstring before adding one.
 RELEASES: List[Dict[str, Any]] = [
     {
+        "version": "1.22.6",
+        "date": "2026-10-07",
+        "headline": "General fixes.",
+        "features": [],
+        "fixes": [GENERIC],
+        "improvements": [],
+    },
+    {
+        "version": "1.22.5",
+        "date": "2026-10-07",
+        "headline": "DevBot prepares the changes you ask for again.",
+        "features": [],
+        "fixes": [
+            "DevBot prepares changes again -- asking it to run or cancel a pipeline, rerun a failed one or ask for "
+            "more quota got \"I can't change anything\" instead of the change ready for you to confirm.",
+            "Asking DevBot to \"run pipeline 12\" or \"kick off the build\" now prepares the run, like \"run the "
+            "pipeline\" already did.",
+        ],
+        "improvements": [],
+    },
+    {
         "version": "1.22.4",
         "date": "2026-10-07",
         "headline": "General fixes.",

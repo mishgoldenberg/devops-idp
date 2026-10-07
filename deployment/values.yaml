@@ -23,6 +23,9 @@ redis:
 
 # --- REFACTORED GLOBAL BLOCK (Added for cross-chart communication) ---
 global:
+  # DevBot and AdminBot: "true" or "false" per environment (values-test/values-prod);
+  # the pipeline variable HUB_AI_ENABLED overrides it when set.
+  aiEnabled: "true"
   # This makes your image repo available to everyone
   customImage:
     repository: "your-registry.example.com/your-org/devops-hub"

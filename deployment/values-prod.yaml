@@ -6,6 +6,9 @@
 
 global:
   nameSuffix: ""
+  # The assistants stay off in production until their review is done; the code and the
+  # stored conversations stay. Turn on here, or with the pipeline variable HUB_AI_ENABLED.
+  aiEnabled: "false"
 
   # Two of each, minimum. One replica means every deploy and every node drain is a
   # visible outage for 500 people; two is the smallest number where a rolling update

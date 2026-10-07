@@ -26,6 +26,9 @@ data:
   DEVBOT_DEFAULT_MODEL: {{ .Values.global.devbotDefaultModel | default "" | quote }}
   DEVBOT_KEY_HELP_URL: {{ .Values.global.devbotKeyHelpUrl | default "" | quote }}
   DEVBOT_STREAM: {{ .Values.global.devbotStream | default "true" | quote }}
+  # "false" takes DevBot and AdminBot out of this environment (devbot.config.switched_on).
+  # A string on purpose: Helm's default would read a boolean false as empty.
+  HUB_AI_ENABLED: {{ .Values.global.aiEnabled | default "true" | quote }}
   # Trust the OpenShift router's X-Forwarded-Proto so request.url.scheme is
   # https — required for the SSO redirect_uri to match the registered value.
   FORWARDED_ALLOW_IPS: "*"

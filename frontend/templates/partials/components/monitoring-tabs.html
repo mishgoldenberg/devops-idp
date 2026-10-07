@@ -51,7 +51,7 @@
 	.monitoring-tabs + .page-header { padding-top: 0.9rem; }
 </style>
 <nav class="monitoring-tabs" aria-label="Monitoring">
-	{% for tab in monitoring_tabs %}
+	{% for tab in monitoring_tabs if ai_enabled or tab.key != 'devbot-monitor' %}
 		<a href="{{ tab.href }}"{% if current_page == tab.key %} aria-current="page"{% endif %}>{{ tab.label }}</a>
 	{% endfor %}
 </nav>

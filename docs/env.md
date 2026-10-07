@@ -103,7 +103,7 @@ default behavior and whether they are required.
 
 <!-- GENERATED:ENV — do not edit by hand; run scripts/gen_docs.py -->
 
-93 variables the backend actually reads, found by parsing every `os.getenv` in `backend/app/`. A variable that is not here is not read by anything, whatever the deployment sets.
+94 variables the backend actually reads, found by parsing every `os.getenv` in `backend/app/`. A variable that is not here is not read by anything, whatever the deployment sets.
 
 | Variable | Default | Read by |
 | --- | --- | --- |
@@ -166,6 +166,7 @@ default behavior and whether they are required.
 | `HOST` | `0.0.0.0` | `config.py` |
 | `HUB_ADMIN_PASSWORD` | _(secret — must be set)_ | `config.py`, `db.py` |
 | `HUB_ADMIN_USERNAME` | _(none)_ | `config.py`, `db.py` |
+| `HUB_AI_ENABLED` | `true` | `config.py` |
 | `HUB_NAMESPACE` | _(none)_ | `backups.py` |
 | `HUB_USER_PASSWORD` | _(secret — must be set)_ | `db.py` |
 | `HUB_USER_USERNAME` | _(none)_ | `db.py` |

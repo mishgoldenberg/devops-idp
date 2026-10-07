@@ -498,6 +498,13 @@ stages:
               # literal $(NAME) text, and that is not a hostname. An empty alias must
               # stay empty rather than becoming a rule with no host, which matches
               # EVERY hostname and hijacks the other environment.
+              # DevBot and AdminBot on or off: the values file decides unless the
+              # variable group sets HUB_AI_ENABLED ("true"/"false").
+              AI_ENABLED="$(HUB_AI_ENABLED)"
+              case "$AI_ENABLED" in
+                "$"*"("*) AI_ENABLED="" ;;
+              esac
+              echo "Assistants: ${AI_ENABLED:-as set in $(helmValuesFile)}"
               HOST_ALIAS="$(deployHostAlias)"
               case "$HOST_ALIAS" in
                 "$"*"("*) HOST_ALIAS="" ;;
@@ -544,7 +551,7 @@ stages:
                 --set-string global.artifactoryDiskTotal="$(ARTIFACTORY_DISK_TOTAL)" \
                 --set-string global.devbotLlmBaseUrl="$(DEVBOT_LLM_BASE_URL)" \
                 --set-string global.devbotDefaultModel="$(DEVBOT_DEFAULT_MODEL)" \
-                --set-string global.devbotKeyHelpUrl="$(DEVBOT_KEY_HELP_URL)" \
+                --set-string global.devbotKeyHelpUrl="$(DEVBOT_KEY_HELP_URL)"                 ${AI_ENABLED:+--set-string global.aiEnabled="${AI_ENABLED}"} \
                 | oc apply -n "$(OPENSHIFT_NAMESPACE)" -f -
             displayName: Deploy with Helm
             # ── DO NOT MOVE, AND DO NOT APPEND A STEP BETWEEN THIS AND THE SCRIPT ABOVE.

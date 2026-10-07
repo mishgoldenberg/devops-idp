@@ -61,6 +61,8 @@
 	],
 } %}
 
+{# The assistants' links, when HUB_AI_ENABLED is false. #}
+{% set hidden_keys = [] if ai_enabled else ['devbot', 'adminbot'] %}
 {% macro nav_item(item) %}
 	{% set active = current_page == item.key or current_page in (item.match or []) %}
 	<li>
@@ -111,7 +113,7 @@
 					</h2>
 				{% endif %}
 				<ul class="menu menu-sm w-full portal-nav-list">
-					{% for item in section['items'] %}{{ nav_item(item) }}{% endfor %}
+					{% for item in section['items'] if item.key not in hidden_keys %}{{ nav_item(item) }}{% endfor %}
 				</ul>
 			</div>
 		{% endfor %}
@@ -122,7 +124,7 @@
 					{{ admin_section.title }}
 				</h2>
 				<ul class="menu menu-sm w-full portal-nav-list">
-					{% for item in admin_section['items'] %}{{ nav_item(item) }}{% endfor %}
+					{% for item in admin_section['items'] if item.key not in hidden_keys %}{{ nav_item(item) }}{% endfor %}
 				</ul>
 			</div>
 		{% endif %}

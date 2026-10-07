@@ -458,6 +458,8 @@ def ui_connections_page(request: Request):
 def ui_devbot_page(request: Request):
     """DevBot, the chat assistant. The page loads everything it shows from /api/devbot
     with its own script, so this only renders the shell."""
+    if not devbot_config.switched_on():
+        raise HTTPException(status_code=404, detail="Not Found")
     token = request.cookies.get("auth_token")
     if not token:
         return RedirectResponse(url="/ui/auth", status_code=303)
@@ -859,6 +861,8 @@ def ui_users_page(request: Request):
 @ui_router.get("/ui/devbot-monitor", response_class=HTMLResponse)
 def ui_devbot_monitor_page(request: Request):
     """Admin-only: how DevBot is used, how questions end, and what people said about it."""
+    if not devbot_config.switched_on():
+        raise HTTPException(status_code=404, detail="Not Found")
     token = request.cookies.get("auth_token")
     if not token:
         return RedirectResponse(url="/ui/auth", status_code=303)
@@ -886,6 +890,8 @@ def ui_devbot_monitor_page(request: Request):
 @ui_router.get("/ui/adminbot", response_class=HTMLResponse)
 def ui_adminbot_page(request: Request):
     """Admin-only: AdminBot, DevBot's page over the Hub's own records (api/adminbot.py)."""
+    if not devbot_config.switched_on():
+        raise HTTPException(status_code=404, detail="Not Found")
     token = request.cookies.get("auth_token")
     if not token:
         return RedirectResponse(url="/ui/auth", status_code=303)

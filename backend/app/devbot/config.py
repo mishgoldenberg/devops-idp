@@ -40,8 +40,15 @@ def llm_base_url() -> str:
     return url
 
 
+def switched_on() -> bool:
+    """HUB_AI_ENABLED (default true). False takes DevBot and AdminBot out of this
+    deployment: their routes are not mounted, their pages and links are gone and the
+    index is not built. The code and the stored conversations stay."""
+    return _clean(os.getenv("HUB_AI_ENABLED", "true")).lower() not in ("0", "false", "no", "off")
+
+
 def enabled() -> bool:
-    return bool(llm_base_url())
+    return switched_on() and bool(llm_base_url())
 
 
 def default_model() -> str:
