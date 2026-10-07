@@ -49,7 +49,6 @@ from pydantic import BaseModel, Field
 import safe_mode
 import streaks
 from integrations_cache import invalidate_owner
-from resilient_http import tls_verify
 from security import AuthUser, get_current_user
 
 from .azure_devops import (
@@ -63,6 +62,7 @@ from .azure_devops import (
     normalize_admin_principal,
 )
 from common import dry_run, simulated
+import resilient_http
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -157,8 +157,7 @@ class CreateBody(_Target):
 # ── plumbing ─────────────────────────────────────────────────────────────────
 
 def _client(pat: str) -> httpx.Client:
-    return httpx.Client(
-        verify=tls_verify(),
+    return resilient_http.Client(
         auth=httpx.BasicAuth("", pat),
         timeout=httpx.Timeout(20.0, connect=5.0),
     )

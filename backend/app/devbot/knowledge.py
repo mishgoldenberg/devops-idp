@@ -78,11 +78,11 @@ from psycopg2.extras import Json
 
 from db import execute, execute_returning, query_all, query_one
 from redis_client import get_redis
-from resilient_http import tls_verify
 from sso_config import decrypt_secret, encrypt_secret
 
 from . import config, llm
-from common import failure_text
+from common import failure_text, wiql_text
+import resilient_http
 
 log = logging.getLogger(__name__)
 
@@ -422,7 +422,7 @@ def confluence_base() -> str:
 
 
 def _confluence(token: str) -> httpx.Client:
-    return httpx.Client(verify=tls_verify(), timeout=httpx.Timeout(30.0, connect=10.0),
+    return resilient_http.Client(timeout=httpx.Timeout(30.0, connect=10.0),
                         headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
 
 
@@ -496,12 +496,6 @@ _NOT_FIX = re.compile(r"reason|resolved.?(by|date)|date|build|version|found.?in|
 # Info. The review holds back what turns out to be environment details.
 _FIX_FALLBACK = ("Microsoft.VSTS.TCM.SystemInfo",)
 MAX_ADO_ITEMS = 5000
-
-
-def _wiql_text(value: str) -> str:
-    from api.azure_devops import _wiql_literal
-
-    return "'" + _wiql_literal(value) + "'"
 
 
 def resolution_fields(fields: List[Dict[str, Any]], override: str = "") -> List[str]:
@@ -583,10 +577,10 @@ def list_ado(s: Dict[str, Any], detail: Dict[str, Any], known: Optional[Dict[str
 
     settings_ = s["ado"]
     api = {"api-version": "7.0"}
-    where = [f"[System.WorkItemType] IN ({', '.join(_wiql_text(t) for t in settings_['types'])})",
+    where = [f"[System.WorkItemType] IN ({', '.join(wiql_text(t) for t in settings_['types'])})",
              f"[System.ChangedDate] >= @Today - {int(settings_['days'])}"]
     if settings_["projects"]:
-        where.append(f"[System.TeamProject] IN ({', '.join(_wiql_text(p) for p in settings_['projects'])})")
+        where.append(f"[System.TeamProject] IN ({', '.join(wiql_text(p) for p in settings_['projects'])})")
     query = "SELECT [System.Id] FROM WorkItems WHERE " + " AND ".join(where) + " ORDER BY [System.ChangedDate] DESC"
     out: List[Dict[str, Any]] = []
     info: Dict[str, Any] = {"collections": {}, "without_fix": 0}
@@ -1375,7 +1369,7 @@ def ado_check(pat: str) -> Callable[[Dict[str, Any]], Optional[bool]]:
     def check(item: Dict[str, Any]) -> Optional[bool]:
         wi_id = str(item["id"]).rsplit(":", 1)[-1]
         try:
-            with httpx.Client(verify=tls_verify(), timeout=httpx.Timeout(15.0, connect=5.0),
+            with resilient_http.Client(timeout=httpx.Timeout(15.0, connect=5.0),
                               auth=httpx.BasicAuth("", pat)) as client:
                 resp = client.get(f"{item['origin']}/_apis/wit/workitems/{wi_id}",
                                   params={"fields": "System.Id", "api-version": "7.0"})

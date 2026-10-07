@@ -33,9 +33,17 @@ GENERIC = "General fixes and improvements you would not see directly."
 # Newest first. See the module docstring before adding one.
 RELEASES: List[Dict[str, Any]] = [
     {
+        "version": "1.22.4",
+        "date": "2026-10-07",
+        "headline": "General fixes.",
+        "features": [],
+        "fixes": [GENERIC],
+        "improvements": [],
+    },
+    {
         "version": "1.22.3",
         "date": "2026-10-06",
-        "headline": GENERIC,
+        "headline": "General fixes.",
         "features": [],
         "fixes": [GENERIC],
         "improvements": [],
@@ -43,7 +51,7 @@ RELEASES: List[Dict[str, Any]] = [
     {
         "version": "1.22.2",
         "date": "2026-10-06",
-        "headline": GENERIC,
+        "headline": "General fixes.",
         "features": [],
         "fixes": [GENERIC],
         "improvements": [],

@@ -37,6 +37,8 @@ import logging
 import os
 from typing import Any, Dict, Optional
 from urllib.parse import quote
+from common import failure_text
+from resilient_http import far_message
 
 log = logging.getLogger(__name__)
 
@@ -134,7 +136,7 @@ def find(name: str, *, settings: Optional[Dict[str, str]] = None) -> Dict[str, A
     except Exception as exc:
         log.warning("ADO definition lookup failed: %s: %s", type(exc).__name__, exc)
         return {"ok": False, "id": None, "url": "", "routed": True,
-                "detail": f"{type(exc).__name__}: {exc}"}
+                "detail": failure_text("Azure DevOps", exc)}
     return {"ok": True, "id": None, "url": "", "routed": True, "detail": "no definition by that name"}
 
 
@@ -275,12 +277,12 @@ def create(
                         "detail": "a pipeline with this name already existed",
                     }
                 return {"ok": False, "id": None, "url": "", "name": name, "manual": manual,
-                        "detail": f"Azure DevOps refused it (HTTP {resp.status_code}): {resp.text[:200]}"}
+                        "detail": f"Azure DevOps refused it (HTTP {resp.status_code}): {far_message(resp)}"}
             created = resp.json() or {}
     except Exception as exc:
         log.warning("ADO definition create failed for %r: %s: %s", name, type(exc).__name__, exc)
         return {"ok": False, "id": None, "url": "", "name": name, "manual": manual,
-                "detail": f"{type(exc).__name__}: {exc}"}
+                "detail": failure_text("Azure DevOps", exc)}
 
     definition_id = created.get("id")
     log.warning("ADO pipeline created: %r id=%s (cleaner %s)", name, definition_id, slug or folder)
@@ -366,7 +368,7 @@ def authorize_variable_group(
                         "detail": "the pipeline permissions API is not routed on this server"}
             if resp.status_code >= 400:
                 return {"ok": False, "manual": manual,
-                        "detail": f"Azure DevOps refused it (HTTP {resp.status_code}): {resp.text[:200]}"}
+                        "detail": f"Azure DevOps refused it (HTTP {resp.status_code}): {far_message(resp)}"}
             # Read back, because a 200 here has been known to mean "recorded" rather
             # than "granted" -- and the difference only shows up at 03:00.
             granted = [
@@ -378,7 +380,7 @@ def authorize_variable_group(
                         "detail": "Azure DevOps accepted the grant but did not report the pipeline as authorised"}
     except Exception as exc:
         log.warning("ADO variable group authorise failed: %s: %s", type(exc).__name__, exc)
-        return {"ok": False, "manual": manual, "detail": f"{type(exc).__name__}: {exc}"}
+        return {"ok": False, "manual": manual, "detail": failure_text("Azure DevOps", exc)}
 
     log.warning("ADO pipeline %s authorised for variable group %r", definition_id, group_name)
     return {"ok": True, "detail": "", "manual": "", "group": group_name}
@@ -440,12 +442,12 @@ def run(
             if resp.status_code >= 400:
                 return {"ok": False, "id": None, "url": "",
                         "detail": f"Azure DevOps refused it (HTTP {resp.status_code}): "
-                                  f"{resp.text[:200]}"}
+                                  f"{far_message(resp)}"}
             queued = resp.json() or {}
     except Exception as exc:
         log.warning("ADO build queue failed for definition %s: %s: %s",
                     definition_id, type(exc).__name__, exc)
-        return {"ok": False, "id": None, "url": "", "detail": f"{type(exc).__name__}: {exc}"}
+        return {"ok": False, "id": None, "url": "", "detail": failure_text("Azure DevOps", exc)}
 
     build_id = queued.get("id")
     log.warning("ADO build %s queued for definition %s", build_id, definition_id)
@@ -489,11 +491,11 @@ def run_states(build_ids, *, settings: Optional[Dict[str, str]] = None) -> Dict[
             )
             if resp.status_code >= 400:
                 return {"ok": False, "states": {},
-                        "detail": f"HTTP {resp.status_code}: {resp.text[:160]}"}
+                        "detail": f"HTTP {resp.status_code}: {far_message(resp)}"}
             rows = (resp.json() or {}).get("value") or []
     except Exception as exc:
         log.warning("ADO build states failed: %s: %s", type(exc).__name__, exc)
-        return {"ok": False, "states": {}, "detail": f"{type(exc).__name__}: {exc}"}
+        return {"ok": False, "states": {}, "detail": failure_text("Azure DevOps", exc)}
 
     states: Dict[str, Any] = {}
     for row in rows:
@@ -551,8 +553,8 @@ def delete(
             if resp.status_code in (200, 202, 204, 404):
                 return {"ok": True, "detail": ""}
             return {"ok": False,
-                    "detail": f"Azure DevOps refused it (HTTP {resp.status_code}): {resp.text[:200]}"}
+                    "detail": f"Azure DevOps refused it (HTTP {resp.status_code}): {far_message(resp)}"}
     except Exception as exc:
         log.warning("ADO definition delete failed for %s: %s: %s",
                     definition_id, type(exc).__name__, exc)
-        return {"ok": False, "detail": f"{type(exc).__name__}: {exc}"}
+        return {"ok": False, "detail": failure_text("Azure DevOps", exc)}

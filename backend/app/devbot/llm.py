@@ -23,9 +23,10 @@ from urllib.parse import quote, urlsplit
 
 import httpx
 
-from resilient_http import explain_integration_failure, tls_verify
+from resilient_http import explain_integration_failure
 
 from . import config
+import resilient_http
 
 log = logging.getLogger(__name__)
 
@@ -245,7 +246,7 @@ def list_models(key: str, embedding: bool = False) -> List[Dict[str, Any]]:
     """
     base = base_url()
     try:
-        with httpx.Client(verify=tls_verify(), timeout=_timeout(20.0), headers=_headers(key)) as client:
+        with resilient_http.Client(timeout=_timeout(20.0), headers=_headers(key)) as client:
             resp = client.get(f"{base}/models")
             if resp.status_code != 200:
                 raise classify(resp.status_code, resp.text, resp.headers)
@@ -306,7 +307,7 @@ def embed(key: str, model: str, texts: List[str], timeout: float = 60.0) -> Tupl
     """
     base = base_url()
     try:
-        with httpx.Client(verify=tls_verify(), timeout=_timeout(timeout), headers=_headers(key)) as client:
+        with resilient_http.Client(timeout=_timeout(timeout), headers=_headers(key)) as client:
             resp = client.post(f"{base}/embeddings", json={"model": model, "input": texts})
     except httpx.HTTPError as exc:
         raise _network_error(exc) from exc
@@ -335,7 +336,7 @@ def complete(key: str, model: str, messages: List[Dict[str, Any]], max_tokens: i
     base = base_url()
     body = {"model": model, "messages": messages, "max_tokens": max_tokens, "temperature": 0.1}
     try:
-        with httpx.Client(verify=tls_verify(), timeout=_timeout(timeout), headers=_headers(key)) as client:
+        with resilient_http.Client(timeout=_timeout(timeout), headers=_headers(key)) as client:
             resp = client.post(f"{base}/chat/completions", json=body)
     except httpx.HTTPError as exc:
         raise _network_error(exc) from exc
@@ -421,7 +422,7 @@ def key_info(key: str) -> Dict[str, Any]:
         return {}
     roots = [root] if root == _origin(root) else [root, _origin(root)]
     try:
-        with httpx.Client(verify=tls_verify(), timeout=_timeout(10.0), headers=_headers(key)) as client:
+        with resilient_http.Client(timeout=_timeout(10.0), headers=_headers(key)) as client:
             body = _get_json(client, [r + "/key/info" for r in roots])
             info = (body or {}).get("info")
             if not isinstance(info, dict):
@@ -591,7 +592,7 @@ async def chat(
                 slot["arguments"] += args if isinstance(args, str) else json.dumps(args)
 
     try:
-        async with httpx.AsyncClient(verify=tls_verify(), timeout=_timeout(read_timeout)) as client:
+        async with resilient_http.AsyncClient(timeout=_timeout(read_timeout)) as client:
             async with client.stream("POST", url, json=body, headers=_headers(key)) as resp:
                 limits = read_limits(resp.headers)
                 if resp.status_code != 200:

@@ -47,10 +47,13 @@ def caller_email(user: Any) -> str:
 
 def failure_text(system: str, exc: BaseException) -> str:
     """A failure as a sentence for a person: the system and what went wrong, never the
-    exception's class or text (the caller logs those)."""
+    exception's class or text, which are logged here at WARNING instead."""
+    import logging
+
     import httpx
     from resilient_http import explain_integration_failure
 
+    logging.getLogger(__name__).warning("%s failed: %s: %s", system, type(exc).__name__, exc)
     if isinstance(exc, httpx.HTTPError):
         return explain_integration_failure(system, exc)
     return f"{system} failed unexpectedly; the details are in the Hub's log."
@@ -126,3 +129,64 @@ def safe_image(value: Optional[str], max_bytes: int) -> str:
     if not (data.startswith(_IMAGE_SIGNATURES[kind]) and is_webp):
         raise ValueError("That file is not the picture it claims to be.")
     return raw
+
+
+# ── Values placed inside another system's query language ───────────────────
+
+def wiql_text(value: Any) -> str:
+    """A WIQL string literal: in single quotes, a quote inside doubled."""
+    return "'" + str(value if value is not None else "").replace("'", "''") + "'"
+
+
+def quoted_text(value: Any) -> str:
+    """A double-quoted CQL or AQL literal, backslash and quote escaped, so a value can
+    never close the literal and add a clause of its own."""
+    text = str(value if value is not None else "")
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+# ── Files attached to a ticket or a request ─────────────────────────────────
+
+# Programs, scripts and pages a browser would run, refused by name AND by bytes.
+_ACTIVE_EXTENSIONS = {
+    "exe", "dll", "com", "scr", "msi", "msp", "bat", "cmd", "ps1", "psm1", "vbs", "vbe", "js",
+    "jse", "wsf", "wsh", "hta", "lnk", "jar", "cpl", "reg", "sh", "html", "htm", "xhtml",
+    "svg", "mht", "mhtml", "xml", "xsl",
+}
+_ACTIVE_SIGNATURES = (b"MZ", b"\x7fELF", b"\xca\xfe\xba\xbe", b"\xfe\xed\xfa", b"\xcf\xfa\xed\xfe", b"#!")
+_ACTIVE_MARKUP = re.compile(rb"^\s*(<\?xml|<!doctype|<html|<script|<svg|<iframe|<body)", re.IGNORECASE)
+
+
+def attachment_type(data: bytes) -> str:
+    """The media type a file's bytes show, never the one the browser declared."""
+    for kind, signatures in _IMAGE_SIGNATURES.items():
+        if data.startswith(signatures) and (kind != "webp" or data[8:12] == b"WEBP"):
+            return f"image/{kind}"
+    if data.startswith(b"%PDF-"):
+        return "application/pdf"
+    if data.startswith(b"PK\x03\x04"):
+        return "application/zip"
+    if b"\x00" not in data[:4096]:
+        try:
+            data[:4096].decode("utf-8")
+            return "text/plain"
+        except UnicodeDecodeError:
+            pass
+    return "application/octet-stream"
+
+
+def safe_attachment(filename: str, data: bytes, max_bytes: int) -> tuple:
+    """(file name, media type) for a file a person attaches, or ValueError with the reason.
+
+    A program, script or web page is refused by its extension and by its first bytes,
+    the name loses any folder part, and the media type comes from the bytes, because
+    the file is stored in another system and opened by whoever handles the request."""
+    name = re.sub(r"[\x00-\x1f]", "", str(filename or "")).replace("\\", "/").split("/")[-1].strip()[:200]
+    name = name or "attachment"
+    if len(data) > max_bytes:
+        raise ValueError(f"'{name}' is larger than {max_bytes // (1024 * 1024)} MB.")
+    extensions = {part.lower() for part in name.split(".")[1:]}
+    if extensions & _ACTIVE_EXTENSIONS or data.startswith(_ACTIVE_SIGNATURES) or _ACTIVE_MARKUP.match(data[:512]):
+        raise ValueError(f"'{name}' is a program, script or web page; attach a picture, a PDF, "
+                         "a text file or a zip instead.")
+    return name, attachment_type(data)

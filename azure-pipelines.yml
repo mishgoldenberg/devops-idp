@@ -173,6 +173,11 @@ stages:
               python3 scripts/check_code_hygiene.py
             displayName: Check for dead and duplicated code
 
+          - script: |
+              set -euo pipefail
+              python3 scripts/check_security_rules.py
+            displayName: Check outbound calls, error messages and secrets
+
 
       - job: docker_build_and_push
         displayName: docker-build-and-push

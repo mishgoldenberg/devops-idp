@@ -40,7 +40,7 @@ from db import execute, execute_returning, query_all, query_one
 from security import AuthUser, get_current_user, has_effective_admin_access_live
 
 from .notifications import create_notification
-from common import now_iso
+from common import failure_text, now_iso
 
 
 # Where the bell dropdown should navigate when the user clicks a request
@@ -833,7 +833,7 @@ def _run_execution_safely(request_id: str) -> None:
         _execute_approved_request(request_row)
     except Exception as exc:
         log.exception("execution: unhandled error for %s: %s", request_id, exc)
-        _finish_failed(request_id, f"Internal error: {exc!s}")
+        _finish_failed(request_id, "It failed unexpectedly; the details are in the Hub's log.")
 
 
 def _execute_approved_request(request_row: Dict[str, Any]) -> None:
@@ -1200,9 +1200,7 @@ def _after_the_work(result: Dict[str, Any], label: str, step) -> None:
     try:
         step()
     except Exception as exc:
-        detail = f"{type(exc).__name__}: {exc}"
-        log.warning("%s failed after the work was done: %s", label, detail)
-        result.setdefault("warnings", []).append(f"{label}: {detail}")
+        result.setdefault("warnings", []).append(failure_text(label, exc))
 
 
 # ─── DB helpers ─────────────────────────────────────────────────────────

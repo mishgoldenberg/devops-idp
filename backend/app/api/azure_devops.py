@@ -35,7 +35,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
 import httpx
 
-from resilient_http import explain_integration_failure, tls_verify
+from resilient_http import explain_integration_failure, far_message
 
 # The identity/permission writes live in their own module because they are built on the
 # LEGACY /_api/_identity/ endpoints rather than the REST ones — the Graph API is not
@@ -48,7 +48,8 @@ from secrets_manager import (
     get_user_azure_devops_pat,
     store_user_azure_devops_pat,
 )
-from common import now_iso
+from common import failure_text, now_iso, wiql_text
+import resilient_http
 
 
 router = APIRouter()
@@ -321,7 +322,7 @@ def _probe_pat_live(pat: str) -> Dict[str, Any]:
     """One call against the CONFIGURED collection: is this token still accepted?"""
     try:
         auth = httpx.BasicAuth("", pat)
-        with httpx.Client(verify=tls_verify(), auth=auth, timeout=httpx.Timeout(8.0, connect=5.0)) as client:
+        with resilient_http.Client(auth=auth, timeout=httpx.Timeout(8.0, connect=5.0)) as client:
             # /_apis/projects, the call the widgets make -- not /_apis/connectionData,
             # which needs the profile scope a PAT scoped as the portal asks does not have.
             #
@@ -357,7 +358,7 @@ def _probe_pat_live(pat: str) -> Dict[str, Any]:
         # be reported to a user as "your token expired" — they would dutifully
         # generate a new one and nothing would change.
         return {"healthy": False, "rejected": False,
-                "detail": f"Azure DevOps is unreachable: {type(exc).__name__}."}
+                "detail": failure_text("Azure DevOps", exc)}
 
 
 def probe_user_pat(current_user: AuthUser) -> Dict[str, Any]:
@@ -475,7 +476,7 @@ def get_projects(current_user: AuthUser = Depends(get_current_user)):
     pat = _get_pat_for_user(current_user)
     auth = httpx.BasicAuth("", pat)
     try:
-        with httpx.Client(verify=tls_verify(), auth=auth, timeout=httpx.Timeout(20.0, connect=5.0)) as client:
+        with resilient_http.Client(auth=auth, timeout=httpx.Timeout(20.0, connect=5.0)) as client:
             bases = _discover_ado_bases(client)
             projects = []
             reachable = 0
@@ -492,7 +493,7 @@ def get_projects(current_user: AuthUser = Depends(get_current_user)):
                     reason = (
                         f"HTTP {exc.response.status_code}"
                         if isinstance(exc, httpx.HTTPStatusError)
-                        else f"{type(exc).__name__}"
+                        else "not reachable"
                     )
                     failures.append(f"{collection}: {reason}")
                     log.info(
@@ -534,7 +535,7 @@ def get_projects(current_user: AuthUser = Depends(get_current_user)):
     except httpx.HTTPStatusError as exc:
         raise HTTPException(status_code=502, detail=f"Azure DevOps API error: {exc.response.status_code}")
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Azure DevOps request failed: {exc!s}")
+        raise HTTPException(status_code=502, detail=failure_text("Azure DevOps", exc))
 
 
 @router.get("/work-item-types")
@@ -552,7 +553,7 @@ def get_work_item_types(
     pat = _get_pat_for_user(current_user)
     auth = httpx.BasicAuth("", pat)
     try:
-        with httpx.Client(verify=tls_verify(), auth=auth, timeout=httpx.Timeout(20.0, connect=5.0)) as client:
+        with resilient_http.Client(auth=auth, timeout=httpx.Timeout(20.0, connect=5.0)) as client:
             for base_url in _discover_ado_bases(client):
                 url = (
                     f"{base_url}/{quote(project, safe='')}"
@@ -575,7 +576,7 @@ def get_work_item_types(
     except httpx.HTTPStatusError as exc:
         raise HTTPException(status_code=502, detail=f"Azure DevOps API error: {exc.response.status_code}")
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Azure DevOps request failed: {exc!s}")
+        raise HTTPException(status_code=502, detail=failure_text("Azure DevOps", exc))
 
 
 def _fetch_iterations(client: httpx.Client, base_url: str, project: str) -> List[Dict[str, Any]]:
@@ -679,7 +680,7 @@ def get_area_paths(
     try:
         pat = _get_pat_for_user(current_user)
         auth = httpx.BasicAuth("", pat)
-        with httpx.Client(verify=tls_verify(), auth=auth, timeout=httpx.Timeout(30.0, connect=5.0)) as client:
+        with resilient_http.Client(auth=auth, timeout=httpx.Timeout(30.0, connect=5.0)) as client:
             for base_url in _discover_ado_bases(client):
                 areas = _fetch_area_paths(client, base_url, project)
                 if areas:
@@ -707,7 +708,7 @@ def get_iterations(
     pat = _get_pat_for_user(current_user)
     auth = httpx.BasicAuth("", pat)
     try:
-        with httpx.Client(verify=tls_verify(), auth=auth, timeout=httpx.Timeout(20.0, connect=5.0)) as client:
+        with resilient_http.Client(auth=auth, timeout=httpx.Timeout(20.0, connect=5.0)) as client:
             for base_url in _discover_ado_bases(client):
                 iterations = _fetch_iterations(client, base_url, project)
                 if iterations:
@@ -716,7 +717,7 @@ def get_iterations(
     except httpx.HTTPStatusError as exc:
         raise HTTPException(status_code=502, detail=f"Azure DevOps API error: {exc.response.status_code}")
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Azure DevOps request failed: {exc!s}")
+        raise HTTPException(status_code=502, detail=failure_text("Azure DevOps", exc))
 
 
 @router.get("/work-items")
@@ -812,7 +813,7 @@ def get_workitem_tasks(
     try:
         pat = _get_pat_for_user(current_user)
         auth = httpx.BasicAuth("", pat)
-        with httpx.Client(verify=tls_verify(), auth=auth, timeout=httpx.Timeout(20.0, connect=5.0)) as client:
+        with resilient_http.Client(auth=auth, timeout=httpx.Timeout(20.0, connect=5.0)) as client:
             bases = _discover_ado_bases(client)
             parent = None
             parent_base = ""
@@ -864,7 +865,7 @@ def get_workitem_tasks(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Azure DevOps request failed: {exc!s}")
+        raise HTTPException(status_code=502, detail=failure_text("Azure DevOps", exc))
 
 
 def _query_str(value: Any) -> Optional[str]:
@@ -875,11 +876,6 @@ def _query_str(value: Any) -> Optional[str]:
     object itself — arrives instead of None, and every string operation on it fails.
     """
     return value if isinstance(value, str) else None
-
-
-def _wiql_literal(value: str) -> str:
-    """Escape a value for a single-quoted WIQL literal."""
-    return str(value or "").replace("'", "''")
 
 
 # States that mean "somebody has to look at this before it can move on". Process
@@ -938,7 +934,7 @@ def get_work_items_awaiting_my_review(current_user: AuthUser) -> List[Dict[str, 
     """
     pat = _get_pat_for_user(current_user)
     auth = httpx.BasicAuth("", pat)
-    states = ", ".join(f"'{_wiql_literal(s)}'" for s in _REVIEW_STATES)
+    states = ", ".join(wiql_text(s) for s in _REVIEW_STATES)
     if not states:
         return []
 
@@ -958,7 +954,7 @@ def get_work_items_awaiting_my_review(current_user: AuthUser) -> List[Dict[str, 
     }
 
     out: List[Dict[str, Any]] = []
-    with httpx.Client(verify=tls_verify(), auth=auth, timeout=httpx.Timeout(20.0, connect=5.0)) as client:
+    with resilient_http.Client(auth=auth, timeout=httpx.Timeout(20.0, connect=5.0)) as client:
         for base_url in _discover_ado_bases(client):
             try:
                 r = client.post(f"{base_url}/_apis/wit/wiql?api-version=7.0", json=query)
@@ -1019,15 +1015,15 @@ def _fetch_work_items_live(
         pat = _get_pat_for_user(current_user)
         auth = httpx.BasicAuth("", pat)
 
-        with httpx.Client(verify=tls_verify(), auth=auth, timeout=httpx.Timeout(30.0, connect=5.0)) as client:
+        with resilient_http.Client(auth=auth, timeout=httpx.Timeout(30.0, connect=5.0)) as client:
             work_items = []
             for base_url in _discover_ado_bases(client):
                 # @Me resolves to the identity that owns the PAT — no username needed.
                 project_clause = (
-                    f"AND [System.TeamProject] = '{_wiql_literal(project)}' " if project else ""
+                    f"AND [System.TeamProject] = {wiql_text(project)} " if project else ""
                 )
                 type_clause = (
-                    f"AND [System.WorkItemType] = '{_wiql_literal(work_item_type)}' "
+                    f"AND [System.WorkItemType] = {wiql_text(work_item_type)} "
                     if work_item_type
                     else ""
                 )
@@ -1047,7 +1043,7 @@ def _fetch_work_items_live(
                     else:
                         iteration_path = wanted
                 iteration_clause = (
-                    f"AND [System.IterationPath] UNDER '{_wiql_literal(iteration_path)}' "
+                    f"AND [System.IterationPath] UNDER {wiql_text(iteration_path)} "
                     if iteration_path
                     else ""
                 )
@@ -1057,7 +1053,7 @@ def _fetch_work_items_live(
                 # (or nothing) means every area.
                 wanted_area = (area_path or "").strip()
                 area_clause = (
-                    f"AND [System.AreaPath] UNDER '{_wiql_literal(wanted_area)}' "
+                    f"AND [System.AreaPath] UNDER {wiql_text(wanted_area)} "
                     if wanted_area and wanted_area.lower() != "all"
                     else ""
                 )
@@ -1183,7 +1179,7 @@ def _fetch_work_items_live(
         logging.exception("Azure DevOps WIQL request failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Azure DevOps request failed: {exc!s}",
+            detail=failure_text("Azure DevOps", exc),
         )
 
 
@@ -1297,7 +1293,7 @@ def _fetch_pull_requests_live(
     try:
         pat = _get_pat_for_user(current_user)
         auth = httpx.BasicAuth("", pat)
-        with httpx.Client(verify=tls_verify(), auth=auth, timeout=httpx.Timeout(30.0, connect=5.0)) as client:
+        with resilient_http.Client(auth=auth, timeout=httpx.Timeout(30.0, connect=5.0)) as client:
             projects: List[Dict[str, Any]] = []
             me: Dict[str, str] = {}
             bases = _discover_ado_bases(client)
@@ -1428,7 +1424,7 @@ def _fetch_pull_requests_live(
         logging.exception("Azure DevOps PR request failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Azure DevOps request failed: {exc!s}",
+            detail=failure_text("Azure DevOps", exc),
         )
 
 
@@ -1627,7 +1623,7 @@ def get_collections(current_user: AuthUser = Depends(get_current_user)):
     try:
         pat = _get_pat_for_user(current_user)
         auth = httpx.BasicAuth("", pat)
-        with httpx.Client(verify=tls_verify(), auth=auth, timeout=httpx.Timeout(30.0, connect=5.0)) as client:
+        with resilient_http.Client(auth=auth, timeout=httpx.Timeout(30.0, connect=5.0)) as client:
             bases = _discover_ado_bases(client)
         return {
             "success": True,
@@ -1663,7 +1659,7 @@ def get_repositories(
         auth = httpx.BasicAuth("", pat)
         repos: List[Dict[str, Any]] = []
         seen: set = set()
-        with httpx.Client(verify=tls_verify(), auth=auth, timeout=httpx.Timeout(30.0, connect=5.0)) as client:
+        with resilient_http.Client(auth=auth, timeout=httpx.Timeout(30.0, connect=5.0)) as client:
             bases = _discover_ado_bases(client)
             if collection:
                 bases = [b for b in bases if _collection_name(b).lower() == collection.lower()] or bases
@@ -1710,7 +1706,7 @@ def get_pipelines(
         auth = httpx.BasicAuth("", pat)
         user_email = str(current_user.get("email") or "").strip()
 
-        with httpx.Client(verify=tls_verify(), auth=auth, timeout=httpx.Timeout(30.0, connect=5.0)) as client:
+        with resilient_http.Client(auth=auth, timeout=httpx.Timeout(30.0, connect=5.0)) as client:
             bases = _discover_ado_bases(client)
             if collection:
                 bases = [b for b in bases if _collection_name(b).lower() == collection.lower()] or bases
@@ -1874,7 +1870,7 @@ def get_pipelines(
         logging.exception("Azure DevOps pipelines request failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Azure DevOps request failed: {exc!s}",
+            detail=failure_text("Azure DevOps", exc),
         )
 
 
@@ -1910,8 +1906,7 @@ def _admin_ado_client() -> httpx.Client:
             "AZURE_DEVOPS_ADMIN_PAT is not configured. Project provisioning needs an "
             "admin token with Project, Process and Graph (Read & Manage) scopes."
         )
-    return httpx.Client(
-        verify=tls_verify(),
+    return resilient_http.Client(
         auth=httpx.BasicAuth("", _ENV_ADMIN_PAT),
         timeout=httpx.Timeout(60.0, connect=5.0),
     )
@@ -2004,7 +1999,7 @@ def _ensure_inherited_process(
     if rc.status_code not in (200, 201):
         raise RuntimeError(
             f"Azure DevOps rejected the process creation in {_collection_name(base_url)} "
-            f"(HTTP {rc.status_code}): {rc.text[:300]}"
+            f"(HTTP {rc.status_code}): {far_message(rc)}"
         )
     created = rc.json()
     return {
@@ -2069,7 +2064,7 @@ def _create_project_in_collection(
     if rc.status_code not in (200, 201, 202):
         raise RuntimeError(
             f"Azure DevOps rejected the project creation in {collection} "
-            f"(HTTP {rc.status_code}): {rc.text[:300]}"
+            f"(HTTP {rc.status_code}): {far_message(rc)}"
         )
 
     operation_id = (rc.json() or {}).get("id")
@@ -2150,8 +2145,8 @@ def _identity_search(
                 f"&searchFilter={mode}&filterValue={quote(value, safe='')}"
                 "&queryMembership=None"
             )
-        except Exception as exc:
-            last = f"{type(exc).__name__}"
+        except Exception:
+            last = "not reachable"
             continue
         if r.is_success:
             rows = (r.json() or {}).get("value", []) or []
@@ -2398,7 +2393,7 @@ def _grant_process_admin(
         rns = client.get(f"{base_url}/_apis/securitynamespaces?api-version=6.0")
         namespaces = (rns.json() or {}).get("value", []) if rns.is_success else []
     except Exception as exc:
-        return {"status": "failed", "detail": f"namespace read: {type(exc).__name__}: {exc}"}
+        return {"status": "failed", "detail": "namespace read: " + failure_text("Azure DevOps", exc)}
     if not rns.is_success:
         return {"status": "process-namespace-not-found", "detail": f"HTTP {rns.status_code}"}
 
@@ -2561,7 +2556,7 @@ def provision_ado_project(
                 })
             except Exception as exc:  # noqa: BLE001 — one collection must not sink the others
                 logging.error("Provisioning failed in collection %s: %s", name, exc)
-                results.append({"collection": name, "status": "failed", "error": str(exc)})
+                results.append({"collection": name, "status": "failed", "error": failure_text("Azure DevOps", exc)})
 
     created = [r for r in results if r["status"] == "created"]
     if not created:

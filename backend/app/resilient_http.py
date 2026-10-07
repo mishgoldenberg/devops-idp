@@ -1,12 +1,86 @@
-"""Outbound calls: whether to verify TLS, and what to tell a person when one fails.
+"""Outbound calls: the one client every integration uses, whether it verifies TLS,
+and what to tell a person when a call fails.
 
-Each integration builds its own httpx.Client with an explicit timeout and handles its
-own responses; this module holds the two things they all share.
+Every outbound request is made through `Client` or `AsyncClient` (scripts/check_code_hygiene.py
+fails a direct httpx client). They refuse an address that climbs out of its path, which
+httpx would otherwise collapse without a word: "/table/incident/../../sys_user" is sent
+as "/sys_user", so a value placed in a path could reach any endpoint the account can.
 """
 
 from __future__ import annotations
 
+import logging
+import re
+from typing import Any
+from urllib.parse import unquote
+
 import httpx
+
+log = logging.getLogger(__name__)
+
+
+class UnsafeURL(ValueError):
+    """An outbound address with a "." or ".." path segment, raw or percent-encoded."""
+
+
+def _climbs(url: str) -> bool:
+    path = re.split(r"[?#]", str(url), maxsplit=1)[0]
+    path = re.sub(r"^[a-zA-Z][a-zA-Z0-9+.-]*://[^/]*", "", path)
+    for _ in range(3):  # encoded twice is still a climb once a server decodes it
+        if any(part in (".", "..") for part in re.split(r"[/\\]", path)):
+            return True
+        decoded = unquote(path)
+        if decoded == path:
+            return False
+        path = decoded
+    return True
+
+
+def _checked(url: Any) -> Any:
+    if isinstance(url, str) and _climbs(url):
+        log.warning("Outbound request refused: %r leaves its path", url[:300])
+        raise UnsafeURL("That address is not allowed.")
+    return url
+
+
+class Client(httpx.Client):
+    """httpx.Client that verifies TLS as configured and refuses a climbing path."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        kwargs.setdefault("verify", tls_verify())
+        super().__init__(**kwargs)
+
+    def build_request(self, method: str, url: Any, **kwargs: Any) -> httpx.Request:
+        return super().build_request(method, _checked(url), **kwargs)
+
+
+class AsyncClient(httpx.AsyncClient):
+    """httpx.AsyncClient that verifies TLS as configured and refuses a climbing path."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        kwargs.setdefault("verify", tls_verify())
+        super().__init__(**kwargs)
+
+    def build_request(self, method: str, url: Any, **kwargs: Any) -> httpx.Request:
+        return super().build_request(method, _checked(url), **kwargs)
+
+
+def far_message(resp: httpx.Response) -> str:
+    """The other system's own error message from a JSON answer, at most 200 characters,
+    or "" -- never the raw body, which can be an HTML page or echo the request."""
+    try:
+        body = resp.json()
+    except Exception:
+        return ""
+    candidates = [body.get("message"), body.get("error"), body.get("errors")] if isinstance(body, dict) else []
+    for value in candidates:
+        if isinstance(value, list) and value:
+            value = value[0]
+        if isinstance(value, dict):
+            value = value.get("message") or value.get("detail")
+        if isinstance(value, str) and value.strip():
+            return value.strip()[:200]
+    return ""
 
 
 def _host_of(exc: Exception) -> str:

@@ -6,6 +6,12 @@
   * dependency pins stay at or above their fixed versions
   * the assistants treat fetched text as data, and the action routers accept only
     ids in the shape of ids
+  * no outbound address can climb out of its path, and no query value can add a
+    condition, whichever module builds it
+  * a file attached to a ticket or a request cannot be a program, and one served
+    back cannot run as the Hub
+  * the signing secret cannot be the example's, and no message carries an
+    exception's text or another system's raw page
 
 Run with:  cd backend && python -m pytest tests -q
 """
@@ -130,6 +136,9 @@ def test_requirements_pins_are_at_or_above_the_fixed_versions():
     assert version("cryptography") >= (50, 0, 0)
     for unused in ("google-cloud-storage", "kubernetes", "aiofiles"):
         assert unused not in pins
+    unbounded = [line for line in text.splitlines()
+                 if line.strip() and not line.startswith("#") and not re.search(r"[=>]=", line)]
+    assert not unbounded, f"every dependency needs a version: {unbounded}"
 
 
 # ── the assistants and the action routers ────────────────────────────────────
@@ -198,3 +207,198 @@ def test_failure_text_never_names_the_exception():
     words = common.failure_text("Confluence", httpx.ConnectError("boom", request=httpx.Request("GET", "https://c.example/x")))
     assert "ConnectError" not in words and "boom" not in words and "c.example" in words
     assert "KeyError" not in common.failure_text("Confluence", KeyError("secret"))
+
+
+# ── outbound addresses: no value can walk a path to another endpoint ─────────────────────────
+
+def test_httpx_alone_would_have_sent_a_climbing_path_somewhere_else():
+    import httpx
+
+    request = httpx.Request("GET", "https://snow.example/api/now/table/incident/../../sys_user")
+    assert request.url.path == "/api/now/sys_user"   # collapsed without a word
+
+
+@pytest.mark.parametrize("path", [
+    "/api/now/table/incident/../../sys_user",
+    "/api/now/table/incident/%2e%2e/%2e%2e/sys_user",
+    "/api/now/table/incident/..%2F..%2Fsys_user",
+    "/api/now/table/incident/%252e%252e/sys_user",
+])
+def test_the_guarded_client_refuses_a_climbing_path_before_sending(path):
+    import httpx
+    import resilient_http
+
+    sent = []
+    client = resilient_http.Client(base_url="https://snow.example",
+                                   transport=httpx.MockTransport(lambda r: sent.append(r) or httpx.Response(200)))
+    with pytest.raises(resilient_http.UnsafeURL):
+        client.get(path)
+    assert not sent
+
+
+def test_the_guarded_client_sends_ordinary_addresses():
+    import httpx
+    import resilient_http
+
+    sent = []
+    client = resilient_http.Client(transport=httpx.MockTransport(lambda r: sent.append(r) or httpx.Response(200)))
+    client.get("https://gitlab.example/api/v4/projects/group%2Fproject")
+    client.get("https://ado.example/tfs/Main/_apis/git/repositories/My%20Repo/items", params={"path": "/a/../b"})
+    assert len(sent) == 2
+
+
+def _rules():
+    import importlib.util
+
+    path = os.path.join(os.path.dirname(__file__), "..", "..", "scripts", "check_security_rules.py")
+    spec = importlib.util.spec_from_file_location("check_security_rules", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_every_rule_holds_across_the_whole_backend():
+    assert _rules().main() == 0
+
+
+def test_the_rules_catch_each_kind_of_regression():
+    import ast
+    from pathlib import Path
+
+    rules = _rules()
+    where = Path(rules.APP) / "example.py"
+    code = ast.parse(
+        "import httpx\n"
+        "def f(resp):\n"
+        "    httpx.Client()\n"
+        "    try:\n"
+        "        pass\n"
+        "    except Exception as exc:\n"
+        "        detail = f'failed: {exc}'\n"
+        "        log.warning(f'failed: {exc}')\n"
+        "    message = f'{resp.text[:200]}'\n"
+        "    params = {'sysparm_query': f'name={value}'}\n"
+        "    password = 'Devops4ever'\n")
+    assert len(rules.direct_clients(where, code)) == 1
+    assert len(rules.leaked_errors(where, code, set())) == 2          # the log line is allowed
+    assert len(rules.unescaped_snow_queries(where, code)) == 1
+    assert len(rules.secret_literals(where, code)) == 1
+
+
+def test_the_rules_catch_a_password_written_into_a_script(tmp_path, monkeypatch):
+    rules = _rules()
+    (tmp_path / "setup.sh").write_text('export DB_PASS="Devops4ever"\nexport DB_USER="${DB_USER}"\n')
+    monkeypatch.setattr(rules, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(rules, "CONFIG_FILES", ["setup.sh"])
+    assert rules.config_secrets() == ["setup.sh:1: DB_PASS is set to a literal value"]
+
+
+# ── query languages: a value cannot add a condition of its own ───────────────────────────────
+
+def test_a_servicenow_query_value_cannot_add_conditions():
+    import snow_catalog
+
+    assert snow_catalog.query_value("Dana Levi") == "Dana Levi"
+    for value in ("x^ORactive=true", "x\nname=y"):
+        with pytest.raises(ValueError):
+            snow_catalog.query_value(value)
+    assert snow_catalog.account_forms("me^ORactive=true", "CORP\\me") == ["CORP\\me", "me"]
+
+
+def test_cql_and_aql_literals_cannot_be_closed_early():
+    assert common.quoted_text('x\\" OR space = "ADMIN') == '"x\\\\\\" OR space = \\"ADMIN"'
+    assert common.wiql_text("x' OR [System.Id] > 0") == "'x'' OR [System.Id] > 0'"
+
+
+# ── files people attach to tickets and requests ──────────────────────────────────────────────
+
+@pytest.mark.parametrize("name, data", [
+    ("report.png", EXE),                                      # a program calling itself a picture
+    ("notes.txt", b"\x7fELF\x02\x01"),
+    ("diagram.svg", b"<svg onload='alert(1)'/>"),
+    ("readme.txt", b"  <!DOCTYPE html><script>alert(1)</script>"),
+    ("run.sh", b"echo hi"),
+    ("invoice.pdf.exe", b"%PDF-1.7"),
+])
+def test_an_attachment_that_would_run_is_refused(name, data):
+    with pytest.raises(ValueError):
+        common.safe_attachment(name, data, 1024 * 1024)
+
+
+def test_an_attachment_keeps_only_its_name_and_takes_its_type_from_its_bytes():
+    assert common.safe_attachment("C:\\Users\\me\\shot.png", PNG, 1024) == ("shot.png", "image/png")
+    assert common.safe_attachment("../../etc/log.txt", b"line one\n", 1024) == ("log.txt", "text/plain")
+    assert common.safe_attachment("spec.pdf", b"%PDF-1.7 ...", 1024)[1] == "application/pdf"
+    with pytest.raises(ValueError):
+        common.safe_attachment("big.txt", b"x" * 2048, 1024)
+
+
+def test_a_ticket_reply_with_a_program_attached_is_refused_before_anything_is_sent(client, monkeypatch):
+    from api import servicenow
+
+    monkeypatch.setattr(servicenow, "_require_own_ticket", lambda sys_id, user: {"number": "INC0001"})
+    monkeypatch.setattr(servicenow, "_snow_client", lambda: pytest.fail("ServiceNow was called"))
+    resp = client.post("/api/support/tickets/reply", data={"sys_id": "a" * 32, "message": "see attached"},
+                       files={"attachments": ("screenshot.png", EXE, "image/png")})
+    assert resp.status_code == 400 and "program" in resp.json()["detail"]
+
+
+def test_a_catalog_attachment_is_checked_by_its_bytes():
+    from fastapi import HTTPException
+    from api import catalog
+
+    with pytest.raises(HTTPException) as refused:
+        catalog._decode(catalog.Attachment(field="diagram", filename="diagram.png",
+                                           data_base64=base64.b64encode(EXE).decode()))
+    assert refused.value.status_code == 400
+    name, kind, blob = catalog._decode(catalog.Attachment(field="diagram", filename="d.png",
+                                                          data_base64=data_url("image/png", PNG)))
+    assert (name, kind, blob) == ("d.png", "image/png", PNG)
+
+
+@pytest.mark.parametrize("payload, disposition, media_type", [
+    (b"<html><script>alert(document.cookie)</script></html>", "attachment", "text/plain"),
+    (PNG, "inline", "image/png"),
+])
+def test_a_ticket_attachment_is_served_so_it_cannot_run_as_the_hub(client, monkeypatch, payload, disposition,
+                                                                  media_type):
+    import httpx
+    import resilient_http
+    from api import servicenow
+
+    ticket, attachment = "a" * 32, "b" * 32
+
+    def handler(request):
+        if request.url.path.endswith("/file"):
+            return httpx.Response(200, content=payload, headers={"Content-Type": "text/html"})
+        return httpx.Response(200, json={"result": {"table_sys_id": ticket, "file_name": "x.html"}})
+
+    monkeypatch.setattr(servicenow, "_require_own_ticket", lambda sys_id, user: {"number": "INC0001"})
+    monkeypatch.setattr(servicenow, "_snow_client", lambda: resilient_http.Client(
+        base_url="https://snow.example", transport=httpx.MockTransport(handler)))
+    resp = client.get(f"/api/support/tickets/{ticket}/attachments/{attachment}")
+    assert resp.status_code == 200
+    assert resp.headers["content-disposition"].startswith(disposition)
+    assert resp.headers["content-type"].startswith(media_type)
+    assert resp.headers["x-content-type-options"] == "nosniff"
+    assert "sandbox" in resp.headers["content-security-policy"]
+
+
+# ── secrets and error wording ────────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("value", ["", "replace_with_a_random_32_character_string", "change_me_in_production"])
+def test_the_app_refuses_a_signing_secret_anyone_could_know(monkeypatch, value):
+    import config
+
+    monkeypatch.setenv("JWT_SECRET", value)
+    with pytest.raises(RuntimeError):
+        config.Settings()
+
+
+def test_far_message_reads_the_other_systems_message_never_its_page():
+    import httpx
+    from resilient_http import far_message
+
+    assert far_message(httpx.Response(400, json={"error": {"message": "Invalid table"}})) == "Invalid table"
+    assert far_message(httpx.Response(400, json={"message": "TF401019: no such repository"})).startswith("TF401019")
+    assert far_message(httpx.Response(500, text="<html><body>Stack trace ...</body></html>")) == ""

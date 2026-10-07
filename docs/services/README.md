@@ -46,5 +46,5 @@ environment variables it reads, and how it fails.
 | `sso_config.py`       | OIDC config, secret encryption, and the JWT_SECRET self-check |
 | `login_guard.py`      | per-account and per-address lockout for local sign-in |
 | `resilient_http.py`   | [resilient_http.md](./resilient_http.md)    |
-| `common.py`           | the small helpers more than one module needs: timestamps, the admin guard, link and picture checks |
+| `common.py`           | the small helpers more than one module needs: timestamps, the admin guard, link, picture and attachment checks, query-language literals, failure wording |
 | `integrations_cache.py` | [integrations_cache.md](./integrations_cache.md) |

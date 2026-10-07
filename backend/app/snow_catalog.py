@@ -25,8 +25,8 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-from common import looks_like_sys_id, truthy
-from resilient_http import tls_verify
+from common import failure_text, looks_like_sys_id, truthy
+import resilient_http
 
 log = logging.getLogger(__name__)
 
@@ -52,8 +52,7 @@ def _client(timeout: float = 30.0) -> httpx.Client:
             "ServiceNow is not configured. Set SNOW_BASE_URL, SNOW_API_USERNAME and "
             "SNOW_API_PASSWORD on the backend."
         )
-    return httpx.Client(
-        verify=tls_verify(),
+    return resilient_http.Client(
         base_url=_instance(),
         auth=(
             (os.getenv("SNOW_API_USERNAME") or "").strip(),
@@ -89,7 +88,7 @@ def resolve_item(name: str, env_var: str) -> str:
         table = client.get(
             "/api/now/table/sc_cat_item",
             params={
-                "sysparm_query": f"name={name}^active=true",
+                "sysparm_query": f"name={query_value(name)}^active=true",
                 "sysparm_fields": "sys_id,name",
                 "sysparm_limit": "5",
             },
@@ -230,6 +229,17 @@ def _tokens(text: str) -> frozenset:
     return frozenset(w for w in words if w and w not in _NOISE)
 
 
+def query_value(value: Any) -> str:
+    """A value for a ServiceNow encoded query (sysparm_query), or ValueError.
+
+    "^" joins conditions and a line break ends the query, so a value carrying either
+    would add conditions of its own -- "name=x^ORactive=true" matches every record."""
+    text = str(value if value is not None else "").strip()
+    if re.search(r"[\^\r\n]", text):
+        raise ValueError("That value cannot be looked up in ServiceNow.")
+    return text
+
+
 def account_forms(*names: str) -> List[str]:
     r"""Every way a ServiceNow user record might spell this person, most exact first:
     the address or login as given, the bare account of DOMAIN\user, and the part of
@@ -241,7 +251,7 @@ def account_forms(*names: str) -> List[str]:
             continue
         bare = value.split("\\")[-1]
         for form in (value, bare, bare.split("@")[0]):
-            if form and form.lower() not in {f.lower() for f in forms}:
+            if form and "^" not in form and form.lower() not in {f.lower() for f in forms}:
                 forms.append(form)
     return forms
 
@@ -255,7 +265,7 @@ def find_user(client: httpx.Client, *names: str) -> str:
     forms = account_forms(*names)
     if not forms:
         return ""
-    query = "^OR".join(f"{field}={form}" for form in forms for field in ("email", "user_name"))
+    query = "^OR".join(f"{field}={query_value(form)}" for form in forms for field in ("email", "user_name"))
     try:
         resp = client.get(
             "/api/now/table/sys_user",
@@ -435,7 +445,7 @@ def order(
             child = client.get(
                 "/api/now/table/sc_req_item",
                 params={
-                    "sysparm_query": f"request={request_sys_id}",
+                    "sysparm_query": f"request={query_value(request_sys_id)}",
                     "sysparm_fields": "number,sys_id",
                     "sysparm_limit": "1",
                 },
@@ -522,7 +532,7 @@ def _settle_requested_for(
                     f"{table} still reads {after or 'unset'} after HTTP {resp.status_code}"
                 )
         except Exception as exc:
-            problems.append(f"{table}: {type(exc).__name__}: {exc}")
+            problems.append(f"{table}: {failure_text('ServiceNow', exc)}")
 
     if fixed:
         log.warning("SNow requested_for corrected on %s -> %s", ", ".join(fixed), wanted)

@@ -46,7 +46,7 @@ import httpx
 
 from . import ado, artifactory, confluence, proposals, sonar
 from .base import NotConnected, Tool, ToolContext, ToolFailure, register
-from common import failure_text
+from common import failure_text, quoted_text, wiql_text
 
 log = logging.getLogger(__name__)
 
@@ -289,9 +289,9 @@ def open_bugs(ctx: ToolContext, client: httpx.Client, project: str, terms: List[
     if not words:
         return []
     ctx.progress("azure", "Looking for open bugs about " + words[0])
-    where = [f"[System.TeamProject] = {ado.literal(project)}", "[System.WorkItemType] = 'Bug'",
-             "[System.State] NOT IN (" + ", ".join(ado.literal(s) for s in ado.CLOSED_STATES) + ")",
-             "(" + " OR ".join(f"[System.Title] CONTAINS {ado.literal(w)}" for w in words) + ")"]
+    where = [f"[System.TeamProject] = {wiql_text(project)}", "[System.WorkItemType] = 'Bug'",
+             "[System.State] NOT IN (" + ", ".join(wiql_text(s) for s in ado.CLOSED_STATES) + ")",
+             "(" + " OR ".join(f"[System.Title] CONTAINS {wiql_text(w)}" for w in words) + ")"]
     try:
         return ado.wiql(ctx, client, where, 5, collection)
     except httpx.HTTPError:
@@ -437,11 +437,11 @@ def artifact_check(ctx: ToolContext, wanted: Dict[str, str]) -> Optional[Dict[st
     try:
         if wanted["kind"] == "docker":
             name = wanted["name"].split("/", 1)[-1] if "/" in wanted["name"] else wanted["name"]
-            rows = artifactory.aql(ctx, f'items.find({{"name":"manifest.json","path":{{"$match":"*{artifactory.literal(name)}*"}}}})'
+            rows = artifactory.aql(ctx, f'items.find({{"name":"manifest.json","path":{{"$match":{quoted_text("*" + name + "*")}}}}})'
                                         '.include("repo","path","modified").sort({"$desc":["modified"]}).limit(15)')
             found = [f"{r.get('repo')}/{r.get('path')}" for r in rows]
         else:
-            rows = artifactory.aql(ctx, f'items.find({{"name":{{"$match":"*{artifactory.literal(wanted["name"])}*"}},"type":"file"}})'
+            rows = artifactory.aql(ctx, f'items.find({{"name":{{"$match":{quoted_text("*" + wanted["name"] + "*")}}},"type":"file"}})'
                                         '.include("repo","path","name","modified").sort({"$desc":["modified"]}).limit(15)')
             found = [f"{r.get('repo')}/{(r.get('path') or '').strip('.').strip('/')}/{r.get('name')}".replace("//", "/") for r in rows]
     except (ToolFailure, httpx.HTTPError) as exc:
@@ -832,8 +832,8 @@ def investigate_project_health(ctx: ToolContext, args: Dict[str, Any]) -> Dict[s
                          "finished": r.get("finished_date"), "url": r.get("url")}
     with ctx.ado_client() as client:
         ctx.progress("azure", "Counting open bugs")
-        where = [f"[System.TeamProject] = {ado.literal(project)}", "[System.WorkItemType] = 'Bug'",
-                 "[System.State] NOT IN (" + ", ".join(ado.literal(s) for s in ado.CLOSED_STATES) + ")"]
+        where = [f"[System.TeamProject] = {wiql_text(project)}", "[System.WorkItemType] = 'Bug'",
+                 "[System.State] NOT IN (" + ", ".join(wiql_text(s) for s in ado.CLOSED_STATES) + ")"]
         bugs = ado.wiql(ctx, client, where, 30, args.get("collection", ""), order="[Microsoft.VSTS.Common.Priority] ASC")
     by_priority = Counter(str(b.get("priority") or "?") for b in bugs)
     gates = []

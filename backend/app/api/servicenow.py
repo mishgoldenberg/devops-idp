@@ -12,11 +12,11 @@ import logging
 import os
 import re
 from html import unescape as _html_unescape
+from urllib.parse import quote
 from typing import Any, Dict, List, Optional
 
 import httpx
 
-from resilient_http import tls_verify
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
 
 import activity
@@ -24,8 +24,10 @@ import cache
 import db
 import identity
 import snow_catalog
-from common import looks_like_sys_id, now_iso, truthy
+from common import attachment_type, looks_like_sys_id, now_iso, safe_attachment, truthy
 from security import AuthUser, get_current_user, has_effective_admin_access_live
+import resilient_http
+from resilient_http import far_message
 
 router = APIRouter()
 _log = logging.getLogger(__name__)
@@ -96,7 +98,7 @@ def _resolve_instance() -> str:
 def _snow_client() -> httpx.Client:
     user = os.getenv("SNOW_API_USERNAME", "")
     password = os.getenv("SNOW_API_PASSWORD", "")
-    return httpx.Client(verify=tls_verify(), 
+    return resilient_http.Client(
         base_url=_resolve_instance(),
         auth=(user, password),
         headers={"Accept": "application/json", "Content-Type": "application/json"},
@@ -116,7 +118,7 @@ def _snow_ticket_flow_client() -> httpx.Client:
 		)
 	if not base_url.startswith(("http://", "https://")):
 		base_url = f"https://{base_url}"
-	return httpx.Client(verify=tls_verify(), 
+	return resilient_http.Client(
 		base_url=base_url,
 		auth=(username, password),
 		headers={"Accept": "application/json"},
@@ -129,17 +131,7 @@ def _safe_snow_error(exc: Exception, context: str) -> HTTPException:
 	if isinstance(exc, HTTPException):
 		return exc
 	if isinstance(exc, httpx.HTTPStatusError):
-		message = ""
-		try:
-			body = exc.response.json()
-			if isinstance(body, dict):
-				err = body.get("error")
-				if isinstance(err, dict):
-					message = str(err.get("message") or err.get("detail") or "").strip()
-				if not message:
-					message = str(body.get("message") or "").strip()
-		except Exception:
-			message = exc.response.text[:200].strip()
+		message = far_message(exc.response)
 		_log.warning(
 			"ServiceNow ticket flow failed while %s: status=%s body=%s",
 			context,
@@ -177,36 +169,43 @@ def _format_ticket_description(fields: Dict[str, str]) -> str:
 	return "\n".join(lines).strip()
 
 
-def _upload_snow_attachments(
-	client: httpx.Client,
-	record_sys_id: str,
-	attachments: Optional[List[UploadFile]],
-	table: str = "incident",
-) -> int:
-	count = 0
+_MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+
+
+def _checked_attachments(attachments: Optional[List[UploadFile]]) -> List[tuple]:
+	"""(file name, media type, bytes) for each upload, checked by common.safe_attachment
+	before anything is sent, so a refused file never leaves a half-made ticket."""
+	files = []
 	for upload in attachments or []:
 		if not upload or not upload.filename:
 			continue
+		upload.file.seek(0)
+		data = upload.file.read(_MAX_ATTACHMENT_BYTES + 1)
+		try:
+			files.append((*safe_attachment(upload.filename, data, _MAX_ATTACHMENT_BYTES), data))
+		except ValueError as exc:
+			raise HTTPException(status_code=400, detail=str(exc))
+	return files
+
+
+def _upload_snow_attachments(client: httpx.Client, record_sys_id: str, files: List[tuple],
+							 table: str = "incident") -> int:
+	count = 0
+	for name, media_type, data in files:
 		# The /api/now/attachment/file endpoint wants table_name, table_sys_id and
 		# file_name as QUERY params and the file as the raw request body (not a
 		# multipart form) — sending multipart drops file_name → HTTP 400.
 		try:
-			upload.file.seek(0)
-			data = upload.file.read()
 			resp = client.post(
 				"/api/now/attachment/file",
-				params={
-					"table_name": table or "incident",
-					"table_sys_id": record_sys_id,
-					"file_name": upload.filename,
-				},
+				params={"table_name": table or "incident", "table_sys_id": record_sys_id, "file_name": name},
 				content=data,
-				headers={"Content-Type": upload.content_type or "application/octet-stream"},
+				headers={"Content-Type": media_type},
 			)
 			resp.raise_for_status()
 			count += 1
 		except Exception as exc:
-			raise _safe_snow_error(exc, f"uploading attachment {upload.filename}") from exc
+			raise _safe_snow_error(exc, f"uploading attachment {name}") from exc
 	return count
 
 
@@ -291,7 +290,8 @@ def _service_account_identities(client: httpx.Client) -> set:
         try:
             resp = client.get(
                 "/api/now/table/sys_user",
-                params={"sysparm_query": f"user_name={user_name}", "sysparm_fields": "name", "sysparm_limit": "1"},
+                params={"sysparm_query": f"user_name={snow_catalog.query_value(user_name)}", "sysparm_fields": "name",
+                        "sysparm_limit": "1"},
             )
             if resp.status_code == 200:
                 rows = resp.json().get("result") or []
@@ -464,17 +464,7 @@ def _raise_snow_error(exc: Exception, context: str) -> None:
         # Best-effort extraction of the ServiceNow error.message — the common
         # shape is ``{"error": {"message": "...", "detail": "..."}}``. Anything
         # that doesn't match is logged server-side and surfaced generically.
-        snow_message = ""
-        try:
-            body = exc.response.json()
-            if isinstance(body, dict):
-                err = body.get("error")
-                if isinstance(err, dict):
-                    snow_message = str(err.get("message") or err.get("detail") or "").strip()
-                if not snow_message:
-                    snow_message = str(body.get("message") or "").strip()
-        except Exception:
-            snow_message = exc.response.text[:200].strip()
+        snow_message = far_message(exc.response)
 
         _log.warning(
             "ServiceNow %s failed (context=%s, instance=%s): status=%s body=%s",
@@ -660,7 +650,8 @@ def get_ticket_detail(sys_id: str, current_user: AuthUser = Depends(get_current_
                     jr = client.get(
                         "/api/now/table/sys_journal_field",
                         params={
-                            "sysparm_query": f"element_id={sys_id}^elementIN{','.join(elements)}",
+                            "sysparm_query": f"element_id={snow_catalog.query_value(sys_id)}"
+                                             f"^elementIN{snow_catalog.query_value(','.join(elements))}",
                             "sysparm_fields": "sys_id,sys_created_by,sys_created_on,value,element",
                             "sysparm_orderby": "sys_created_on",
                             "sysparm_limit": 500,
@@ -692,7 +683,7 @@ def get_ticket_detail(sys_id: str, current_user: AuthUser = Depends(get_current_
                 att_resp = client.get(
                     "/api/now/attachment",
                     params={
-                        "sysparm_query": f"table_name=incident^table_sys_id={sys_id}",
+                        "sysparm_query": f"table_name=incident^table_sys_id={snow_catalog.query_value(sys_id)}",
                         "sysparm_fields": "sys_id,file_name,content_type,size_bytes,sys_created_on",
                         "sysparm_limit": 50,
                     },
@@ -758,7 +749,8 @@ def get_attachment(
         with _snow_client() as client:
             meta = client.get(f"/api/now/attachment/{attachment_id}")
             meta.raise_for_status()
-            if str((meta.json().get("result") or {}).get("table_sys_id") or "") != sys_id:
+            record = meta.json().get("result") or {}
+            if str(record.get("table_sys_id") or "") != sys_id:
                 raise HTTPException(status_code=404, detail="That attachment does not exist.")
             resp = client.get(
                 f"/api/now/attachment/{attachment_id}/file",
@@ -769,8 +761,16 @@ def get_attachment(
         raise
     except Exception as exc:
         _raise_snow_error(exc, "downloading attachment")
-    content_type = resp.headers.get("Content-Type", "application/octet-stream")
-    return Response(content=resp.content, media_type=content_type)
+    # Served from the Hub's own address, so the type comes from the bytes (never from
+    # ServiceNow's header) and only a picture opens in the browser: anything else, a
+    # page or a script included, is downloaded and cannot run as the Hub.
+    media_type = attachment_type(resp.content)
+    disposition = "inline" if media_type.startswith("image/") else "attachment"
+    return Response(content=resp.content, media_type=media_type, headers={
+        "Content-Disposition": f"{disposition}; filename*=UTF-8''{quote(str(record.get('file_name') or 'attachment'), safe='')}",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'none'; sandbox",
+    })
 
 
 def _comment_present(client: httpx.Client, sys_id: str, text: str) -> bool:
@@ -810,7 +810,8 @@ def reply_to_ticket(
     # plain incident.comments write (no marker — see the write block below); files
     # go through the attachment API.
     text = (message or "").strip()
-    has_files = any(bool(u and u.filename) for u in (attachments or []))
+    files = _checked_attachments(attachments)
+    has_files = bool(files)
     if not text and not has_files:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
     number = str(_require_own_ticket(sys_id, current_user).get("number") or "your ticket")
@@ -855,7 +856,7 @@ def reply_to_ticket(
                 else:
                     resp.raise_for_status()
             if has_files:
-                attachment_count = _upload_snow_attachments(client, sys_id, attachments, "incident")
+                attachment_count = _upload_snow_attachments(client, sys_id, files, "incident")
     except Exception as exc:
         _raise_snow_error(exc, "sending reply")
 
@@ -1169,12 +1170,13 @@ def _resolve_support_group(client: httpx.Client, value: str) -> str:
     sys_user_group, so submit_producer needs the group's sys_id. Look it up by
     name; fall back to the raw value if it's already a sys_id or can't be found."""
     value = (value or "").strip()
-    if not value or looks_like_sys_id(value):
+    if not value or looks_like_sys_id(value) or "^" in value:
         return value
     try:
         resp = client.get(
             "/api/now/table/sys_user_group",
-            params={"sysparm_query": f"name={value}", "sysparm_fields": "sys_id", "sysparm_limit": "1"},
+            params={"sysparm_query": f"name={snow_catalog.query_value(value)}", "sysparm_fields": "sys_id",
+                    "sysparm_limit": "1"},
         )
         if resp.status_code == 200:
             rows = resp.json().get("result") or []
@@ -1720,6 +1722,7 @@ def create_ticket_flow(
 	user_email = (current_user.get("email") or current_user.get("username") or "").strip().lower()
 	if not user_email:
 		raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User email missing from auth context.")
+	files = _checked_attachments(attachments)
 
 	fields = {
 		"full_name": identity.trusted_name(user_id=str(current_user.get("id") or ""), email=user_email),
@@ -1817,7 +1820,7 @@ def create_ticket_flow(
 			)
 
 			caller = _set_ticket_caller(client, table, incident_sys_id, caller_sys_id, record)
-			attachment_count = _upload_snow_attachments(client, incident_sys_id, attachments, table)
+			attachment_count = _upload_snow_attachments(client, incident_sys_id, files, table)
 	except HTTPException:
 		raise
 	except Exception as exc:

@@ -45,6 +45,8 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 import gitlab_client
 
 from db import execute, query_all, query_one
+import resilient_http
+from common import failure_text
 
 log = logging.getLogger(__name__)
 
@@ -442,13 +444,11 @@ def maybe_sync(user: Dict[str, Any]) -> bool:
             try:
                 sync_ado(user)
             except Exception as exc:
-                log.warning("streaks: Azure DevOps history not read for %s: %s: %s", who, type(exc).__name__, exc)
-                _mark(who, error=f"{type(exc).__name__}: {exc}"[:500])
+                _mark(who, error=failure_text("Azure DevOps", exc))
             try:
                 sync_gitlab(user)
             except Exception as exc:
-                log.warning("streaks: GitLab history not read for %s: %s: %s", who, type(exc).__name__, exc)
-                _mark_gitlab(who, error=f"{type(exc).__name__}: {exc}"[:500])
+                _mark_gitlab(who, error=failure_text("GitLab", exc))
         finally:
             with _running_lock:
                 _running.discard(who)
@@ -559,7 +559,6 @@ def sync_ado(user: Dict[str, Any]) -> Dict[str, int]:
         _my_account_forms,
         _person_forms,
     )
-    from resilient_http import tls_verify
     from secrets_manager import get_user_azure_devops_pat
 
     who = _who(user.get("email"))
@@ -583,7 +582,7 @@ def sync_ado(user: Dict[str, Any]) -> Dict[str, int]:
         except ValueError:
             return False
 
-    with httpx.Client(verify=tls_verify(), auth=httpx.BasicAuth("", pat),
+    with resilient_http.Client(auth=httpx.BasicAuth("", pat),
                       timeout=httpx.Timeout(20.0, connect=5.0)) as client:
         for base in _discover_ado_bases(client):
             me = _ado_identity(client, base)

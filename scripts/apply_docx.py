@@ -241,6 +241,7 @@ def run_guards() -> bool:
         ("templates against compiled CSS", "check_css_classes.py"),
         ("inline script blocks", "check_inline_js.py"),
         ("dead and duplicated code", "check_code_hygiene.py"),
+        ("outbound calls, error messages and secrets", "check_security_rules.py"),
     ]
     ok = True
     for label, script in checks:

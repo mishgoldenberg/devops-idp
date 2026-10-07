@@ -66,19 +66,23 @@ class SettingsBody(BaseModel):
     snow_table: Optional[str] = Field(None, max_length=80)
 
 
+class SetupRefused(ValueError):
+    """A setting that cannot work, in the Hub's own words for the admin."""
+
+
 def _check_snow(table: str) -> str:
     """One row of the ticket table, read the way the build will read it."""
     from api.servicenow import _snow_ticket_flow_client
 
     if not knowledge.snow_available():
-        raise ValueError("ServiceNow is not configured on this Hub (SNOW_BASE_URL, SNOW_API_USERNAME, SNOW_API_PASSWORD).")
+        raise SetupRefused("ServiceNow is not configured on this Hub (SNOW_BASE_URL, SNOW_API_USERNAME, SNOW_API_PASSWORD).")
     if not re.fullmatch(r"[a-z0-9_]{1,80}", table):
-        raise ValueError(f"'{table}' is not a ServiceNow table name.")
+        raise SetupRefused(f"'{table}' is not a ServiceNow table name.")
     with _snow_ticket_flow_client() as client:
         resp = client.get(f"/api/now/table/{table}", params={
             "sysparm_query": "close_notesISNOTEMPTY", "sysparm_fields": "sys_id", "sysparm_limit": 1})
     if resp.status_code != 200 or "json" not in (resp.headers.get("content-type") or ""):
-        raise ValueError(f"ServiceNow refused to list {table} ({resp.status_code}).")
+        raise SetupRefused(f"ServiceNow refused to list {table} ({resp.status_code}).")
     return f"{table} is readable"
 
 
@@ -129,7 +133,7 @@ def save_settings(body: SettingsBody, request: Request, admin: AuthUser = Depend
     if snow_after["enabled"]:
         try:
             checks["snow"] = _check_snow(snow_after["table"])
-        except ValueError as exc:
+        except SetupRefused as exc:
             raise audited_error(request, 400, f"Ticket fixes: {exc}")
         except httpx.HTTPError as exc:
             raise audited_error(request, 502, failure_text("ServiceNow", exc))

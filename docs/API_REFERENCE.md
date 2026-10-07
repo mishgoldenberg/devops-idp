@@ -2,7 +2,7 @@
 
 <!-- GENERATED:API — do not edit by hand; run scripts/gen_docs.py -->
 
-258 endpoints across 29 groups, generated from the running application's OpenAPI schema.
+256 endpoints across 29 groups, generated from the running application's OpenAPI schema.
 
 Everything under `/api/…` returns JSON. Everything under `/ui/…` returns HTML fragments for HTMX and is not part of this reference — those are not an API, they are the pages.
 
@@ -354,7 +354,6 @@ Authentication is the `auth_token` cookie (HS256 JWT) on every route except `/ap
 | `GET` | `/ui/components/artifactory-repos` | Ui Artifactory Repos Component |
 | `GET` | `/ui/components/artifactory-storage` | Ui Artifactory Storage Component |
 | `GET` | `/ui/components/azure-devops-tasks` | Ui Azure Devops Tasks Component |
-| `GET` | `/ui/components/banner` | Ui Banner Component |
 | `GET` | `/ui/components/confluence-pages` | Ui Confluence Pages Component |
 | `GET` | `/ui/components/gitlab-merge-requests` | Ui Gitlab Merge Requests Component |
 | `GET` | `/ui/components/gitlab-merge-requests-review` | Ui Gitlab Merge Requests Review Component |
@@ -365,7 +364,6 @@ Authentication is the `auth_token` cookie (HS256 JWT) on every route except `/ap
 | `GET` | `/ui/components/quick-links` | Ui Quick Links Component |
 | `GET` | `/ui/components/recent-activity` | Ui Recent Activity Component |
 | `GET` | `/ui/components/servicenow-tickets` | Ui Servicenow Tickets Component |
-| `GET` | `/ui/components/sidebar` | Ui Sidebar Component |
 | `GET` | `/ui/components/sonarqube-gates` | Ui Sonarqube Gates Component |
 | `GET` | `/ui/components/sonarqube-hotspots` | Ui Sonarqube Hotspots Component |
 | `GET` | `/ui/components/sonarqube-my-issues` | Ui Sonarqube My Issues Component |

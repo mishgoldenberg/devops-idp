@@ -44,7 +44,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
-from resilient_http import tls_verify
+import resilient_http
+from common import failure_text
 
 log = logging.getLogger(__name__)
 
@@ -220,8 +221,7 @@ def _call(
     for shape in order:
         auth = httpx.BasicAuth(user, secret) if shape == "basic" else None
         try:
-            with httpx.Client(
-                verify=tls_verify(),
+            with resilient_http.Client(
                 auth=auth,
                 headers=_headers(shape, secret),
                 timeout=httpx.Timeout(timeout, connect=5.0),
@@ -231,7 +231,7 @@ def _call(
         except Exception as exc:
             log.warning("Artifactory %s: %s unreachable: %s", label, url, exc)
             raise ArtifactoryProbeError(
-                label, url, 0, f"{type(exc).__name__}: {exc}", user, ", ".join(order)
+                label, url, 0, failure_text("Artifactory", exc), user, ", ".join(order)
             ) from exc
 
         log.warning(

@@ -54,6 +54,8 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 import httpx
 
 from resilient_http import tls_verify
+import resilient_http
+from common import failure_text
 
 _log = logging.getLogger(__name__)
 
@@ -229,7 +231,7 @@ def _client(base: str) -> httpx.Client:
     with _client_lock:
         client = _clients.get(key)
         if client is None:
-            client = httpx.Client(
+            client = resilient_http.Client(
                 verify=verify,
                 cookies=CookieJar(policy=DefaultCookiePolicy(allowed_domains=[])),
                 limits=httpx.Limits(
@@ -260,7 +262,7 @@ def _request(
                 **_auth_kwargs(scheme, token),
             )
         except Exception as exc:
-            raise SonarUnavailable(f"{type(exc).__name__}: {exc}", cause=exc) from exc
+            raise SonarUnavailable(failure_text("SonarQube", exc), cause=exc) from exc
         last = response
         if response.status_code in {401, 403}:
             continue

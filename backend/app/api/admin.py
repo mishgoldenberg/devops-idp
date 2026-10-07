@@ -16,7 +16,7 @@ from api.quick_links import (
     normalize_kind as _normalize_kind,
     validate_quick_link_shape as _validate_quick_link_shape,
 )
-from common import now_iso, require_admin
+from common import failure_text, now_iso, require_admin
 from db import execute, execute_returning, query_all, query_one
 from security import (
     PLATFORM_ADMIN_LEVEL,
@@ -140,7 +140,7 @@ def test_sso_connection(
     except (httpx.HTTPError, ValueError) as exc:
         return {
             "success": False,
-            "message": f"Connection failed: {exc}",
+            "message": str(exc) if isinstance(exc, ValueError) else failure_text("The identity provider", exc),
             "timestamp": now_iso(),
         }
 
@@ -164,7 +164,7 @@ def save_admin_sso_config(
     except (httpx.HTTPError, ValueError) as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"SSO configuration is invalid: {exc}",
+            detail=str(exc) if isinstance(exc, ValueError) else failure_text("The identity provider", exc),
         )
     return {
         "success": True,

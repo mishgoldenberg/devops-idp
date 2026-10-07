@@ -71,7 +71,7 @@ def test_scoped_limit_headers_report_the_tightest():
     assert llm.read_limits({"x-litellm-key-tpm-limit": "30000"}) == {"tpm": 30000, "tpm_scope": "key"}
 
 
-_REAL_CLIENT = llm.httpx.Client
+_REAL_CLIENT = llm.resilient_http.Client
 
 
 def _gateway(monkeypatch, routes):
@@ -83,7 +83,7 @@ def _gateway(monkeypatch, routes):
         body = routes.get(path)
         return httpx.Response(200, json=body) if body is not None else httpx.Response(404, json={"detail": "Not Found"})
 
-    monkeypatch.setattr(llm.httpx, "Client", lambda *a, **kw: _REAL_CLIENT(transport=httpx.MockTransport(handler),
+    monkeypatch.setattr(llm.resilient_http, "Client", lambda *a, **kw: _REAL_CLIENT(transport=httpx.MockTransport(handler),
                                                                           headers=kw.get("headers")))
     monkeypatch.setenv("DEVBOT_LLM_BASE_URL", "https://gw.example/litellm/v1")
 
@@ -215,7 +215,8 @@ def test_an_unpaired_tool_call_is_not_replayed():
 
 from devbot import tools  # noqa: E402
 from devbot.tools import base as tool_base  # noqa: E402
-from devbot.tools.confluence import cql_literal, page_id_from, storage_to_text  # noqa: E402
+from common import quoted_text, wiql_text  # noqa: E402
+from devbot.tools.confluence import page_id_from, storage_to_text  # noqa: E402
 
 ALL = {"azure": True, "sonarqube": True, "artifactory": True, "confluence": True}
 
@@ -268,9 +269,9 @@ def test_confluence_code_blocks_survive_as_code():
 
 
 def test_cql_and_wiql_values_cannot_break_out():
-    assert cql_literal('a" OR space = "X') == '"a\\" OR space = \\"X"'
-    from devbot.tools.ado import literal
-    assert literal("x' OR 1=1") == "'x'' OR 1=1'"
+    assert quoted_text('a" OR space = "X') == '"a\\" OR space = \\"X"'
+    assert quoted_text('a\\" OR space = "X') == '"a\\\\\\" OR space = \\"X"'
+    assert wiql_text("x' OR 1=1") == "'x'' OR 1=1'"
 
 
 def test_page_links_become_ids():

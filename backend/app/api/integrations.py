@@ -9,7 +9,7 @@ from urllib.parse import quote
 
 import httpx
 
-from resilient_http import explain_integration_failure, tls_verify
+from resilient_http import explain_integration_failure
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
 
@@ -28,7 +28,8 @@ import sonar_insights
 from devbot import config as devbot_config
 from devbot import llm as devbot_llm
 from devbot import models as devbot_models
-from common import now_iso
+from common import failure_text, now_iso, quoted_text
+import resilient_http
 
 # "devbot" is the person's own key to the AI model gateway. It is kept here, with the
 # other tokens, so Connections and the DevBot page read and write the same one.
@@ -192,7 +193,7 @@ def integrations_health(current_user: AuthUser = Depends(get_current_user)) -> D
             else:
                 result["detail"] = str(exc.detail or f"{label} is unreachable.")
         except Exception as exc:
-            result["detail"] = f"{label} is unreachable: {type(exc).__name__}."
+            result["detail"] = failure_text(label, exc)
         return result
 
     with ThreadPoolExecutor(max_workers=4) as pool:
@@ -1019,10 +1020,7 @@ def confluence_search(
     if not query:
         return {"success": True, "data": [], "timestamp": now_iso()}
     base = _base_url("confluence")
-    # Escape any embedded double-quotes before placing the query inside the CQL
-    # ``text~"..."`` clause so attackers can't break out of the literal.
-    safe = query.replace('"', '\\"')
-    cql = f'type=page AND text~"{safe}"'
+    cql = f"type=page AND text~{quoted_text(query)}"
     response = _confluence_request(
         f"{base}/rest/api/content/search",
         token,
@@ -1050,7 +1048,7 @@ def _confluence_request(
     """Authenticated GET to Confluence; surfaces 401/403 as 401 to the browser."""
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
     try:
-        with httpx.Client(verify=tls_verify(), timeout=httpx.Timeout(timeout, connect=5.0), headers=headers) as client:
+        with resilient_http.Client(timeout=httpx.Timeout(timeout, connect=5.0), headers=headers) as client:
             response = client.get(url, params=params)
     except Exception:
         raise HTTPException(status_code=502, detail="Confluence is unreachable")
@@ -1128,7 +1126,7 @@ def _test_token(system: str, token: str) -> None:
         elif system == "confluence":
             # What confluence_recent() uses. /rest/api/space is not enabled everywhere.
             headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-            with httpx.Client(verify=tls_verify(), timeout=httpx.Timeout(8.0, connect=5.0), headers=headers) as client:
+            with resilient_http.Client(timeout=httpx.Timeout(8.0, connect=5.0), headers=headers) as client:
                 response = client.get(
                     f"{base}/rest/api/content/search",
                     params={"cql": "type = page", "limit": 1},
@@ -1298,7 +1296,7 @@ def _artifactory_request(
     extra_headers = dict(kwargs.pop("headers", {}) or {})
     for headers in _artifactory_header_sets(token):
         merged_headers = {**headers, **extra_headers}
-        with httpx.Client(verify=tls_verify(), timeout=httpx.Timeout(timeout, connect=5.0), headers=merged_headers) as client:
+        with resilient_http.Client(timeout=httpx.Timeout(timeout, connect=5.0), headers=merged_headers) as client:
             response = client.request(method, url, **kwargs)
         if response.status_code not in {401, 403}:
             response.raise_for_status()
@@ -1330,7 +1328,7 @@ def _sonar_request(
     )
     response: Optional[httpx.Response] = None
     for kwargs in attempts:
-        with httpx.Client(verify=tls_verify(), timeout=httpx.Timeout(timeout, connect=5.0)) as client:
+        with resilient_http.Client(timeout=httpx.Timeout(timeout, connect=5.0)) as client:
             response = client.get(url, params=params, **kwargs)
         if response.status_code not in {401, 403}:
             return response
@@ -1339,18 +1337,13 @@ def _sonar_request(
     return response
 
 
-def _aql_literal(value: str) -> str:
-    """Escape a value for embedding in an AQL JSON string literal."""
-    return str(value or "").replace("\\", "\\\\").replace('"', '\\"')
-
-
 def _latest_artifacts(base: str, token: str, repo: str) -> List[Dict[str, Any]]:
     # AQL clause ORDER IS SIGNIFICANT: find → include → sort → limit. With .sort()
     # before .include() Artifactory rejects the query outright, which is why every
     # repo's hover panel said "no data available" — the 400 was being swallowed
     # below and turned into an empty list.
     query = (
-        f'items.find({{"repo":"{_aql_literal(repo)}"}})'
+        f'items.find({{"repo":{quoted_text(repo)}}})'
         '.include("name","repo","path","type","modified")'
         '.sort({"$desc":["modified"]})'
         ".limit(10)"

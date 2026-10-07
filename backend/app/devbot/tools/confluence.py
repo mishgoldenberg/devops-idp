@@ -19,18 +19,14 @@ from urllib.parse import parse_qs, urlsplit
 
 import httpx
 
-from resilient_http import tls_verify
 
 from .base import NotConnected, Tool, ToolContext, ToolFailure, register
-
-
-def cql_literal(value: str) -> str:
-    return '"' + str(value or "").replace("\\", "\\\\").replace('"', '\\"') + '"'
+import resilient_http
+from common import quoted_text
 
 
 def _client(ctx: ToolContext) -> httpx.Client:
-    return httpx.Client(
-        verify=tls_verify(),
+    return resilient_http.Client(
         timeout=httpx.Timeout(20.0, connect=5.0),
         headers={"Authorization": f"Bearer {ctx.token('confluence')}", "Accept": "application/json"},
     )
@@ -85,9 +81,9 @@ def storage_to_text(storage: str, limit: int = 3500) -> str:
 
 def search(ctx: ToolContext, query: str, space: str = "", limit: int = 8) -> List[Dict[str, Any]]:
     """Pages matching ``query``, best first, with Confluence's own excerpt of each."""
-    cql = f"type = page AND text ~ {cql_literal(query)}"
+    cql = f"type = page AND text ~ {quoted_text(query)}"
     if space:
-        cql += f" AND space = {cql_literal(space)}"
+        cql += f" AND space = {quoted_text(space)}"
     with _client(ctx) as client:
         resp = _get(ctx, client, "/rest/api/search", {"cql": cql, "limit": limit, "excerpt": "highlight"})
         if resp.status_code == 200:

@@ -53,10 +53,13 @@ def _announcements(db, version):
     )
 
 
-def test_a_new_version_posts_one_announcement_for_two_days(database):
+def test_a_new_version_posts_one_announcement_for_two_days(database, monkeypatch):
     db, _env = database
     import release_notes
 
+    # A generic-only release is never announced, so deploy as the newest one that says something.
+    entry = next(e for e in changelog.all_releases() if not changelog.is_generic(e))
+    monkeypatch.setattr(changelog, "current", lambda: entry)
     version = changelog.version()
     before = {row["id"] for row in _announcements(db, version)}
     try:

@@ -56,9 +56,14 @@ class Settings:
         self.redis_port = int(os.getenv("REDIS_PORT", "6379"))
         self.redis_password = os.getenv("REDIS_PASSWORD")
 
-        self.jwt_secret = os.getenv("JWT_SECRET", "")
-        if not self.jwt_secret:
-            log.error("Missing critical environment variable: JWT_SECRET")
+        # It signs every session and derives the key that encrypts stored credentials,
+        # so an empty or example value is refused: anyone who read env.example could
+        # forge a session or decrypt a backup.
+        self.jwt_secret = os.getenv("JWT_SECRET", "").strip()
+        if not self.jwt_secret or self.jwt_secret.lower().startswith(("replace_with", "change_me", "changeme")):
+            raise RuntimeError("JWT_SECRET is empty or still the example value; set a random one of 32+ characters")
+        if len(self.jwt_secret) < 32:
+            log.warning("JWT_SECRET is shorter than 32 characters; a longer random value is harder to guess")
         # Keep same semantics as Node auth-service default
         self.jwt_expiry = os.getenv("JWT_EXPIRY", "8h")
 

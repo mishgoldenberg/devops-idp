@@ -3,7 +3,7 @@ Artifactory, read with the person's own token.
 
 Requests go through the Hub's _artifactory_request, which tries the token as a Bearer
 token and then as an API key -- the Hub does not know which kind a person pasted, and
-neither does DevBot. Every value a person gives reaches AQL through _aql_literal.
+neither does DevBot. Every value a person gives reaches AQL through common.quoted_text.
 
 Links point at the web UI (a sibling of the REST base on a JFrog Platform install),
 never at the download URL, which serves a bare file index.
@@ -18,6 +18,7 @@ from urllib.parse import quote
 from fastapi import HTTPException
 
 from .base import Tool, ToolContext, ToolFailure, register
+from common import quoted_text
 
 
 def _integ():
@@ -58,10 +59,6 @@ def ui_url(ctx: ToolContext, repo: str, path: str = "") -> str:
 def aql(ctx: ToolContext, query: str) -> List[Dict[str, Any]]:
     resp = request(ctx, "POST", "/api/search/aql", content=query, headers={"Content-Type": "text/plain"})
     return resp.json().get("results") or []
-
-
-def literal(value: str) -> str:
-    return _integ()._aql_literal(value)
 
 
 # ── tools ────────────────────────────────────────────────────────────────────
@@ -144,7 +141,7 @@ def art_item(ctx: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]:
 
 def docker_tags(ctx: ToolContext, repo: str, image: str, top: int = 25) -> List[Dict[str, Any]]:
     image = image.strip("/")
-    query = (f'items.find({{"repo":"{literal(repo)}","path":{{"$match":"{literal(image)}/*"}},"name":"manifest.json"}})'
+    query = (f'items.find({{"repo":{quoted_text(repo)},"path":{{"$match":{quoted_text(image + "/*")}}},"name":"manifest.json"}})'
              '.include("path","modified","size")'
              '.sort({"$desc":["modified"]})'
              f".limit({top})")

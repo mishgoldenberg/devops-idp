@@ -7,7 +7,8 @@ starlette==1.7.0
 # Without [standard]: its uvloop/httptools/watchfiles are optional speed-ups with
 # Linux-only wheels the internal index does not carry; uvicorn runs on asyncio and h11.
 uvicorn==0.38.0
-python-multipart
+# Parses uploads; 0.0.18 fixed a denial of service in form parsing.
+python-multipart>=0.0.18
 jinja2==3.1.6
 
 # Storage

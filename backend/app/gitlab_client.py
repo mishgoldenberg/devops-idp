@@ -29,7 +29,7 @@ from urllib.parse import quote
 import httpx
 from fastapi import HTTPException, status
 
-from resilient_http import tls_verify
+import resilient_http
 
 log = logging.getLogger(__name__)
 
@@ -91,10 +91,10 @@ def require_token(user: Dict[str, Any]) -> str:
 
 def client(token: str, read: float = 20.0) -> httpx.Client:
     """A client on the API root, carrying the token as GitLab expects it."""
-    return httpx.Client(
+    return resilient_http.Client(
         base_url=require_base() + "/api/v4",
         headers={"PRIVATE-TOKEN": token, "Accept": "application/json"},
-        verify=tls_verify(),
+
         timeout=httpx.Timeout(read, connect=5.0),
     )
 

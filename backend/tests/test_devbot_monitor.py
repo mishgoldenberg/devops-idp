@@ -87,8 +87,8 @@ def test_a_work_item_the_person_cannot_open_is_not_visible(monkeypatch):
     def handler(request):
         return httpx.Response(200 if request.url.path.endswith("/1") else 404, json={"id": 1})
 
-    real = httpx.Client
-    monkeypatch.setattr(knowledge.httpx, "Client", lambda *a, **kw: real(transport=httpx.MockTransport(handler)))
+    real = knowledge.resilient_http.Client
+    monkeypatch.setattr(knowledge.resilient_http, "Client", lambda *a, **kw: real(transport=httpx.MockTransport(handler)))
     check = knowledge.ado_check("pat")
     assert check({"id": "ado:Main:1", "origin": "https://ado.test/tfs/Main"}) is True
     assert check({"id": "ado:Main:2", "origin": "https://ado.test/tfs/Main"}) is False

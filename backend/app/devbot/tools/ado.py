@@ -8,7 +8,7 @@ widgets skip it. Where the Hub already has a reader (pipeline runs, pull request
 repositories) it is called rather than copied, so DevBot and the widgets cannot
 disagree about what exists.
 
-User-supplied values reach WIQL only through _wiql_literal.
+User-supplied values reach WIQL only through common.wiql_text.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from urllib.parse import quote
 import httpx
 
 from .base import Tool, ToolContext, ToolFailure, register
+from common import wiql_text
 
 API = {"api-version": "7.0"}
 NOT_MINE = (400, 401, 403, 404)
@@ -146,10 +147,6 @@ def wiql(ctx: ToolContext, client: httpx.Client, where: List[str], top: int, col
     return rows[:top]
 
 
-def literal(value: str) -> str:
-    return "'" + _ado()._wiql_literal(value) + "'"
-
-
 # ── tools ────────────────────────────────────────────────────────────────────
 
 def ado_projects(ctx: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -198,23 +195,23 @@ def ado_pipeline_runs(ctx: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]:
 def ado_work_items(ctx: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]:
     where: List[str] = []
     if args.get("project"):
-        where.append(f"[System.TeamProject] = {literal(args['project'])}")
+        where.append(f"[System.TeamProject] = {wiql_text(args['project'])}")
     if args.get("type"):
-        where.append(f"[System.WorkItemType] = {literal(args['type'])}")
+        where.append(f"[System.WorkItemType] = {wiql_text(args['type'])}")
     state = (args.get("state") or "").strip()
     if state.lower() in ("open", "active", "not done", "not closed"):
-        where.append("[System.State] NOT IN (" + ", ".join(literal(s) for s in CLOSED_STATES) + ")")
+        where.append("[System.State] NOT IN (" + ", ".join(wiql_text(s) for s in CLOSED_STATES) + ")")
     elif state:
-        where.append(f"[System.State] = {literal(state)}")
+        where.append(f"[System.State] = {wiql_text(state)}")
     if args.get("assigned_to_me"):
         where.append("[System.AssignedTo] = @Me")
     elif args.get("assigned_to"):
-        where.append(f"[System.AssignedTo] = {literal(args['assigned_to'])}")
+        where.append(f"[System.AssignedTo] = {wiql_text(args['assigned_to'])}")
     query = (args.get("query") or "").strip()
     if query.lstrip("#").isdigit():
         where.append(f"[System.Id] = {int(query.lstrip('#'))}")
     elif query:
-        where.append(f"[System.Title] CONTAINS {literal(query)}")
+        where.append(f"[System.Title] CONTAINS {wiql_text(query)}")
     top = max(1, min(int(args.get("top") or 15), 30))
     with ctx.ado_client() as client:
         rows = wiql(ctx, client, where, top, args.get("collection", ""))

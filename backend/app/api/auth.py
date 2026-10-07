@@ -5,7 +5,6 @@ import secrets
 import ssl
 from urllib.parse import urlencode
 
-import httpx
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 
@@ -23,6 +22,7 @@ from sso_config import (
     fetch_openid_configuration,
     get_enabled_sso_config,
 )
+import resilient_http
 
 
 def _jwks_ssl_context() -> Optional[ssl.SSLContext]:
@@ -266,7 +266,7 @@ async def sso_callback(request: Request, code: Optional[str] = None, state: Opti
     except ValueError:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="SSO secret is unavailable")
 
-    async with httpx.AsyncClient(timeout=10, verify=tls_verify()) as client:
+    async with resilient_http.AsyncClient(timeout=10) as client:
         token_resp = await client.post(
             discovery["token_endpoint"],
             data={

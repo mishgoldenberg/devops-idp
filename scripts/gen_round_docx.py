@@ -128,13 +128,55 @@ def body(doc, text: str, bold: bool = False) -> None:
 
 # -- the round ---------------------------------------------------------------
 
-ROUND = "146"
-SUMMARY = ("The backend installs uvicorn without its [standard] extras (uvloop, httptools, watchfiles, websockets): optional speed-ups whose Linux wheels the internal PyPI repository does not carry, which failed the round 144 build with \"Could not find a version that satisfies the requirement uvloop>=0.15.1\". Apply on top of round 144; round 145 still waits until a build passes")
+ROUND = "148"
+SUMMARY = ("Security hardening applied across the whole backend rather than at single spots: every outbound HTTP call goes through one client that refuses a path climbing out of itself; values placed in ServiceNow, WIQL, CQL and AQL queries go through one escaper each; files attached to tickets and requests are checked by their bytes and served back so they cannot run; messages never carry exception text or another system's raw page; the app refuses an empty or example JWT_SECRET; a new check (scripts/check_security_rules.py) fails the build on any regression; GitHub CI also runs the tests against Postgres and a dependency CVE audit")
 DELETES = []
 FILES = [
+    ".github/workflows/ci.yml",
+    "CLAUDE.md",
+    "azure-pipelines.yml",
+    "backend/app/ado_identity.py",
+    "backend/app/ado_pipeline.py",
+    "backend/app/ado_repo.py",
+    "backend/app/api/admin.py",
+    "backend/app/api/ado_actions.py",
+    "backend/app/api/approvals.py",
+    "backend/app/api/auth.py",
+    "backend/app/api/azure_devops.py",
+    "backend/app/api/backups.py",
+    "backend/app/api/catalog.py",
+    "backend/app/api/confluence_actions.py",
+    "backend/app/api/devbot_index.py",
+    "backend/app/api/integrations.py",
+    "backend/app/api/servicenow.py",
+    "backend/app/artifactory_admin.py",
     "backend/app/changelog.py",
+    "backend/app/common.py",
+    "backend/app/config.py",
+    "backend/app/devbot/knowledge.py",
+    "backend/app/devbot/llm.py",
+    "backend/app/devbot/tools/ado.py",
+    "backend/app/devbot/tools/artifactory.py",
+    "backend/app/devbot/tools/base.py",
+    "backend/app/devbot/tools/confluence.py",
+    "backend/app/devbot/tools/investigate.py",
+    "backend/app/gitlab_client.py",
     "backend/app/requirements.txt",
-    "scripts/check_imports.py",
+    "backend/app/resilient_http.py",
+    "backend/app/snow_catalog.py",
+    "backend/app/sonar_insights.py",
+    "backend/app/sso_config.py",
+    "backend/app/streaks.py",
+    "backend/tests/test_devbot.py",
+    "backend/tests/test_devbot_monitor.py",
+    "backend/tests/test_release_announcement.py",
+    "backend/tests/test_security_fixes.py",
+    "docs/API_REFERENCE.md",
+    "docs/services/README.md",
+    "docs/services/resilient_http.md",
+    "docs/services/servicenow.md",
+    "scripts/apply_docx.py",
+    "scripts/check_security_rules.py",
     "scripts/gen_round_docx.py",
 ]
 PREAMBLE = ""

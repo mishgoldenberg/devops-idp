@@ -35,13 +35,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 import safe_mode
-from resilient_http import tls_verify
 from security import AuthUser, get_current_user
 
 from devbot.markup import markdown_to_storage
 
 from .integrations import _base_url, _require_token
 from common import dry_run, simulated
+import resilient_http
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -66,8 +66,7 @@ class AppendBody(_Action):
 
 
 def _client(token: str) -> httpx.Client:
-    return httpx.Client(
-        verify=tls_verify(),
+    return resilient_http.Client(
         timeout=httpx.Timeout(20.0, connect=5.0),
         headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
     )

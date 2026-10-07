@@ -23,8 +23,9 @@ from typing import Any, Callable, Dict, Iterable, List, Optional
 import httpx
 from fastapi import HTTPException
 
-from resilient_http import explain_integration_failure, tls_verify
+from resilient_http import explain_integration_failure
 from security import AuthUser
+import resilient_http
 
 log = logging.getLogger(__name__)
 
@@ -172,8 +173,7 @@ class ToolContext:
         return pat
 
     def ado_client(self, read: float = 20.0) -> httpx.Client:
-        return httpx.Client(
-            verify=tls_verify(),
+        return resilient_http.Client(
             auth=httpx.BasicAuth("", self.ado_pat()),
             timeout=httpx.Timeout(read, connect=5.0),
         )

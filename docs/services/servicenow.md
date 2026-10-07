@@ -26,6 +26,20 @@ Every endpoint that takes a ticket id first checks it is on the caller's own lis
 | POST   | `/api/support/tickets/create-flow`                    | Open a ticket through the record producer       |
 | GET    | `/api/support/ticket-form`                            | Admins: the producer's questions, which one carries the requester, and whether you resolve to a ServiceNow user |
 
+## Attachments
+
+A file attached to a ticket or a reply is checked before anything is sent
+(`common.safe_attachment`): at most 10 MB, and refused when its name or its first
+bytes make it a program, a script or a web page (`.exe`, `.ps1`, `.html`, `.svg`, `MZ`,
+`ELF`, `<script` ...). Its name loses any folder part, and the type sent to ServiceNow
+comes from its bytes, never from the browser. A download is served with the type its
+bytes show, `nosniff` and a sandboxing `Content-Security-Policy`; only a picture opens
+in the browser, anything else is saved, so a file someone added in ServiceNow cannot run
+as the Hub. The catalog forms check their attachments the same way, with a 5 MB cap.
+
+Every value put into a `sysparm_query` goes through `snow_catalog.query_value`, which
+refuses `^` and line breaks (`scripts/check_security_rules.py` fails one that does not).
+
 ## Who a ticket is for
 
 The producer inserts the incident as the service account. The requester is sent in

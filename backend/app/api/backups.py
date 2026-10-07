@@ -30,7 +30,7 @@ from fastapi import APIRouter, Depends, Query
 
 import db
 from security import AuthUser
-from common import admin_user
+from common import admin_user, failure_text
 
 
 log = logging.getLogger(__name__)
@@ -342,7 +342,7 @@ def backup_status(
                 "health": {
                     "level": "unknown",
                     "headline": "Backup status could not be read",
-                    "detail": f"The query against backup_runs failed: {exc}",
+                    "detail": failure_text("The backup history", exc),
                 },
                 "runs": [],
                 "last_backup": None,
