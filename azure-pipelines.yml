@@ -73,6 +73,14 @@ variables:
       value: $(HUB_HOSTNAME_ALIAS)
     ${{ else }}:
       value: ''
+  # DevBot and AdminBot, on or off per environment: HUB_AI_ENABLED_PROD and
+  # HUB_AI_ENABLED_TEST ("true"/"false") in the variable group. Leave one undefined
+  # and that environment's values file decides (values-prod.yaml off, values-test.yaml on).
+  - name: aiEnabledOverride
+    ${{ if eq(variables['Build.SourceBranch'], 'refs/heads/main') }}:
+      value: $(HUB_AI_ENABLED_PROD)
+    ${{ else }}:
+      value: $(HUB_AI_ENABLED_TEST)
   # Must agree with the values file above.
   - name: nameSuffix
     ${{ if eq(variables['Build.SourceBranch'], 'refs/heads/main') }}:
@@ -494,18 +502,25 @@ stages:
                 "$"*"("*) TLS_SECRET="" ;;
               esac
 
+              # DevBot and AdminBot on or off: this environment's values file decides
+              # unless the variable group sets HUB_AI_ENABLED_PROD / HUB_AI_ENABLED_TEST.
+              # Read from the environment Azure DevOps exports, not as $(...) in this text:
+              # an undefined one would arrive as $(HUB_AI_ENABLED_PROD), which bash runs as
+              # a command and set -e turns into a failed deploy.
+              AI_ENABLED="${AIENABLEDOVERRIDE:-}"
+              case "$AI_ENABLED" in
+                "$"*"("*) AI_ENABLED="" ;;
+              esac
+              case "$AI_ENABLED" in
+                ""|true|false) ;;
+                *) echo "##vso[task.logissue type=error]The assistants' switch for $(envName) (HUB_AI_ENABLED_PROD / HUB_AI_ENABLED_TEST) is '$AI_ENABLED'; use true or false."; exit 1 ;;
+              esac
+              echo "Assistants ($(envName)): ${AI_ENABLED:-as set in $(helmValuesFile)}"
               # Same macro guard: an undefined Azure DevOps variable arrives as its
               # literal $(NAME) text, and that is not a hostname. An empty alias must
               # stay empty rather than becoming a rule with no host, which matches
               # EVERY hostname and hijacks the other environment.
-              # DevBot and AdminBot on or off: the values file decides unless the
-              # variable group sets HUB_AI_ENABLED ("true"/"false").
-              AI_ENABLED="$(HUB_AI_ENABLED)"
-              case "$AI_ENABLED" in
-                "$"*"("*) AI_ENABLED="" ;;
-              esac
-              echo "Assistants: ${AI_ENABLED:-as set in $(helmValuesFile)}"
-              HOST_ALIAS="$(deployHostAlias)"
+              HOST_ALIAS="${DEPLOYHOSTALIAS:-}"
               case "$HOST_ALIAS" in
                 "$"*"("*) HOST_ALIAS="" ;;
               esac

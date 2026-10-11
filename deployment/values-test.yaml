@@ -10,7 +10,7 @@
 
 global:
   nameSuffix: "-test"
-  # The assistants run here, where they are being reviewed.
+  # The assistants run here, where they are being reviewed (HUB_AI_ENABLED_TEST overrides).
   aiEnabled: "true"
 
   # One of each. Test does not need to survive a node drain, and halving the pod

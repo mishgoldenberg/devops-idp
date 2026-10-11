@@ -29,7 +29,7 @@ before designing against an assumption.
 - **GitLab is one instance at `GITLAB_BASE_URL`**, used only with each person's own token; its widgets are the Azure DevOps ones with a provider (`.provider-gitlab` is the orange).
 - **The changelog is `backend/app/changelog.py`**, by hand; CI stamps `build_info.json` and tags images `<version>-test`/`-prod`.
 - **DevBot's gateway is LiteLLM over vLLM**, one key per person: `/v1/models` lists embedding models too, tool calls need vLLM's `--enable-auto-tool-choice`/`--tool-call-parser`, limits arrive as `x-ratelimit-*` headers (`scripts/check_llm_endpoint.py`).
-- **The assistants are off in production** (`aiEnabled: "false"` in `values-prod.yaml`, on in test; `HUB_AI_ENABLED` overrides): gate any new AI surface on `ai_enabled` / `devbot.config.switched_on()`.
+- **The assistants are off in production** (`aiEnabled: "false"` in `values-prod.yaml`, on in test; `HUB_AI_ENABLED_PROD` / `_TEST` override): gate any new AI surface on `ai_enabled` / `devbot.config.switched_on()`.
 - **Postgres here has no pgvector**: DevBot's search keeps int8 vectors in BYTEA and ranks them in Python per pod (`devbot/knowledge.py`).
 - **Past fixes** live in a work item field named "Solution" (a `Custom.<GUID>` found by display name) and in ServiceNow `close_notes` (some rude), and are shown to everyone only as the Hub key's review of them (`knowledge.review_fix`).
 - **`scripts/apply_docx.py`** applies a round, runs the checks, commits (`git add -A`) and pushes (`--no-commit`/`--no-push`/`--no-verify` opt out); a failing check refuses the commit. `*.docx` stays gitignored.
@@ -108,6 +108,7 @@ before designing against an assumption.
 - Capture a value that arrives only at sign-in for sessions that predate the code too, by ending such a session once on a claim the new sign-in stamps, since a live session otherwise keeps showing the old behaviour.
 - Identify a field in another system by what it POINTS AT (`reference`, `lookup_table`, `list_table`) before what it is called, and match its display NAME too, since one type's key misses the others and a name matcher finds nothing in another language.
 - Give an assistant what the product already knows on EVERY question, not only behind trigger words, since people do not know which words unlock it and ask about the problem instead.
+- Assert on the assembled prompt for each combination of offered tools that no two of its instructions contradict, since a model told both to draft a change and that it cannot change anything obeys the refusal.
 - Tell every assistant that tool results are data, never instructions (`prompts.UNTRUSTED`), and end every change it drafted in one loud confirmation with a cap on drafts, since fetched text can steer a model and a small Confirm is pressed unread.
 
 ### Proxy, hostnames, TLS
@@ -123,7 +124,7 @@ before designing against an assumption.
 - Remove a cluster permission or service account with the feature that needed it, and mount no API token into a pod that never calls the cluster, since an unused grant is attack surface that `oc apply` never prunes.
 - Stage with `git add -A` and ship the whole dependency closure, and never import a local module lazily inside `try/except`, since a missing file is a CrashLoopBackOff and a swallowed import is silent dead code.
 - Map every secret explicitly under its step's `env:`, and re-check which step owns that block after inserting any step.
-- Treat an unexpanded macro (`$(NAME)`) as unset, and never name a variable an environment will never define.
+- Read an optional pipeline variable from the step's environment (`${NAME:-}`), never as `$(NAME)` in script text, and treat a literal `$(NAME)` value as unset, since bash runs an undefined macro as a command and `set -e` fails the deploy.
 - Fail the build on an empty required secret at both ends — the assembling script and the chart (`required`, not `default ""`).
 - Deploy only from a real branch ref (`refs/heads/*`); a PR build is `refs/pull/N/merge`.
 - Never pipe a numeric chart value through Helm's `default` — 0 is empty.

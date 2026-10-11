@@ -392,8 +392,8 @@ and what the lookups returned. Tokens and keys never leave the Hub's server.
 ### On or off per environment
 
 `HUB_AI_ENABLED` (`global.aiEnabled` in the values files: `"true"` in
-`values-test.yaml`, `"false"` in `values-prod.yaml`; the pipeline variable
-`HUB_AI_ENABLED` overrides both) decides whether this deployment has the assistants at
+`values-test.yaml`, `"false"` in `values-prod.yaml`; the variable group's
+`HUB_AI_ENABLED_TEST` and `HUB_AI_ENABLED_PROD` override each environment separately) decides whether this deployment has the assistants at
 all (`devbot.config.switched_on`). Off, the `/api/devbot*` and `/api/adminbot` routers
 are not mounted, `/ui/devbot`, `/ui/adminbot` and `/ui/devbot-monitor` answer 404, their
 sidebar links, the Monitoring tab and the index card are not drawn, the widgets' Ask
