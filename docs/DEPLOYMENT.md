@@ -430,9 +430,8 @@ What it does need:
 - `ADO_PROVISION_COLLECTIONS` — the collections a request is allowed to target, and the
   first one is the default. A request names exactly one; nothing fans out.
 
-`deployment/charts/backend/templates/terraform-rbac.yaml` still ships the
-`terraform-job-manager` Role for the legacy runner. Nothing in the live path uses it, and
-it can be removed once you are sure you will not want the Job approach back.
+The chart grants the backend no cluster permissions, and its pod mounts no service
+account token: nothing in it calls the cluster API.
 
 ---
 

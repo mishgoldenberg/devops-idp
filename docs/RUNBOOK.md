@@ -125,6 +125,15 @@ oc patch secret all-secrets$SUFFIX -n $NS -p "{\"stringData\":{\"POSTGRES_PASSWO
 oc rollout restart deploy/backend$SUFFIX -n $NS
 ```
 
+### `all N database connections stayed busy for 10 s`
+
+The pod's pool (`DB_POOL_MAX`) was fully in use for `DB_POOL_WAIT` seconds. Usually a
+slow query or a stuck transaction holding connections, not too little pool: look at
+`pg_stat_activity` for long-running statements first. If the load is real, add pods
+(the HPA's `maxReplicas`) before raising `DB_POOL_MAX`, and keep
+`DB_POOL_MAX x maxReplicas` under Postgres `max_connections` -- every pod now keeps its
+connections open.
+
 ---
 
 ## 3. Redis is down or was restarted
@@ -595,6 +604,47 @@ did, then rotate `HUB_ADMIN_PASSWORD` in the variable group and redeploy.
 
 Repeated failures against it are rate-limited per account and per address
 (`LOGIN_MAX_FAILURES`, default 5 / `LOGIN_LOCKOUT_SECONDS`, default 900).
+
+---
+
+## 9a. DevBot's search is not finding pages or past fixes
+
+Platform Managing -> **DevBot search index** shows the index: what it holds per source
+(pages, work items, tickets), the last builds and, for a failed one, the reason. Admin ->
+**DevBot** shows how questions end, which lookups fail and what people rated down.
+Nothing here needs a shell.
+
+| The card says | Do this |
+| --- | --- |
+| DevBot is not set up on this Hub | `DEVBOT_LLM_BASE_URL` is missing from the variable group. |
+| Not set up | Give the spaces, a read-only Confluence token that can see them, and an AI key for the Hub, then **Check and save**. Saving tests all three and says which one failed. |
+| Last build failed: `Space X: ...` | The token cannot read that space any more (expired, or the account lost access). Save a new token. |
+| Last build failed: `The AI service: ...` | The Hub's AI key was refused, expired, or lost its embedding model. Save a new key. |
+| `N could not be read` under Pages | Those pages failed alone (listed in the run); they are retried on the next build. |
+| The index is full | Raise `DEVBOT_INDEX_MAX_CHUNKS` or index fewer spaces. Each passage costs about 1 KB per backend pod. |
+| `0 with a fix` and a field with `0 filled` | The fix is written in another field. The card lists each field it read with how many items have it filled; if yours is not there, type its reference name (or its display name's field, e.g. `Custom.<GUID>` of "Solution") into **Fix field** -- several, in order, comma-separated. |
+| `N from the discussion` | Items with no fix field filled whose comments held the fix. Switch "read the discussion" off on the card if it brings noise. |
+| A DevBot or AdminBot card says "No more changes can be proposed here" | The caps: at most 5 proposed changes in one answer and 30 in one conversation (`orchestrator.MAX_PROPOSALS_*`). Review or dismiss the cards shown, or start a new conversation. |
+| `no fix field found` for a collection | Its process has no text field about resolution: type the field's reference name (for example `Custom.Resolution`) into **Fix field**. |
+| `N without` a fix | Those work items were closed without anything written in the fix field; they are not indexed. |
+| Azure DevOps fixes skipped | The Hub has no `AZURE_DEVOPS_ADMIN_PAT`; the fixes are read with it, and shown to a person only if their own PAT can open the work item. |
+| Ticket fixes refused on save | The ServiceNow account cannot list the table, or the table name is wrong (`incident` by default). |
+| A build stays "running" at the same number after a redeploy | Its pod was killed. Within two or three minutes the card shows it as **Died** and **Build now** works; **Stop the build** marks it at once. The next build carries on from what was indexed. |
+| A build reads far too many work items | Name the **Collections**, **Projects** and **Work item types** to take fixes from, save, and build again: entries outside them are removed. **Stop the build** stops a running one after the entry it is on; what it indexed stays. |
+| Held back: "the review added details the note does not have" | The rewrite named a command, path or setting the original note lacks, so it is not shown. Read it under **Review the past fixes**; if the note itself is thin, add the missing step to the work item and it is reviewed again on the next build. |
+| A past fix people should not see | **Review the past fixes** → **Hide**. It stays hidden through rebuilds until shown again. |
+| `N held back (no usable fix)` | The review found nothing another engineer could apply ("fixed", "done", blame only). Held-back notes are not shown and not reviewed again until the item changes. |
+| `N waiting for review` | Fixes indexed before the review existed. The next build reviews them; until then they are not shown. |
+| Save refused: no chat model to review fixes | The Hub's AI key needs a chat model as well as an embedding model; pick one under **Model that reviews past fixes**, or switch past fixes off. |
+| AdminBot says the Hub's AI key is not set | AdminBot answers with the same key as the index: set it on this card. |
+
+A build re-reads only pages whose version changed, every `DEVBOT_INDEX_INTERVAL_HOURS`
+(12) or on **Build now**. Changing the embedding model starts the index over. Matches are
+shown to a person only after Confluence confirms, with their own token, that they can
+open the page, so a person without a Confluence token gets keyword search only.
+
+Check the model from a pod before blaming the index: `scripts/check_llm_endpoint.py`
+sends one embeddings request to each embedding model (`EMBED OK`).
 
 ---
 

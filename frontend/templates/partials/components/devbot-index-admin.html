@@ -1,0 +1,648 @@
+{#
+	DevBot's page search index. Included by platform-managing-container.html.
+
+	An admin names the Confluence spaces DevBot should search by meaning, and gives
+	the two credentials the Hub builds the index with: a read-only Confluence token
+	and an AI key for the Hub itself. Saving checks both before keeping them (every
+	space readable, the model able to embed a sentence), so a setting that would fail
+	in a build nobody watches fails here instead, with the reason.
+
+	Fed by /api/devbot/index, which re-checks admin access itself; this card sitting
+	on an admin page is a convenience, never the permission. Credentials go in and
+	never come back: the page is only told whether each one is set.
+#}
+<style>
+	/* Hand-written: output.css ships precompiled, so a Tailwind class that is not
+	   already in it silently does nothing. */
+	[data-dbx] .dbx-facts {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+		gap: 0.75rem;
+	}
+	[data-dbx] .dbx-fact {
+		border: 1px solid hsl(var(--bc) / 0.1);
+		border-radius: 0.45rem;
+		padding: 0.6rem 0.75rem;
+		background: hsl(var(--b2) / 0.5);
+	}
+	[data-dbx] .dbx-fact-label {
+		font-size: 0.68rem;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: hsl(var(--bc) / 0.55);
+	}
+	[data-dbx] .dbx-fact-value {
+		font-size: 1rem;
+		font-weight: 600;
+		margin-top: 0.15rem;
+		overflow-wrap: anywhere;
+	}
+	[data-dbx] .dbx-fact-sub {
+		font-size: 0.72rem;
+		color: hsl(var(--bc) / 0.6);
+		margin-top: 0.1rem;
+		overflow-wrap: anywhere;
+	}
+	[data-dbx] .dbx-state {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		font-size: 0.8rem;
+		white-space: nowrap;
+	}
+	[data-dbx] .dbx-dot {
+		width: 0.55rem;
+		height: 0.55rem;
+		border-radius: 9999px;
+		background: hsl(var(--bc) / 0.35);
+		flex: none;
+	}
+	[data-dbx] .dbx-dot[data-level="ok"] { background: hsl(var(--su)); }
+	[data-dbx] .dbx-dot[data-level="busy"] { background: hsl(var(--in)); }
+	[data-dbx] .dbx-dot[data-level="bad"] { background: hsl(var(--er)); }
+	[data-dbx] .dbx-dot[data-level="warn"] { background: hsl(var(--wa)); }
+	[data-dbx] .dbx-hint {
+		font-size: 0.74rem;
+		color: hsl(var(--bc) / 0.6);
+		margin-top: 0.3rem;
+		line-height: 1.45;
+	}
+	[data-dbx] .dbx-row {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.6rem;
+	}
+	[data-dbx] .dbx-runs {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: 0.8rem;
+	}
+	[data-dbx] .dbx-runs th {
+		text-align: left;
+		font-size: 0.68rem;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: hsl(var(--bc) / 0.55);
+		padding: 0.35rem 0.5rem;
+		border-bottom: 1px solid hsl(var(--bc) / 0.1);
+	}
+	[data-dbx] .dbx-runs td {
+		padding: 0.4rem 0.5rem;
+		border-bottom: 1px solid hsl(var(--bc) / 0.06);
+		vertical-align: top;
+	}
+	[data-dbx] .dbx-scroll { overflow-x: auto; }
+	[data-dbx] .dbx-error {
+		color: hsl(var(--er));
+		font-size: 0.76rem;
+		overflow-wrap: anywhere;
+	}
+	[data-dbx] .dbx-msg {
+		font-size: 0.8rem;
+		line-height: 1.45;
+		border-radius: 0.45rem;
+		padding: 0.55rem 0.75rem;
+		display: none;
+	}
+	[data-dbx] .dbx-msg[data-kind="bad"] { display: block; background: hsl(var(--er) / 0.08); border: 1px solid hsl(var(--er) / 0.35); }
+	[data-dbx] .dbx-source {
+		border: 1px solid hsl(var(--bc) / 0.1);
+		border-radius: 0.6rem;
+		padding: 0.75rem 0.9rem;
+		display: grid;
+		gap: 0.6rem;
+	}
+	[data-dbx] .dbx-source-head { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; }
+	[data-dbx] .dbx-source-title { font-weight: 600; font-size: 0.9rem; }
+	[data-dbx] .dbx-source-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 0.6rem; }
+	[data-dbx] .dbx-found { font-size: 0.75rem; color: hsl(var(--bc) / 0.7); line-height: 1.5; overflow-wrap: anywhere; }
+	[data-dbx] .dbx-tabs { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
+	[data-dbx] .dbx-tab { font-size: 0.75rem; padding: 0.2rem 0.6rem; border-radius: 999px; border: 1px solid hsl(var(--bc) / 0.15); background: transparent; cursor: pointer; }
+	[data-dbx] .dbx-tab[aria-pressed="true"] { background: hsl(var(--p)); border-color: hsl(var(--p)); color: hsl(var(--pc)); }
+	[data-dbx] .dbx-fixes { max-height: 30rem; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem; padding-right: 0.25rem; }
+	[data-dbx] .dbx-fix { border: 1px solid hsl(var(--bc) / 0.12); border-radius: 0.5rem; padding: 0.55rem 0.7rem; font-size: 0.8rem; line-height: 1.5; }
+	[data-dbx] .dbx-fix[data-state="hidden"], [data-dbx] .dbx-fix[data-state="held"] { background: hsl(var(--bc) / 0.03); }
+	[data-dbx] .dbx-fix-head { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+	[data-dbx] .dbx-fix-head b { flex: 1 1 12rem; min-width: 0; overflow-wrap: anywhere; }
+	[data-dbx] .dbx-fix-ref { font-size: 0.7rem; font-weight: 600; color: hsl(var(--bc) / 0.6); white-space: nowrap; }
+	[data-dbx] .dbx-fix-state { font-size: 0.7rem; font-weight: 600; white-space: nowrap; }
+	[data-dbx] .dbx-fix-state[data-state="shown"] { color: hsl(var(--su)); }
+	[data-dbx] .dbx-fix-state[data-state="held"], [data-dbx] .dbx-fix-state[data-state="hidden"] { color: hsl(var(--wa)); }
+	[data-dbx] .dbx-fix-problem { color: hsl(var(--bc) / 0.65); margin-top: 0.2rem; }
+	[data-dbx] .dbx-fix-text { white-space: pre-wrap; margin-top: 0.25rem; }
+	[data-dbx] .dbx-fix-actions { display: flex; gap: 0.25rem; flex: none; }
+	[data-dbx] .dbx-warn { font-size: 0.74rem; line-height: 1.45; padding: 0.45rem 0.6rem; border-radius: 0.4rem; background: hsl(var(--wa) / 0.1); border: 1px solid hsl(var(--wa) / 0.35); }
+	[data-dbx] .dbx-msg[data-kind="ok"] { display: block; background: hsl(var(--su) / 0.08); border: 1px solid hsl(var(--su) / 0.35); }
+</style>
+
+<section class="section-card" data-dbx>
+	<div class="card-body p-5 gap-4">
+		<div class="flex items-start justify-between gap-4">
+			<div>
+				<h2 class="section-title">DevBot search index</h2>
+				<p class="text-sm text-base-content/60">
+					Lets DevBot find Confluence pages, and fixes written down before, by what they mean, not only by their
+					words: an English error finds the Hebrew page, or the closed bug, that fixes it. The Hub keeps an index of
+					what you choose below and catches up with edits on its own.
+				</p>
+			</div>
+			<span class="dbx-state" data-dbx-state><span class="dbx-dot"></span><span>Loading…</span></span>
+		</div>
+
+		<div class="dbx-facts" data-dbx-facts></div>
+
+		<div class="grid grid-cols-1 gap-3">
+			<label class="form-control">
+				<span class="label-text mb-1">Spaces</span>
+				<input data-dbx-spaces type="text" autocomplete="off" placeholder="DEVOPS, OPS" class="input input-bordered w-full" dir="auto" />
+				<span class="dbx-hint">Space keys, separated by commas. Every page in them is searched by meaning.</span>
+			</label>
+			<label class="form-control">
+				<span class="label-text mb-1">Confluence token</span>
+				<input data-dbx-token type="password" autocomplete="new-password" class="input input-bordered w-full" />
+				<span class="dbx-hint">A read-only personal access token of an account that can see those spaces. Stored encrypted; never displayed.</span>
+			</label>
+			<label class="form-control">
+				<span class="label-text mb-1">AI key for the Hub</span>
+				<input data-dbx-key type="password" autocomplete="new-password" class="input input-bordered w-full" />
+				<span class="dbx-hint">
+					A key for the AI model service, like the one each person gives DevBot, but for the Hub: the index is built in
+					the background and searched with it, so it never uses anybody's own limits. It needs an embedding model
+					(a multilingual e5 is best here) and, for past fixes, a chat model that reviews each fix before it is kept.
+					Stored encrypted; never displayed.
+				</span>
+			</label>
+			<label class="form-control">
+				<span class="label-text mb-1">Embedding model</span>
+				<div class="dbx-row">
+					<select data-dbx-model class="select select-bordered select-sm" style="min-width: 16rem; max-width: 100%">
+						<option value="">Choose for me</option>
+					</select>
+					<button type="button" class="btn btn-sm btn-ghost" data-dbx-models>List the key's models</button>
+				</div>
+				<span class="dbx-hint">Changing the model rebuilds the whole index: vectors from two models cannot be compared.</span>
+			</label>
+			<label class="form-control">
+				<span class="label-text mb-1">Model that reviews past fixes</span>
+				<select data-dbx-fix-model class="select select-bordered select-sm" style="min-width: 16rem; max-width: 100%">
+					<option value="">Choose for me</option>
+				</select>
+				<span class="dbx-hint">
+					Reads each fix once, when it is indexed: says in a sentence what the problem was, rewrites the fix clearly and
+					professionally with every technical detail kept, and holds back a note with no usable fix in it. Only that
+					reviewed text is kept and shown.
+				</span>
+			</label>
+		</div>
+
+		<div class="dbx-source">
+			<div class="dbx-source-head">
+				<span class="dbx-source-title">Past fixes from Azure DevOps</span>
+				<label class="flex items-center gap-2 text-sm">
+					<input data-dbx-ado-enabled type="checkbox" class="toggle toggle-primary toggle-sm" />
+					<span>Take them</span>
+				</label>
+			</div>
+			<p class="dbx-hint" style="margin-top: 0">
+				Work items of these types that have a fix written in them, read with the Hub's admin token. They are found by
+				their title and description, and shown to anyone who asks as the reviewed problem and fix; the link to the work
+				item is added only for someone whose own Azure DevOps token can open it.
+			</p>
+			<div class="dbx-source-grid">
+				<label class="form-control">
+					<span class="label-text mb-1">Work item types</span>
+					<input data-dbx-ado-types type="text" autocomplete="off" placeholder="Bug, GrafanaAlert" class="input input-bordered input-sm w-full" dir="auto" />
+				</label>
+				<label class="form-control">
+					<span class="label-text mb-1">Collections <span class="dbx-hint" style="display: inline">(empty: all)</span></span>
+					<input data-dbx-ado-collections type="text" autocomplete="off" placeholder="All collections" class="input input-bordered input-sm w-full" dir="auto" />
+				</label>
+				<label class="form-control">
+					<span class="label-text mb-1">Projects <span class="dbx-hint" style="display: inline">(empty: all)</span></span>
+					<input data-dbx-ado-projects type="text" autocomplete="off" placeholder="All projects" class="input input-bordered input-sm w-full" dir="auto" />
+				</label>
+				<label class="form-control">
+					<span class="label-text mb-1">Fix field <span class="dbx-hint" style="display: inline">(empty: find it; several: in order, comma-separated)</span></span>
+					<input data-dbx-ado-field type="text" autocomplete="off" placeholder="Found from the process" class="input input-bordered input-sm w-full" dir="auto" />
+				</label>
+				<label class="form-control">
+					<span class="label-text mb-1">Changed in the last (days)</span>
+					<input data-dbx-ado-days type="number" min="30" max="3650" step="30" class="input input-bordered input-sm w-full" />
+				</label>
+			</div>
+			<label class="flex items-center gap-2 text-sm">
+				<input data-dbx-ado-comments type="checkbox" class="toggle toggle-primary toggle-sm" />
+				<span>When no fix field is filled, read the last comments of the discussion</span>
+			</label>
+			<div class="dbx-found" data-dbx-ado-found></div>
+		</div>
+
+		<div class="dbx-source">
+			<div class="dbx-source-head">
+				<span class="dbx-source-title">Past fixes from ServiceNow tickets</span>
+				<label class="flex items-center gap-2 text-sm">
+					<input data-dbx-snow-enabled type="checkbox" class="toggle toggle-primary toggle-sm" />
+					<span>Take them</span>
+				</label>
+			</div>
+			<div class="dbx-warn">
+				Tickets are found by their short description and description. Each resolution note is reviewed before it is kept:
+				rewritten clearly and professionally, and held back when there is no usable fix in it. Everyone who asks DevBot
+				can be shown the reviewed problem and fix of any ticket -- never the original note, who raised or fixed it, or a
+				link, since people here have no ServiceNow account to open it with.
+			</div>
+			<div class="dbx-source-grid">
+				<label class="form-control">
+					<span class="label-text mb-1">Table</span>
+					<input data-dbx-snow-table type="text" autocomplete="off" placeholder="incident" class="input input-bordered input-sm w-full" />
+				</label>
+			</div>
+			<div class="dbx-found" data-dbx-snow-found></div>
+		</div>
+
+		<details class="dbx-source" data-dbx-fixes-wrap>
+			<summary class="dbx-source-title" style="cursor: pointer">Review the past fixes <span class="dbx-hint" style="display: inline" data-dbx-fix-counts></span></summary>
+			<p class="dbx-hint" style="margin-top: 0">
+				What DevBot shows people, exactly as the review rewrote it. The original notes are not kept; <b>Open</b> shows the
+				work item. <b>Hide</b> keeps a fix from everyone, through every rebuild, until you show it again. <b>Review again</b>
+				takes it out of answers until the next build has reviewed it anew.
+			</p>
+			<div class="dbx-row" style="gap: 0.5rem">
+				<div class="dbx-tabs" data-dbx-fix-tabs>
+					<button type="button" class="dbx-tab" data-dbx-fix-state="" aria-pressed="true">All</button>
+					<button type="button" class="dbx-tab" data-dbx-fix-state="shown" aria-pressed="false">Shown</button>
+					<button type="button" class="dbx-tab" data-dbx-fix-state="held" aria-pressed="false">Held back</button>
+					<button type="button" class="dbx-tab" data-dbx-fix-state="hidden" aria-pressed="false">Hidden</button>
+					<button type="button" class="dbx-tab" data-dbx-fix-state="waiting" aria-pressed="false">Waiting for review</button>
+				</div>
+				<input type="search" data-dbx-fix-q class="input input-bordered input-sm" style="min-width: 12rem; flex: 1 1 12rem" dir="auto" placeholder="Search the title, problem or fix" />
+			</div>
+			<div class="dbx-fixes" data-dbx-fixes></div>
+			<button type="button" class="btn btn-ghost btn-xs" data-dbx-fix-more style="display: none">Show more</button>
+		</details>
+
+		<div class="dbx-msg" data-dbx-msg></div>
+
+		<div class="dbx-row">
+			<label class="flex items-center gap-2 text-sm">
+				<input data-dbx-enabled type="checkbox" class="toggle toggle-primary" checked />
+				<span>Search by meaning</span>
+			</label>
+			<button type="button" class="btn btn-outline btn-primary btn-sm" data-dbx-build>Build now</button>
+			<button type="button" class="btn btn-outline btn-error btn-sm" data-dbx-stop style="display: none">Stop the build</button>
+			<button type="button" class="btn btn-primary btn-sm ml-auto" data-dbx-save>Check and save</button>
+		</div>
+
+		<div data-dbx-runs-wrap style="display: none">
+			<div class="dbx-fact-label" style="margin-bottom: 0.3rem">Recent builds</div>
+			<div class="dbx-scroll"><table class="dbx-runs" data-dbx-runs></table></div>
+		</div>
+	</div>
+</section>
+
+<script>
+	(function () {
+		var root = document.querySelector("[data-dbx]");
+		if (!root) return;
+		var $ = function (sel) { return root.querySelector(sel); };
+		var els = {
+			state: $("[data-dbx-state]"), facts: $("[data-dbx-facts]"), spaces: $("[data-dbx-spaces]"),
+			token: $("[data-dbx-token]"), key: $("[data-dbx-key]"), model: $("[data-dbx-model]"),
+			enabled: $("[data-dbx-enabled]"), msg: $("[data-dbx-msg]"), save: $("[data-dbx-save]"),
+			build: $("[data-dbx-build]"), models: $("[data-dbx-models]"), runsWrap: $("[data-dbx-runs-wrap]"),
+			stop: $("[data-dbx-stop]"), fixModel: $("[data-dbx-fix-model]"), adoCollections: $("[data-dbx-ado-collections]"),
+			adoComments: $("[data-dbx-ado-comments]"),
+			runs: $("[data-dbx-runs]"),
+			adoEnabled: $("[data-dbx-ado-enabled]"), adoTypes: $("[data-dbx-ado-types]"), adoProjects: $("[data-dbx-ado-projects]"),
+			adoField: $("[data-dbx-ado-field]"), adoDays: $("[data-dbx-ado-days]"), adoFound: $("[data-dbx-ado-found]"),
+			snowEnabled: $("[data-dbx-snow-enabled]"), snowTable: $("[data-dbx-snow-table]"), snowFound: $("[data-dbx-snow-found]"),
+		};
+		var status = null;
+		var poll = null;
+		var filled = false;
+
+		function esc(v) {
+			return String(v == null ? "" : v).replace(/[&<>"']/g, function (c) {
+				return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+			});
+		}
+		function toast(message, kind) {
+			if (window.portalToast) window.portalToast({ message: message, kind: kind || "info" });
+		}
+		function when(iso) {
+			if (!iso) return "";
+			var d = new Date(iso);
+			return isNaN(d) ? "" : d.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+		}
+		function took(run) {
+			if (!run.started_at || !run.finished_at) return "";
+			var s = Math.max(0, Math.round((new Date(run.finished_at) - new Date(run.started_at)) / 1000));
+			return s < 90 ? s + " s" : Math.round(s / 60) + " min";
+		}
+		function api(method, path, body) {
+			return fetch("/api/devbot/index" + path, {
+				method: method,
+				credentials: "same-origin",
+				headers: body ? { "Content-Type": "application/json" } : {},
+				body: body ? JSON.stringify(body) : undefined,
+			}).then(function (r) {
+				return r.json().catch(function () { return {}; }).then(function (j) {
+					if (!r.ok) throw new Error(j.detail || ("The Hub answered " + r.status));
+					return j.data || {};
+				});
+			});
+		}
+		function showMsg(text, kind) {
+			els.msg.textContent = text || "";
+			if (text) els.msg.setAttribute("data-kind", kind); else els.msg.removeAttribute("data-kind");
+		}
+
+		function setState(level, text) {
+			els.state.innerHTML = '<span class="dbx-dot" data-level="' + level + '"></span><span>' + esc(text) + "</span>";
+		}
+
+		function fact(label, value, sub) {
+			return '<div class="dbx-fact"><div class="dbx-fact-label">' + esc(label) + '</div><div class="dbx-fact-value">' +
+				esc(value) + "</div>" + (sub ? '<div class="dbx-fact-sub">' + esc(sub) + "</div>" : "") + "</div>";
+		}
+
+		// What the review did with one source's fixes: kept, held back, still to review.
+		function reviewed(k) {
+			var b = (status.by_source || {})[k] || {};
+			var parts = [];
+			if (b.indexed) parts.push(b.indexed + " kept");
+			if (b.held) parts.push(b.held + " held back (no usable fix)");
+			if (b.unreviewed) parts.push(b.unreviewed + " waiting for review");
+			return parts.length ? "<br>Reviewed: " + esc(parts.join(" · ")) : "";
+		}
+
+		// "Stopped" is an admin's Stop; "Died" is a build whose pod went away (a redeploy).
+		var RESULT = { done: "Done", running: "Running", stopped: "Stopped", died: "Died", failed: "Failed" };
+
+		function render() {
+			var s = status;
+			var set = s.settings || {};
+			var last = (s.runs || [])[0];
+			if (!s.hub_ready) setState("warn", "DevBot is not set up on this Hub");
+			else if (!s.confluence_configured) setState("warn", "Confluence is not set up on this Hub");
+			else if (s.running) setState("busy", "Building…");
+			else if (!s.configured) setState("", "Not set up");
+			else if (!set.enabled) setState("", "Switched off");
+			else if (last && (last.status === "failed" || last.status === "died")) setState("bad", "Last build " + (last.status === "died" ? "died with its pod" : "failed"));
+			else if (last && last.status === "stopped") setState("warn", "Last build stopped");
+			else if (s.pages) setState("ok", "On · " + s.pages + " indexed");
+			else setState("warn", "Not built yet");
+
+			var lastLine = last
+				? (last.status === "running" ? "running since " + when(last.started_at) : last.status + " · " + when(last.finished_at || last.started_at))
+				: "never";
+			var bySource = s.by_source || {};
+			var n = function (k) { return (bySource[k] || {}).indexed || 0; };
+			var split = [n("confluence") ? n("confluence") + " pages" : "", n("ado") ? n("ado") + " work items" : "", n("snow") ? n("snow") + " tickets" : ""]
+				.filter(Boolean).join(" · ");
+			els.facts.innerHTML =
+				fact("Indexed", String(s.pages || 0), s.pages_failed ? s.pages_failed + " could not be read" : (split || (set.spaces || []).join(", "))) +
+				fact("Passages", Number(s.passages || 0).toLocaleString(), "of at most " + Number(s.max_passages).toLocaleString() + " · " +
+					(s.memory_mb < 1 ? "under 1 MB" : "about " + s.memory_mb + " MB") + " per pod") +
+				fact("Last build", last ? (RESULT[last.status] || "Failed") : "None",
+					last && last.status === "running" && (last.detail || {}).phase ? last.detail.phase + "…" : lastLine) +
+				fact("Catches up", "Every " + s.interval_hours + " h", "only pages edited since are re-read");
+
+			var ado = set.ado || {};
+			var snow = set.snow || {};
+			var lastDetail = (last && last.detail) || {};
+			var adoInfo = lastDetail.ado || {};
+			var adoSource = (lastDetail.sources || {}).ado || {};
+			els.adoFound.innerHTML = !ado.available
+				? "The Hub has no Azure DevOps admin token (AZURE_DEVOPS_ADMIN_PAT), so there is nothing to read these with."
+				: adoSource.error ? '<span style="color: hsl(var(--er))">Last build could not read them: ' + esc(adoSource.error) + "</span>"
+				: adoInfo.collections ? Object.keys(adoInfo.collections).map(function (c) {
+					var info = adoInfo.collections[c];
+					// Each field by its name, with how many items have it filled: a field
+					// that is never filled is the wrong one, and says so at a glance.
+					var named = (info.fields || []).map(function (f) {
+						var name = (info.names || {})[f];
+						return (name ? esc(name) + ' <span style="opacity:0.6">(' + esc(f) + ")</span>" : esc(f)) +
+							(info.filled ? ": " + esc(info.filled[f] || 0) + " filled" : "");
+					});
+					return "<b>" + esc(c) + "</b>: " + (named.length
+						? "fix read from, in order: " + named.join("; ") + "<br>" + info.items + " with a fix" +
+							(info.from_discussion ? " (" + info.from_discussion + " from the discussion)" : "") + ", " + info.without_fix + " without"
+						: "no fix field found; name it above") + (info.error ? " · " + esc(info.error) : "");
+				}).join("<br>") + (adoInfo.missing_collections ? '<br><span style="color: hsl(var(--wa))">No collection called ' +
+					esc(adoInfo.missing_collections.join(", ")) + "</span>" : "") + reviewed("ado")
+				: "Not read yet. The next build finds the field the fixes are written in, per collection, and shows it here.";
+			var snowSource = (lastDetail.sources || {}).snow || {};
+			els.snowFound.innerHTML = !snow.available
+				? "ServiceNow is not configured on this Hub."
+				: snowSource.error ? '<span style="color: hsl(var(--er))">Last build could not read them: ' + esc(snowSource.error) + "</span>"
+				: (lastDetail.snow ? esc(lastDetail.snow.items) + " tickets with resolution notes in " + esc(lastDetail.snow.table) + reviewed("snow") : "");
+
+			if (!filled) {
+				filled = true;
+				els.spaces.value = (set.spaces || []).join(", ");
+				els.enabled.checked = set.enabled !== false;
+				els.adoEnabled.checked = !!ado.enabled;
+				els.adoTypes.value = (ado.types || []).join(", ");
+				els.adoProjects.value = (ado.projects || []).join(", ");
+				els.adoCollections.value = (ado.collections || []).join(", ");
+				els.adoComments.checked = ado.comments !== false;
+				if (set.fix_model) {
+					els.fixModel.innerHTML = '<option value="">Choose for me</option><option value="' + esc(set.fix_model) + '" selected>' + esc(set.fix_model) + "</option>";
+				}
+				els.adoField.value = ado.field || "";
+				els.adoDays.value = ado.days || 730;
+				els.snowEnabled.checked = !!snow.enabled;
+				els.snowTable.value = snow.table || "incident";
+				if (set.model) {
+					els.model.innerHTML = '<option value="">Choose for me</option><option value="' + esc(set.model) + '" selected>' + esc(set.model) + "</option>";
+				}
+			}
+			els.token.placeholder = set.has_confluence_token ? "Saved. Leave empty to keep it." : "Not set";
+			els.key.placeholder = set.has_gateway_key ? "Saved. Leave empty to keep it." : "Not set";
+			els.build.disabled = !s.configured || s.running;
+			els.stop.style.display = s.running ? "" : "none";
+
+			var runs = s.runs || [];
+			els.runsWrap.style.display = runs.length ? "" : "none";
+			els.runs.innerHTML = "<tr><th>Started</th><th>By</th><th>Result</th><th>Pages read</th><th>Took</th></tr>" +
+				runs.map(function (r) {
+					var d = r.detail || {};
+					var result = RESULT[r.status] || "Failed";
+					var changed = d.to_read != null ? d.to_read : null;
+					var read = r.status === "running" && changed == null ? (d.phase || "Starting") + "…" : (changed === 0 ? "none of " + r.pages_seen + " changed"
+						: r.pages_indexed + (changed != null ? " of " + changed : "") + " changed, of " + r.pages_seen) +
+						(r.pages_removed ? ", " + r.pages_removed + " removed" : "") + (r.pages_failed ? ", " + r.pages_failed + " failed" : "");
+					return "<tr><td>" + esc(when(r.started_at)) + "</td><td>" + esc(r.trigger === "schedule" ? "Schedule" : "An admin") +
+						"</td><td>" + esc(result) + (r.error ? '<div class="dbx-error">' + esc(r.error) + "</div>" : "") +
+						(d.stopped ? '<div class="dbx-error">' + esc(d.stopped) + "</div>" : "") +
+						"</td><td>" + esc(read) + "</td><td>" + esc(took(r)) + "</td></tr>";
+				}).join("");
+
+			clearTimeout(poll);
+			if (s.running) poll = setTimeout(load, 4000);
+		}
+
+		function load() {
+			return api("GET", "").then(function (data) {
+				status = data;
+				render();
+			}).catch(function (err) {
+				setState("bad", "Could not load");
+				showMsg(err.message, "bad");
+			});
+		}
+
+		els.models.addEventListener("click", function () {
+			els.models.disabled = true;
+			api("POST", "/models", { gateway_key: els.key.value.trim() || null }).then(function (data) {
+				var current = els.model.value;
+				els.model.innerHTML = '<option value="">Choose for me (' + esc(data.suggested || "none") + ")</option>" +
+					(data.models || []).map(function (m) {
+						return '<option value="' + esc(m) + '"' + (m === current ? " selected" : "") + ">" + esc(m) + "</option>";
+					}).join("");
+				var currentFix = els.fixModel.value;
+				els.fixModel.innerHTML = '<option value="">Choose for me (' + esc(data.suggested_chat || "none") + ")</option>" +
+					(data.chat_models || []).map(function (m) {
+						return '<option value="' + esc(m) + '"' + (m === currentFix ? " selected" : "") + ">" + esc(m) + "</option>";
+					}).join("");
+				showMsg(data.models && data.models.length ? "" : "The key may not use any embedding model.", "bad");
+			}).catch(function (err) {
+				showMsg(err.message, "bad");
+			}).finally(function () {
+				els.models.disabled = false;
+			});
+		});
+
+		els.save.addEventListener("click", function () {
+			els.save.disabled = true;
+			showMsg("");
+			var body = {
+				spaces: els.spaces.value, model: els.model.value, enabled: els.enabled.checked,
+				ado_enabled: els.adoEnabled.checked, ado_types: els.adoTypes.value, ado_projects: els.adoProjects.value,
+				ado_collections: els.adoCollections.value, fix_model: els.fixModel.value, ado_comments: els.adoComments.checked,
+				ado_field: els.adoField.value, ado_days: Number(els.adoDays.value) || 730,
+				snow_enabled: els.snowEnabled.checked, snow_table: els.snowTable.value,
+			};
+			if (els.token.value.trim()) body.confluence_token = els.token.value.trim();
+			if (els.key.value.trim()) body.gateway_key = els.key.value.trim();
+			api("PUT", "/settings", body).then(function (data) {
+				els.token.value = "";
+				els.key.value = "";
+				var checks = data.checks || {};
+				var said = (checks.spaces || []).map(function (c) { return c.space + " (" + c.detail + ")"; }).join(", ");
+				showMsg("Saved. " + (said ? "Readable: " + said + ". " : "") + (checks.model ? "Model: " + checks.model + ". " : "") +
+					(checks.ado ? checks.ado + ". " : "") + (checks.fix_model ? "Past " + checks.fix_model + ". " : "") +
+					(checks.snow ? "Tickets: " + checks.snow + "." : ""), "ok");
+				status = data.status;
+				render();
+			}).catch(function (err) {
+				showMsg(err.message, "bad");
+			}).finally(function () {
+				els.save.disabled = false;
+			});
+		});
+
+		els.build.addEventListener("click", function () {
+			els.build.disabled = true;
+			api("POST", "/build").then(function () {
+				toast("The index is being built. This page follows it.", "info");
+				setTimeout(load, 600);
+			}).catch(function (err) {
+				toast(err.message, "error");
+				els.build.disabled = false;
+			});
+		});
+
+		// ── reviewing the past fixes ───────────────────────────────────────
+		var fixes = { state: "", q: "", items: [], total: 0, loaded: false, timer: 0 };
+		var fixEls = {
+			wrap: $("[data-dbx-fixes-wrap]"), list: $("[data-dbx-fixes]"), tabs: $("[data-dbx-fix-tabs]"),
+			q: $("[data-dbx-fix-q]"), more: $("[data-dbx-fix-more]"), counts: $("[data-dbx-fix-counts]"),
+		};
+		var FIX_STATE = { shown: "Shown", held: "Held back", hidden: "Hidden", waiting: "Waiting for review" };
+
+		function fixHtml(f) {
+			var body = f.state === "held"
+				? '<div class="dbx-fix-problem" dir="auto">Held back: ' + esc(f.held) + "</div>"
+				: f.state === "waiting" ? '<div class="dbx-fix-problem">Reviewed on the next build.</div>'
+				: '<div class="dbx-fix-problem" dir="auto">' + esc(f.problem) + '</div><div class="dbx-fix-text" dir="auto">' + esc(f.fix) + "</div>";
+			return '<div class="dbx-fix" data-state="' + esc(f.state) + '" data-fix-id="' + esc(f.id) + '">' +
+				'<div class="dbx-fix-head"><span class="dbx-fix-ref">' + esc(f.ref || (f.source === "snow" ? "Ticket" : "Work item")) + "</span>" +
+				'<b dir="auto">' + esc(f.title) + "</b>" +
+				(f.audience === "support" ? '<span class="dbx-fix-ref" title="Needs rights on servers or systems people do not have: DevBot tells them to open a support ticket">Support team only</span>' : "") +
+				'<span class="dbx-fix-state" data-state="' + esc(f.state) + '">' + esc(FIX_STATE[f.state] || f.state) +
+				(f.state === "hidden" && f.hidden_by ? " by " + esc(f.hidden_by) : "") + "</span>" +
+				'<span class="dbx-fix-actions">' +
+				(f.url ? '<a class="btn btn-ghost btn-xs" href="' + esc(f.url) + '" target="_blank" rel="noopener noreferrer">Open</a>' : "") +
+				'<button type="button" class="btn btn-ghost btn-xs" data-dbx-fix-hide="' + (f.state === "hidden" ? "0" : "1") + '">' + (f.state === "hidden" ? "Show" : "Hide") + "</button>" +
+				(f.state !== "waiting" ? '<button type="button" class="btn btn-ghost btn-xs" data-dbx-fix-review>Review again</button>' : "") +
+				"</span></div>" + body + "</div>";
+		}
+
+		function loadFixes(append) {
+			var offset = append ? fixes.items.length : 0;
+			return api("GET", "/fixes?state=" + encodeURIComponent(fixes.state) + "&q=" + encodeURIComponent(fixes.q) + "&limit=50&offset=" + offset)
+				.then(function (data) {
+					fixes.items = (append ? fixes.items : []).concat(data.items || []);
+					fixes.total = data.total || 0;
+					fixes.loaded = true;
+					var c = data.counts || {};
+					fixEls.counts.textContent = "· " + (c.shown || 0) + " shown, " + (c.held || 0) + " held back, " + (c.hidden || 0) + " hidden" +
+						(c.waiting ? ", " + c.waiting + " waiting" : "");
+					fixEls.list.innerHTML = fixes.items.length ? fixes.items.map(fixHtml).join("")
+						: '<div class="dbx-hint">' + (fixes.q || fixes.state ? "Nothing matches." : "No past fixes in the index yet.") + "</div>";
+					fixEls.more.style.display = fixes.items.length < fixes.total ? "" : "none";
+					fixEls.more.textContent = "Show more (" + (fixes.total - fixes.items.length) + " left)";
+				}).catch(function (err) {
+					fixEls.list.innerHTML = '<div class="dbx-error">' + esc(err.message) + "</div>";
+				});
+		}
+
+		fixEls.wrap.addEventListener("toggle", function () { if (fixEls.wrap.open && !fixes.loaded) loadFixes(false); });
+		fixEls.tabs.addEventListener("click", function (e) {
+			var tab = e.target.closest("[data-dbx-fix-state]");
+			if (!tab) return;
+			fixes.state = tab.getAttribute("data-dbx-fix-state");
+			fixEls.tabs.querySelectorAll("[data-dbx-fix-state]").forEach(function (b) { b.setAttribute("aria-pressed", b === tab ? "true" : "false"); });
+			loadFixes(false);
+		});
+		fixEls.q.addEventListener("input", function () {
+			clearTimeout(fixes.timer);
+			fixes.timer = setTimeout(function () { fixes.q = fixEls.q.value.trim(); loadFixes(false); }, 300);
+		});
+		fixEls.more.addEventListener("click", function () { loadFixes(true); });
+		fixEls.list.addEventListener("click", function (e) {
+			var row = e.target.closest("[data-fix-id]");
+			if (!row) return;
+			var id = row.getAttribute("data-fix-id");
+			var hide = e.target.closest("[data-dbx-fix-hide]");
+			var again = e.target.closest("[data-dbx-fix-review]");
+			if (!hide && !again) return;
+			var on = hide && hide.getAttribute("data-dbx-fix-hide") === "1";
+			(hide ? api("POST", "/fixes/hide", { id: id, hidden: on }) : api("POST", "/fixes/review", { id: id }))
+				.then(function () {
+					toast(hide ? (on ? "Hidden from everyone. Show it again from the Hidden tab." : "Shown again.")
+						: "It is out of answers until the next build reviews it again.", "success");
+					loadFixes(false);
+				}).catch(function (err) { toast(err.message, "error"); });
+		});
+
+		els.stop.addEventListener("click", function () {
+			els.stop.disabled = true;
+			api("POST", "/stop").then(function (data) {
+				toast(data.outcome === "cleared"
+					? "That build's pod was already gone; it is marked as stopped. Build now starts a new one."
+					: "Stopping within a few seconds. What it indexed so far stays, and the next build carries on.", "info");
+				setTimeout(load, data.outcome === "cleared" ? 200 : 2500);
+			}).catch(function (err) {
+				toast(err.message, "error");
+			}).finally(function () {
+				els.stop.disabled = false;
+			});
+		});
+
+		load();
+	})();
+</script>

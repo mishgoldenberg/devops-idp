@@ -47,5 +47,61 @@ jobs:
       - name: The changelog is present and written for users
         run: python scripts/check_changelog.py
 
+      - name: No dead or duplicated code
+        run: python scripts/check_code_hygiene.py
+
+      - name: Outbound calls, error messages and secrets follow the rules
+        run: python scripts/check_security_rules.py
+
       - name: Everything compiles
         run: python -m compileall -q backend/app scripts
+
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    # A throwaway database that exists only for this job, so every query the
+    # modules send is run against a real Postgres.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: hub
+          POSTGRES_PASSWORD: ci-only
+          POSTGRES_DB: hub
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      DATABASE_URL: postgresql://hub:ci-only@localhost:5432/hub
+      JWT_SECRET: ci-only-signing-key-that-signs-nothing-real
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r backend/app/requirements.txt pytest
+
+      - name: Run the tests
+        working-directory: backend
+        run: python -m pytest tests -q
+
+  audit:
+    name: Known vulnerabilities
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # The closed network cannot reach a vulnerability database; this job can,
+      # on every push, against the same pins the image installs.
+      - name: Audit the pinned dependencies
+        run: |
+          pip install pip-audit
+          pip-audit -r backend/app/requirements.txt

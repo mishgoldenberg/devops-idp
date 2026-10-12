@@ -14,36 +14,38 @@
 	Icons live in one <svg> sprite at the bottom. Stroke-drawn and fill-drawn icons carry
 	their own attributes inside the symbol, so <use> renders each correctly.
 
-	SonarQube is deliberately absent from Systems while it is unreachable from the
-	cluster — a navigation entry that always lands on an error is worse than no entry.
-	The page, the route and the `nav-sonarqube` icon in the sprite below all still
-	exist, so restoring it is one line here once the firewall is open. The note lives
-	up here rather than beside the list because `sections` below is a Jinja expression,
-	and a Jinja comment cannot be placed inside one.
+	`news` marks an entry that can carry a "something changed since you were last
+	here" dot: a request decided, a ticket answered, a suggestion voted on. The dot is
+	filled in by the script at the bottom from /api/notifications/sections, and the
+	page itself clears it when it is opened. The note lives up here rather than beside
+	the list because `sections` below is a Jinja expression, and a Jinja comment cannot
+	be placed inside one.
 #}
 {% set sections = [
 	{
 		"title": None,
 		"items": [
 			{"key": "home", "label": "Home", "href": "/ui/", "icon": "nav-home"},
+			{"key": "devbot", "label": "DevBot AI", "href": "/ui/devbot", "icon": "nav-devbot"},
 		],
 	},
 	{
 		"title": "Systems",
 		"items": [
 			{"key": "azure-devops", "label": "Azure DevOps", "href": "/ui/azure-devops", "icon": "nav-azure-devops"},
+			{"key": "gitlab", "label": "GitLab", "href": "/ui/gitlab", "icon": "nav-gitlab"},
 			{"key": "artifactory", "label": "Artifactory", "href": "/ui/artifactory", "icon": "nav-artifactory"},
+			{"key": "sonarqube", "label": "SonarQube", "href": "/ui/sonarqube", "icon": "nav-sonarqube"},
 		],
 	},
 	{
 		"title": "Platform",
 		"items": [
-			{"key": "search", "label": "Search", "href": "/ui/search", "icon": "nav-search"},
 			{"key": "connections", "label": "Connections", "href": "/ui/connections", "icon": "nav-connections"},
 			{"key": "automations", "label": "Requests", "href": "/ui/automations", "icon": "nav-automations"},
-			{"key": "my-requests", "label": "My Requests", "href": "/ui/my-requests", "icon": "nav-requests"},
-			{"key": "support", "label": "Support", "href": "/ui/support", "icon": "nav-support"},
-			{"key": "suggestions", "label": "Suggestions", "href": "/ui/suggestions", "icon": "nav-suggestions"},
+			{"key": "my-requests", "label": "My Requests", "href": "/ui/my-requests", "icon": "nav-requests", "news": true},
+			{"key": "support", "label": "Support", "href": "/ui/support", "icon": "nav-support", "news": true},
+			{"key": "suggestions", "label": "Suggestions", "href": "/ui/suggestions", "icon": "nav-suggestions", "news": true},
 			{"key": "changelog", "label": "What's New", "href": "/ui/changelog", "icon": "nav-changelog", "unread": true},
 		],
 	},
@@ -51,15 +53,18 @@
 {% set admin_section = {
 	"title": "Admin",
 	"items": [
-		{"key": "observability", "label": "Observability", "href": "/ui/observability", "icon": "nav-observability"},
-		{"key": "platform-managing", "label": "Platform Managing", "href": "/ui/platform-managing", "icon": "nav-platform"},
+		{"key": "monitoring", "label": "Monitoring", "href": "/ui/observability", "icon": "nav-observability",
+		 "match": ["observability", "users", "devbot-monitor", "audit-logs"]},
 		{"key": "approvals", "label": "Approvals", "href": "/ui/approvals", "icon": "nav-approvals"},
-		{"key": "audit-logs", "label": "Logs", "href": "/ui/audit-logs", "icon": "nav-logs"},
+		{"key": "adminbot", "label": "AdminBot AI", "href": "/ui/adminbot", "icon": "nav-adminbot"},
+		{"key": "platform-managing", "label": "Platform Managing", "href": "/ui/platform-managing", "icon": "nav-platform"},
 	],
 } %}
 
+{# The assistants' links, when HUB_AI_ENABLED is false. #}
+{% set hidden_keys = [] if ai_enabled else ['devbot', 'adminbot'] %}
 {% macro nav_item(item) %}
-	{% set active = current_page == item.key %}
+	{% set active = current_page == item.key or current_page in (item.match or []) %}
 	<li>
 		<a
 			href="{{ item.href }}"
@@ -79,6 +84,9 @@
 			#}
 			{% if item.unread %}
 				<span class="portal-nav-dot" data-portal-unread style="display:none"></span>
+			{% endif %}
+			{% if item.news and not active %}
+				<span class="portal-nav-dot" data-portal-news="{{ item.key }}" style="display:none" title="Something changed since your last visit"></span>
 			{% endif %}
 		</a>
 	</li>
@@ -105,7 +113,7 @@
 					</h2>
 				{% endif %}
 				<ul class="menu menu-sm w-full portal-nav-list">
-					{% for item in section['items'] %}{{ nav_item(item) }}{% endfor %}
+					{% for item in section['items'] if item.key not in hidden_keys %}{{ nav_item(item) }}{% endfor %}
 				</ul>
 			</div>
 		{% endfor %}
@@ -116,7 +124,7 @@
 					{{ admin_section.title }}
 				</h2>
 				<ul class="menu menu-sm w-full portal-nav-list">
-					{% for item in admin_section['items'] %}{{ nav_item(item) }}{% endfor %}
+					{% for item in admin_section['items'] if item.key not in hidden_keys %}{{ nav_item(item) }}{% endfor %}
 				</ul>
 			</div>
 		{% endif %}
@@ -181,8 +189,26 @@
 		<rect fill="currentColor" x="5" y="42.4" width="38" height="2.92" />
 		<path fill="currentColor" d="M23.93,34.48A16.24,16.24,0,1,1,40.17,18.24,16.25,16.25,0,0,1,23.93,34.48Zm0-29.38A13.14,13.14,0,1,0,37.07,18.24,13.16,13.16,0,0,0,23.93,5.1Z" />
 	</symbol>
+	<symbol id="nav-gitlab" viewBox="0 0 24 24">
+		<path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M12 21.2 2.4 14.3a.8.8 0 0 1-.3-.9l1.2-3.7 2.3-7a.4.4 0 0 1 .8 0l2.3 7h6.6l2.3-7a.4.4 0 0 1 .8 0l2.3 7 1.2 3.7a.8.8 0 0 1-.3.9z"/>
+	</symbol>
 	<symbol id="nav-sonarqube" viewBox="0 0 24 24">
 		<path fill="currentColor" d="M15.685.386l-.465.766c3.477 2.112 6.305 5.27 7.966 8.89L24 9.67C22.266 5.887 19.313 2.59 15.685.386zM8.462.91l-.305 1.075c6.89 1.976 12.384 7.64 13.997 14.421l1.085-.258C21.535 8.977 15.735 2.997 8.462.909zM0 2.667v1.342c10.963 0 19.883 8.795 19.883 19.605h1.342c0-11.55-9.522-20.947-21.225-20.947z" />
+	</symbol>
+	<!--
+		A speech bubble whose round part is a circle of radius 9 about (12,12), the
+		middle of the box, with the tail hanging off its lower left; the sparkle is
+		centred on that same point. Centring the sparkle on the viewBox while the
+		circle sat elsewhere is what made it look pushed into the top-left corner.
+	-->
+	<symbol id="nav-devbot" viewBox="0 0 24 24">
+		<path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M7.9 20A9 9 0 1 0 4 16.1L2.5 21.5Z" />
+		<path fill="currentColor" d="M12 7.2Q12.7 11.3 16.8 12Q12.7 12.7 12 16.8Q11.3 12.7 7.2 12Q11.3 11.3 12 7.2Z" />
+	</symbol>
+	<!-- AdminBot: DevBot's sparkle inside a shield, both centred on (12,12). -->
+	<symbol id="nav-adminbot" viewBox="0 0 24 24">
+		<path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M12 2.5L4.5 5.5V11.5C4.5 16 7.6 19.9 12 21.5C16.4 19.9 19.5 16 19.5 11.5V5.5Z" />
+		<path fill="currentColor" d="M12 7.6Q12.6 11.4 16.4 12Q12.6 12.6 12 16.4Q11.4 12.6 7.6 12Q11.4 11.4 12 7.6Z" />
 	</symbol>
 	<symbol id="nav-search" viewBox="0 0 24 24">
 		<g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -222,6 +248,13 @@
 			<path d="M9 18h6" />
 			<path d="M10 22h4" />
 			<path d="M12 2a7 7 0 00-4 12.7V17h8v-2.3A7 7 0 0012 2z" />
+		</g>
+	</symbol>
+	<symbol id="nav-users" viewBox="0 0 24 24">
+		<g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+			<path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2" />
+			<circle cx="9" cy="7" r="4" />
+			<path d="M22 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" />
 		</g>
 	</symbol>
 	<symbol id="nav-observability" viewBox="0 0 24 24">
@@ -290,5 +323,38 @@
 			// failure than a release nobody hears about.
 		}
 		if (seen !== running) dot.style.display = "";
+	})();
+
+	(function () {
+		"use strict";
+		// "Something changed since you were last here" -- a request decided, a ticket
+		// answered, a suggestion voted on or answered. The same events ring the bell;
+		// the dot says WHERE, and survives the bell being cleared, because reading a
+		// notification is not the same as having looked at the page it points to.
+		// Opening the page clears its dot (the server stamps the visit).
+		var dots = document.querySelectorAll("[data-portal-news]");
+		if (!dots.length) return;
+		function refresh() {
+			fetch("/api/notifications/sections", { credentials: "same-origin" })
+				.then(function (res) { return res.ok ? res.json() : null; })
+				.then(function (body) {
+					var data = (body && body.data) || {};
+					dots.forEach(function (dot) {
+						var entry = data[dot.getAttribute("data-portal-news")] || {};
+						var n = Number(entry.count || 0);
+						dot.style.display = n > 0 ? "" : "none";
+						dot.title = n > 0 ? (n === 1 ? "1 update" : n + " updates") + " since your last visit" : "";
+					});
+				})
+				.catch(function () { /* a missing dot is better than a wrong one */ });
+		}
+		refresh();
+		// Same cadence and the same background-tab rule as the bell.
+		setInterval(function () {
+			if (document.visibilityState === "visible") refresh();
+		}, 60000);
+		document.addEventListener("visibilitychange", function () {
+			if (document.visibilityState === "visible") refresh();
+		});
 	})();
 </script>

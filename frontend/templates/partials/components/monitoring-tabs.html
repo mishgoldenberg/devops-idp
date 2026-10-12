@@ -1,0 +1,57 @@
+{#
+	Monitoring: one entry in the sidebar, four pages under it. Each tab is still its
+	own page -- it loads only its own data, and its link and bookmarks keep working --
+	and the switch between them is the same crossfade (and hover prefetch) as any page
+	switch, so it reads as tabs. The sidebar marks "Monitoring" on all four
+	(sidebar.html, "match").
+
+	Included at the top of each page's .page-shell, above its header.
+#}
+{% set monitoring_tabs = [
+	{"key": "observability", "label": "Usage", "href": "/ui/observability"},
+	{"key": "users", "label": "Users", "href": "/ui/users"},
+	{"key": "devbot-monitor", "label": "DevBot", "href": "/ui/devbot-monitor"},
+	{"key": "audit-logs", "label": "Logs", "href": "/ui/audit-logs"},
+] %}
+<style>
+	.monitoring-tabs {
+		display: flex;
+		align-items: flex-end;
+		gap: 0.25rem;
+		flex-shrink: 0;
+		padding: 0.6rem 2rem 0;
+		background: hsl(var(--b1));
+		overflow-x: auto;
+		scrollbar-width: none;
+	}
+	html[data-density="compact"] .monitoring-tabs { padding: 0.4rem 1.15rem 0; }
+	.monitoring-tabs a {
+		position: relative;
+		padding: 0.45rem 0.85rem 0.55rem;
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: hsl(var(--bc) / 0.6);
+		border-radius: 0.5rem 0.5rem 0 0;
+		white-space: nowrap;
+		transition: color 0.15s, background-color 0.15s;
+	}
+	.monitoring-tabs a:hover { color: hsl(var(--bc)); background: hsl(var(--b2)); }
+	.monitoring-tabs a[aria-current="page"] { color: hsl(var(--p)); }
+	.monitoring-tabs a[aria-current="page"]::after {
+		content: "";
+		position: absolute;
+		left: 0.6rem;
+		right: 0.6rem;
+		bottom: 0;
+		height: 2px;
+		border-radius: 2px;
+		background: hsl(var(--p));
+	}
+	/* The tabs and the header read as one band. */
+	.monitoring-tabs + .page-header { padding-top: 0.9rem; }
+</style>
+<nav class="monitoring-tabs" aria-label="Monitoring">
+	{% for tab in monitoring_tabs if ai_enabled or tab.key != 'devbot-monitor' %}
+		<a href="{{ tab.href }}"{% if current_page == tab.key %} aria-current="page"{% endif %}>{{ tab.label }}</a>
+	{% endfor %}
+</nav>

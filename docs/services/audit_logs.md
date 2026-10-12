@@ -29,7 +29,6 @@ per five minutes carrying `metadata.repeated`.
 | ------ | -------------------------------- | ----------------------------------------------------------------- |
 | GET    | `/api/audit-logs`                | Paginated list with filters (`user_email`/`user`, `action`, `date_from`, `to`, `limit`, `offset`) |
 | GET    | `/api/audit-logs/actions`        | Distinct `action` values (for the filter dropdown)               |
-| GET    | `/api/audit-logs/levels`         | The five level names                                             |
 | GET    | `/api/audit-logs/export`         | The current view as CSV, capped at 5000 rows                     |
 | DELETE | `/api/audit-logs`                | **Deletes** the rows matching the same filters. An unfiltered clear requires `confirm_all=true`; the clear itself is logged afterwards, so it survives its own purge. |
 

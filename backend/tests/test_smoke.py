@@ -14,6 +14,7 @@ Run with:  cd backend && python -m pytest tests -q
 """
 import inspect
 import os
+import re
 import sys
 
 import pytest
@@ -30,9 +31,18 @@ def app():
     return create_app()
 
 
-@pytest.fixture(scope="module")
-def paths(app):
-    return {getattr(r, "path", "") for r in app.routes}
+def _registered(app, path: str) -> bool:
+    """Whether the router answers this path for some method. Asked of the router, not
+    read off app.routes: fastapi >= 0.139 keeps included routers there unexpanded."""
+    from starlette.routing import Match
+
+    concrete = re.sub(r"\{[^}]+\}", "1", path)
+    for method in ("GET", "POST"):
+        scope = {"type": "http", "method": method, "path": concrete, "root_path": "",
+                 "query_string": b"", "headers": []}
+        if any(route.matches(scope)[0] != Match.NONE for route in app.router.routes):
+            return True
+    return False
 
 
 def test_app_builds(app):
@@ -56,11 +66,21 @@ def test_app_builds(app):
         "/api/dashboard/snow-items",
         "/ui/search",
         "/ui/connections",
+        "/ui/devbot",
+        "/api/devbot/status",
+        "/api/devbot/chat",
+        "/api/devbot/conversations",
+        "/api/devbot/conversations/{conversation_id}",
+        "/api/devbot/models/check",
     ],
 )
-def test_route_exists(paths, path):
+def test_route_exists(app, path):
     """Routes the UI depends on are registered. A typo'd prefix is a 404 in production."""
-    assert path in paths, f"{path} is not registered"
+    assert _registered(app, path), f"{path} is not registered"
+
+
+def test_unknown_route_is_not_registered(app):
+    assert not _registered(app, "/api/no-such-thing")
 
 
 def test_query_defaults_are_not_leaked_to_direct_callers():
@@ -143,3 +163,28 @@ def test_search_groups_survive_a_dead_source():
     assert group["unavailable"] is True
     assert group["items"] == []
     assert group["total"] == 0
+
+
+def test_every_page_renders(app):
+    """Every /ui page and component answers below 500 for a signed-in admin.
+
+    Rendering is where a framework upgrade breaks first (Starlette 1.0 removed the
+    TemplateResponse(name, {"request": ...}) form, which turned every page into a 500
+    while every route was still registered)."""
+    from fastapi.testclient import TestClient
+    from ui import ui_router
+    import security
+
+    client = TestClient(app, raise_server_exceptions=False)
+    client.cookies.set("auth_token", security.create_access_token(
+        {"id": "00000000-0000-0000-0000-000000000001", "email": "admin@corp.example", "username": "admin", "role": "Platform Admin",
+         "hierarchy_level": 1}))
+    pages = sorted({r.path for r in ui_router.routes
+                    if "GET" in getattr(r, "methods", ()) and "{" not in r.path})
+    assert len(pages) > 30
+    broken = []
+    for path in pages:
+        res = client.get(path, follow_redirects=False)
+        if res.status_code >= 500:
+            broken.append(f"{path} -> {res.status_code}")
+    assert not broken, broken

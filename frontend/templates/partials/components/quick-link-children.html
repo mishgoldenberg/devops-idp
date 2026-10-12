@@ -85,6 +85,26 @@
 			if (!tbody.children.length) set(tbody, []);
 		});
 
-		window.portalQuickLinkChildren = { set: set, read: read, addRow: addRow, row: childRow };
+		// An uploaded icon, redrawn as a 96px PNG: the server takes only real raster
+		// images under its size limit, and a redrawn picture is always one.
+		async function iconDataUrl(file) {
+			if (!/^image\/(png|jpeg|gif|webp)$/.test(file.type)) {
+				throw new Error("Choose a PNG, JPEG, GIF or WebP picture.");
+			}
+			let bitmap;
+			try {
+				bitmap = await createImageBitmap(file);
+			} catch (_) {
+				throw new Error("That file is not a picture.");
+			}
+			const scale = Math.min(1, 96 / Math.max(bitmap.width, bitmap.height));
+			const canvas = document.createElement("canvas");
+			canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+			canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+			canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+			return canvas.toDataURL("image/png");
+		}
+
+		window.portalQuickLinkChildren = { set: set, read: read, addRow: addRow, row: childRow, iconDataUrl: iconDataUrl };
 	})();
 </script>

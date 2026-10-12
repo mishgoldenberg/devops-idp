@@ -21,6 +21,38 @@
 	.req-more-summary:hover { color: hsl(var(--p)); }
 	.req-more-chevron { transition: transform 200ms ease; }
 	.req-more[open] .req-more-chevron { transform: rotate(180deg); }
+
+	/* Waiting longer than approvals usually take: a dot and a sentence, not a badge. */
+	.req-late {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		color: hsl(var(--wa));
+		font-weight: 600;
+	}
+	.req-late::before {
+		content: "";
+		width: 0.45rem;
+		height: 0.45rem;
+		border-radius: 9999px;
+		background: currentColor;
+		flex: none;
+	}
+	/* Five stars. Buttons, so a keyboard can rate; the filled ones are amber. */
+	.req-stars { display: inline-flex; gap: 0.15rem; }
+	.req-star {
+		display: inline-flex;
+		width: 1.9rem;
+		height: 1.9rem;
+		align-items: center;
+		justify-content: center;
+		border-radius: 0.5rem;
+		color: hsl(var(--bc) / 0.25);
+	}
+	.req-star:hover { background: hsl(var(--bc) / 0.06); }
+	.req-star[data-on] { color: hsl(var(--wa)); }
+	.req-star svg { width: 1.35rem; height: 1.35rem; }
+	.req-stars-small { color: hsl(var(--wa)); letter-spacing: 0.05em; }
 </style>
 
 <div class="page-shell">
@@ -168,6 +200,35 @@
 			return parts.join(" · ");
 		}
 
+		function rateable(r) {
+			const s = String(r.status || "").toUpperCase();
+			return s === "COMPLETED" || s === "EXECUTED";
+		}
+
+		const STAR = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2.5l2.9 6.1 6.6.8-4.9 4.6 1.3 6.6L12 17.3l-5.9 3.3 1.3-6.6L2.5 9.4l6.6-.8L12 2.5z"/></svg>';
+
+		// Rating a finished request: five stars and an optional sentence, changeable
+		// later. Approvers see it; a low one reaches whoever approved the request.
+		function renderRating(r) {
+			if (!rateable(r)) return "";
+			const current = Number(r.rating || 0);
+			const stars = [1, 2, 3, 4, 5].map((n) =>
+				`<button type="button" class="req-star" data-rate="${n}" ${n <= current ? "data-on" : ""}
+					aria-label="${n} of 5" aria-pressed="${n === current ? "true" : "false"}">${STAR}</button>`
+			).join("");
+			return `
+				<section data-my-rating data-rating="${current}">
+					<h4 class="text-xs font-semibold uppercase tracking-widest text-base-content/50 mb-2">How did it go?</h4>
+					<div class="req-stars" role="group" aria-label="Your rating">${stars}</div>
+					<textarea class="textarea textarea-bordered w-full mt-2 text-sm" rows="2" maxlength="1000" dir="auto"
+						placeholder="Anything the team should know (optional)" data-rate-comment>${escapeHtml(r.rating_comment || "")}</textarea>
+					<div class="flex items-center gap-3 mt-2">
+						<button type="button" class="btn btn-primary btn-sm" data-rate-save ${current ? "" : "disabled"}>${current ? "Update rating" : "Send rating"}</button>
+						<span class="text-xs text-base-content/50" data-rate-note>${current ? "Thanks — you can change it any time." : ""}</span>
+					</div>
+				</section>`;
+		}
+
 		function renderCard(r) {
 			const statusStr = String(r.status || "PENDING").toUpperCase();
 			const badge = STATUS_BADGE[statusStr] || "badge-ghost";
@@ -183,6 +244,10 @@
 							<span><span class="font-medium text-base-content/80">Created:</span> ${fmtDate(r.created_at)}</span>
 							${r.approved_at ? `<span><span class="font-medium text-base-content/80">Decided:</span> ${fmtDate(r.approved_at)}</span>` : ""}
 							${summary ? `<span class="line-clamp-1">${escapeHtml(summary)}</span>` : ""}
+							${r.overdue ? `<span class="req-late">Waiting ${r.waiting_days} days, longer than the usual ${r.sla_days}</span>` : ""}
+							${rateable(r) ? (r.rating
+								? `<span>Your rating: <span class="req-stars-small" aria-label="${r.rating} of 5">${"★".repeat(r.rating)}${"☆".repeat(5 - r.rating)}</span></span>`
+								: `<span class="text-primary font-medium">How did it go? Open to rate it</span>`) : ""}
 						</div>
 						<div class="text-xs text-base-content/40 mt-1">${escapeHtml(r.request_type || "")}</div>
 					</div>
@@ -508,11 +573,16 @@
 							<dt class="text-base-content/60">Rejection reason</dt>
 							<dd class="text-error">${escapeHtml(r.rejection_reason)}</dd>
 						` : ""}
+						${r.overdue ? `
+							<dt class="text-base-content/60">Waiting</dt>
+							<dd><span class="req-late">${r.waiting_days} days, longer than the usual ${r.sla_days}</span></dd>
+						` : ""}
 						${renderServiceNow(r.execution_result)}
 					</dl>
 					${renderProjectLink(r.execution_result)}
 					${renderCleanerOutcome(r)}
 				</section>
+				${renderRating(r)}
 				<details class="req-more">
 					<summary class="req-more-summary">
 						<span>More info</span>
@@ -595,6 +665,49 @@
 			try { modal.close(); } catch (_) {}
 			load();
 		}
+
+		modalBody?.addEventListener("click", async (event) => {
+			const box = event.target.closest("[data-my-rating]");
+			if (!box) return;
+			const star = event.target.closest("[data-rate]");
+			if (star) {
+				const n = Number(star.dataset.rate);
+				box.dataset.rating = String(n);
+				box.querySelectorAll("[data-rate]").forEach((b) => {
+					b.toggleAttribute("data-on", Number(b.dataset.rate) <= n);
+					b.setAttribute("aria-pressed", Number(b.dataset.rate) === n ? "true" : "false");
+				});
+				box.querySelector("[data-rate-save]").disabled = false;
+				return;
+			}
+			const save = event.target.closest("[data-rate-save]");
+			if (!save || !activeRequestId) return;
+			const rating = Number(box.dataset.rating || 0);
+			if (!rating) return;
+			const note = box.querySelector("[data-rate-note]");
+			save.disabled = true;
+			try {
+				const res = await fetch(`/api/approvals/requests/${encodeURIComponent(activeRequestId)}/rating`, {
+					method: "POST",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ rating: rating, comment: box.querySelector("[data-rate-comment]").value || "" }),
+				});
+				const json = await res.json().catch(() => ({}));
+				if (!res.ok) throw new Error((json && json.detail) || "HTTP " + res.status);
+				const row = cache.find((x) => String(x.id) === String(activeRequestId));
+				if (row) { row.rating = json.data.rating; row.rating_comment = json.data.comment; }
+				note.textContent = "Thanks — you can change it any time.";
+				save.textContent = "Update rating";
+				const card = listEl.querySelector('[data-request-id="' + activeRequestId + '"]');
+				if (card && row) card.outerHTML = renderCard(row);
+				listEl.querySelector('[data-request-id="' + activeRequestId + '"]')?.addEventListener("click", () => openDetail(row.id));
+			} catch (err) {
+				note.textContent = "Not saved: " + (err.message || "try again");
+			} finally {
+				save.disabled = false;
+			}
+		});
 
 		forceFailBtn?.addEventListener("click", () => runAdminAction("fail"));
 		deleteBtn?.addEventListener("click", () => runAdminAction("delete"));

@@ -37,6 +37,14 @@ Create or confirm these Artifactory repositories exist:
 
 Seed the Python, npm, and Docker packages using `offline-deps/README.md`.
 
+A round that needs a Python package the internal PyPI repository may lack carries the
+wheel in `offline-deps/wheels/` (with `SHA256SUMS`). The pipeline's first step,
+`scripts/upload_wheels.py`, uploads each wheel the index does not list, using
+`ARTIFACTORY_ADMIN_USERNAME` / `ARTIFACTORY_ADMIN_TOKEN`, and never overwrites one that is
+there. Both `pip install` steps also read that folder (`--find-links`), so a refused upload
+does not fail the build. Once a build shows the wheels in the repository, a later round
+deletes them.
+
 Important Docker images to mirror:
 
 ```text

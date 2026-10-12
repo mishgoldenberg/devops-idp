@@ -23,11 +23,13 @@ from __future__ import annotations
 import logging
 import os
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import httpx
 
-from resilient_http import tls_verify
+import resilient_http
+from common import failure_text
+from resilient_http import far_message
 
 log = logging.getLogger(__name__)
 
@@ -80,8 +82,7 @@ def _client() -> httpx.Client:
             "AZURE_DEVOPS_ADMIN_PAT is not configured. Committing the cleaner files "
             "needs an admin token with Code (Read, write) scope."
         )
-    return httpx.Client(
-        verify=tls_verify(),
+    return resilient_http.Client(
         auth=httpx.BasicAuth("", pat),
         headers={"Accept": "application/json"},
         timeout=httpx.Timeout(60.0, connect=5.0),
@@ -159,7 +160,7 @@ def pull_request_states(*, settings: Optional[Dict[str, str]] = None) -> Dict[st
             rows = (resp.json() or {}).get("value") or []
     except Exception as exc:
         log.warning("ADO pull requests unreadable: %s: %s", type(exc).__name__, exc)
-        return {"ok": False, "states": {}, "detail": f"{type(exc).__name__}: {exc}"}
+        return {"ok": False, "states": {}, "detail": failure_text("Azure DevOps", exc)}
 
     states: Dict[str, Dict[str, Any]] = {}
     for row in rows:
@@ -230,7 +231,7 @@ def pull_request_one(
             row = resp.json() or {}
     except Exception as exc:
         log.warning("ADO pull request %s unreadable: %s: %s", pr_id, type(exc).__name__, exc)
-        return {"ok": False, "state": "", "detail": f"{type(exc).__name__}: {exc}"}
+        return {"ok": False, "state": "", "detail": failure_text("Azure DevOps", exc)}
     return {
         "ok": True,
         "detail": "",
@@ -288,12 +289,12 @@ def abandon_pull_request(
                     }
                 return {
                     "ok": False,
-                    "detail": f"Azure DevOps refused it (HTTP {resp.status_code}): {resp.text[:200]}",
+                    "detail": f"Azure DevOps refused it (HTTP {resp.status_code}): {far_message(resp)}",
                 }
     except Exception as exc:
         log.warning("ADO pull request abandon failed for %s: %s: %s",
                     pr_id, type(exc).__name__, exc)
-        return {"ok": False, "detail": f"{type(exc).__name__}: {exc}"}
+        return {"ok": False, "detail": failure_text("Azure DevOps", exc)}
     return {"ok": True, "detail": ""}
 
 
@@ -427,7 +428,7 @@ def commit_files_on_branch(
         )
         if push.status_code >= 400:
             raise RuntimeError(
-                f"Azure DevOps refused the commit (HTTP {push.status_code}): {push.text[:300]}"
+                f"Azure DevOps refused the commit (HTTP {push.status_code}): {far_message(push)}"
             )
         commit_id = ""
         pushed = (push.json() or {}).get("commits") or []
@@ -450,7 +451,7 @@ def commit_files_on_branch(
             # submits it a second time.
             raise RuntimeError(
                 f"The files were committed to branch '{branch}', but opening the pull "
-                f"request failed (HTTP {pr.status_code}): {pr.text[:200]}. Open it by hand."
+                f"request failed (HTTP {pr.status_code}): {far_message(pr)}. Open it by hand."
             )
         pr_json = pr.json() or {}
 

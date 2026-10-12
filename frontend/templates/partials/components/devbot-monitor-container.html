@@ -1,0 +1,467 @@
+{#
+	DevBot monitoring -- how the chat assistant is used and how its answers end, for
+	admins. Laid out like the Users page on purpose: the same figures row, charts and
+	scrolling table, so an admin reads it without learning a second layout.
+
+	What it can show is limited on purpose. Every question leaves one row of NUMBERS
+	(devbot/monitor.py): who, which model, how it ended, what it cost, which lookups it
+	made and whether they worked. Never the question or the answer: those are the
+	person's. The only text here is what somebody chose to send with a thumbs up or down.
+
+	All of it comes from /api/devbot/admin/*, which re-checks admin access itself.
+#}
+<style>
+	[data-dbm] .dbm-kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; }
+	@media (min-width: 48rem) { [data-dbm] .dbm-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+	@media (min-width: 90rem) { [data-dbm] .dbm-kpis { grid-template-columns: repeat(8, minmax(0, 1fr)); } }
+	[data-dbm] .dbm-kpi { border: 1px solid hsl(var(--bc) / 0.1); border-radius: 0.9rem; background: hsl(var(--b1)); padding: 0.85rem 1rem; min-width: 0; }
+	[data-dbm] .dbm-kpi-label { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: hsl(var(--bc) / 0.5); }
+	[data-dbm] .dbm-kpi-value { font-size: 1.6rem; font-weight: 800; line-height: 1.15; margin-top: 0.2rem; font-variant-numeric: tabular-nums; }
+	[data-dbm] .dbm-kpi-note { font-size: 0.72rem; color: hsl(var(--bc) / 0.55); margin-top: 0.15rem; }
+	[data-dbm] .dbm-explain { display: none; font-size: 0.72rem; line-height: 1.45; color: hsl(var(--bc) / 0.72); margin-top: 0.55rem; padding-top: 0.5rem; border-top: 1px dashed hsl(var(--bc) / 0.15); }
+	[data-dbm][data-explain] .dbm-explain { display: block; }
+	[data-dbm] .dbm-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr)); gap: 1rem; }
+	[data-dbm] .dbm-bars { display: flex; align-items: flex-end; gap: 3px; height: 8.5rem; padding-top: 0.5rem; }
+	[data-dbm] .dbm-bar { flex: 1 1 0; min-width: 3px; display: flex; flex-direction: column-reverse; border-radius: 3px 3px 0 0; overflow: hidden; background: hsl(var(--bc) / 0.08); }
+	[data-dbm] .dbm-bar > span { display: block; width: 100%; }
+	[data-dbm] .dbm-bar .ok { background: hsl(var(--p) / 0.75); }
+	[data-dbm] .dbm-bar .bad { background: hsl(var(--er) / 0.75); }
+	[data-dbm] .dbm-axis { display: flex; justify-content: space-between; font-size: 0.68rem; color: hsl(var(--bc) / 0.45); margin-top: 0.35rem; }
+	[data-dbm] .dbm-key { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.7rem; color: hsl(var(--bc) / 0.6); margin-inline-end: 0.8rem; }
+	[data-dbm] .dbm-key i { width: 0.6rem; height: 0.6rem; border-radius: 2px; display: inline-block; }
+	[data-dbm] .dbm-hrow { display: grid; grid-template-columns: minmax(5rem, 9rem) minmax(4rem, 1fr) max-content; gap: 0.6rem; align-items: center; font-size: 0.8rem; padding: 0.2rem 0; }
+	[data-dbm] .dbm-hrow > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	[data-dbm] .dbm-hrow > .dbm-num { font-size: 0.74rem; color: hsl(var(--bc) / 0.7); }
+	[data-dbm] .dbm-track { height: 0.55rem; border-radius: 9999px; background: hsl(var(--bc) / 0.07); overflow: hidden; }
+	[data-dbm] .dbm-fill { height: 100%; border-radius: 9999px; background: hsl(var(--p) / 0.75); min-width: 3px; }
+	[data-dbm] .dbm-fill[data-tone="bad"] { background: hsl(var(--er) / 0.7); }
+	[data-dbm] .dbm-empty { font-size: 0.8rem; color: hsl(var(--bc) / 0.5); padding: 0.6rem 0; }
+	[data-dbm] .dbm-scroll { max-height: 32rem; overflow: auto; border: 1px solid hsl(var(--b3)); border-radius: 0.75rem; }
+	[data-dbm] .dbm-table { width: 100%; min-width: 52rem; border-collapse: separate; border-spacing: 0; }
+	[data-dbm] .dbm-table th { position: sticky; top: 0; z-index: 1; background: hsl(var(--b1)); font-size: 0.68rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: hsl(var(--bc) / 0.55); text-align: start; padding: 0.6rem 0.75rem; border-bottom: 1px solid hsl(var(--b3)); white-space: nowrap; }
+	[data-dbm] .dbm-table td { padding: 0.55rem 0.75rem; border-bottom: 1px solid hsl(var(--bc) / 0.06); font-size: 0.82rem; vertical-align: middle; }
+	[data-dbm] .dbm-table tr:hover td { background: hsl(var(--b2) / 0.6); }
+	[data-dbm] .dbm-num, [data-dbm] .dbm-table th.dbm-num { text-align: end; font-variant-numeric: tabular-nums; white-space: nowrap; }
+	[data-dbm] .dbm-muted { color: hsl(var(--bc) / 0.5); }
+	[data-dbm] .dbm-bad { color: hsl(var(--er)); font-weight: 600; }
+	[data-dbm] .dbm-person { display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
+	[data-dbm] .dbm-avatar { width: 2rem; height: 2rem; border-radius: 9999px; flex: none; display: inline-flex; align-items: center; justify-content: center; font-size: 0.72rem; font-weight: 700; color: hsl(var(--pc)); background: hsl(var(--p) / 0.8); }
+	[data-dbm] .dbm-name { display: inline-block; vertical-align: top; unicode-bidi: isolate; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 16rem; }
+	[data-dbm] .dbm-mail { font-size: 0.72rem; color: hsl(var(--bc) / 0.5); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 16rem; }
+	[data-dbm] .dbm-state { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.75rem; white-space: nowrap; }
+	[data-dbm] .dbm-state::before { content: ""; width: 0.5rem; height: 0.5rem; border-radius: 9999px; background-color: currentColor; flex: none; }
+	[data-dbm] .dbm-state[data-tone="on"] { color: hsl(var(--su)); }
+	[data-dbm] .dbm-state[data-tone="off"] { color: hsl(var(--bc) / 0.4); }
+	[data-dbm] .dbm-toolbar { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; }
+	[data-dbm] .dbm-tabs { display: inline-flex; gap: 0.25rem; }
+	[data-dbm] .dbm-tab { font-size: 0.78rem; padding: 0.25rem 0.75rem; border-radius: 9999px; color: hsl(var(--bc) / 0.65); }
+	[data-dbm] .dbm-tab[aria-pressed="true"] { background: hsl(var(--p) / 0.12); color: hsl(var(--p)); font-weight: 600; }
+	[data-dbm] .dbm-feedback { display: flex; flex-direction: column; gap: 0.75rem; }
+	[data-dbm] .dbm-fb { border: 1px solid hsl(var(--bc) / 0.1); border-radius: 0.75rem; background: hsl(var(--b1)); padding: 0.8rem 0.95rem; min-width: 0; }
+	[data-dbm] .dbm-fb-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; font-size: 0.78rem; color: hsl(var(--bc) / 0.6); }
+	[data-dbm] .dbm-thumb { width: 1.6rem; height: 1.6rem; border-radius: 9999px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+	[data-dbm] .dbm-thumb[data-rating="up"] { background: hsl(var(--su) / 0.15); color: hsl(var(--su)); }
+	[data-dbm] .dbm-thumb[data-rating="down"] { background: hsl(var(--er) / 0.12); color: hsl(var(--er)); }
+	[data-dbm] .dbm-thumb svg { width: 0.95rem; height: 0.95rem; }
+	[data-dbm] .dbm-q { font-weight: 600; font-size: 0.88rem; margin-top: 0.45rem; overflow-wrap: anywhere; }
+	[data-dbm] .dbm-note { font-size: 0.84rem; margin-top: 0.35rem; padding: 0.4rem 0.6rem; border-inline-start: 3px solid hsl(var(--wa) / 0.7); background: hsl(var(--wa) / 0.07); border-radius: 0.3rem; overflow-wrap: anywhere; }
+	[data-dbm] .dbm-answer { font-size: 0.8rem; color: hsl(var(--bc) / 0.75); margin-top: 0.4rem; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 14rem; overflow: auto; background: hsl(var(--b2) / 0.6); border-radius: 0.4rem; padding: 0.5rem 0.65rem; }
+	[data-dbm] .dbm-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.45rem; }
+	[data-dbm] .dbm-chip { font-size: 0.7rem; padding: 0.1rem 0.5rem; border-radius: 9999px; background: hsl(var(--bc) / 0.07); color: hsl(var(--bc) / 0.7); white-space: nowrap; }
+	[data-dbm] .dbm-chip[data-ok="false"] { background: hsl(var(--er) / 0.1); color: hsl(var(--er)); }
+	[data-dbm] .dbm-errors { display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.78rem; margin-top: 0.75rem; }
+	[data-dbm] .dbm-errors li { display: grid; grid-template-columns: minmax(8rem, 12rem) minmax(0, 1fr) max-content; gap: 0.6rem; }
+	[data-dbm] .dbm-errors li > span:nth-child(2) { overflow-wrap: anywhere; color: hsl(var(--bc) / 0.75); }
+</style>
+
+<div class="page-shell" data-dbm>
+	{% include "partials/components/monitoring-tabs.html" %}
+	<header class="page-header">
+		<div>
+			<h1 class="page-title">DevBot monitoring</h1>
+			<p class="page-subtitle">How the chat assistant is used, how its answers end, and what people said about them</p>
+		</div>
+		<div class="flex items-center gap-2">
+			<button type="button" class="btn btn-ghost btn-sm" data-dbm-explain aria-pressed="true">Hide explanations</button>
+			<select class="select select-bordered select-sm" data-dbm-range aria-label="Period">
+				<option value="7">Last 7 days</option>
+				<option value="30" selected>Last 30 days</option>
+				<option value="90">Last 90 days</option>
+				<option value="0">All time</option>
+			</select>
+			<button type="button" class="btn btn-outline btn-primary btn-sm" data-dbm-refresh>&#8635; Refresh</button>
+		</div>
+	</header>
+
+	<div class="page-content-flush">
+		<div class="portal-content-container space-y-6" style="max-width: 104rem">
+			<div class="hidden alert alert-error text-sm" role="alert" data-dbm-alert></div>
+
+			<section class="dbm-kpis" data-dbm-kpis>
+				<div class="dbm-kpi"><div class="dbm-kpi-label">Loading</div><div class="dbm-kpi-value">…</div></div>
+			</section>
+			<p class="text-xs text-base-content/60" data-dbm-hubkey></p>
+
+			<section class="dbm-charts">
+				<div class="section-card">
+					<div class="card-body p-5">
+						<h2 class="section-title" data-dbm-daily-title>Questions per day</h2>
+						<div class="text-xs text-base-content/50">
+							<span class="dbm-key"><i style="background: hsl(var(--p) / 0.75)"></i>Answered</span>
+							<span class="dbm-key"><i style="background: hsl(var(--er) / 0.75)"></i>Failed</span>
+						</div>
+						<div class="dbm-bars" data-dbm-daily></div>
+						<div class="dbm-axis" data-dbm-daily-axis></div>
+						<div class="dbm-explain">
+							Every question asked each day, everybody together. The red part of a bar is the questions that
+							ended in an error instead of an answer. A day with a tall red part is worth opening "Why questions
+							fail" for: it is usually the AI service or a limit, not DevBot itself.
+						</div>
+					</div>
+				</div>
+				<div class="section-card">
+					<div class="card-body p-5">
+						<h2 class="section-title">Why questions fail</h2>
+						<div class="text-xs text-base-content/50">Questions that ended in an error, by what went wrong</div>
+						<div class="mt-2" data-dbm-errors></div>
+						<div class="dbm-explain">
+							Rate limit and budget mean a person's AI key ran out for the minute or for good: raise the key's
+							limits with whoever issues them. Key refused means an expired or revoked key. Too long for the
+							model means the conversation outgrew it: people should start a new one. AI service error or
+							unreachable is the model service's side. Hub error is ours: its details are on the Logs page.
+						</div>
+					</div>
+				</div>
+				<div class="section-card">
+					<div class="card-body p-5">
+						<h2 class="section-title">Models</h2>
+						<div class="text-xs text-base-content/50">Questions per model, with how many failed and the typical wait</div>
+						<div class="mt-2" data-dbm-models></div>
+						<div class="dbm-explain">
+							Which models people pick, and how each one does. A model with many failures or a long typical
+							wait is a reason to change DEVBOT_DEFAULT_MODEL, which is what a person's picker starts on.
+						</div>
+					</div>
+				</div>
+			</section>
+
+			<section class="section-card">
+				<div class="card-body p-5 gap-3">
+					<div>
+						<h2 class="section-title">Lookups</h2>
+						<p class="text-sm text-base-content/60">
+							Every lookup DevBot made in the systems, and how often each one failed. A lookup that keeps failing
+							usually means a system changed or a token lacks a permission; the latest errors are listed under the table.
+						</p>
+					</div>
+					<div class="dbm-scroll">
+						<table class="dbm-table">
+							<thead><tr>
+								<th>Lookup</th><th>System</th>
+								<th class="dbm-num">Runs</th><th class="dbm-num">Failed</th>
+								<th class="dbm-num" title="Half the runs were faster than this">Typical time</th>
+								<th class="dbm-num" title="Nine runs in ten were faster than this">Slow (9 in 10)</th>
+							</tr></thead>
+							<tbody data-dbm-tools><tr><td colspan="6" class="dbm-muted">Loading…</td></tr></tbody>
+						</table>
+					</div>
+					<ul class="dbm-errors" data-dbm-tool-errors></ul>
+				</div>
+			</section>
+
+			<section class="section-card">
+				<div class="card-body p-5 gap-3">
+					<div>
+						<h2 class="section-title">People</h2>
+						<p class="text-sm text-base-content/60">
+							Everyone who has connected an AI key or asked something in the period. Numbers only: what people
+							asked is theirs and is not recorded here.
+						</p>
+					</div>
+					<div class="dbm-toolbar">
+						<input type="search" class="input input-bordered input-sm" style="min-width: 16rem" placeholder="Name or e-mail" data-dbm-search dir="auto" />
+						<span class="text-xs text-base-content/50" data-dbm-people-count></span>
+					</div>
+					<div class="dbm-scroll">
+						<table class="dbm-table">
+							<thead><tr>
+								<th>Person</th><th>AI key</th>
+								<th class="dbm-num">Questions</th><th class="dbm-num">Failed</th>
+								<th class="dbm-num" title="Questions that waited out or failed on the key's per-minute limit or budget">Hit a limit</th>
+								<th class="dbm-num">Tokens</th><th class="dbm-num" title="Thumbs up and down they gave">Feedback</th>
+								<th>Usual model</th><th>Last asked</th>
+							</tr></thead>
+							<tbody data-dbm-people><tr><td colspan="9" class="dbm-muted">Loading…</td></tr></tbody>
+						</table>
+					</div>
+					<div class="dbm-explain">
+						Hit a limit counts the questions that had to wait for the key's per-minute limit or failed on it or on
+						the budget. Somebody whose questions hit it often needs a key with higher limits, not more patience.
+						Someone with a key and no questions has set DevBot up and not used it yet.
+					</div>
+				</div>
+			</section>
+
+			<section class="section-card">
+				<div class="card-body p-5 gap-3">
+					<div class="flex items-start justify-between gap-3 flex-wrap">
+						<div>
+							<h2 class="section-title">What people said</h2>
+							<p class="text-sm text-base-content/60">
+								Thumbs up and down on answers, with the question and answer the person sent along. A thumbs down
+								with a note is the most direct way to learn what to fix next.
+							</p>
+						</div>
+						<div class="dbm-tabs" role="group" aria-label="Which feedback">
+							<button type="button" class="dbm-tab" data-dbm-rating="" aria-pressed="true">All</button>
+							<button type="button" class="dbm-tab" data-dbm-rating="down" aria-pressed="false">Thumbs down</button>
+							<button type="button" class="dbm-tab" data-dbm-rating="up" aria-pressed="false">Thumbs up</button>
+						</div>
+					</div>
+					<div class="dbm-feedback" data-dbm-feedback><div class="dbm-empty">Loading…</div></div>
+				</div>
+			</section>
+
+			<p class="text-xs text-base-content/50">
+				DevBot's search index, what it covers and its last builds are on
+				<a href="/ui/platform-managing" class="link link-primary">Platform Managing</a>. Figures are kept for two
+				years, so "All time" starts at the first question recorded; what people sent with a thumbs up or down is kept
+				for 180 days. AdminBot's questions are not counted here, only in what the Hub's AI key spent.
+			</p>
+		</div>
+	</div>
+</div>
+
+<script>
+	(function () {
+		"use strict";
+		var root = document.querySelector("[data-dbm]");
+		if (!root) return;
+		var $ = function (sel) { return root.querySelector(sel); };
+		var els = {
+			kpis: $("[data-dbm-kpis]"), daily: $("[data-dbm-daily]"), axis: $("[data-dbm-daily-axis]"),
+			hubkey: $("[data-dbm-hubkey]"), dailyTitle: $("[data-dbm-daily-title]"),
+			errors: $("[data-dbm-errors]"), models: $("[data-dbm-models]"), tools: $("[data-dbm-tools]"),
+			toolErrors: $("[data-dbm-tool-errors]"), people: $("[data-dbm-people]"), peopleCount: $("[data-dbm-people-count]"),
+			search: $("[data-dbm-search]"), feedback: $("[data-dbm-feedback]"), range: $("[data-dbm-range]"),
+			refresh: $("[data-dbm-refresh]"), alert: $("[data-dbm-alert]"), explain: $("[data-dbm-explain]"),
+		};
+		var people = [];
+		var rating = "";
+
+		var EXPLAIN_KEY = "portal-devbot-monitor-explain";
+		function setExplain(on) {
+			root.toggleAttribute("data-explain", on);
+			els.explain.textContent = on ? "Hide explanations" : "What do these mean?";
+			els.explain.setAttribute("aria-pressed", on ? "true" : "false");
+		}
+		var explainOn = true;
+		try { explainOn = localStorage.getItem(EXPLAIN_KEY) !== "0"; } catch (_) {}
+		setExplain(explainOn);
+		els.explain.addEventListener("click", function () {
+			explainOn = !explainOn;
+			setExplain(explainOn);
+			try { localStorage.setItem(EXPLAIN_KEY, explainOn ? "1" : "0"); } catch (_) {}
+		});
+
+		// The error kinds DevBot records (llm.LLMError and the orchestrator's own), in words.
+		var ERROR_NAMES = {
+			limit: "Rate limit", budget: "Budget used up", key: "Key refused", model_denied: "Model not allowed for the key",
+			model_missing: "Model not found", tools: "Model cannot read data", context: "Too long for the model",
+			request: "Request refused", server: "AI service error", timeout: "AI service too slow",
+			network: "AI service unreachable", busy: "DevBot busy", no_key: "No AI key", internal: "Hub error",
+			empty_answer: "Empty answer", not_found: "Conversation gone", not_configured: "Not set up", "": "Other",
+		};
+		var SYSTEM_NAMES = { azure: "Azure DevOps", sonarqube: "SonarQube", artifactory: "Artifactory", confluence: "Confluence" };
+		var THUMB = {
+			up: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10v11H4a1 1 0 01-1-1v-9a1 1 0 011-1h3zm0 0l4-7a2 2 0 012 2v4h5.5a2 2 0 012 2.3l-1.3 7A2 2 0 0117.2 21H7"/></svg>',
+			down: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 14V3h3a1 1 0 011 1v9a1 1 0 01-1 1h-3zm0 0l-4 7a2 2 0 01-2-2v-4H5.5a2 2 0 01-2-2.3l1.3-7A2 2 0 016.8 3H17"/></svg>',
+		};
+
+		function esc(v) {
+			return String(v === null || v === undefined ? "" : v)
+				.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+				.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+		}
+		function fmt(n) { return Number(n || 0).toLocaleString("en-US"); }
+		function pct(part, whole) { return whole ? Math.round((part / whole) * 100) + "%" : "—"; }
+		function tokens(n) {
+			n = Number(n || 0);
+			if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
+			if (n >= 1000) return (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "K";
+			return String(n);
+		}
+		function secs(ms) {
+			ms = Number(ms || 0);
+			if (!ms) return "—";
+			return ms < 1000 ? ms + " ms" : (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + " s";
+		}
+		function ago(iso) {
+			var t = Date.parse(iso || "");
+			if (isNaN(t)) return "—";
+			var s = Math.max(1, Math.floor((Date.now() - t) / 1000));
+			if (s < 120) return "just now";
+			if (s < 3600) return Math.floor(s / 60) + "m ago";
+			if (s < 86400) return Math.floor(s / 3600) + "h ago";
+			return Math.floor(s / 86400) + "d ago";
+		}
+		function initials(name) {
+			var parts = String(name || "?").replace(/@.*/, "").split(/[\s._\\-]+/).filter(Boolean);
+			return ((parts[0] || "?").charAt(0) + (parts.length > 1 ? parts[parts.length - 1].charAt(0) : "")).toUpperCase();
+		}
+		function nameOf(p) { return p.full_name || p.username || p.email || "Someone"; }
+		function api(path) {
+			return fetch("/api/devbot/admin/" + path, { credentials: "same-origin" }).then(function (r) {
+				return r.json().catch(function () { return {}; }).then(function (j) {
+					if (!r.ok) throw new Error(j.detail || ("The Hub answered " + r.status));
+					return j.data;
+				});
+			});
+		}
+		function showAlert(text) {
+			els.alert.textContent = text || "";
+			els.alert.classList.toggle("hidden", !text);
+		}
+		function kpi(label, value, note) {
+			return '<div class="dbm-kpi"><div class="dbm-kpi-label">' + esc(label) + '</div><div class="dbm-kpi-value">' + esc(value) +
+				"</div>" + (note ? '<div class="dbm-kpi-note">' + esc(note) + "</div>" : "") + "</div>";
+		}
+		// A bar scaled to the larger of the value and the top of the list, never thinner than a sliver.
+		function hrow(label, value, max, right, tone, title) {
+			var w = max ? Math.max(2, Math.round((value / max) * 100)) : 0;
+			return '<div class="dbm-hrow" title="' + esc(title || "") + '"><span dir="auto">' + esc(label) + '</span><div class="dbm-track"><div class="dbm-fill"' +
+				(tone ? ' data-tone="' + tone + '"' : "") + ' style="width: ' + w + '%"></div></div><span class="dbm-num">' + esc(right) + "</span></div>";
+		}
+
+		function renderOverview(o) {
+			var t = o.totals || {};
+			var q = t.questions || 0;
+			var answered = (t.answered || 0) + (t.found_only || 0);
+			els.kpis.innerHTML =
+				kpi("People asking", fmt(t.people), fmt(t.keys_connected) + " have an AI key connected") +
+				kpi("Questions", fmt(q), o.all_time ? "all time · " + o.days + " day" + (o.days === 1 ? "" : "s") + " of history" : "in the last " + o.days + " days") +
+				kpi("Answered", pct(answered, q), fmt(t.found_only || 0) + " from what was found only") +
+				kpi("Failed", pct(t.failed || 0, q), fmt(t.failed) + " questions" + (t.stopped ? " · " + fmt(t.stopped) + " stopped" : "")) +
+				kpi("Typical wait", secs(t.median_ms), "slow ones: " + secs(t.p90_ms)) +
+				kpi("Tokens", tokens((t.prompt_tokens || 0) + (t.completion_tokens || 0)), tokens(t.prompt_tokens) + " in · " + tokens(t.completion_tokens) + " out · " + fmt(t.requests) + " requests") +
+				kpi("Hit a limit", fmt((t.limit_waits || 0) + (t.limit_failures || 0)), fmt(t.limit_waits) + " waited · " + fmt(t.limit_failures) + " failed") +
+				kpi("Feedback", fmt((t.up || 0) + (t.down || 0)), fmt(t.up) + " up · " + fmt(t.down) + " down");
+
+			// What the Hub's own AI key spent: AdminBot, and the search index's builds.
+			var hk = o.hub_key || {};
+			els.hubkey.textContent = "The Hub's AI key in this period: " +
+				fmt(hk.adminbot_questions) + " AdminBot question" + (hk.adminbot_questions === 1 ? "" : "s") +
+				(hk.adminbot_questions ? " (" + fmt(hk.adminbot_requests) + " requests, " + tokens(hk.adminbot_tokens) + " tokens, " + fmt(hk.admins) + " admin" + (hk.admins === 1 ? "" : "s") + ")" : "") +
+				" · " + fmt(hk.index_builds) + " index build" + (hk.index_builds === 1 ? "" : "s") + ": " +
+				fmt(hk.index_embed_requests) + " embedding requests, " + fmt(hk.index_reviews) + " past fixes reviewed.";
+			els.dailyTitle.textContent = o.bucket === "week" ? "Questions per week" : "Questions per day";
+			var days = o.daily || [];
+			var top = Math.max.apply(null, [1].concat(days.map(function (d) { return d.questions || 0; })));
+			els.daily.innerHTML = days.map(function (d) {
+				var ok = (d.questions || 0) - (d.failed || 0);
+				var title = (o.bucket === "week" ? "Week of " : "") + d.day + ": " + fmt(d.questions) + " questions, " + fmt(d.failed) + " failed, " + fmt(d.people) + " people";
+				return '<div class="dbm-bar" title="' + esc(title) + '" style="height: ' + Math.max(2, Math.round(((d.questions || 0) / top) * 100)) + '%">' +
+					'<span class="ok" style="height: ' + (d.questions ? Math.round((ok / d.questions) * 100) : 0) + '%"></span>' +
+					'<span class="bad" style="height: ' + (d.questions ? Math.round(((d.failed || 0) / d.questions) * 100) : 0) + '%"></span></div>';
+			}).join("");
+			// Over a year the axis needs the year too.
+			var cut = o.days > 300 ? 0 : 5;
+			els.axis.innerHTML = days.length ? "<span>" + esc(days[0].day.slice(cut)) + "</span><span>" + esc(days[Math.floor(days.length / 2)].day.slice(cut)) + "</span><span>" + esc(days[days.length - 1].day.slice(cut)) + "</span>" : "";
+
+			var errs = o.errors || [];
+			var emax = Math.max.apply(null, [1].concat(errs.map(function (e) { return e.n; })));
+			els.errors.innerHTML = errs.length ? errs.map(function (e) {
+				return hrow(ERROR_NAMES[e.error_kind] || e.error_kind, e.n, emax, fmt(e.n), "bad", e.error_kind);
+			}).join("") : '<div class="dbm-empty">No question failed in this period.</div>';
+
+			var ms = o.models || [];
+			var mmax = Math.max.apply(null, [1].concat(ms.map(function (m) { return m.questions; })));
+			els.models.innerHTML = ms.length ? ms.map(function (m) {
+				var label = String(m.model || "").split("/").pop();
+				return hrow(label, m.questions, mmax, fmt(m.questions) + " · " + pct(m.failed, m.questions) + " failed · " + secs(m.median_ms), "", m.model);
+			}).join("") : '<div class="dbm-empty">Nobody asked anything in this period.</div>';
+
+			var tools = o.tools || [];
+			els.tools.innerHTML = tools.length ? tools.map(function (row) {
+				var bad = row.calls && row.failed / row.calls >= 0.2;
+				return "<tr><td>" + esc(row.label || row.tool) + '<div class="dbm-muted" style="font-size: 0.7rem">' + esc(row.tool) + "</div></td>" +
+					"<td>" + esc(SYSTEM_NAMES[row.system] || row.system || "—") + "</td>" +
+					'<td class="dbm-num">' + fmt(row.calls) + "</td>" +
+					'<td class="dbm-num' + (bad ? " dbm-bad" : "") + '">' + fmt(row.failed) + " (" + pct(row.failed, row.calls) + ")</td>" +
+					'<td class="dbm-num">' + secs(row.median_ms) + '</td><td class="dbm-num">' + secs(row.p90_ms) + "</td></tr>";
+			}).join("") : '<tr><td colspan="6" class="dbm-muted">No lookups in this period.</td></tr>';
+			var terrs = o.tool_errors || [];
+			els.toolErrors.innerHTML = terrs.length
+				? '<li class="dbm-muted" style="font-size: 0.68rem; letter-spacing: 0.05em; text-transform: uppercase">Latest lookup errors</li>' +
+					terrs.map(function (e) {
+						return "<li><span>" + esc(e.label || e.tool) + '</span><span dir="auto">' + esc(e.error || "no detail") + '</span><span class="dbm-muted">' +
+							(e.n > 1 ? fmt(e.n) + "× · " : "") + esc(ago(e.last_at)) + "</span></li>";
+					}).join("")
+				: "";
+		}
+
+		function renderPeople() {
+			var term = (els.search.value || "").trim().toLowerCase();
+			var rows = people.filter(function (p) {
+				return !term || (nameOf(p) + " " + (p.email || "") + " " + (p.username || "")).toLowerCase().indexOf(term) >= 0;
+			});
+			els.peopleCount.textContent = rows.length + " of " + people.length;
+			els.people.innerHTML = rows.length ? rows.map(function (p) {
+				return '<tr><td><div class="dbm-person"><span class="dbm-avatar">' + esc(initials(nameOf(p))) + '</span><div style="min-width: 0">' +
+					'<span class="dbm-name" dir="auto">' + esc(nameOf(p)) + '</span><div class="dbm-mail">' + esc(p.email || p.username || "") + "</div></div></div></td>" +
+					'<td><span class="dbm-state" data-tone="' + (p.key_connected ? "on" : "off") + '">' + (p.key_connected ? "Connected" : "None") + "</span></td>" +
+					'<td class="dbm-num">' + fmt(p.questions) + "</td>" +
+					'<td class="dbm-num' + (p.questions && p.failed / p.questions >= 0.25 ? " dbm-bad" : "") + '">' + fmt(p.failed) + "</td>" +
+					'<td class="dbm-num">' + fmt(p.limited + p.limit_waits) + "</td>" +
+					'<td class="dbm-num">' + tokens(p.tokens) + "</td>" +
+					'<td class="dbm-num">' + (p.up || p.down ? fmt(p.up) + " up · " + fmt(p.down) + " down" : "—") + "</td>" +
+					"<td>" + esc(p.model ? String(p.model).split("/").pop() : "—") + "</td>" +
+					"<td>" + esc(p.last_at ? ago(p.last_at) : p.ever_at ? "before this period" : "never") + "</td></tr>";
+			}).join("") : '<tr><td colspan="9" class="dbm-muted">' + (people.length ? "Nobody matches." : "Nobody has connected an AI key yet.") + "</td></tr>";
+		}
+
+		function renderFeedback(rows) {
+			els.feedback.innerHTML = rows.length ? rows.map(function (f) {
+				var chips = (f.tools || []).map(function (t) { return '<span class="dbm-chip" data-ok="' + (t.ok ? "true" : "false") + '">' + esc(t.tool) + "</span>"; }).join("") +
+					(f.sources || []).slice(0, 4).map(function (s) {
+						return '<a class="dbm-chip" href="' + esc(s.url) + '" target="_blank" rel="noopener noreferrer" dir="auto">' + esc(s.title) + "</a>";
+					}).join("");
+				return '<article class="dbm-fb"><div class="dbm-fb-head"><span class="dbm-thumb" data-rating="' + esc(f.rating) + '">' + (THUMB[f.rating] || "") + "</span>" +
+					'<b dir="auto" style="color: hsl(var(--bc))">' + esc(f.full_name || f.username || f.email || "Someone") + "</b><span>" + esc(ago(f.updated_at)) + "</span>" +
+					(f.model ? "<span>· " + esc(String(f.model).split("/").pop()) + "</span>" : "") + "</div>" +
+					'<div class="dbm-q" dir="auto">' + esc(f.question || "(no question)") + "</div>" +
+					(f.note ? '<div class="dbm-note" dir="auto">' + esc(f.note) + "</div>" : "") +
+					'<details><summary class="text-xs link link-primary" style="margin-top: 0.4rem">Show the answer</summary><div class="dbm-answer" dir="auto">' + esc(f.answer) + "</div></details>" +
+					(chips ? '<div class="dbm-chips">' + chips + "</div>" : "") + "</article>";
+			}).join("") : '<div class="dbm-empty">' + (rating === "down" ? "No thumbs down in this period." : rating === "up" ? "No thumbs up in this period." : "Nobody has rated an answer in this period.") + "</div>";
+		}
+
+		function loadFeedback() {
+			return api("feedback?days=" + els.range.value + "&rating=" + rating).then(renderFeedback).catch(function (err) {
+				els.feedback.innerHTML = '<div class="dbm-empty">' + esc(err.message) + "</div>";
+			});
+		}
+
+		function load() {
+			showAlert("");
+			var days = els.range.value;
+			return Promise.all([
+				api("overview?days=" + days).then(renderOverview),
+				api("people?days=" + days).then(function (rows) { people = rows || []; renderPeople(); }),
+				loadFeedback(),
+			]).catch(function (err) { showAlert(err.message); });
+		}
+
+		root.querySelectorAll("[data-dbm-rating]").forEach(function (btn) {
+			btn.addEventListener("click", function () {
+				rating = btn.getAttribute("data-dbm-rating");
+				root.querySelectorAll("[data-dbm-rating]").forEach(function (b) { b.setAttribute("aria-pressed", b === btn ? "true" : "false"); });
+				loadFeedback();
+			});
+		});
+		els.search.addEventListener("input", renderPeople);
+		els.range.addEventListener("change", load);
+		els.refresh.addEventListener("click", load);
+		load();
+	})();
+</script>

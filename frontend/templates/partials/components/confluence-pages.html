@@ -213,6 +213,11 @@
 				// Say WHY the page is in the list — "viewed" comes from the user's own
 				// Confluence history, "edited" from pages they contributed to.
 				const how = p.interaction === "viewed" ? "Viewed" : p.interaction === "edited" ? "Edited" : "";
+				// The hover chip's question (devbot-hover.html).
+				const ask = window.portalDevbot && window.portalDevbot.attr
+					? window.portalDevbot.attr("Summarise the Confluence page \"" + (p.title || "") + "\"" +
+						(p.space_name ? " in " + p.space_name : "") + ": what is it for, and what are its key steps?")
+					: "";
 				const pinnedCls = p.pinned
 					? "border-warning/30 bg-warning/5"
 					: "border-base-300 bg-base-200/60";
@@ -225,7 +230,7 @@
 				return `
 					<li
 						class="rounded-lg border ${pinnedCls} px-3 py-2.5 transition hover:border-info/50 hover:bg-base-200"
-						data-confluence-id="${id}"
+						data-confluence-id="${id}"${ask}
 					>
 						<div class="flex items-center justify-between gap-2">
 							<a href="${url}" target="_blank" rel="noopener noreferrer" class="min-w-0 flex-1 truncate text-sm font-semibold hover:text-info">${title}</a>

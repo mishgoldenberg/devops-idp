@@ -1,27 +1,13 @@
 """
-Suggestions — the feedback board.
+Suggestions — the feedback board, on the fider model:
 
-It used to be a write-only box on the Settings page. You typed an idea, it went into a
-table, and that was the last anyone heard of it: you could not see other people's ideas,
-you could not say "yes, this, I need it too", and you never found out whether yours was
-going to happen. Everything that makes feedback worth collecting was missing.
-
-This is the fider model, which exists because it works:
-
-  * Everyone can SEE the board. An idea nobody can read cannot be agreed with.
-  * Everyone can VOTE. Votes are how you find out which of forty ideas actually matter,
-    instead of an admin guessing from a list sorted by date.
+  * Everyone can SEE the board and VOTE, which is how the ideas that matter surface.
   * Admins set a STATUS — planned, in progress, completed, declined — and write a
-    RESPONSE. A declined idea with a reason is a conversation. A declined idea in
-    silence is why people stop bothering.
+    RESPONSE, so a declined idea comes with a reason.
 
-WHO WROTE IT is anonymous to other users and visible to admins. People self-censor when
-their name is on the complaint, and the complaints they swallow are the ones worth
-hearing; admins still need to know who to go and ask. The redaction happens HERE, on the
-way out of the API — not in the template. A payload that carries every author's address
-to every browser and merely declines to paint it is not anonymous, it is one DevTools
-tab away from a directory of who said what.
-
+The author is anonymous to other users and visible to admins. The redaction happens
+HERE, on the way out of the API, not in the template: a payload that carries every
+author's address to every browser is not anonymous.
 
 Endpoints:
   GET    /api/suggestions                 -> the board (any authenticated user)
@@ -38,7 +24,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status as http_status
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 import audit
@@ -46,6 +32,7 @@ from db import execute, execute_returning, query_all, query_one
 from security import AuthUser, get_current_user, has_effective_admin_access_live
 
 from .notifications import create_notification
+from common import caller_email, require_admin
 
 
 log = logging.getLogger(__name__)
@@ -75,21 +62,6 @@ class UpdateBody(BaseModel):
     # Kept so the old Platform Managing "reviewed" checkbox keeps working against this
     # endpoint rather than 422-ing the moment this ships.
     reviewed: Optional[bool] = None
-
-
-def _caller_email(user: AuthUser) -> str:
-    email = (user.get("email") or "").strip().lower()
-    if not email:
-        raise HTTPException(
-            status_code=http_status.HTTP_401_UNAUTHORIZED,
-            detail="User email missing from auth context",
-        )
-    return email
-
-
-def _require_admin(user: AuthUser) -> None:
-    if not has_effective_admin_access_live(user):
-        raise HTTPException(status_code=http_status.HTTP_403_FORBIDDEN, detail="Admin access required")
 
 
 def _vote_state(suggestion_id: str, email: str) -> Dict[str, Any]:
@@ -192,7 +164,7 @@ def list_suggestions(
 
     Authors are redacted for non-admins before the rows leave this function.
     """
-    email = _caller_email(current_user)
+    email = caller_email(current_user)
     is_admin = has_effective_admin_access_live(current_user)
 
     clauses: List[str] = []
@@ -267,7 +239,7 @@ def create_suggestion(
     body: SuggestionBody,
     current_user: AuthUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    email = _caller_email(current_user)
+    email = caller_email(current_user)
     title = body.title.strip()
     if not title:
         raise HTTPException(status_code=400, detail="A title is required")
@@ -323,7 +295,7 @@ def add_vote(
     suggestion_id: str,
     current_user: AuthUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    email = _caller_email(current_user)
+    email = caller_email(current_user)
     try:
         # ON CONFLICT DO NOTHING: voting twice is not an error, it is a double-click.
         execute(
@@ -353,7 +325,7 @@ def remove_vote(
     suggestion_id: str,
     current_user: AuthUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    email = _caller_email(current_user)
+    email = caller_email(current_user)
     try:
         execute(
             "DELETE FROM suggestion_votes WHERE suggestion_id = %s AND user_email = %s",
@@ -372,8 +344,8 @@ def update_suggestion(
     current_user: AuthUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Admin: set the status, and say why."""
-    _require_admin(current_user)
-    email = _caller_email(current_user)
+    require_admin(current_user)
+    email = caller_email(current_user)
 
     new_status = body.status
     if new_status is None and body.reviewed is not None:
@@ -460,8 +432,8 @@ def delete_suggestion(
     current_user: AuthUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Admin: remove a suggestion. Its votes go with it (ON DELETE CASCADE)."""
-    _require_admin(current_user)
-    email = _caller_email(current_user)
+    require_admin(current_user)
+    email = caller_email(current_user)
     try:
         execute("DELETE FROM suggestions WHERE id = %s", [suggestion_id])
     except Exception as exc:
@@ -488,7 +460,7 @@ def list_comments(
     suggestion_id: str,
     current_user: AuthUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    email = _caller_email(current_user)
+    email = caller_email(current_user)
     is_admin = has_effective_admin_access_live(current_user)
     try:
         rows = query_all(
@@ -522,7 +494,7 @@ def add_comment(
     body: CommentBody,
     current_user: AuthUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    email = _caller_email(current_user)
+    email = caller_email(current_user)
     is_admin = has_effective_admin_access_live(current_user)
     text = (body.body or "").strip()
     if not text:
@@ -573,7 +545,7 @@ def delete_comment(
     current_user: AuthUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Delete a comment. Your own, or any if you're an admin."""
-    email = _caller_email(current_user)
+    email = caller_email(current_user)
     is_admin = has_effective_admin_access_live(current_user)
     row = query_one(
         "SELECT user_email FROM suggestion_comments WHERE id = %s AND suggestion_id = %s",

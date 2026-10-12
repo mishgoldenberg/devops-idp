@@ -2,14 +2,8 @@
 The one description of every self-service form the portal offers.
 
 A form is DATA here, not markup: sections, fields, types, options, and the rule that
-decides whether a section is shown. One renderer in the browser turns any of these
-into a form, which is what makes adding a request a dozen lines rather than another
-four hundred lines of hand-written wizard.
-
-That matters beyond tidiness. The Support ticket wizard is four hand-built steps with
-its own validation, its own progress bar, its own summary and its own localStorage
-handling; every form built that way is a fresh chance to get one of those wrong, and
-none of the fixes carry across.
+decides whether a section is shown. One renderer in the browser (catalog-form.html)
+turns any of these into a form.
 
 The keys here are also the keys the answers are stored and submitted under. Where a
 field maps onto a ServiceNow catalog variable, snow_catalog matches it by name and
@@ -26,10 +20,9 @@ Field types the renderer understands:
     toggle      yes / no
     file        one attachment (image_only marks the ones that must be a picture)
 
-Anything with visible_when is shown only while another field holds a given value,
-which is how the conditional Build and SonarQube blocks work. Hidden fields are not
-validated and not submitted -- a required field nobody can see is a form that cannot
-be sent and does not say why.
+Anything with visible_when is shown only while another field holds a given value.
+Hidden fields are not validated and not submitted -- a required field nobody can see
+is a form that cannot be sent and does not say why.
 """
 
 from __future__ import annotations
@@ -173,9 +166,7 @@ FORMS: Dict[str, Dict[str, Any]] = {
             "Nothing is deleted until that pull request is merged."
         ),
         "request_type": "ARTIFACTORY_CLEANER_CREATE",
-        # No snow_item, as above. It also never fitted: this was ordering the
-        # "Enlarge Quota in Artifactory" item to describe a cleaner, which is a
-        # request for storage raised every time somebody asked for the opposite.
+        # No snow_item, as above: no catalog item describes a cleaner.
         "sections": [
             dict(_WHO_YOU_ARE),
             {
@@ -270,10 +261,8 @@ FORMS: Dict[str, Dict[str, Any]] = {
                     {"key": "problem_declaration", "label": "Problem declaration",
                      "type": "textarea", "rows": 3, "required": True,
                      "placeholder": "What is painful today?"},
-                    # Labelled as the catalog item labels it. The mapping is on the KEY
-                    # and no longer depends on this, but a field the requester sees
-                    # under one name and the team sees under another is a needless way
-                    # to make two people describe the same answer differently.
+                    # Labelled as the catalog item labels it, so requester and team see one
+                    # name for one answer (the mapping itself is on the key).
                     {"key": "pipeline_purpose", "label": "Pipeline's purpose",
                      "type": "textarea", "rows": 3, "required": True,
                      "placeholder": "What should it do, end to end?"},
@@ -400,25 +389,14 @@ FORMS: Dict[str, Dict[str, Any]] = {
 
     # ── Support: open a ticket ───────────────────────────────────────────────
     #
-    # THE ONE FORM THAT IS STILL A WIZARD, and deliberately.
+    # The one form shown as a wizard (`wizard`: one section per step). A ticket is
+    # asked of somebody having a problem, for whom four short questions at a time are
+    # kinder than eighteen at once. Same controls, validation and requester section as
+    # every other form.
     #
-    # Every other request here is asked of somebody who knows what they want: a
-    # quota, a cleaner, a project. A ticket is asked of somebody having a problem,
-    # who does not know what the portal needs to hear, and for whom four short
-    # questions at a time is kinder than eighteen at once. So this spec sets
-    # `wizard` and the renderer shows one section per step. Nothing else differs --
-    # same controls, same validation, same Hebrew labels, same requester section.
-    #
-    # It used to be nine hundred lines of hand-written markup with its own step
-    # machinery, its own validation and its own copy of the six requester questions
-    # -- the copy that drifted on all four axes and needed a guard to catch it. The
-    # copy is gone; there is one of everything now.
-    #
-    # THE FIELD KEYS ARE THE ENDPOINT'S OWN NAMES. /api/support/tickets/create-flow
-    # takes named multipart fields and creates the incident through the ServiceNow
-    # record producer, which is the path that works on this instance and is not
-    # being rewritten to look tidier. `submit_as: form` is what tells the renderer
-    # to send it that way.
+    # The field keys are the endpoint's own names: /api/support/tickets/create-flow
+    # takes named multipart fields (`submit_as: form`) and creates the incident through
+    # the ServiceNow record producer.
     "support_ticket": {
         "key": "support_ticket",
         "title": "Open a Ticket",
@@ -429,14 +407,8 @@ FORMS: Dict[str, Dict[str, Any]] = {
         "submit_as": "form",
         "submit_label": "Open a Ticket",
         "submit_note": "It reaches the DevOps Support team straight away — there is no approval step.",
-        # WHERE THIS ONE ENDS UP, said once, here.
-        #
-        # A ticket is not a request: nobody approves it, it exists the moment the
-        # wizard is submitted, and it is listed under My Tickets on the Support
-        # page -- not under My Requests, which is where every other form in this
-        # catalogue is answered. The result screen used to say "Sent for approval"
-        # and link to My Requests for this form too, which sent people to a page
-        # their ticket was never going to appear on.
+        # A ticket is not a request: nobody approves it, and it is listed under My
+        # Tickets on the Support page, not under My Requests.
         "done": {
             "kind": "ticket",
             "lead": "Opened with the DevOps Support team as",
@@ -463,26 +435,29 @@ FORMS: Dict[str, Dict[str, Any]] = {
                     # Only when the answer above is Azure DevOps. Asking a SonarQube
                     # ticket which collection it is about is how a form teaches people
                     # that most of its questions do not apply to them.
+                    # Required when shown, as create_ticket_flow requires them for an Azure
+                    # DevOps ticket: left optional here, the wizard let a person through all
+                    # four steps and the server refused the ticket at the end.
                     {"key": "azure_devops_support_type",
-                     "label": "Azure DevOps Support Type (סוג תמיכה)", "type": "select",
+                     "label": "Azure DevOps Support Type (סוג תמיכה)", "type": "select", "required": True,
                      "visible_when": {"field": "devops_services", "equals": "azure devops"},
                      "options": [{"value": v, "label": v} for v in
                                  ("pipelines", "repository", "permissions", "others")]},
                     {"key": "azure_devops_collection",
-                     "label": "Azure DevOps Collection (אוסף)", "type": "select",
+                     "label": "Azure DevOps Collection (אוסף)", "type": "select", "required": True,
                      "visible_when": {"field": "devops_services", "equals": "azure devops"},
                      "options": [{"value": v, "label": v} for v in
                                  ("devcollection-inheritance", "devcollection",
                                   "devcollection17", "tikshuvcollection-inheritance",
                                   "tikshuvcollection")]},
                     {"key": "azure_devops_project", "label": "Azure DevOps Project (פרויקט)",
-                     "type": "select", "searchable": True, "allow_custom": True,
+                     "type": "select", "searchable": True, "allow_custom": True, "required": True,
                      "options_source": "azure_devops_projects",
                      "depends_on": "azure_devops_collection",
                      "visible_when": {"field": "devops_services", "equals": "azure devops"},
                      "custom_placeholder": "MyProject"},
                     {"key": "pipeline_url", "label": "Pipeline URL (קישור Pipeline)",
-                     "type": "text", "wide": True,
+                     "type": "text", "wide": True, "required": True,
                      "visible_when": {"field": "azure_devops_support_type", "equals": "pipelines"}},
                     {"key": "reason", "label": "Reason (סיבת פתיחת הקריאה)",
                      "type": "select", "required": True,
@@ -531,13 +506,9 @@ FORMS: Dict[str, Dict[str, Any]] = {
 
 # ── What the "+" button offers ───────────────────────────────────────────────
 
-# The two things you can ask for that are NOT described by a form in this module:
-# the Azure DevOps project request, which is still its own dialog, and a suggestion,
-# which is not a request at all but is the other thing people arrive wanting to do.
-#
-# Everything else is derived from FORMS. That is the point: the "+" menu used to be a
-# hand-written list of two, so every request added since simply never appeared in it,
-# and nothing anywhere said the two lists were meant to agree.
+# The two things you can ask for that are NOT forms in this module: the Azure DevOps
+# project request (its own dialog) and a suggestion. Everything else in the + menu is
+# derived from FORMS.
 _EXTRA_ACTIONS: List[Dict[str, str]] = [
     {
         "key": "ado_project",
@@ -558,16 +529,11 @@ _EXTRA_ACTIONS: List[Dict[str, str]] = [
 
 
 def quick_actions() -> List[Dict[str, str]]:
-    """Every "create" the portal offers, for the + menu in the banner.
+    """Every "create" the portal offers, for the + menu in the banner -- derived from
+    FORMS, so a new request appears there without a second list.
 
-    Derived from FORMS rather than written out again. A menu that has to be edited
-    whenever a request is added is a menu that stops being true on the first request
-    somebody adds and forgets it -- which is exactly what happened: three self-service
-    forms shipped and the + button went on offering the same two things it always had.
-
-    Each entry says how to act on it. `opens` is the kind of thing behind it, so the
-    banner can open it in place when the page it lives on is already the current one,
-    and fall back to the href otherwise.
+    `opens` is the kind of thing behind an entry, so the banner can open it in place
+    when its page is already the current one, and fall back to the href otherwise.
     """
     actions: List[Dict[str, str]] = [_EXTRA_ACTIONS[0]]
     for spec in all_forms():
@@ -604,11 +570,9 @@ def fields_of(spec: Dict[str, Any]) -> List[Dict[str, Any]]:
 def apply_defaults(spec: Dict[str, Any], answers: Dict[str, Any]) -> Dict[str, Any]:
     """Fill in every default the form declares, before anything reads the answers.
 
-    The browser seeds these when it renders, so a person who leaves a toggle alone is
-    submitting its default. If the server does not do the same, an answer that was
-    never touched is absent here and the two sides disagree about which sections were
-    even visible -- which is how a required field ends up not required, silently, for
-    exactly the requests nobody edited.
+    The browser seeds these when it renders, so an untouched toggle submits its
+    default. The server must agree, or the two disagree about which sections were
+    visible and a required field silently stops being required.
     """
     filled = dict(answers or {})
     for section in spec.get("sections") or []:
@@ -628,7 +592,8 @@ def section_visible(section: Dict[str, Any], answers: Dict[str, Any]) -> bool:
     return _rule_holds(section.get("visible_when"), answers)
 
 
-def field_visible(field: Dict[str, Any], answers: Dict[str, Any]) -> bool:
+def field_visible(field: Dict[str, Any], answers: Dict[str, Any],
+                  spec: Optional[Dict[str, Any]] = None) -> bool:
     """Same rule, one level down.
 
     A ticket about SonarQube is not asked which Azure DevOps collection it concerns.
@@ -636,8 +601,20 @@ def field_visible(field: Dict[str, Any], answers: Dict[str, Any]) -> bool:
     already had: hidden means not shown, not required, and not submitted -- on the
     server as well as in the browser, because a required field nobody can see is a
     form that cannot be sent and does not say why.
+
+    With ``spec``, a field whose rule names a field that is itself hidden is hidden
+    too: the pipeline URL belongs to an Azure DevOps ticket, and an answer left behind
+    by switching the service away must not keep asking for it.
     """
-    return _rule_holds(field.get("visible_when"), answers)
+    rule = field.get("visible_when")
+    if not _rule_holds(rule, answers):
+        return False
+    if spec and rule:
+        parent = next((f for s in spec.get("sections") or [] for f in s.get("fields") or []
+                       if f.get("key") == rule.get("field")), None)
+        if parent is not None and parent is not field:
+            return field_visible(parent, answers, spec)
+    return True
 
 
 def _rule_holds(rule: Optional[Dict[str, Any]], answers: Dict[str, Any]) -> bool:
@@ -663,7 +640,7 @@ def validate_answers(spec: Dict[str, Any], answers: Dict[str, Any]) -> Dict[str,
         if not section_visible(section, answers):
             continue
         for field in section.get("fields") or []:
-            if not field_visible(field, answers):
+            if not field_visible(field, answers, spec):
                 continue
             if field.get("type") == "toggle":
                 continue  # a toggle always holds a value, and False is one

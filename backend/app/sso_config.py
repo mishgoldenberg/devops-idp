@@ -12,15 +12,15 @@ import base64
 import hashlib
 from typing import Any, Dict, Optional
 
-import httpx
 
-from resilient_http import tls_verify
 from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from config import get_settings
 from db import execute, query_all, query_one
+import resilient_http
+from common import failure_text
 
 
 _DISCOVERY_REQUIRED = {"authorization_endpoint", "token_endpoint", "jwks_uri"}
@@ -109,7 +109,7 @@ def credential_key_check() -> Dict[str, Any]:
         )
     except Exception as exc:
         result["ok"] = None  # unknown, not broken
-        result["error"] = f"could not read stored credentials: {exc}"
+        result["error"] = failure_text("Reading the stored credentials", exc)
         return result
 
     for row in rows:
@@ -133,7 +133,7 @@ def fetch_openid_configuration(issuer_uri: str, timeout: float = 10.0) -> Dict[s
     if not issuer:
         raise ValueError("Issuer URI is required")
     url = f"{issuer}/.well-known/openid-configuration"
-    with httpx.Client(verify=tls_verify(), timeout=timeout, follow_redirects=True) as client:
+    with resilient_http.Client(timeout=timeout, follow_redirects=True) as client:
         response = client.get(url, headers={"Accept": "application/json"})
         response.raise_for_status()
         data = response.json()

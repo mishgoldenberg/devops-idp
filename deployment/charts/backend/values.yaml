@@ -48,8 +48,6 @@ autoscaling:
 
 tier: backend
 
-terraformServiceAccountAnnotations: {}
-
 service:
   type: ClusterIP
   port: 8000
@@ -72,6 +70,8 @@ secrets:
   artifactoryBaseUrl: ""
   sonarqubeBaseUrl: ""
   confluenceBaseUrl: ""
+  # GitLab's web address (https://gitlab.example), from the pipeline's GITLAB_BASE_URL.
+  gitlabBaseUrl: ""
 
 ingress:
   enabled: true

@@ -1,47 +1,36 @@
 """
-ServiceNow integration (Support page).
+Support tickets in ServiceNow: the person's own tickets, their conversation, replies
+and attachments, and opening a new one through the "Open A Ticket" record producer.
 
-Talks to a ServiceNow instance via the Table API (``/api/now/table/…``)
-using HTTP Basic auth with a service-account user. All portal-created
-tickets are technically opened by that shared account, so we keep a
-mapping in the local ``user_tickets`` table to recover the portal
-requester for "My Tickets".
-
-Resilience
-----------
-* Every outbound call has a hard timeout (30 s) and goes through
-  ``httpx.Client`` so connection errors surface fast.
-* We cache ticket lists for 60 s (per user) and ticket detail for the
-  same window; writes explicitly invalidate those keys so the UI never
-  shows a stale state after the user's own action.
-* Transport errors never leak upstream — ``_raise_snow_error`` converts
-  them into a generic 502 "Service temporarily unavailable".
-
-The integration is configured only through ``SNOW_BASE_URL``,
-``SNOW_API_USERNAME``, and ``SNOW_API_PASSWORD``.
+Everything goes through one service account. The `user_tickets` table records which
+portal user opened which ticket, and every endpoint that takes a ticket id checks it
+against that person's own list (`_require_own_ticket`) before the account touches it.
+Configured by SNOW_BASE_URL, SNOW_API_USERNAME and SNOW_API_PASSWORD.
 """
 
 import logging
 import os
 import re
-from datetime import datetime, timezone
 from html import unescape as _html_unescape
+from urllib.parse import quote
 from typing import Any, Dict, List, Optional
 
 import httpx
 
-from resilient_http import tls_verify
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
-from pydantic import BaseModel
 
 import activity
-import db
 import cache
+import db
+import identity
+import snow_catalog
+from common import attachment_type, looks_like_sys_id, now_iso, safe_attachment, truthy
 from security import AuthUser, get_current_user, has_effective_admin_access_live
+import resilient_http
+from resilient_http import far_message
 
 router = APIRouter()
 _log = logging.getLogger(__name__)
-_SNOW_SUPPORT_GROUP_SYS_ID: Optional[str] = None
 
 
 def _ensure_user_tickets_table() -> None:
@@ -78,14 +67,9 @@ def _ticket_owner_key(email: str) -> str:
 def _portal_ticket_sys_ids(user_email: str) -> List[str]:
     """sys_ids of the tickets this user opened THROUGH THE PORTAL.
 
-    The Record Producer submits as the service account, so ServiceNow records the
-    service account as ``opened_by`` and the producer's own default as ``caller_id``
-    — neither of which is the portal user. The portal used to fix that by PATCHing
-    ``caller_id`` after creation, but that PATCH is an update by the service account
-    and re-triggers the assignment rule that flips the ticket to In Progress.
-
-    So ownership is resolved from our OWN table instead: every ticket created here
-    is already recorded in ``user_tickets``. No post-create write, ticket stays Open.
+    The producer submits as the service account, so ServiceNow's own fields may not name
+    the portal user. Every ticket created here is recorded in ``user_tickets``, and
+    ownership is read from there.
     """
     try:
         _ensure_user_tickets_table()
@@ -109,28 +93,12 @@ def _resolve_instance() -> str:
     return ""
 
 
-# ── Pydantic models ──────────────────────────────────────────────────────────
-
-class CreateTicketRequest(BaseModel):
-    title: str
-    description: str
-    priority: str = "3"  # ServiceNow priority code: 1=Critical 2=High 3=Moderate 4=Low 5=Planning
-
-
-class ReplyRequest(BaseModel):
-    message: str
-
-
 # ── Helpers ──────────────────────────────────────────────────────────────────
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
 
 def _snow_client() -> httpx.Client:
     user = os.getenv("SNOW_API_USERNAME", "")
     password = os.getenv("SNOW_API_PASSWORD", "")
-    return httpx.Client(verify=tls_verify(), 
+    return resilient_http.Client(
         base_url=_resolve_instance(),
         auth=(user, password),
         headers={"Accept": "application/json", "Content-Type": "application/json"},
@@ -150,7 +118,7 @@ def _snow_ticket_flow_client() -> httpx.Client:
 		)
 	if not base_url.startswith(("http://", "https://")):
 		base_url = f"https://{base_url}"
-	return httpx.Client(verify=tls_verify(), 
+	return resilient_http.Client(
 		base_url=base_url,
 		auth=(username, password),
 		headers={"Accept": "application/json"},
@@ -163,17 +131,7 @@ def _safe_snow_error(exc: Exception, context: str) -> HTTPException:
 	if isinstance(exc, HTTPException):
 		return exc
 	if isinstance(exc, httpx.HTTPStatusError):
-		message = ""
-		try:
-			body = exc.response.json()
-			if isinstance(body, dict):
-				err = body.get("error")
-				if isinstance(err, dict):
-					message = str(err.get("message") or err.get("detail") or "").strip()
-				if not message:
-					message = str(body.get("message") or "").strip()
-		except Exception:
-			message = exc.response.text[:200].strip()
+		message = far_message(exc.response)
 		_log.warning(
 			"ServiceNow ticket flow failed while %s: status=%s body=%s",
 			context,
@@ -198,92 +156,6 @@ def _required_form_value(name: str, value: Optional[str]) -> str:
 	return clean
 
 
-def _resolve_snow_user_sys_id(client: httpx.Client, email: str) -> str:
-	"""The ServiceNow sys_id of the person signed in to the portal.
-
-	ServiceNow reference fields need sys_id values, not portal e-mails, and the
-	account is not necessarily filed under the address the portal knows it by:
-	an SSO e-mail, a user_name and the part before the @ are three ways of naming
-	one person, and an instance may hold any of them. One query on `email` finds
-	nobody perfectly quietly -- and a caller that cannot be resolved is a ticket
-	that opens under the service account.
-
-	So try each form against each field, and match EXACTLY rather than taking the
-	first row a query happens to return.
-	"""
-	address = (email or "").strip()
-	if not address:
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail="Could not find your ServiceNow user: no e-mail on the session.",
-		)
-	local = address.split("@")[0]
-	forms = [f for f in (address, local) if f]
-
-	attempts: List[str] = []
-	for field in ("email", "user_name"):
-		for form in forms:
-			query = f"{field}={form}"
-			attempts.append(query)
-			try:
-				resp = client.get(
-					"/api/now/table/sys_user",
-					params={
-						"sysparm_query": query,
-						"sysparm_fields": "sys_id,email,user_name,active",
-						"sysparm_limit": 5,
-					},
-				)
-			except Exception as exc:
-				raise _safe_snow_error(exc, "resolving user") from exc
-			if resp.status_code != 200:
-				continue
-			rows = resp.json().get("result") or []
-			wanted = form.lower()
-			for row in rows:
-				if not row.get("sys_id"):
-					continue
-				if str(row.get(field) or "").strip().lower() == wanted:
-					_log.warning(
-						"SNow user resolved: %s -> %s via %s", address, row["sys_id"], query
-					)
-					return str(row["sys_id"])
-
-	_log.warning("SNow user NOT resolved: %s (tried %s)", address, ", ".join(attempts))
-	raise HTTPException(
-		status_code=status.HTTP_400_BAD_REQUEST,
-		detail=f"Could not find a ServiceNow user for {address}.",
-	)
-
-
-def _resolve_support_group_sys_id(client: httpx.Client) -> str:
-	global _SNOW_SUPPORT_GROUP_SYS_ID
-	if _SNOW_SUPPORT_GROUP_SYS_ID:
-		return _SNOW_SUPPORT_GROUP_SYS_ID
-	# Devops Support rarely changes, so cache the group sys_id after the first
-	# successful lookup and reuse it for later ticket submissions.
-	try:
-		resp = client.get(
-			"/api/now/table/sys_user_group",
-			params={
-				"sysparm_query": "name=Devops Support",
-				"sysparm_fields": "sys_id,name",
-				"sysparm_limit": 1,
-			},
-		)
-		resp.raise_for_status()
-	except Exception as exc:
-		raise _safe_snow_error(exc, "resolving support group") from exc
-	result = resp.json().get("result") or []
-	if not result or not result[0].get("sys_id"):
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail='Could not find the ServiceNow group "Devops Support".',
-		)
-	_SNOW_SUPPORT_GROUP_SYS_ID = str(result[0]["sys_id"])
-	return _SNOW_SUPPORT_GROUP_SYS_ID
-
-
 def _format_ticket_description(fields: Dict[str, str]) -> str:
 	lines = [
 		fields["description"],
@@ -297,36 +169,43 @@ def _format_ticket_description(fields: Dict[str, str]) -> str:
 	return "\n".join(lines).strip()
 
 
-def _upload_snow_attachments(
-	client: httpx.Client,
-	record_sys_id: str,
-	attachments: Optional[List[UploadFile]],
-	table: str = "incident",
-) -> int:
-	count = 0
+_MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+
+
+def _checked_attachments(attachments: Optional[List[UploadFile]]) -> List[tuple]:
+	"""(file name, media type, bytes) for each upload, checked by common.safe_attachment
+	before anything is sent, so a refused file never leaves a half-made ticket."""
+	files = []
 	for upload in attachments or []:
 		if not upload or not upload.filename:
 			continue
+		upload.file.seek(0)
+		data = upload.file.read(_MAX_ATTACHMENT_BYTES + 1)
+		try:
+			files.append((*safe_attachment(upload.filename, data, _MAX_ATTACHMENT_BYTES), data))
+		except ValueError as exc:
+			raise HTTPException(status_code=400, detail=str(exc))
+	return files
+
+
+def _upload_snow_attachments(client: httpx.Client, record_sys_id: str, files: List[tuple],
+							 table: str = "incident") -> int:
+	count = 0
+	for name, media_type, data in files:
 		# The /api/now/attachment/file endpoint wants table_name, table_sys_id and
 		# file_name as QUERY params and the file as the raw request body (not a
 		# multipart form) — sending multipart drops file_name → HTTP 400.
 		try:
-			upload.file.seek(0)
-			data = upload.file.read()
 			resp = client.post(
 				"/api/now/attachment/file",
-				params={
-					"table_name": table or "incident",
-					"table_sys_id": record_sys_id,
-					"file_name": upload.filename,
-				},
+				params={"table_name": table or "incident", "table_sys_id": record_sys_id, "file_name": name},
 				content=data,
-				headers={"Content-Type": upload.content_type or "application/octet-stream"},
+				headers={"Content-Type": media_type},
 			)
 			resp.raise_for_status()
 			count += 1
 		except Exception as exc:
-			raise _safe_snow_error(exc, f"uploading attachment {upload.filename}") from exc
+			raise _safe_snow_error(exc, f"uploading attachment {name}") from exc
 	return count
 
 
@@ -379,10 +258,6 @@ _PORTAL_MSG_RE = re.compile(
 )
 
 
-def _portal_marker(display: str, email: str) -> str:
-    return f"[portal:{display}|{email}]\n"
-
-
 def _portal_display_name(user: AuthUser) -> str:
     for key in ("name", "full_name", "display_name", "preferred_username", "username"):
         val = str(user.get(key) or "").strip()
@@ -415,7 +290,8 @@ def _service_account_identities(client: httpx.Client) -> set:
         try:
             resp = client.get(
                 "/api/now/table/sys_user",
-                params={"sysparm_query": f"user_name={user_name}", "sysparm_fields": "name", "sysparm_limit": "1"},
+                params={"sysparm_query": f"user_name={snow_catalog.query_value(user_name)}", "sysparm_fields": "name",
+                        "sysparm_limit": "1"},
             )
             if resp.status_code == 200:
                 rows = resp.json().get("result") or []
@@ -588,17 +464,7 @@ def _raise_snow_error(exc: Exception, context: str) -> None:
         # Best-effort extraction of the ServiceNow error.message — the common
         # shape is ``{"error": {"message": "...", "detail": "..."}}``. Anything
         # that doesn't match is logged server-side and surfaced generically.
-        snow_message = ""
-        try:
-            body = exc.response.json()
-            if isinstance(body, dict):
-                err = body.get("error")
-                if isinstance(err, dict):
-                    snow_message = str(err.get("message") or err.get("detail") or "").strip()
-                if not snow_message:
-                    snow_message = str(body.get("message") or "").strip()
-        except Exception:
-            snow_message = exc.response.text[:200].strip()
+        snow_message = far_message(exc.response)
 
         _log.warning(
             "ServiceNow %s failed (context=%s, instance=%s): status=%s body=%s",
@@ -622,7 +488,6 @@ def _raise_snow_error(exc: Exception, context: str) -> None:
             "instance is reachable from the portal."
         ),
     )
-
 
 
 # ── GET /tickets ─────────────────────────────────────────────────────────────
@@ -663,15 +528,9 @@ def get_tickets(refresh: bool = False, current_user: AuthUser = Depends(get_curr
             detail="No email on the current session to scope ServiceNow tickets.",
         )
 
-    # Match the user on either the email or the user_name of opened_by/caller_id,
-    # since instances differ in which attribute carries the SSO identity. That alone
-    # only finds tickets the user raised INSIDE ServiceNow.
-    #
-    # Tickets raised through the portal carry neither: the Record Producer submits as
-    # the service account. We deliberately no longer PATCH caller_id afterwards to fix
-    # that (the PATCH re-triggered the assignment rule and flipped the ticket to
-    # In Progress), so those tickets are matched by sys_id from our own user_tickets
-    # table instead, OR-ed onto the same query.
+    # Match the user on the email or user_name of opened_by/caller_id (instances differ
+    # in which carries the SSO identity), OR on the sys_ids in our own user_tickets
+    # table: a ticket opened through the portal may name only the service account.
     portal_ids = _portal_ticket_sys_ids(snow_email)
     clauses = [
         f"opened_by.email={snow_email}",
@@ -722,13 +581,40 @@ def get_tickets(refresh: bool = False, current_user: AuthUser = Depends(get_curr
         records = _fetch_live()
 
     _log.info("ServiceNow my-tickets: email=%r returned %d ticket(s)", snow_email, len(records or []))
-    return {"success": True, "data": records, "timestamp": _now_iso()}
+    return {"success": True, "data": records, "timestamp": now_iso()}
+
+
+# ── whose ticket is it ───────────────────────────────────────────────────────
+
+_SYS_ID = re.compile(r"^[A-Za-z0-9]{1,64}$")
+
+
+def _require_own_ticket(sys_id: str, current_user: AuthUser) -> Dict[str, Any]:
+    """Refuse a ticket that is not on this person's own list (get_tickets).
+
+    Every read and write here goes through the service account, which can open ANY
+    ticket: the id in the address was the only thing standing between one person and
+    another's ticket, its attachments and its comment box. The list is answered from
+    its 60-second cache and read again once, uncached, before refusing, so a ticket
+    raised a moment ago is not turned away. Checked in each function that reads or
+    writes, not in the page. Returns the ticket as the list has it."""
+    if not _SYS_ID.match(str(sys_id or "")):
+        raise HTTPException(status_code=404, detail="That ticket does not exist, or it is not yours.")
+    for refresh in (False, True):
+        mine = {str(t.get("sys_id") or ""): t for t in (get_tickets(refresh=refresh, current_user=current_user).get("data") or [])}
+        if sys_id in mine:
+            return mine[sys_id]
+    _log.warning("ServiceNow: %s asked for ticket %s, which is not theirs",
+                 current_user.get("email") or current_user.get("username"), sys_id)
+    raise HTTPException(status_code=404, detail="That ticket does not exist, or it is not yours.")
 
 
 # ── GET /tickets/{sys_id} ─────────────────────────────────────────────────────
 
 @router.get("/tickets/{sys_id}")
 def get_ticket_detail(sys_id: str, current_user: AuthUser = Depends(get_current_user)):
+    _require_own_ticket(sys_id, current_user)
+
     def _fetch():
         with _snow_client() as client:
             ticket_resp = client.get(
@@ -764,7 +650,8 @@ def get_ticket_detail(sys_id: str, current_user: AuthUser = Depends(get_current_
                     jr = client.get(
                         "/api/now/table/sys_journal_field",
                         params={
-                            "sysparm_query": f"element_id={sys_id}^elementIN{','.join(elements)}",
+                            "sysparm_query": f"element_id={snow_catalog.query_value(sys_id)}"
+                                             f"^elementIN{snow_catalog.query_value(','.join(elements))}",
                             "sysparm_fields": "sys_id,sys_created_by,sys_created_on,value,element",
                             "sysparm_orderby": "sys_created_on",
                             "sysparm_limit": 500,
@@ -796,7 +683,7 @@ def get_ticket_detail(sys_id: str, current_user: AuthUser = Depends(get_current_
                 att_resp = client.get(
                     "/api/now/attachment",
                     params={
-                        "sysparm_query": f"table_name=incident^table_sys_id={sys_id}",
+                        "sysparm_query": f"table_name=incident^table_sys_id={snow_catalog.query_value(sys_id)}",
                         "sysparm_fields": "sys_id,file_name,content_type,size_bytes,sys_created_on",
                         "sysparm_limit": 50,
                     },
@@ -841,7 +728,7 @@ def get_ticket_detail(sys_id: str, current_user: AuthUser = Depends(get_current_
     except Exception as exc:
         _log.info("ticket read-receipt failed for %s: %s", sys_id, exc)
 
-    return {"success": True, "data": ticket_data, "timestamp": _now_iso()}
+    return {"success": True, "data": ticket_data, "timestamp": now_iso()}
 
 
 # ── GET /tickets/{sys_id}/attachments/{attachment_id} ────────────────────────
@@ -853,18 +740,37 @@ def get_attachment(
     current_user: AuthUser = Depends(get_current_user),
 ):
     """Stream an attachment's bytes through the portal so the browser never hits
-    ServiceNow directly and the service-account credentials stay server-side."""
+    ServiceNow directly and the service-account credentials stay server-side. Only an
+    attachment OF that ticket, and only of one of the person's own tickets."""
+    _require_own_ticket(sys_id, current_user)
+    if not _SYS_ID.match(str(attachment_id or "")):
+        raise HTTPException(status_code=404, detail="That attachment does not exist.")
     try:
         with _snow_client() as client:
+            meta = client.get(f"/api/now/attachment/{attachment_id}")
+            meta.raise_for_status()
+            record = meta.json().get("result") or {}
+            if str(record.get("table_sys_id") or "") != sys_id:
+                raise HTTPException(status_code=404, detail="That attachment does not exist.")
             resp = client.get(
                 f"/api/now/attachment/{attachment_id}/file",
                 headers={"Accept": "*/*"},
             )
             resp.raise_for_status()
+    except HTTPException:
+        raise
     except Exception as exc:
         _raise_snow_error(exc, "downloading attachment")
-    content_type = resp.headers.get("Content-Type", "application/octet-stream")
-    return Response(content=resp.content, media_type=content_type)
+    # Served from the Hub's own address, so the type comes from the bytes (never from
+    # ServiceNow's header) and only a picture opens in the browser: anything else, a
+    # page or a script included, is downloaded and cannot run as the Hub.
+    media_type = attachment_type(resp.content)
+    disposition = "inline" if media_type.startswith("image/") else "attachment"
+    return Response(content=resp.content, media_type=media_type, headers={
+        "Content-Disposition": f"{disposition}; filename*=UTF-8''{quote(str(record.get('file_name') or 'attachment'), safe='')}",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'none'; sandbox",
+    })
 
 
 def _comment_present(client: httpx.Client, sys_id: str, text: str) -> bool:
@@ -894,6 +800,9 @@ def reply_to_ticket(
     sys_id: str = Form(...),
     message: str = Form(""),
     attachments: Optional[List[UploadFile]] = File(None),
+    # True: check that the ticket is the caller's and say what would be sent; send nothing.
+    # The confirmation step of a reply DevBot drafted (the shared action dialog).
+    dry_run: bool = Form(False),
     current_user: AuthUser = Depends(get_current_user),
 ):
     # Posted as multipart/form-data to a STATIC path (sys_id in the body, not the
@@ -901,9 +810,20 @@ def reply_to_ticket(
     # plain incident.comments write (no marker — see the write block below); files
     # go through the attachment API.
     text = (message or "").strip()
-    has_files = any(bool(u and u.filename) for u in (attachments or []))
+    files = _checked_attachments(attachments)
+    has_files = bool(files)
     if not text and not has_files:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
+    number = str(_require_own_ticket(sys_id, current_user).get("number") or "your ticket")
+    # "is True": called as a plain function, the parameter is still its Form() default.
+    if dry_run is True:
+        return {
+            "success": True,
+            "dry_run": True,
+            "summary": f"Reply on {number}",
+            "checks": [f"{number} is one of your tickets.",
+                       "The support team sees the message on the ticket, under your name."],
+        }
 
     display = _portal_display_name(current_user)
     email = (current_user.get("email") or current_user.get("username") or "").strip()
@@ -936,7 +856,7 @@ def reply_to_ticket(
                 else:
                     resp.raise_for_status()
             if has_files:
-                attachment_count = _upload_snow_attachments(client, sys_id, attachments, "incident")
+                attachment_count = _upload_snow_attachments(client, sys_id, files, "incident")
     except Exception as exc:
         _raise_snow_error(exc, "sending reply")
 
@@ -946,7 +866,7 @@ def reply_to_ticket(
     new_message = {
         "sys_id": "",
         "sys_created_by": email or display,
-        "sys_created_on": _now_iso(),
+        "sys_created_on": now_iso(),
         "author": display,
         "author_email": email,
         "is_portal_user": True,
@@ -955,188 +875,13 @@ def reply_to_ticket(
     }
     return {
         "success": True,
+        "summary": f"Reply on {number}",
+        "result": "Sent.",
+        "url": f"/ui/support?ticket={sys_id}",
         "data": new_message,
         "attachments_uploaded": attachment_count,
-        "timestamp": _now_iso(),
+        "timestamp": now_iso(),
     }
-
-
-# ── POST /tickets ─────────────────────────────────────────────────────────────
-
-@router.post("/tickets")
-def create_ticket(
-    body: CreateTicketRequest,
-    current_user: AuthUser = Depends(get_current_user),
-):
-    user_email = (current_user.get("email") or current_user.get("username") or "").strip()
-
-    # Hardening: reject empty title/description so we never post meaningless
-    # tickets to ServiceNow. Mirrors the frontend guard for defense-in-depth.
-    title_clean = (body.title or "").strip()
-    description_clean = (body.description or "").strip()
-    if not title_clean:
-        raise HTTPException(status_code=400, detail="Ticket title is required.")
-    if not description_clean:
-        raise HTTPException(status_code=400, detail="Ticket description is required.")
-    if len(title_clean) > 160:
-        raise HTTPException(
-            status_code=400,
-            detail="Ticket title is too long (max 160 characters).",
-        )
-
-    try:
-        _ensure_user_tickets_table()
-    except Exception:
-        pass
-
-    # Safe Mode: simulate success without hitting ServiceNow.
-    try:
-        import safe_mode as _safe_mode
-        import audit as _audit
-        if _safe_mode.is_enabled():
-            ts = int(datetime.now(timezone.utc).timestamp())
-            simulated = {
-                "sys_id": f"safe_{ts}",
-                "number": f"INC-SAFE-{ts % 10_000_000:07d}",
-                "short_description": title_clean,
-                "state": "New",
-                "priority": str(body.priority or "3"),
-                "assigned_to": user_email,
-                "opened_at": _now_iso(),
-                "description": description_clean,
-                "safe_mode": True,
-            }
-            try:
-                _audit.log(
-                    _audit.Action.TICKET_CREATED,
-                    user_email=user_email,
-                    metadata={"safe_mode": True, "title": title_clean[:160]},
-                )
-            except Exception:
-                pass
-            activity.log_activity(
-                user_email=user_email,
-                action_type=activity.ACTION_CREATE_TICKET,
-                item_name=title_clean or simulated.get("number") or "Ticket",
-                metadata={
-                    "sys_id": simulated.get("sys_id"),
-                    "number": simulated.get("number"),
-                    "safe_mode": True,
-                },
-            )
-            return {"success": True, "data": simulated, "timestamp": _now_iso()}
-    except Exception:
-        pass
-
-    _PRIORITY_LABELS = {
-        "1": "1 - Critical",
-        "2": "2 - High",
-        "3": "3 - Moderate",
-        "4": "4 - Low",
-        "5": "5 - Planning",
-    }
-    priority_label = _PRIORITY_LABELS.get(str(body.priority), "3 - Moderate")
-
-    # ServiceNow derives 'priority' from impact × urgency via a lookup matrix —
-    # setting 'priority' directly is ignored.  Map portal priorities to the
-    # impact/urgency pair that produces the matching calculated priority.
-    _PRIORITY_TO_IMPACT_URGENCY = {
-        "1": ("1", "1"),  # Critical  → impact 1 (High),    urgency 1 (High)
-        "2": ("1", "2"),  # High      → impact 1 (High),    urgency 2 (Medium)
-        "3": ("2", "2"),  # Moderate  → impact 2 (Medium),  urgency 2 (Medium)
-        "4": ("3", "2"),  # Low       → impact 3 (Low),     urgency 2 (Medium)
-        "5": ("3", "3"),  # Planning  → impact 3 (Low),     urgency 3 (Low)
-    }
-    impact, urgency = _PRIORITY_TO_IMPACT_URGENCY.get(str(body.priority), ("2", "2"))
-
-    snow_user = os.getenv("SNOW_API_USERNAME", "")
-    try:
-        with _snow_client() as client:
-            resp = client.post(
-                "/api/now/table/incident",
-                json={
-                    "short_description": body.title,
-                    "description": body.description,
-                    "impact": impact,
-                    "urgency": urgency,
-                    # Use the service account as caller so the field is never empty
-                    "caller_id": snow_user,
-                    # Record the portal user in work notes for visibility in ServiceNow
-                    "work_notes": f"Submitted via DevOps Control Center by: {user_email}",
-                },
-                params={"sysparm_display_value": "true"},
-            )
-            resp.raise_for_status()
-            raw = resp.json().get("result", {})
-    except Exception as exc:
-        _raise_snow_error(exc, "creating ticket")
-
-    ticket = _map_ticket(raw)
-    ticket["description"] = body.description
-    ticket["conversation"] = []
-
-    # Record the ticket ownership in the local DB so "My Tickets" can find it
-    try:
-        db.execute(
-            """
-            INSERT INTO user_tickets (user_email, sys_id, ticket_number)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (user_email, sys_id) DO NOTHING
-            """,
-            [_ticket_owner_key(user_email), ticket["sys_id"], ticket["number"]],
-        )
-    except Exception:
-        pass  # Non-fatal: the ticket was created in ServiceNow successfully
-
-    # Bust the ticket-list cache so the new ticket appears immediately
-    cache.invalidate(f"snow:tickets:{user_email}")
-    try:
-        from integrations_cache import invalidate_owner
-        invalidate_owner("snow", user_email)
-    except Exception:
-        pass
-
-    try:
-        from observability_tracking import (
-            priority_to_severity_band,
-            record_servicenow_portal_ticket,
-        )
-
-        record_servicenow_portal_ticket(
-            str(ticket.get("number") or ticket.get("sys_id") or ""),
-            user_email,
-            priority_to_severity_band(str(body.priority)),
-            body.title or "",
-        )
-    except Exception:
-        pass
-
-    try:
-        import audit as _audit
-        _audit.log(
-            _audit.Action.TICKET_CREATED,
-            user_email=user_email,
-            metadata={
-                "ticket_number": ticket.get("number"),
-                "sys_id": ticket.get("sys_id"),
-                "priority": str(body.priority or ""),
-                "title": title_clean[:160],
-            },
-        )
-    except Exception:
-        pass
-
-    activity.log_activity(
-        user_email=user_email,
-        action_type=activity.ACTION_CREATE_TICKET,
-        item_name=title_clean or str(ticket.get("number") or "") or "Ticket",
-        metadata={
-            "sys_id": ticket.get("sys_id"),
-            "number": ticket.get("number"),
-        },
-    )
-
-    return {"success": True, "data": ticket, "timestamp": _now_iso()}
 
 
 def _producer_sys_id() -> str:
@@ -1151,28 +896,9 @@ _PRODUCER_VAR_ALIASES = {
     "help_text": "how_can_we_help",
 }
 
-# The producer's mandatory "Choose A Support Group" reference variable. Its name
-# and default group are overridable for other instances.
-# The producer's own "Choose A Support Group" question, and the group this
-# portal's tickets belong to. Read only when that question is MANDATORY and the
-# wizard has not answered it -- see _fill_required. It was once put on every
-# submission unconditionally, which is a different thing and is not done.
-_SUPPORT_GROUP_VAR = os.getenv("SNOW_SUPPORT_GROUP_VAR", "choose_a_support_group").strip()
+# The group this portal's tickets belong to: the answer to the producer's "Choose A
+# Support Group" question when it is mandatory and unanswered (_fill_required).
 _DEFAULT_SUPPORT_GROUP = os.getenv("SNOW_DEFAULT_SUPPORT_GROUP", "Devops Support").strip()
-
-
-def _flatten_variables(vars_list: Any) -> List[Dict[str, Any]]:
-    """Container variables (Container Start) nest their real fields under
-    ``children``; flatten the whole tree so every input variable is visible."""
-    out: List[Dict[str, Any]] = []
-    for var in vars_list or []:
-        if not isinstance(var, dict):
-            continue
-        out.append(var)
-        kids = var.get("children")
-        if kids:
-            out.extend(_flatten_variables(kids))
-    return out
 
 
 def _producer_variable_specs(client: httpx.Client) -> List[Dict[str, Any]]:
@@ -1184,11 +910,7 @@ def _producer_variable_specs(client: httpx.Client) -> List[Dict[str, Any]]:
         data = resp.json().get("result", {}) or {}
     except Exception:
         return []
-    return _flatten_variables(data.get("variables"))
-
-
-def _is_truthy(value: Any) -> bool:
-    return str(value).strip().lower() in ("true", "1", "yes")
+    return snow_catalog.flatten(data.get("variables"))
 
 
 def _normalize_var_name(text: Any) -> str:
@@ -1197,10 +919,6 @@ def _normalize_var_name(text: Any) -> str:
     way so a wizard field key can be matched to the producer's real variable."""
     s = str(text or "").strip().lower().replace("?", "").replace("!", "").replace(".", "")
     return re.sub(r"[^a-z0-9]+", "_", s).strip("_")
-
-
-def _looks_like_sys_id(value: str) -> bool:
-    return bool(re.fullmatch(r"[0-9a-fA-F]{32}", (value or "").strip()))
 
 
 # ServiceNow variable types, the handful that matter here.
@@ -1216,12 +934,8 @@ def _is_checkbox(spec: Dict[str, Any]) -> bool:
 
 
 def _satisfies_mandatory(spec: Dict[str, Any], value: Any) -> bool:
-    """Whether this value would get past ServiceNow's mandatory check.
-
-    Not the same as "is not empty". For a CHECKBOX, mandatory means TICKED --
-    `False` is a perfectly good value and still fails, which is how a submission
-    came back "Mandatory variables are not filled" with every variable in the
-    log showing an answer beside it."""
+    """Whether this value would get past ServiceNow's mandatory check. For a checkbox,
+    mandatory means ticked: `False` is a value and still fails."""
     v = str(value if value is not None else "").strip().lower()
     if not v:
         return False
@@ -1241,7 +955,7 @@ def _declared_default(spec: Dict[str, Any]) -> Optional[str]:
         val = spec.get(key)
         if val in (None, "", []):
             continue
-        if _is_truthy(spec.get("mandatory")) and not _satisfies_mandatory(spec, val):
+        if truthy(spec.get("mandatory")) and not _satisfies_mandatory(spec, val):
             # A mandatory box the item ships unticked. Falling through leaves it
             # to the placeholder, which ticks it.
             return None
@@ -1261,41 +975,31 @@ def _first_choice_for_spec(
     conditionally-hidden mandatory variable still has to carry something or the
     whole submission is refused.
 
-    A reference needs a real sys_id, so one is never invented -- but two of them
-    are known rather than guessed: a question pointing at a PERSON is answered
-    with the requester (that is who is asking), and one pointing at a GROUP with
-    this portal's support group. A free-text box gets "N/A", which reads as an
-    answer to a person; it used to get "true", which reads as a bug."""
+    A question about a PERSON gets the requester and one about a GROUP this
+    portal's support group -- never the first name on a list. Any other record
+    question takes its first listed choice or nothing; a ticked box for a checkbox
+    (mandatory means ticked); "N/A" for free text."""
+    table = snow_catalog.table_of(spec)
+    if table == "sys_user":
+        return caller_sys_id or None
+    if table == "sys_user_group":
+        return group_sys_id or None
     for ch in spec.get("choices") or []:
         val = ch.get("value")
         if val not in (None, ""):
             return str(val)
-    vtype = str(spec.get("type") or "").strip().lower()
-    if vtype in _REFERENCE_TYPES:
-        reference = str(spec.get("reference") or "")
-        if reference == "sys_user":
-            return caller_sys_id or None
-        if reference == "sys_user_group":
-            return group_sys_id or None
+    if snow_catalog.refers_to_record(spec):
         return None
-    if vtype in _CHECKBOX_TYPES:
-        # TICKED. A mandatory checkbox is only filled in when it is true; see
-        # _satisfies_mandatory. Sending "false" is what refused the ticket.
+    if _is_checkbox(spec):
         return "true"
     return "N/A"
 
 
-# What a GUESS may never decide. A declared default is exempt -- that is the
-# item answering its own question, not us. This list is only about the fallback
-# of taking the first option off a list, which is how filling in "every
-# mandatory question" once put tickets straight into In Progress, assigned, at
-# a severity nobody chose.
+# What a placeholder may never decide (a declared default is the item's own answer and
+# is exempt):
 #
-#   a PERSON  -- who a ticket is for is not ours to guess; that is the caller,
-#                and it is set deliberately, once, after the insert.
-#   a STATE   -- anything deciding where the ticket lands, who owns it, or how
-#                loudly it arrives. The requester asked for a ticket, not to be
-#                triaged by a portal picking the top item on a list.
+#   a PERSON  -- who a ticket is for is the caller, set deliberately (_caller_variable).
+#   a STATE   -- where the ticket lands, who owns it, or how loudly it arrives.
 _NEVER_GUESSED = (
     "state", "stage", "status", "assign", "assigned", "priority", "impact",
     "urgency", "severity",
@@ -1386,7 +1090,7 @@ def _fill_required(
     group_sys_id = ""
     for spec in specs:
         name = spec.get("name")
-        if not name or not _is_truthy(spec.get("mandatory")):
+        if not name or not truthy(spec.get("mandatory")):
             continue
         if _satisfies_mandatory(spec, variables.get(name)):
             continue
@@ -1405,11 +1109,11 @@ def _fill_required(
         #    portal's tickets belong to, named in configuration rather than
         #    picked off a list. A queue is not an assignee -- an incident that
         #    names one is still unassigned and still Open.
-        if not value and str(spec.get("reference") or "") == "sys_user_group":
+        if not value and snow_catalog.table_of(spec) == "sys_user_group":
             wanted = (support_group or _DEFAULT_SUPPORT_GROUP).strip()
             value = _resolve_support_group(client, wanted)
             group_sys_id = value
-            if value == wanted and not _looks_like_sys_id(value):
+            if value == wanted and not looks_like_sys_id(value):
                 # The lookup did not find the group, so this is its NAME going
                 # into a reference field. ServiceNow may accept it and may not;
                 # if the submission comes back 400, THIS is why, and the group
@@ -1426,7 +1130,7 @@ def _fill_required(
         elif not value:
             haystack = (_normalize_var_name(name) + " "
                         + _normalize_var_name(spec.get("label") or "")).replace("_", "")
-            risky = _references_users(spec) or any(w in haystack for w in _NEVER_GUESSED)
+            risky = _points_at_people(spec) or any(w in haystack for w in _NEVER_GUESSED)
             if risky and not force:
                 skipped.append(str(name))
                 continue
@@ -1466,12 +1170,13 @@ def _resolve_support_group(client: httpx.Client, value: str) -> str:
     sys_user_group, so submit_producer needs the group's sys_id. Look it up by
     name; fall back to the raw value if it's already a sys_id or can't be found."""
     value = (value or "").strip()
-    if not value or _looks_like_sys_id(value):
+    if not value or looks_like_sys_id(value) or "^" in value:
         return value
     try:
         resp = client.get(
             "/api/now/table/sys_user_group",
-            params={"sysparm_query": f"name={value}", "sysparm_fields": "sys_id", "sysparm_limit": "1"},
+            params={"sysparm_query": f"name={snow_catalog.query_value(value)}", "sysparm_fields": "sys_id",
+                    "sysparm_limit": "1"},
         )
         if resp.status_code == 200:
             rows = resp.json().get("result") or []
@@ -1484,128 +1189,63 @@ def _resolve_support_group(client: httpx.Client, value: str) -> str:
 
 # ── Who the ticket is FOR ────────────────────────────────────────────────────
 #
-# A Record Producer inserts the incident AS THE ACCOUNT THAT SUBMITTED IT, so
-# `caller_id` comes out as the portal's own service account unless somebody says
-# otherwise. Every ticket then reads as having been raised by "monitor user",
-# which is the one field a support agent looks at to know whose problem it is.
+# The producer inserts the incident as the service account, so the Caller is the
+# service account unless the submission names the requester. The producer's own
+# script copies its `caller_id` question onto the incident and falls back to the
+# submitting account when that question is empty -- which is the "monitor user" a
+# ticket shows when the portal did not fill it.
 #
-# There are exactly two ways to say otherwise, and they are NOT interchangeable:
-#
-#   AT INSERT   the value travels with the record being created. On the Table
-#               API that is just `caller_id` in the POST body; on a producer it
-#               is a reference variable the item carries. Nothing is updated, so
-#               nothing reacts, and the ticket stays as it was created.
-#
-#   AFTER       one Table API PATCH of `caller_id`. THIS IS WHAT THE PORTAL
-#               DOES, and it is what it did for months before any of this: a
-#               single field, no query parameters, no follow-up write.
-#
-# THE PATCH IS NOT WHAT COSTS THE TICKET ITS STATE, and five rounds were spent
-# proving otherwise. The activity log looked conclusive -- the insert at 08:59:57
-# leaves the incident Open, and one entry at 08:59:58, by this account, reads
-# "Assigned to: monitor user was Empty" and "Incident state: In Progress was
-# Open". What that reading missed is that the INSERT it was being compared
-# against was not the original one. By then the submission had grown a default
-# support group and an auto-fill for every mandatory producer question, so the
-# incident was already arriving assigned; the rule had something to advance.
-#
-# Removing the PATCH cost the caller and did not save the state. Replacing the
-# producer with a direct incident insert got the caller and the state and lost
-# the field mapping, which is the thing the producer exists for. The version
-# that has all three is the one here: submit the producer with the wizard's
-# answers ONLY, then set the caller with the one write.
-#
-# The remaining improvement is a ServiceNow-side one: a reference variable on
-# the producer pointing at sys_user makes the caller arrive at insert and there
-# is no second write at all. `_caller_variable` finds one automatically if an
-# admin adds it, and GET /api/support/ticket-form lists what the item has today.
+# Set AT INSERT only: any later update by the service account reassigns the incident
+# to it and moves it to In Progress (SNOW_CALLER_PATCH=1 accepts that trade).
 
 _CALLER_VAR_OVERRIDE = os.getenv("SNOW_CALLER_VAR", "").strip()
 
-# Ordered best-first. A producer question about who is asking is spelled a dozen
-# ways; match the normalized name AND the normalized label against each of these.
+# What a question about who is asking tends to be called, best first.
 _CALLER_VAR_HINTS = (
-    "caller",
-    "caller_id",
-    "requested_for",
-    "request_for",
-    "requester",
-    "opened_for",
-    "opened_by",
-    "affected_user",
-    "on_behalf_of",
-    "for_user",
-    "user",
-    "employee",
+    "caller_id", "caller", "requested_for", "request_for", "requester", "opened_for",
+    "on_behalf_of", "affected_user", "for_user", "user", "employee",
 )
 
-_REFERENCE_TYPES = ("8", "21", "reference", "list", "lookup", "glide_list")
 
-
-def _references_users(var: Dict[str, Any]) -> bool:
-    """Does this producer variable point at the sys_user table?"""
-    return str(var.get("reference") or "").strip().lower() == "sys_user"
+def _points_at_people(var: Dict[str, Any]) -> bool:
+    return snow_catalog.table_of(var) == "sys_user"
 
 
 def _caller_variable(specs: List[Dict[str, Any]]) -> str:
-    """The producer variable that names the person the ticket is for, or "".
+    """The producer question that carries the requester, or "".
 
-    MATCHED ON WHAT IT POINTS AT, then on what it is called.
-
-    Naming was the wrong primary test. A producer's caller question can be called
-    anything -- and on this instance the hints matched nothing, so the ticket kept
-    opening under the service account. But a variable that REFERENCES sys_user on
-    a support-ticket producer is a person, and the only people such a form asks
-    about are the one it is for. So: a sys_user reference whose name also reads
-    like a caller wins; failing that, the only sys_user reference on the item
-    wins, because there is nothing else it could be.
-
-    Falls back to the old name-match over reference-typed variables. A free-text
-    question never qualifies however it is named: writing a sys_id into one puts a
-    hex string on the ticket and leaves the caller exactly as wrong as before.
-    """
+    SNOW_CALLER_VAR when set; else a question pointing at sys_user (a Reference, or a
+    Lookup Select Box from Catalog Builder) whose name or label reads like a caller;
+    else the only such question; else a record-type question named like one. A free
+    text question never qualifies: a sys_id in it is a hex string on the ticket."""
     if _CALLER_VAR_OVERRIDE:
         return _CALLER_VAR_OVERRIDE
 
-    named: Dict[str, str] = {}          # sys_user references, by every name they answer to
-    user_refs: List[str] = []           # sys_user references, in order
-    typed: Dict[str, str] = {}          # any reference-typed variable, by name
-
+    people: Dict[str, str] = {}
+    records: Dict[str, str] = {}
+    people_order: List[str] = []
     for var in specs:
-        name = var.get("name")
-        if not name:
+        name = str(var.get("name") or "")
+        if not name or not snow_catalog.refers_to_record(var):
             continue
-        is_user_ref = _references_users(var)
-        if is_user_ref and str(name) not in user_refs:
-            user_refs.append(str(name))
-        reference_shaped = (
-            is_user_ref
-            or str(var.get("type") or "").strip().lower() in _REFERENCE_TYPES
-        )
-        if not reference_shaped:
-            continue
+        is_person = _points_at_people(var)
+        if is_person and name not in people_order:
+            people_order.append(name)
         for text in (name, var.get("label")):
             norm = _normalize_var_name(text)
-            if not norm:
-                continue
-            if is_user_ref:
-                named.setdefault(norm, str(name))
-            typed.setdefault(norm, str(name))
+            if norm:
+                records.setdefault(norm, name)
+                if is_person:
+                    people.setdefault(norm, name)
 
     for hint in _CALLER_VAR_HINTS:
-        if hint in named:
-            return named[hint]
-    if len(user_refs) == 1:
-        # Chosen by the table it points at rather than by its name. Said out loud,
-        # because a guess that is never announced is one nobody can correct.
-        _log.warning(
-            "SNow caller variable chosen by reference table: %r is the only "
-            "sys_user reference on the producer.", user_refs[0],
-        )
-        return user_refs[0]
+        if hint in people:
+            return people[hint]
+    if len(people_order) == 1:
+        return people_order[0]
     for hint in _CALLER_VAR_HINTS:
-        if hint in typed:
-            return typed[hint]
+        if hint in records:
+            return records[hint]
     return ""
 
 
@@ -1626,6 +1266,19 @@ def _record_field(record: Dict[str, Any], field: str) -> Dict[str, str]:
     return {"value": text, "display": text}
 
 
+def _caller_value(spec: Dict[str, Any], sys_id: str, names: tuple) -> str:
+    """What to send in the caller question: the sys_id, unless the item lists its
+    choices and identifies people by another field (a lookup's value field)."""
+    values = [str(c.get("value") or "") for c in spec.get("choices") or [] if isinstance(c, dict)]
+    if not values or sys_id in values:
+        return sys_id
+    by_lower = {v.lower(): v for v in values if v}
+    for form in snow_catalog.account_forms(*names):
+        if form.lower() in by_lower:
+            return by_lower[form.lower()]
+    return sys_id
+
+
 def _set_ticket_caller(
     client: httpx.Client,
     table: str,
@@ -1633,78 +1286,33 @@ def _set_ticket_caller(
     wanted_sys_id: str,
     record: Dict[str, Any],
 ) -> Dict[str, str]:
-    """Make `caller_id` the person who filled the wizard in. Never raises.
+    """Report who the new ticket is for, and fix it only if SNOW_CALLER_PATCH allows.
 
-    HEAD'S WRITE, RESTORED: one bare PATCH of one field, no query parameters,
-    no follow-up. Everything else this function grew -- reading the state back,
-    writing it again to put it back, a switch to turn the write off -- has been
-    removed. Each of those is a SECOND write, and on this instance a second
-    write is what was costing the ticket its state.
-
-    `record` is the post-insert read. Returns what happened, in words, so the
-    answer survives into the response and the log rather than being something
-    somebody has to go and check in ServiceNow.
-    """
+    `record` is the read taken right after the insert. Returns {how, sys_id, name},
+    where how is insert (it arrived right), unresolved (no ServiceNow user for this
+    person), not-set (wrong, and left alone), patched, reverted, refused or
+    unverified. Never raises."""
     found = _record_field(record, "caller_id")
     outcome = {"how": "", "sys_id": found["value"], "name": found["display"]}
 
     if not wanted_sys_id:
-        # Resolving the portal user failed earlier; the log already says why.
         outcome["how"] = "unresolved"
         return outcome
     if found["value"] == wanted_sys_id:
-        # The producer carried it. Nothing to do, so nothing is done.
         outcome["how"] = "insert"
         return outcome
 
-    # OFF BY DEFAULT, AND THIS TIME THE EVIDENCE IS A SINGLE TICKET.
-    #
-    #   SNow ticket at insert: number=INC0010955 state=1 (Open) caller=monitor user
-    #   SNow ticket caller:    how=patched is=77856bab... (the requester)
-    #   -> the incident is In Progress, assigned to the service account
-    #
-    # Inserted Open; one PATCH of one field; advanced and assigned. There is no
-    # ordering, no field combination and no follow-up write that wins, because
-    # the rule reacts to the update EXISTING -- round 106 tried putting the state
-    # back and the restore is itself an update.
-    #
-    # Three properties; this instance allows any two:
-    #
-    #     fields in their own fields   the producer does that -- kept
-    #     Open, nobody assigned        requires no update after the insert
-    #     Caller is the requester      requires an update after the insert
-    #
-    # So the choice is the Caller field or the state, and the state wins: an
-    # incident that is Open and unassigned gets picked up, and one that says In
-    # Progress assigned to `monitor user` looks handled and is not. The requester
-    # is still on the ticket -- the item asks for their full name and phone as
-    # its own questions and both are in their own fields.
-    #
-    # SNOW_CALLER_PATCH=1 makes the opposite trade, deliberately.
-    #
-    # NEITHER IS NECESSARY. One variable on the producer in ServiceNow -- type
-    # Reference, table sys_user, mapped to Caller -- carries the caller on the
-    # insert, and then there is no update and nothing to trade. The item has two
-    # reference variables today, pointing at sys_user_group and cmdb_ci_service;
-    # neither is a person. _caller_variable picks a sys_user one up on the next
-    # ticket, with no redeploy.
-    if os.getenv("SNOW_CALLER_PATCH", "0").strip().lower() not in ("1", "true", "yes"):
+    if not truthy(os.getenv("SNOW_CALLER_PATCH", "0")):
         outcome["how"] = "not-set"
         _log.warning(
-            "SNow ticket caller NOT set on %s: it is %s (%s) and the requester is %s. "
-            "The write that would fix it also moves the ticket out of Open and assigns "
-            "it to this account, so it is off. To get both: add a variable to producer "
-            "%s of type Reference -> sys_user, mapped to the incident Caller field; or "
-            "set SNOW_CALLER_PATCH=1 to accept In Progress.",
-            sys_id, found["value"] or "(empty)", found["display"] or "?",
-            wanted_sys_id, _producer_sys_id(),
+            "SNow ticket caller NOT set on %s: it is %s (%s), the requester is %s. The "
+            "producer did not receive them -- see GET /api/support/ticket-form.",
+            sys_id, found["value"] or "(empty)", found["display"] or "?", wanted_sys_id,
         )
         return outcome
 
-    # NO QUERY PARAMETERS ON THIS WRITE. `sysparm_display_value` on a PATCH makes
-    # the instance read the values being sent as DISPLAY values, so a sys_id is
-    # looked up as if it were a person's name, matches nothing, and is dropped --
-    # with a 200 and an empty field. One field, no parameters.
+    # No query parameters: with sysparm_display_value a sys_id is read as a NAME and
+    # silently dropped.
     try:
         resp = client.patch(f"/api/now/table/{table}/{sys_id}", json={"caller_id": wanted_sys_id})
     except Exception as exc:
@@ -1716,8 +1324,7 @@ def _set_ticket_caller(
         outcome["how"] = "refused"
         return outcome
 
-    # Read it back. A read is not an update, so this cannot trip anything -- and
-    # "we sent it" was already true when the field was still wrong.
+    # Read it back: "we sent it" was already true when the field was still wrong.
     try:
         rec = client.get(
             f"/api/now/table/{table}/{sys_id}",
@@ -1726,9 +1333,7 @@ def _set_ticket_caller(
         if rec.status_code == 200:
             back = _record_field(rec.json().get("result", {}) or {}, "caller_id")
             outcome["sys_id"], outcome["name"] = back["value"], back["display"]
-            # "reverted", not "not-set": the instance ACCEPTED the write and the
-            # field is still not ours -- a business rule put it back. That is a
-            # different problem from a refusal and needs a different answer.
+            # Accepted and still wrong means a business rule put it back.
             outcome["how"] = "patched" if back["value"] == wanted_sys_id else "reverted"
         else:
             outcome["how"] = "unverified"
@@ -1851,16 +1456,10 @@ def _insert_incident_directly(
 	caller_sys_id: str,
 	support_group: Optional[str],
 ):
-	"""Create the incident straight on the Table API. THE FALLBACK.
+	"""Create the incident on the Table API, used only when the producer refuses.
 
-	Used only when the producer refuses. It gives up the one thing the producer
-	is for -- mapping each answer onto its own field -- and the answers ride in
-	the description instead. In exchange it is the path this instance has
-	actually been observed to get right: the caller travels ON the insert, so
-	the ticket opens in the requester's name, Open, with nobody assigned, and
-	nothing is written to it afterwards.
-
-	A ticket that exists and reads a bit worse beats an error message."""
+	The answers go into the description instead of their own fields; the caller
+	travels on the insert, so the ticket still opens in the requester's name."""
 	payload: Dict[str, Any] = {
 		"short_description": fields["title"],
 		"description": _format_ticket_description(fields),
@@ -1876,9 +1475,7 @@ def _insert_incident_directly(
 			payload["assignment_group"] = _resolve_support_group(client, group_value)
 		except Exception as exc:
 			_log.warning("SNow support group %r not resolved: %s", group_value, exc)
-	# NOT SENT: `state`. A new incident already opens in the state the requester
-	# wants, and the value that looks right in the documentation -- state "2" --
-	# is the "In Progress" this has all been about.
+	# No `state`: a new incident opens Open; "2" would be In Progress.
 	payload = {k: v for k, v in payload.items() if str(v or "").strip()}
 
 	_log.warning(
@@ -1898,68 +1495,31 @@ def _submit_via_producer(
 	fields: Dict[str, str],
 	support_group: Optional[str],
 	caller_sys_id: str,
+	caller_names: tuple = (),
 ):
-	"""Submit the "Open A Ticket" Record Producer with the wizard's answers.
+	"""Submit the "Open A Ticket" record producer with the wizard's answers.
 
-	THIS IS HEAD'S SUBMIT, RESTORED. It sends the answers and nothing else.
-
-	Plus the questions the ITEM insists on and the wizard does not ask, which is
-	not the same thing as "whatever else might help". HEAD's payload is refused
-	today -- HTTP 400, mandatory variables are not filled -- because over REST
-	the dictionary-level mandatory flag is enforced and the UI policies that
-	would hide those questions never run.
-
-	What is NOT sent, having each been tried and each cost something:
-
-	  * `caller_id` as a speculative variable  -- this producer has no such
-	    question, so it went nowhere; the caller is set once, afterwards
-	  * `sysparm_requested_for` on the submit  -- ignored by this instance
-	  * a value for any mandatory question naming a PERSON or a STATE -- see
-	    _NEVER_INVENTED. Those are left unanswered and the producer may refuse
-	    them, which is the point: a refusal names the question, a guess buries it
-
-	The producer is what maps an answer onto its own field on the incident,
-	which is why the ticket comes out with Branch in Branch and Network in
-	Network rather than one description holding everything.
-	"""
+	Plus the requester in the item's caller question, and an answer for any
+	mandatory question the wizard does not ask: over REST the dictionary-level
+	mandatory flag is enforced and the UI policies that hide such questions never
+	run. A mandatory question naming a person or a state is never guessed
+	(_NEVER_GUESSED) -- the producer refuses instead, and the refusal names it.
+	Returns (response, mandatory questions still unanswered)."""
 	specs = _producer_variable_specs(client)
 	variables = _build_producer_variables(client, fields, specs)
 	wizard_names = _wizard_variable_names(fields, specs)
 
-	# THE CALLER, ON THE INSERT, IF THE ITEM HAS ANYWHERE TO PUT IT.
-	#
-	# `_caller_variable` returns the item's own question about who is asking --
-	# a variable of type Reference pointing at sys_user. Fill that and the caller
-	# arrives WITH the record: nothing is updated afterwards, so the rule that
-	# reassigns and advances the incident never fires, and the ticket keeps both
-	# its state and the requester's name. That is the only arrangement that gets
-	# all three things at once, and it is a ServiceNow-side change -- see the
-	# note above _CALLER_VAR_OVERRIDE and GET /api/support/ticket-form.
-	#
-	# For the item as it stands there is no such question, so this fills nothing
-	# and the ticket goes on making the trade _set_ticket_caller describes. The
-	# moment somebody adds the variable this starts working, with no redeploy:
-	# the item's definition is read fresh on every submission.
-	#
-	# IT IS FILLED BEFORE the mandatory sweep below, so a caller question that is
-	# ALSO mandatory counts as answered and does not get a placeholder.
-	#
-	# Round 114 promised this worked already. It did not: the line that fills the
-	# variable was lost when this function was rewritten in round 109, leaving
-	# only the log line that names it -- so the advice would have cost somebody an
-	# afternoon in ServiceNow and changed nothing.
 	caller_var = _caller_variable(specs)
 	if caller_sys_id and caller_var:
-		variables[caller_var] = caller_sys_id
+		spec = next((v for v in specs if v.get("name") == caller_var), {})
+		variables[caller_var] = _caller_value(spec, caller_sys_id, caller_names)
 	_log.warning(
-		"SNow producer caller: sys_id=%s question=%r %s reference_vars=%s",
+		"SNow producer caller: sys_id=%s question=%r%s",
 		caller_sys_id or "(unresolved)", caller_var or None,
-		"-- SENT with the ticket, so nothing is written afterwards"
-		if (caller_sys_id and caller_var)
-		else "-- no question on this item can carry a person; see /api/support/ticket-form",
-		[(s.get("name"), s.get("label"), s.get("reference")) for s in specs
-		 if s.get("reference")
-		 or str(s.get("type") or "").strip().lower() in _REFERENCE_TYPES],
+		"" if (caller_sys_id and caller_var)
+		else " -- NOT SENT; record questions on the item: %s" % [
+			(v.get("name"), v.get("type"), snow_catalog.table_of(v)) for v in specs
+			if snow_catalog.refers_to_record(v)],
 	)
 
 	# AFTER the caller, so a mandatory caller question is already answered.
@@ -1988,22 +1548,17 @@ def _submit_via_producer(
 	# An unticked mandatory checkbox has a value and is not filled in.
 	unanswered = [
 		f"{s.get('name')} ({s.get('label')})" for s in specs
-		if _is_truthy(s.get("mandatory")) and not _satisfies_mandatory(s, variables.get(s.get("name")))
+		if truthy(s.get("mandatory")) and not _satisfies_mandatory(s, variables.get(s.get("name")))
 	]
 
 	if resp.status_code >= 400:
-		# Print EVERYTHING, once, at the only moment it is worth reading. A list
-		# of the variables we already know are mandatory cannot name a variable
-		# that became mandatory because of an answer -- and that is what
-		# "Mandatory variables are not filled / unanswered mandatory: []" was.
+		# Everything, once: a question can become mandatory because of an answer.
 		def _inventory():
 			rows = []
 			for s in specs:
 				name = s.get("name")
 				sent = repr(variables.get(name)) if name in variables else "NOT SENT"
-				mandatory = _is_truthy(s.get("mandatory"))
-				# The line that would have ended this three rounds earlier: say
-				# when a value is present AND still does not satisfy the check.
+				mandatory = truthy(s.get("mandatory"))
 				verdict = ""
 				if mandatory and not _satisfies_mandatory(s, variables.get(name)):
 					verdict = ("   <-- THIS IS WHY: a value that cannot satisfy mandatory"
@@ -2022,14 +1577,10 @@ def _submit_via_producer(
 			"sent for it:\n  %s", resp.status_code, _producer_sys_id(), _inventory(),
 		)
 
-		# SECOND ATTEMPT. The item insists on questions the wizard does not ask,
-		# and on questions it DOES ask that this requester correctly left blank
-		# -- the four Azure DevOps ones are mandatory in the dictionary whatever
-		# service you pick, because the UI policy that hides them is not run over
-		# REST. Answering them with placeholders is a worse ticket than one where
-		# every answer is the requester's; it is a far better ticket than none,
-		# and it is the only way the rest of their answers reach their own fields
-		# instead of being flattened into the description.
+		# Second attempt with placeholders for what the item insists on, including
+		# questions this requester rightly left blank (the Azure DevOps ones are
+		# mandatory whatever service is picked). A worse ticket, but one whose
+		# answers still land in their own fields.
 		forced = _fill_required(client, variables, specs, support_group,
 								wizard_names=None, caller_sys_id=caller_sys_id, force=True)
 		if forced:
@@ -2055,28 +1606,18 @@ def _submit_via_producer(
 	# Recomputed after the retry: what the item still says it wants.
 	unanswered = [
 		f"{s.get('name')} ({s.get('label')})" for s in specs
-		if _is_truthy(s.get("mandatory")) and not _satisfies_mandatory(s, variables.get(s.get("name")))
+		if truthy(s.get("mandatory")) and not _satisfies_mandatory(s, variables.get(s.get("name")))
 	]
 	return resp, unanswered
 
 
 @router.get("/ticket-form")
 def ticket_form_diagnostics(current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]:
-	"""What the Record Producer actually asks for. Platform Admins only.
+	"""What the record producer asks for, which question carries the requester, and
+	whether the signed-in admin resolves to a ServiceNow user. Admins only.
 
-	THIS EXISTS BECAUSE THE ANSWER IS NOT IN THIS REPOSITORY.
-
-	Whether a ticket can carry the requester's name is decided by the producer in
-	ServiceNow, not by any code here: if one of its questions references sys_user,
-	the caller travels with the insert and the ticket opens in the right name and
-	the right state; if none does, no arrangement of writes on this side gets both,
-	because every post-insert write reassigns the incident and advances it.
-
-	That fact has been reported three times as "check the log line", which is the
-	wrong place to put something somebody has to act on. It is a screen now: the
-	producer's questions, what each one points at, which one would be used, and --
-	when none would be -- the one sentence to hand a ServiceNow admin.
-	"""
+	Whether a ticket opens in the requester's name is decided by the producer, not
+	by code here, so this is where to look when one opens as the service account."""
 	if not has_effective_admin_access_live(current_user):
 		raise HTTPException(
 			status_code=status.HTTP_403_FORBIDDEN,
@@ -2085,6 +1626,7 @@ def ticket_form_diagnostics(current_user: AuthUser = Depends(get_current_user)) 
 	try:
 		with _snow_ticket_flow_client() as client:
 			specs = _producer_variable_specs(client)
+			you = snow_catalog.find_user(client, current_user.get("email") or "", current_user.get("username") or "")
 	except HTTPException:
 		raise
 	except Exception as exc:
@@ -2095,9 +1637,9 @@ def ticket_form_diagnostics(current_user: AuthUser = Depends(get_current_user)) 
 			"name": str(v.get("name") or ""),
 			"label": str(v.get("label") or ""),
 			"type": str(v.get("type") or ""),
-			"reference": str(v.get("reference") or ""),
-			"mandatory": _is_truthy(v.get("mandatory")),
-			"points_at_a_person": _references_users(v),
+			"reference": snow_catalog.table_of(v),
+			"mandatory": truthy(v.get("mandatory")),
+			"points_at_a_person": _points_at_people(v),
 		}
 		for v in specs
 		if v.get("name")
@@ -2123,14 +1665,14 @@ def ticket_form_diagnostics(current_user: AuthUser = Depends(get_current_user)) 
 		)
 	else:
 		verdict = (
-			"No question on this producer points at a person, so the ticket cannot "
-			"carry the requester's name at insert -- and the portal will not set it "
-			"afterwards, because that reassigns the ticket and moves it to In "
-			"Progress. Ask a ServiceNow admin to add a variable to the 'Open A "
-			"Ticket' record producer of type Reference, referencing the User "
-			"(sys_user) table, mapped to the incident's Caller field. Nothing here "
-			"needs redeploying: the next ticket will use it."
+			"No question on this producer points at a person, so tickets open as the "
+			"service account. Ask a ServiceNow admin to add a 'caller_id' variable to "
+			"the 'Open A Ticket' record producer that references the User (sys_user) "
+			"table. The next ticket uses it; nothing here needs redeploying."
 		)
+	if not you:
+		verdict += (" Your own account did not resolve to a ServiceNow user by e-mail "
+		            "or user name, so a ticket you open would carry no requester.")
 
 	return {
 		"success": True,
@@ -2139,24 +1681,22 @@ def ticket_form_diagnostics(current_user: AuthUser = Depends(get_current_user)) 
 			"variables": rows,
 			"caller_variable": chosen,
 			"people_questions": people,
-			# Whether anything is written to the incident after it opens. OFF:
-			# INC0010955 went in Open, took one PATCH of caller_id, and came out
-			# In Progress assigned to this account. The trade is the Caller field
-			# against the state, and it is only a trade because no question on
-			# this item can carry the caller -- see verdict.
+			"you_resolve_to": you,
 			"post_insert_write":
-				"caller_id"
-				if os.getenv("SNOW_CALLER_PATCH", "0").strip().lower() in ("1", "true", "yes")
+				"caller_id" if truthy(os.getenv("SNOW_CALLER_PATCH", "0"))
 				else "nothing (SNOW_CALLER_PATCH is off, so the ticket stays Open)",
 			"verdict": verdict,
 		},
-		"timestamp": _now_iso(),
+		"timestamp": now_iso(),
 	}
 
 
 @router.post("/tickets/create-flow")
 def create_ticket_flow(
-	full_name: str = Form(...),
+	# Accepted and IGNORED: the name on a ticket is the identity provider's, from
+	# identity.trusted_name, never what the browser sent. The display name a person
+	# chose for themselves is not who they are to the support team.
+	full_name: str = Form(""),
 	phone_number: str = Form(...),
 	branch: str = Form(...),
 	team: str = Form(...),
@@ -2182,9 +1722,10 @@ def create_ticket_flow(
 	user_email = (current_user.get("email") or current_user.get("username") or "").strip().lower()
 	if not user_email:
 		raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User email missing from auth context.")
+	files = _checked_attachments(attachments)
 
 	fields = {
-		"full_name": _required_form_value("full_name", full_name),
+		"full_name": identity.trusted_name(user_id=str(current_user.get("id") or ""), email=user_email),
 		"phone_number": _required_form_value("phone_number", phone_number),
 		"branch": _required_form_value("branch", branch),
 		"team": _required_form_value("team", team),
@@ -2216,9 +1757,6 @@ def create_ticket_flow(
 		fields["azure_devops_project"] = (azure_devops_project or "").strip()
 		fields["pipeline_url"] = (pipeline_url or "").strip()
 
-	# The new wizard posts multipart data so incident creation and file upload
-	# can happen as one user action while keeping all ServiceNow credentials
-	# server-side.
 	try:
 		_ensure_user_tickets_table()
 	except Exception:
@@ -2226,42 +1764,15 @@ def create_ticket_flow(
 
 	try:
 		with _snow_ticket_flow_client() as client:
-			# Who this ticket is for. Resolved before the submit so the producer log
-			# can name them, and used by the one PATCH afterwards.
-			caller_sys_id = ""
-			try:
-				caller_sys_id = _resolve_snow_user_sys_id(client, user_email)
-			except Exception as exc:
-				_log.warning("SNow caller lookup failed for %s: %s", user_email, exc)
-
-			# THIS IS HEAD'S TICKET CREATION, RESTORED.
-			#
-			# Submit the Record Producer with the wizard's answers, then set the
-			# caller with one PATCH. That is the whole thing, and it is the version
-			# that produced the ticket everybody wants: the answers mapped onto
-			# their own fields by the producer, the state left Open, and the caller
-			# the person who asked.
-			#
-			# Rounds 99-108 replaced it three times -- speculative caller variables,
-			# a default support group, mandatory auto-fill, `sysparm_requested_for`,
-			# a state-restore write, and finally a direct incident insert that got
-			# the caller and the state right by giving up the field mapping. Each
-			# one traded away something the previous version already had. What was
-			# actually wrong was never the mechanism; it was the extra things put on
-			# the insert along the way.
-			#
-			# Do not add to this. If the caller needs to arrive without a second
-			# write, the change is a reference variable on the producer in
-			# ServiceNow -- see the note above _CALLER_VAR_OVERRIDE.
-			resp, unanswered = _submit_via_producer(client, fields, support_group, caller_sys_id)
+			caller_names = (user_email, str(current_user.get("username") or ""))
+			caller_sys_id = snow_catalog.find_user(client, *caller_names)
+			resp, unanswered = _submit_via_producer(client, fields, support_group, caller_sys_id, caller_names)
 			via = "producer"
 
 			_log.warning("SNow producer response: status=%s body=%s", resp.status_code, resp.text[:600])
 			if resp.status_code >= 400:
-				# THE REQUESTER STILL GETS A TICKET. The producer's own inventory
-				# has just been logged, which is what fixing this properly needs;
-				# meanwhile the incident is created directly, which costs the
-				# field mapping and keeps the caller and the state.
+				# The requester still gets a ticket: created directly, answers in the
+				# description. The producer's inventory has just been logged.
 				_log.warning(
 					"SNow producer refused (statically-mandatory and unanswered: %s) -- "
 					"creating the incident directly instead. The answers will be in the "
@@ -2277,8 +1788,7 @@ def create_ticket_flow(
 							   + ", which the portal does not guess at.")
 				raise HTTPException(
 					status_code=status.HTTP_502_BAD_GATEWAY,
-					detail=(f"ServiceNow rejected the ticket (HTTP {resp.status_code}): "
-							f"{resp.text[:300]}{because}"),
+					detail=f"ServiceNow refused the ticket (HTTP {resp.status_code}).{because}",
 				)
 			result = resp.json().get("result", {}) or {}
 			incident_sys_id = str(result.get("sys_id") or "")
@@ -2287,8 +1797,7 @@ def create_ticket_flow(
 			if not incident_sys_id:
 				raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="ServiceNow did not return a record sys_id.")
 
-			# One read: the number for the requester, the caller the producer
-			# recorded, and the state it opened in. Reading changes nothing.
+			# One read (never a write): the number, the caller and the state.
 			ticket_number = ""
 			record: Dict[str, Any] = {}
 			try:
@@ -2311,14 +1820,7 @@ def create_ticket_flow(
 			)
 
 			caller = _set_ticket_caller(client, table, incident_sys_id, caller_sys_id, record)
-			attachment_count = _upload_snow_attachments(client, incident_sys_id, attachments, table)
-
-			# NOTHING ELSE WRITES TO THE INCIDENT.
-			#
-			# This instance assigns an incident to whoever updates it and advances
-			# it out of Open. The caller PATCH above is the one write there is, and
-			# it is the one HEAD made -- a single field, no query parameters, no
-			# follow-up read-and-correct. Anything added here is a second write.
+			attachment_count = _upload_snow_attachments(client, incident_sys_id, files, table)
 	except HTTPException:
 		raise
 	except Exception as exc:
@@ -2343,9 +1845,7 @@ def create_ticket_flow(
 		pass
 	try:
 		from observability_tracking import urgency_to_severity_band, record_servicenow_portal_ticket
-		# fields["urgency"] is a WORD (low/medium/high/urgent) from the wizard, not a
-		# ServiceNow priority code — so it must NOT go through priority_to_severity_band,
-		# which only understands 1–5 and silently binned everything as "Low".
+		# The wizard's urgency is a word (low/medium/high/urgent), not a priority code.
 		record_servicenow_portal_ticket(ticket_number or incident_sys_id, user_email, urgency_to_severity_band(fields["urgency"]), fields["title"])
 	except Exception:
 		pass
@@ -2362,54 +1862,9 @@ def create_ticket_flow(
 			"number": ticket_number,
 			"short_description": fields["title"],
 			"attachments_uploaded": attachment_count,
-			# Read back off the created ticket, not echoed from the request -- and
-			# only shown when it is actually the requester. Printing whatever name
-			# the field holds would put "Opened for monitor user" on the screen and
-			# call it confirmation.
+			# Read back off the ticket, and shown only when it is the requester.
 			"caller": (caller.get("name") or "") if caller.get("how") in ("insert", "patched") else "",
 			"caller_set": caller.get("how") or "",
 		},
-		"timestamp": _now_iso(),
+		"timestamp": now_iso(),
 	}
-
-
-# ── GET /stats (existing widget endpoint, kept for compatibility) ─────────────
-
-@router.get("/stats")
-def get_stats(current_user: AuthUser = Depends(get_current_user)):
-    try:
-        with _snow_client() as client:
-            new_resp = client.get(
-                "/api/now/table/incident",
-                params={"sysparm_query": "state=1", "sysparm_count": "true", "sysparm_limit": 1},
-            )
-            new_resp.raise_for_status()
-            new_count = int(new_resp.headers.get("X-Total-Count", 0))
-
-            ip_resp = client.get(
-                "/api/now/table/incident",
-                params={"sysparm_query": "state=2", "sysparm_count": "true", "sysparm_limit": 1},
-            )
-            ip_resp.raise_for_status()
-            ip_count = int(ip_resp.headers.get("X-Total-Count", 0))
-
-            res_resp = client.get(
-                "/api/now/table/incident",
-                params={"sysparm_query": "state=6", "sysparm_count": "true", "sysparm_limit": 1},
-            )
-            res_resp.raise_for_status()
-            res_count = int(res_resp.headers.get("X-Total-Count", 0))
-
-    except Exception as exc:
-        _raise_snow_error(exc, "fetching stats")
-
-    return {
-        "success": True,
-        "data": {
-            "open": new_count,
-            "in_progress": ip_count,
-            "resolved": res_count,
-            "total": new_count + ip_count + res_count,
-        },
-        "timestamp": _now_iso(),
-    }

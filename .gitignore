@@ -51,7 +51,9 @@ temp/
 
 # Docker
 .docker/
-offline-deps/
+# The bundle stays local, except the wheels the pipeline uploads (scripts/upload_wheels.py).
+offline-deps/*
+!offline-deps/wheels/
 
 # Database
 *.db
@@ -109,3 +111,6 @@ backend/app/build_info.json
 # deployment and to nobody else, so it stays out of a public repository.
 docs/RED_TEAM_BRIEF.md
 docs/PENTEST_CHECKLIST_HE.docx
+
+
+presentation

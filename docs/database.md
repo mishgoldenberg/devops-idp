@@ -9,8 +9,7 @@ There are two creation paths, and only one of them runs in the cluster:
    `safe_mode.py`). They run at startup, in a background thread that retries
    forever, and they are idempotent (`CREATE TABLE IF NOT EXISTS …`,
    `ALTER TABLE … ADD COLUMN IF NOT EXISTS …`). **This is the whole schema
-   mechanism in OpenShift.** There is no migration Job: the chart's
-   `migration-job.yaml` was an empty file and has been removed.
+   mechanism in OpenShift.** There is no migration Job.
 
 2. **SQL files** in
    [`deployment/charts/infrastructure/database/`](../deployment/charts/infrastructure/database/)
@@ -61,7 +60,7 @@ or by the env bootstrap admin startup path (`api/auth.py`, `db.py`).
 | `username`       | Unique — email local part or SSO subject        |
 | `email`          | Unique, lowercased                              |
 | `role_id`        | FK → `roles.id`                                 |
-| `domain_groups`  | JSON — cached from SSO; not currently used      |
+| `domain_groups`  | JSON, from the seed schema; nothing reads it    |
 | `created_at`     | Timestamp                                       |
 | `updated_at`     | Timestamp, updated on role grants               |
 
@@ -99,7 +98,8 @@ the original SQL enum.
 
 #### `approval_rules`
 
-Static rule table — which `request_type` needs approval from which role.
+Created by the seed SQL; nothing in the application reads or writes it. Every
+request is approved by a Platform Admin (`approvals.py`).
 
 ---
 
@@ -109,8 +109,8 @@ Two tables exist, deliberately.
 
 #### `audit_logs` (from `00_schema.sql`, legacy)
 
-Older audit sink with an `audit_action` ENUM column. Still written to by
-some code paths for backwards compatibility.
+Older audit sink with an `audit_action` ENUM column, still written by the
+approval flow (`approvals._log_audit`) beside `audit_events`.
 
 | Column           | Notes                                       |
 | ---------------- | ------------------------------------------- |
@@ -180,7 +180,8 @@ Event stream: one row per widget render. Used for
 
 #### `widget_types`
 
-Lookup table describing each widget (label, RBAC minimums, icon).
+Created by the seed SQL; nothing reads it. The widget catalogue is
+`backend/app/widget_registry.py`.
 
 ---
 
@@ -193,7 +194,7 @@ In-app bell notifications.
 | `id`         | BIGSERIAL PK                                                               |
 | `user_email` | Recipient                                                                  |
 | `message`    | Text                                                                       |
-| `notif_type` | String (`REQUEST_SUBMITTED`, `REQUEST_APPROVED`, `TICKET_CREATED`, …)      |
+| `notif_type` | String (`REQUEST_SUBMITTED`, `REQUEST_APPROVED`, `CLEANER_PR_STATE`, …)    |
 | `related_id` | Optional FK reference (UUID/string)                                        |
 | `link`       | Optional URL to navigate to on click (added via `ALTER TABLE IF NOT EXISTS`) |
 | `group_key`  | Optional grouping key — notifications sharing this collapse in the bell (added via `ALTER`) |
@@ -262,15 +263,12 @@ items, "new since last visit" markers, etc.).
 
 ---
 
-### Metrics tables (`00_schema.sql`)
+### Unused seed tables (`00_schema.sql`)
 
-These are the older "aggregated metrics" tables used by
-`api/metrics.py`. They pre-date the `widget_usage` event stream and
-remain for the platform metrics dashboard.
-
-- `usage_metrics` — one row per metric event.
-- `daily_metrics` — daily rollups.
-- `service_health` — service status snapshots.
+`usage_metrics`, `daily_metrics` and `service_health` are created by the seed SQL
+and nothing reads or writes them; usage is recorded in `widget_usage` and the
+Observability page's own tables. They are left in place because startup never drops
+anything.
 
 ---
 
@@ -283,7 +281,7 @@ users ──┬── approval_requests (requester_id, approver_id)
         └── notifications (user_email)
 
 approval_requests ──► audit_events (via action = REQUEST_*)
-servicenow tickets ──► audit_events (action = TICKET_CREATED)
+servicenow tickets ──► user_tickets (who opened which ticket)
 portal_flags   — standalone, used by safe_mode module.
 ```
 
@@ -300,7 +298,7 @@ portal_flags   — standalone, used by safe_mode module.
 
 <!-- GENERATED:TABLES — do not edit by hand; run scripts/gen_docs.py -->
 
-27 tables, created idempotently at startup by `ensure_tables()` and friends. There is no migration Job in the cluster — this DDL *is* the schema mechanism, and it must stay additive: a `DROP` on this path runs on every pod start.
+44 tables, created idempotently at startup by `ensure_tables()` and friends. There is no migration Job in the cluster — this DDL *is* the schema mechanism, and it must stay additive: a `DROP` on this path runs on every pod start.
 
 | Table | Created in |
 | --- | --- |
@@ -312,22 +310,39 @@ portal_flags   — standalone, used by safe_mode module.
 | `azure_projects` | `backend/app/db.py` |
 | `backup_runs` | `backend/app/db.py` |
 | `catalog_submissions` | `backend/app/db.py` |
+| `devbot_conversations` | `backend/app/devbot/store.py` |
+| `devbot_events` | `backend/app/devbot/monitor.py` |
+| `devbot_feedback` | `backend/app/devbot/monitor.py` |
+| `devbot_index_chunks` | `backend/app/devbot/knowledge.py` |
+| `devbot_index_pages` | `backend/app/devbot/knowledge.py` |
+| `devbot_index_runs` | `backend/app/devbot/knowledge.py` |
+| `devbot_index_settings` | `backend/app/devbot/knowledge.py` |
+| `devbot_messages` | `backend/app/devbot/store.py` |
+| `devbot_usage` | `backend/app/devbot/store.py` |
 | `favorites` | `backend/app/db.py` |
 | `inbox_dismissals` | `backend/app/db.py` |
 | `notifications` | `backend/app/db.py` |
 | `portal_flags` | `backend/app/safe_mode.py` |
 | `quick_links` | `backend/app/db.py` |
+| `release_notes` | `backend/app/release_notes.py` |
+| `request_ratings` | `backend/app/db.py` |
 | `self_service_usage` | `backend/app/db.py` |
 | `servicenow_tickets` | `backend/app/db.py` |
 | `sso_config` | `backend/app/db.py` |
 | `suggestion_comments` | `backend/app/db.py` |
 | `suggestion_votes` | `backend/app/db.py` |
 | `suggestions` | `backend/app/db.py` |
+| `user_activity_daily` | `backend/app/usage_tracking.py` |
 | `user_integrations` | `backend/app/db.py` |
 | `user_item_pins` | `backend/app/db.py` |
 | `user_item_seen` | `backend/app/db.py` |
 | `user_pins` | `backend/app/db.py` |
 | `user_quick_links` | `backend/app/db.py` |
+| `user_section_seen` | `backend/app/db.py` |
+| `user_sessions` | `backend/app/usage_tracking.py` |
+| `user_streak_bonus` | `backend/app/streaks.py` |
+| `user_streak_days` | `backend/app/streaks.py` |
+| `user_streak_sync` | `backend/app/streaks.py` |
 | `user_tickets` | `backend/app/api/servicenow.py`, `backend/app/db.py` |
 | `user_widgets` | `backend/app/db.py` |
 | `widget_usage` | `backend/app/db.py` |

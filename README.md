@@ -2,7 +2,7 @@
 
 # 🛠️ DevOps Hub
 
-**An internal developer portal that puts Azure DevOps, ServiceNow, SonarQube, Artifactory and Confluence behind one login — with self-service provisioning and an approval workflow on top.**
+**An internal developer portal that puts Azure DevOps, ServiceNow, SonarQube, Artifactory and Confluence behind one login — with self-service provisioning, an approval workflow and an AI assistant on top.**
 
 [![CI](https://img.shields.io/github/actions/workflow/status/mishgoldenberg/devops-idp/ci.yml?branch=main&style=for-the-badge&label=CI&logo=githubactions&logoColor=white)](https://github.com/mishgoldenberg/devops-idp/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
@@ -25,6 +25,8 @@ Developers lose a surprising amount of the day to tab-switching. Your work items
 
 It also goes the other way. Requests that normally mean filing a ticket and waiting — *create me an Azure DevOps project*, *raise my Artifactory quota*, *schedule a cleanup job for my repository* — are self-service forms that route through an approval workflow and are then **actually executed** against the target system, not just recorded as done.
 
+And it answers questions. **DevBot**, the built-in AI assistant, reads those systems with *your* tokens and follows a problem across them: ask why a pipeline failed and it reads the log, finds the Confluence page or the past bug that fixed the same error, checks Artifactory or SonarQube when the error points there, and proposes the next step for you to confirm. Admins get **AdminBot**, the same assistant over the Hub's own users, requests and logs.
+
 The browser never talks to any external system directly. Every integration call goes through the backend, which holds the credentials, caches responses in Redis, and writes an audit record of what it did.
 
 ---
@@ -34,9 +36,11 @@ The browser never talks to any external system directly. Every integration call 
 | | |
 |---|---|
 | 🔐 **SSO + RBAC** | OIDC sign-in (Keycloak / Red Hat SSO compatible) with a role hierarchy enforced server-side, plus local accounts as a fallback |
-| 🧩 **Personal dashboards** | Twelve widgets across five systems — drag, resize, hide. Admin policy sets what *may* be shown; each user narrows it from there |
+| 🧩 **Personal dashboards** | Seventeen widgets across five systems — drag, resize, hide. Admin policy sets what *may* be shown; each user narrows it from there |
 | ⚡ **Self-service that executes** | Project creation, quota increases and cleanup schedules run for real against the target system once approved |
 | ✅ **Approval workflow** | Rule-driven routing, an approver inbox, and a typed request catalogue that the database enum is generated from |
+| 🤖 **DevBot AI** | A chat assistant over every connected system, with each person's own tokens and AI key: cross-system investigations, search by meaning over Confluence and past fixes, and changes it drafts for you to confirm (run or cancel a pipeline, work items, pull requests, Confluence pages, support tickets, self-service requests). Ask it from any widget row |
+| 🧑‍✈️ **AdminBot AI** | The same assistant for admins, over the Hub's users, requests, logs, usage and health — approvals (one or many), account changes, announcements and the search index proposed, confirmed by you |
 | 🎫 **Ticketing built in** | Raise and track ServiceNow tickets from the portal, with answers landing in the catalog item's own fields |
 | 🛡️ **Safe Mode** | A single admin toggle turns every side-effecting action into a simulated success — demo and test without touching production |
 | 📊 **Observability** | Request auditing, outbound-call logging, per-integration health, and a deployment timeline showing which build reached which environment |
@@ -62,17 +66,19 @@ The browser never talks to any external system directly. Every integration call 
               │  ┌─────────────────────┐  │
               │  │ auth · RBAC · audit │  │
               │  └─────────────────────┘  │
-              │  26 routers, one per      │
+              │  36 routers, one per      │
               │  integration or feature   │
-              └──┬──────────┬─────────┬───┘
-                 │          │         │
-       ┌─────────▼──┐  ┌────▼────┐    │
-       │ PostgreSQL │  │  Redis  │    │  credentials held server-side
-       │            │  │ ~60s TTL│    │  the browser never sees them
-       │ users      │  │  cache  │    │
-       │ approvals  │  └─────────┘    │
-       │ dashboards │                 │
-       │ audit      │                 ▼
+              │  + DevBot (devbot/)       │
+              └──┬──────────┬─────────┬─┬─┘
+                 │          │         │ │
+       ┌─────────▼──┐  ┌────▼────┐    │ └──────────────┐
+       │ PostgreSQL │  │  Redis  │    │                ▼
+       │            │  │ ~60s TTL│    │   ┌─────────────────────────┐
+       │ users      │  │  cache  │    │   │ AI gateway (OpenAI-     │
+       │ approvals  │  └─────────┘    │   │ compatible, e.g.        │
+       │ dashboards │                 │   │ LiteLLM over vLLM)      │
+       │ audit      │                 │   └─────────────────────────┘
+       │ AI index   │                 ▼
        └────────────┘   ┌──────────────────────────────┐
                         │ Azure DevOps   ServiceNow    │
                         │ SonarQube      Artifactory   │
@@ -83,6 +89,8 @@ The browser never talks to any external system directly. Every integration call 
 **The read path.** A dashboard widget asks the backend, not the vendor. The backend checks Redis (`ext:<integration>:<owner>:<key>`, ~60s), calls the system if it misses, and returns a rendered HTML fragment that HTMX swaps into place. A Redis outage is swallowed — the cache degrades, the portal doesn't.
 
 **The write path.** A self-service form is declared as data in `catalog_forms.py` and rendered by one generic renderer, so a new form is a dictionary rather than a template. On submit it becomes an approval request of a typed kind; on approval an executor calls the real API — creating the Azure DevOps project, opening the pull request, raising the quota — and the request is only marked complete when that executor says so.
+
+**The AI path.** A question to DevBot streams back over one request. The backend plans it to fit the person's AI key limits, offers the model only the tools the question needs, runs the lookups it asks for with the person's own tokens (several at once, or a whole cross-system investigation in one call), and always makes the last round without tools so the question ends in an answer. Search by meaning uses an index the Hub builds itself — int8 vectors in plain Postgres, no vector database — and every past fix in it has been rewritten by the model before anyone reads it. The whole design is in **[docs/devbot.md](docs/devbot.md)**.
 
 **The trust boundary.** Integration credentials live in the database encrypted at rest, with the key derived from the app's signing secret via HKDF. No integration token is ever returned to the frontend or written to a log.
 
@@ -189,6 +197,18 @@ Nothing is OpenShift-specific — it is plain Kubernetes with `Ingress`. Swap th
 | `LOGIN_MAX_FAILURES` / `LOGIN_LOCKOUT_SECONDS` | `5` / `900` | Local sign-in rate limiting, per account and per client IP |
 | `AUTH_ACTIVE_CHECK_TTL` | `30` | How often a live session is re-checked against account state |
 
+### DevBot (optional)
+
+| Variable | Default | Description |
+|---|---|---|
+| `DEVBOT_LLM_BASE_URL` | — | The AI gateway's OpenAI-compatible `/v1` address. DevBot and AdminBot are on when this is set |
+| `DEVBOT_DEFAULT_MODEL` | — | The model a new conversation starts with, and the one that reviews past fixes unless an admin picks another |
+| `DEVBOT_EMBED_MODEL` | — | The embedding model for search by meaning; empty picks a multilingual e5 the key may use |
+| `DEVBOT_HISTORY_DAYS` | `30` | How long a conversation is kept after it was last used |
+| `DEVBOT_INDEX_INTERVAL_HOURS` | `12` | How often the search index catches up with edits |
+
+Each person connects their own AI key; the Hub's own key (for the index and AdminBot) is set by an admin in the UI. The rest of the `DEVBOT_*` tuning is listed in [`docs/env.md`](docs/env.md).
+
 Integration credentials (Azure DevOps PAT, ServiceNow service account, Artifactory token, …) are **not** environment variables. They are entered in the admin UI and stored encrypted in the database, so rotating one is a form, not a redeploy.
 
 The full inventory of endpoints, variables and tables is generated from the code — see [`docs/env.md`](docs/env.md), [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) and [`docs/database.md`](docs/database.md), all regenerated by `python scripts/gen_docs.py`.
@@ -200,9 +220,11 @@ The full inventory of endpoints, variables and tables is generated from the code
 | Needs You · Quick Links · Recent Activity | — |
 | Tasks · Pull Requests (mine) · Pull Requests (to review) · Pipelines | Azure DevOps |
 | My Tickets | ServiceNow |
-| Projects | SonarQube |
+| Projects · Quality Gates · New Code · Security Hotspots · Issues (yours) · Gate on my PRs | SonarQube |
 | Repositories · Storage *(admin)* | Artifactory |
 | Pages | Confluence |
+
+Rest the pointer on a row of any of these for a moment and an **Ask DevBot** chip appears on it: one click asks DevBot about that run, work item, pull request, ticket, project, repository or page.
 
 ### Self-service request types
 
@@ -222,7 +244,9 @@ devops-idp/
 │   ├── main.py                 App factory, startup hooks, schema bootstrap
 │   ├── config.py               Every setting, loaded from the environment
 │   ├── ui.py                   HTMX HTML routes — the UI layer
-│   ├── api/                    26 routers, one per integration or feature
+│   ├── api/                    36 routers, one per integration or feature
+│   ├── devbot/                 DevBot and AdminBot: gateway client, orchestrator,
+│   │                           tools, search index, admin figures
 │   ├── db.py                   psycopg2 pool + idempotent DDL
 │   ├── cache.py                get_cached(key, ttl, producer)
 │   ├── security.py             JWT sessions, RBAC helpers
@@ -276,6 +300,8 @@ devops-idp/
 One renderer draws it, one endpoint validates it against the same spec. To make it *do* something, add the type to `request_types.py` and an executor branch in `api/approvals.py` — the database enum follows on the next start.
 
 **Add an integration** — a router in `backend/app/api/`, its reads wrapped in `integrations_cache`, its outbound calls through `resilient_http` so failures are classified rather than surfaced as `HTTPStatusError`.
+
+**Teach DevBot something** — a `Tool` in `backend/app/devbot/tools/`: a plain function over the person's `ToolContext` returning a small dict, registered with the words that make a question about it. A widget row joins "Ask DevBot on hover" by carrying its question: `window.portalDevbot.attr(question)` in its markup. See [docs/devbot.md](docs/devbot.md).
 
 ---
 

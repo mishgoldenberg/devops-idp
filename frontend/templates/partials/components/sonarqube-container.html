@@ -1,8 +1,28 @@
+{#
+	The SonarQube page: every SonarQube widget, whatever the dashboard shows.
+
+	The dashboard is a personal selection -- somebody who hid Security Hotspots at
+	home still needs somewhere to look at them. This page is that place, so it
+	renders all six unconditionally and does not read the Customize cookie.
+
+	Laid out as a working surface rather than a mirror of the dashboard: the project
+	browser runs the full width, where an expanded project's tiles sit on one line,
+	and the five focused views share the rows beneath it. Heights are inline styles
+	because h-[..] utilities are not compiled into output.css.
+#}
+{% set sq_page_widgets = [
+	("sonarqube-projects-component", "/ui/components/sonarqube-projects", "grid-column: 1 / -1; height: 36rem"),
+	("sonarqube-gates-component", "/ui/components/sonarqube-gates", "height: 32rem"),
+	("sonarqube-new-code-component", "/ui/components/sonarqube-new-code", "height: 32rem"),
+	("sonarqube-hotspots-component", "/ui/components/sonarqube-hotspots", "height: 32rem"),
+	("sonarqube-my-issues-component", "/ui/components/sonarqube-my-issues", "height: 32rem"),
+	("sonarqube-pr-gates-component", "/ui/components/sonarqube-pr-gates", "height: 32rem"),
+] %}
 <div class="page-shell">
 	<header class="page-header">
 		<div>
 			<h1 class="page-title">SonarQube</h1>
-			<p class="page-subtitle">Code quality and security analysis</p>
+			<p class="page-subtitle">Quality gates, new code, hotspots, your issues and your pull requests</p>
 		</div>
 		<div class="flex items-center gap-2">
 			{% with system_key = 'sonarqube' %}
@@ -16,10 +36,12 @@
 
 	<div class="page-content-flush">
 		<div class="widget-grid">
+			{% for component_id, url, style in sq_page_widgets %}
 			<div
-				id="sonarqube-projects-component"
-				class="h-80 widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
-				hx-get="/ui/components/sonarqube-projects"
+				id="{{ component_id }}"
+				class="widget-shell [&_.widget-loading]:hidden [&.htmx-request_.widget-content]:hidden [&.htmx-request_.widget-loading]:block"
+				style="{{ style }}"
+				hx-get="{{ url }}"
 				hx-trigger="load, refresh, click from:#refresh-btn"
 				data-autorefresh
 				hx-target="find .widget-content"
@@ -30,6 +52,7 @@
 				</div>
 				<div class="widget-content h-full"></div>
 			</div>
+			{% endfor %}
 		</div>
 	</div>
 </div>

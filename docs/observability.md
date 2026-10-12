@@ -1,6 +1,10 @@
 # Observability
 
 The Observability page gives admins a single view of how the portal is
+
+In the sidebar it is the **Usage** tab of **Monitoring**, beside Users, DevBot and Logs
+(`partials/components/monitoring-tabs.html`): four pages under one entry, each still
+loading only its own data.
 used: which widgets people actually add, which self-services run, how
 many tickets are opened, and how quickly requests get approved.
 
