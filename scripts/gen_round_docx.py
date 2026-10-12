@@ -128,17 +128,15 @@ def body(doc, text: str, bold: bool = False) -> None:
 
 # -- the round ---------------------------------------------------------------
 
-ROUND = "151"
-SUMMARY = ("The assistants' switch is set separately for test and production: HUB_AI_ENABLED_TEST and HUB_AI_ENABLED_PROD in the variable group (true/false), each falling back to its environment's values file (test on, production off) when undefined. The deploy step reads optional variables from its environment, so an undefined one no longer risks failing the deploy. Apply after round 150")
+ROUND = "152"
+SUMMARY = ('Removes a real password value that two security tests carried as sample input; the tests now build a stand-in at runtime. check_security_rules.py now also reads the text inside every string in the app, the scripts and the tests, and accepts only obvious placeholders where a secret goes. Apply after round 151')
 DELETES = []
 FILES = [
     "CLAUDE.md",
-    "azure-pipelines.yml",
     "backend/app/changelog.py",
-    "deployment/values-prod.yaml",
-    "deployment/values-test.yaml",
-    "deployment/values.yaml",
-    "docs/devbot.md",
+    "backend/tests/test_devbot_knowledge.py",
+    "backend/tests/test_security_fixes.py",
+    "scripts/check_security_rules.py",
     "scripts/gen_round_docx.py",
 ]
 PREAMBLE = ""

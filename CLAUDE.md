@@ -100,6 +100,7 @@ before designing against an assumption.
 - Never take a secret in a URL query parameter or echo a decoded token payload.
 - Derive at-rest keys from a shared signing secret through HKDF with a distinct info label.
 - Treat a data-encryption secret as part of the data: back it up with the dump, never rotate it casually, and self-check at startup that it still decrypts.
+- Never write a real secret into a test, fixture or sample, even one proving a leak is caught: use an obvious placeholder or build the value at runtime, since the test republishes what it guards.
 - Write CI intermediate secret files 0600 and delete them via `trap ... EXIT`.
 - Detect an expired session centrally (401, or a fetch that landed on the sign-in page), never on 403, and never pass a far system's 401 through (answer 424), since the Hub reads any 401 as its own session ending.
 - Share a pooled HTTP client between users only with a cookie jar that refuses everything, since a cookie answered to one user would otherwise ride on the next user's request.

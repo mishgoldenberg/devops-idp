@@ -278,7 +278,7 @@ def test_the_rules_catch_each_kind_of_regression():
         "        log.warning(f'failed: {exc}')\n"
         "    message = f'{resp.text[:200]}'\n"
         "    params = {'sysparm_query': f'name={value}'}\n"
-        "    password = 'Devops4ever'\n")
+        "    password = '" + "Sun" + "flower77'\n")             # built here so this file holds none
     assert len(rules.direct_clients(where, code)) == 1
     assert len(rules.leaked_errors(where, code, set())) == 2          # the log line is allowed
     assert len(rules.unescaped_snow_queries(where, code)) == 1
@@ -287,10 +287,12 @@ def test_the_rules_catch_each_kind_of_regression():
 
 def test_the_rules_catch_a_password_written_into_a_script(tmp_path, monkeypatch):
     rules = _rules()
-    (tmp_path / "setup.sh").write_text('export DB_PASS="Devops4ever"\nexport DB_USER="${DB_USER}"\n')
+    (tmp_path / "setup.sh").write_text('export DB_PASS="' + "Sun" + 'flower77"\nexport DB_USER="${DB_USER}"\n')
     monkeypatch.setattr(rules, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(rules, "CONFIG_FILES", ["setup.sh"])
     assert rules.config_secrets() == ["setup.sh:1: DB_PASS is set to a literal value"]
+    (tmp_path / "setup.sh").write_text('export DB_PASS="not-a-real-pass"\n')
+    assert rules.config_secrets() == []                       # an obvious placeholder is allowed
 
 
 # ── query languages: a value cannot add a condition of its own ───────────────────────────────
@@ -402,3 +404,17 @@ def test_far_message_reads_the_other_systems_message_never_its_page():
     assert far_message(httpx.Response(400, json={"error": {"message": "Invalid table"}})) == "Invalid table"
     assert far_message(httpx.Response(400, json={"message": "TF401019: no such repository"})).startswith("TF401019")
     assert far_message(httpx.Response(500, text="<html><body>Stack trace ...</body></html>")) == ""
+
+
+def test_the_rules_catch_a_password_inside_a_sample_string():
+    import ast
+    from pathlib import Path
+
+    rules = _rules()
+    stand_in = "Sun" + "flower77"          # built here so this file never holds one
+    sample = ast.parse(f"code = {('    password = ' + repr(stand_in) + chr(10))!r}\n"
+                       f"script = {('export DB_PASS=' + chr(34) + stand_in + chr(34) + chr(10))!r}\n"
+                       "fixture = \"    password = 'not-a-real-pass'\\n\"\n")
+    found = rules.secrets_in_strings(Path(rules.REPO_ROOT) / "backend" / "tests" / "example.py", sample)
+    assert [p.split(": ")[1] for p in found] == ["password is set to a literal value inside a string",
+                                                "DB_PASS is set to a literal value inside a string"]

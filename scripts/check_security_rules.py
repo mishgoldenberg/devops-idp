@@ -38,8 +38,11 @@ DIAGNOSTIC_SINKS = {"_remember"}
 RESPONSE_NAME = re.compile(r"^(r|rc|pr|push|res|resp|response|reply|\w+_resp|\w+_response)$")
 SECRET_NAME = re.compile(r"(password|passwd|secret|token|api_?key)$", re.IGNORECASE)
 CONFIG_SECRET = re.compile(
-    r"^\s*(?:export\s+|-\s+)?[\"']?([A-Z][A-Z0-9_]*(?:PASSWORD|PASS|SECRET|TOKEN|API_KEY))[\"']?\s*[:=]\s*"
+    r"^\s*(?:export\s+|-\s+)?[\"']?((?:[A-Za-z][A-Za-z0-9_]*?)?(?:PASSWORD|PASS|SECRET|TOKEN|API_KEY|password|passwd|secret|token))[\"']?\s*[:=]\s*"
     r"[\"']?([^\s\"'#]+)")
+# A value that is plainly not a real one; anything else written where a secret goes fails.
+PLACEHOLDER = re.compile(r"not-a-real|placeholder|example|change_?me|replace_with|dummy|fake|ci-only|test-only|test-secret",
+                         re.IGNORECASE)
 CONFIG_FILES = ["setup.sh", "azure-pipelines.yml", "docker-compose.yml", "deployment/**/*.yaml",
                 "deployment/**/*.yml", "scripts/*.sh", "backend/**/*.sh"]
 
@@ -159,9 +162,28 @@ def secret_literals(path: Path, tree: ast.AST) -> list:
             pairs = [(node.arg, node.value)]
         for name, value in pairs:
             if (SECRET_NAME.search(name) and isinstance(value, ast.Constant) and isinstance(value.value, str)
-                    and len(value.value) >= 6 and not value.value.startswith(("$", "{{"))):
+                    and len(value.value) >= 6 and not value.value.startswith(("$", "{{"))
+                    and not PLACEHOLDER.search(value.value)):
                 problems.append(f"{_rel(path)}:{node.lineno}: '{name}' is set to a literal value")
     return problems
+
+
+def secrets_in_strings(path: Path, tree: ast.AST) -> list:
+    """A secret written inside a string -- a script, a fixture, a sample -- is still published."""
+    problems = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+            continue
+        for line in node.value.splitlines():
+            match = CONFIG_SECRET.match(line)
+            if match and not _harmless(match.group(2)):
+                problems.append(f"{_rel(path)}:{node.lineno}: {match.group(1)} is set to a literal value inside a string")
+    return problems
+
+
+def _harmless(value: str) -> bool:
+    return (value.startswith(("$", "{{", "(", "<")) or value.lower() in ("true", "false", "null", "|", ">")
+            or bool(PLACEHOLDER.search(value)) or bool(re.match(r"[A-Za-z_][\w.]*\(", value)))  # read from a call
 
 
 def config_secrets() -> list:
@@ -176,8 +198,7 @@ def config_secrets() -> list:
                 match = CONFIG_SECRET.match(line)
                 if not match:
                     continue
-                value = match.group(2)
-                if value.startswith(("$", "{{", "(", "<")) or value.lower() in ("true", "false", "null", "|", ">"):
+                if _harmless(match.group(2)):
                     continue
                 problems.append(f"{_rel(path)}:{number}: {match.group(1)} is set to a literal value")
     return problems
@@ -194,8 +215,13 @@ def main() -> int:
         problems += leaked_errors(path, tree, own)
         problems += unescaped_snow_queries(path, tree)
         problems += secret_literals(path, tree)
-    for path in sorted((REPO_ROOT / "scripts").glob("*.py")):
+    # Scripts and tests are published with the code, so a secret in them is a leak too.
+    others = sorted((REPO_ROOT / "scripts").glob("*.py")) + sorted(
+        p for p in (REPO_ROOT / "backend" / "tests").rglob("*.py") if "__pycache__" not in p.parts)
+    for path in others:
         problems += secret_literals(path, ast.parse(path.read_text(encoding="utf-8")))
+    for path in list(_app_files()) + others:
+        problems += secrets_in_strings(path, ast.parse(path.read_text(encoding="utf-8")))
     problems += config_secrets()
 
     if problems:

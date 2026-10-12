@@ -229,7 +229,7 @@ def _confluence(token):
         pid = path.rsplit("/", 1)[-1]
         if pid not in PAGES:
             return httpx.Response(404, json={})
-        if PAGES[pid].get("restricted") and token != "index-token":
+        if PAGES[pid].get("restricted") and token != "fake-index-token":
             return httpx.Response(403, json={"message": "no"})
         return httpx.Response(200, json={"id": pid, "body": {"storage": {"value": PAGES[pid]["body"]}}})
 
@@ -264,7 +264,7 @@ def index(monkeypatch):
     monkeypatch.setattr(llm, "list_models", lambda key, embedding=False: [{"id": "intfloat/multilingual-e5-large"}])
     _Redis.shared = _Redis()
     knowledge._loaded["gen"] = None
-    knowledge.save_settings(["TST"], "", True, "test", confluence_token="index-token", gateway_key="hub-key")
+    knowledge.save_settings(["TST"], "", True, "test", confluence_token="fake-index-token", gateway_key="hub-key")
     yield embedded
     execute("DELETE FROM devbot_index_pages WHERE page_id LIKE 'test-%%'")
     execute("DELETE FROM devbot_index_runs WHERE trigger = 'test'")
@@ -307,7 +307,7 @@ def test_a_build_then_a_search_that_only_shows_what_the_person_may_open(index):
 
     status = knowledge.admin_status()
     assert status["pages"] == 2 and status["runs"][0]["status"] == "done"
-    assert "index-token" not in str(status) and "hub-key" not in str(status)
+    assert "fake-index-token" not in str(status) and "hub-key" not in str(status)
 
 
 def test_a_second_build_while_one_runs_does_not_start(index):
