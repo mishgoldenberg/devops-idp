@@ -1,0 +1,10 @@
+{#
+	GitLab: open merge requests where the signed-in person is a reviewer and has not
+	approved yet. Approving one drops it off this list, as a vote does for Azure DevOps.
+#}
+{% set pr_role = "review" %}
+{% set pr_title = "MRs Needing My Review" %}
+{% set pr_empty_title = "All caught up" %}
+{% set pr_empty_hint = "no merge request is waiting on your review" %}
+{% set pr_provider = "gitlab" %}
+{% include "partials/components/pull-requests-widget.html" %}

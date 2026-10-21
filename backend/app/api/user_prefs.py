@@ -1,17 +1,7 @@
 """
-Per-user UI preferences: avatar + preferred theme.
-
-Kept as a tiny, dedicated router instead of folding into ``auth`` because these
-endpoints are written to from both the Settings page (theme) and the Profile
-page (avatar), and it's nice to keep their request shape discoverable at
-``/api/me/...`` instead of hiding them inside the auth namespace.
-
-Endpoints:
-  GET  /api/me                 -> current user's display info + preferences
-  PUT  /api/me/theme           -> persist preferred_theme ("light" | "night")
-  POST /api/me/avatar          -> set avatar_url (data URL or absolute URL)
-  DELETE /api/me/avatar        -> clear avatar
-  PUT  /api/me/display-name    -> update full_name (keeps legacy POST /ui/profile too)
+The signed-in person's own preferences, under /api/me: GET for everything, PUT
+/theme and /density, POST and DELETE /avatar. The display name is changed through
+the profile form (POST /ui/profile).
 """
 
 from __future__ import annotations
@@ -19,9 +9,10 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
+from common import safe_image
 from db import execute, query_one
 from security import AuthUser, get_current_user
 
@@ -34,6 +25,8 @@ router = APIRouter()
 # payload by ~33%, so this maps to ~450KB of image bytes — more than enough
 # for a sidebar avatar and small enough to keep the `users` row readable.
 _AVATAR_MAX_CHARS = 600_000
+# The decoded picture; the profile page sends a 256px JPEG, a few tens of KB.
+_AVATAR_MAX_BYTES = 400 * 1024
 # "system" is a PREFERENCE, not a theme: it is stored as-is and resolved to light or
 # night in the browser, against the OS setting, on every load. Storing the resolved
 # value instead would freeze whichever mode the user happened to be in when they chose
@@ -159,11 +152,10 @@ def set_avatar(
             status_code=413,
             detail=f"avatar payload too large (max {_AVATAR_MAX_CHARS} characters)",
         )
-    # Only allow data URLs we can render inline, or http(s) URLs. This keeps
-    # hostile schemes (javascript:, vbscript:, file:) out of the DB.
-    lowered = raw.lower()
-    if not (lowered.startswith("data:image/") or lowered.startswith("http://") or lowered.startswith("https://")):
-        raise HTTPException(status_code=400, detail="Unsupported avatar URL scheme")
+    try:
+        raw = safe_image(raw, _AVATAR_MAX_BYTES)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
     user_id = _caller_id(current_user)
     try:
@@ -191,23 +183,3 @@ def clear_avatar(current_user: AuthUser = Depends(get_current_user)) -> Dict[str
     return {"success": True}
 
 
-class DisplayNameBody(BaseModel):
-    display_name: str = Field("", max_length=255)
-
-
-@router.put("/display-name")
-def set_display_name(
-    body: DisplayNameBody,
-    current_user: AuthUser = Depends(get_current_user),
-) -> Dict[str, Any]:
-    user_id = _caller_id(current_user)
-    new_name = (body.display_name or "").strip() or None
-    try:
-        execute(
-            "UPDATE users SET full_name = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
-            [new_name, user_id],
-        )
-    except Exception as exc:
-        log.debug("set_display_name failed: %s", exc)
-        raise HTTPException(status_code=500, detail="Failed to save name")
-    return {"success": True, "data": {"display_name": new_name}}

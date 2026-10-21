@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en" data-theme="nord">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>GitLab - DevOps Hub</title>
+		<link rel="stylesheet" href="/static/css/output.css?v={{ asset_v }}" />
+		<!-- Palette override. MUST stay after output.css: both declare the same
+		     DaisyUI custom properties, so this one wins on source order alone. -->
+		<link rel="stylesheet" href="/static/css/theme.css?v={{ asset_v }}" />
+		<script src="/static/js/htmx.min.js?v={{ asset_v }}"></script>
+		{% include "partials/favicon.html" %}
+	</head>
+
+	<body class="h-screen bg-base-200 flex flex-col">
+		<!-- Banner -->
+		{% include 'partials/components/banner.html' with context %}
+
+		<div class="flex flex-1 min-h-0 overflow-hidden">
+			<!-- Sidebar -->
+			{% include "partials/components/sidebar.html" with context %} {% include
+			"partials/components/gitlab-container.html" %}
+		</div>
+	</body>
+</html>

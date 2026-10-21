@@ -159,8 +159,9 @@ def env_inventory() -> str:
     for name in sorted(found):
         entry = found[name]
         default = f"`{entry['default']}`" if entry["default"] else "_(none)_"
-        # Secrets: never print a default even if one exists in the source.
-        if re.search(r"SECRET|PASSWORD|TOKEN|PAT\b", name):
+        # Secrets: never print a default even if one exists in the source. TOKENS,
+        # plural, is a count (DEVBOT_MAX_PROMPT_TOKENS), not a credential.
+        if re.search(r"SECRET|PASSWORD|TOKEN(?!S)|PAT\b", name):
             default = "_(secret — must be set)_"
         files = ", ".join(f"`{f.split('/')[-1]}`" for f in sorted(entry["files"])[:3])
         out.append(f"| `{name}` | {default} | {files} |")

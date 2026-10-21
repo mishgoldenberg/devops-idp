@@ -25,7 +25,7 @@ from docx import Document
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Pt, RGBColor
+from docx.shared import Pt
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -37,7 +37,6 @@ END = _TAG + "END##"
 
 APPLY_SHADE = "FFF4CE"
 CODE_SHADE = "F4F5F7"
-PAYLOAD_SHADE = "EEF2F7"
 
 
 # ── docx helpers ───────────────────────────────────────────────────────────
@@ -129,23 +128,17 @@ def body(doc, text: str, bold: bool = False) -> None:
 
 # -- the round ---------------------------------------------------------------
 
-ROUND = "117"
-
-SUMMARY = ("The image the Artifactory cleaner's CronJob runs, and the console its objects "
-           "live in, move out of the source and into the variable group -- they describe "
-           "this installation rather than the product, and the repository is public")
-
+ROUND = "152"
+SUMMARY = ('Removes a real password value that two security tests carried as sample input; the tests now build a stand-in at runtime. check_security_rules.py now also reads the text inside every string in the app, the scripts and the tests, and accepts only obvious placeholders where a secret goes. Apply after round 151')
 DELETES = []
-
 FILES = [
-    "backend/app/artifactory_cleaner.py",
-    "frontend/templates/partials/components/approvals-container.html",
-    "azure-pipelines.yml",
-    "deployment/charts/backend/templates/secrets.yaml",
-    "deployment/charts/backend/templates/deployment.yaml",
+    "CLAUDE.md",
     "backend/app/changelog.py",
+    "backend/tests/test_devbot_knowledge.py",
+    "backend/tests/test_security_fixes.py",
+    "scripts/check_security_rules.py",
+    "scripts/gen_round_docx.py",
 ]
-
 PREAMBLE = ""
 
 

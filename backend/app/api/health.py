@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 
 from db import health_check as db_health_check
 from redis_client import health_check as redis_health_check
+from common import now_iso
 
 
 router = APIRouter()
@@ -16,12 +17,6 @@ router = APIRouter()
 APP_BUILD = os.getenv("APP_BUILD", "unknown")
 
 
-def _now_iso() -> str:
-    from datetime import datetime, timezone
-
-    return datetime.now(timezone.utc).isoformat()
-
-
 def _render_health() -> JSONResponse:
     db_healthy = db_health_check()
     redis_healthy = redis_health_check()
@@ -29,7 +24,7 @@ def _render_health() -> JSONResponse:
     status_code = 200 if overall == "healthy" else 503
     payload = {
         "status": overall,
-        "timestamp": _now_iso(),
+        "timestamp": now_iso(),
         "services": {
             "database": "up" if db_healthy else "down",
             "redis": "up" if redis_healthy else "down",

@@ -16,7 +16,9 @@ group_key)` to enqueue a notification; the bell in
 | GET    | `/api/notifications`             | Caller's notifications, grouped by `group_key`       |
 | POST   | `/api/notifications/{id}/read`   | Mark one as read                                     |
 | POST   | `/api/notifications/read-all`    | Mark all as read                                     |
-| DELETE | `/api/notifications/{id}`        | Delete one                                           |
+| GET    | `/api/notifications/unread-count`| The bell's number                                    |
+| GET    | `/api/notifications/sections`    | Which sidebar sections have something new            |
+| POST   | `/api/notifications/sections/{section}/seen` | The person opened that section            |
 
 ## Public helper
 

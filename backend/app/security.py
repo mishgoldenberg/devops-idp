@@ -19,7 +19,7 @@ import logging
 import os
 import threading
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import bcrypt
 import jwt
@@ -41,28 +41,27 @@ security_scheme = HTTPBearer(auto_error=False)
 
 # ── Deactivation, enforced on every request ──────────────────────────────────
 #
-# Deactivating a user used to do almost nothing. `is_active = true` is checked when
-# somebody SIGNS IN — and that is the one moment a deactivated user is not doing
-# anything. Whoever was already signed in kept a valid JWT, and since nothing on the
-# request path ever looked at the database again, they kept full access for the
-# remaining life of the token: up to eight hours of an account an admin believed they
-# had just switched off.
-#
-# So the check moves to where tokens are read. It is cached briefly because it now runs
-# on every request including page renders, and the cost of a per-request query on the
-# hot path is real; 30 seconds is short enough that "deactivate" means what it says.
+# Checked where tokens are read, not only at sign-in: otherwise a deactivated user keeps
+# full access for the rest of their token's life. Cached for 30 seconds, because it runs
+# on every request.
 _ACTIVE_TTL_S = int(os.getenv("AUTH_ACTIVE_CHECK_TTL", "30"))
 _active_cache: Dict[str, Tuple[float, bool]] = {}
+# The live admin answer for a token that does not say admin (has_effective_admin_access_live),
+# behind the same TTL: it ran a query for every request an ordinary user made.
+_admin_cache: Dict[str, Tuple[float, bool]] = {}
 _active_lock = threading.Lock()
 
 
 def invalidate_active_cache(user_id: Optional[str] = None) -> None:
-    """Drop a cached active-flag so a deactivation takes effect on this pod at once."""
+    """Drop a cached active-flag and admin answer so a deactivation or a role change takes
+    effect on this pod at once."""
     with _active_lock:
         if user_id is None:
             _active_cache.clear()
+            _admin_cache.clear()
         else:
             _active_cache.pop(str(user_id), None)
+            _admin_cache.pop(str(user_id), None)
 
 
 def user_is_active(user_id: str) -> bool:
@@ -93,6 +92,47 @@ def user_is_active(user_id: str) -> bool:
     with _active_lock:
         _active_cache[key] = (time.monotonic(), active)
     return active
+
+
+# In every token the SSO callback mints: "this sign-in recorded the provider's name".
+SSO_NAME_CLAIM = "sn"
+_needs_name_cache: Dict[str, Tuple[float, bool]] = {}
+
+
+def session_needs_provider_name(user_id: str) -> bool:
+    """Should a session WITHOUT ``SSO_NAME_CLAIM`` end, so a sign-in reads the name?
+
+    Yes only for an SSO account (no local password) with no provider name on record
+    (identity.trusted_name) while SSO is switched on -- so there is a sign-in that can
+    supply one. Fails OPEN, like user_is_active: an unreadable database must not sign
+    anybody out.
+    """
+    key = str(user_id)
+    now = time.monotonic()
+    with _active_lock:
+        hit = _needs_name_cache.get(key)
+        if hit and now - hit[0] < _ACTIVE_TTL_S:
+            return hit[1]
+    from db import query_one
+
+    try:
+        row = query_one(
+            """
+            SELECT (u.password_hash IS NULL
+                    AND COALESCE(TRIM(u.sso_name), '') = ''
+                    AND EXISTS (SELECT 1 FROM sso_config WHERE id = 1 AND enabled = true)) AS needs
+              FROM users u
+             WHERE u.id = %s
+            """,
+            [key],
+        )
+    except Exception as exc:
+        log.warning("provider-name check failed for %s, allowing: %s", key, exc)
+        return False
+    needs = bool(row and row.get("needs"))
+    with _active_lock:
+        _needs_name_cache[key] = (time.monotonic(), needs)
+    return needs
 
 
 def _parse_expiry(expiry: str) -> dt.timedelta:
@@ -160,6 +200,15 @@ def decode_access_token(token: str) -> Dict[str, Any]:
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="This account has been deactivated.",
             )
+        # A session from before the portal kept the provider's name has none to put on
+        # a ticket: end it once, and the sign-in that follows records it. The token
+        # that sign-in mints carries the claim, so this can never send anyone round
+        # again (session_needs_provider_name).
+        if user_id and not payload.get(SSO_NAME_CLAIM) and session_needs_provider_name(str(user_id)):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Please sign in again.",
+            )
         return payload
     except jwt.ExpiredSignatureError:
         raise HTTPException(
@@ -202,20 +251,8 @@ def get_current_user(
 # RBAC helpers
 # ================================
 #
-# There is exactly one privilege boundary in this application: Platform Admin, or
-# not. Everything else is an ordinary user.
-#
-# It used to look richer than that. A seven-level hierarchy sat in the roles table,
-# each row carrying a permissions array ("approve:ado_projects", "view:observability"),
-# and helpers existed to read both. None of them were ever called — the array was
-# loaded, signed into the token and ignored, while the real gates tested the
-# hierarchy level directly. Four roles in the middle were therefore identical to one
-# another and two at the bottom identical to each other, which is the worst way for an
-# access model to be wrong: it reads as fine-grained and behaves as coarse.
-#
-# has_role_level(), has_permission(), can_view_aggregated_metrics() and
-# can_manage_users() were that dead machinery and are gone. Do not reintroduce a
-# check that a caller has to remember to make; add the gate to the handler.
+# There is exactly one privilege boundary: Platform Admin, or not. Do not add a
+# permission a caller has to remember to check; put the gate in the handler.
 
 PLATFORM_ADMIN_LEVEL = 1
 REGULAR_USER_LEVEL = 7
@@ -256,6 +293,20 @@ def has_effective_admin_access_live(user: AuthUser) -> bool:
     user_id = user.get("id")
     if not user_id:
         return False
+    key = str(user_id)
+    with _active_lock:
+        hit = _admin_cache.get(key)
+        if hit and time.monotonic() - hit[0] < _ACTIVE_TTL_S:
+            return hit[1]
+    answer = _admin_from_db(key)
+    if answer is None:
+        return False  # the database did not answer: say no now, and ask again next time
+    with _active_lock:
+        _admin_cache[key] = (time.monotonic(), answer)
+    return answer
+
+
+def _admin_from_db(user_id: str) -> Optional[bool]:
     try:
         from db import query_one
 
@@ -275,22 +326,8 @@ def has_effective_admin_access_live(user: AuthUser) -> bool:
         if (row.get("role_name") or "").strip().lower() == "platform admin":
             return True
     except Exception:
-        pass
+        return None
     return False
-
-
-def can_view_observability(user: AuthUser) -> bool:
-    """
-    Observability and monitoring are restricted to Admins only.
-
-    Frontend exposes three simplified roles:
-      - Admin
-      - TeamLead
-      - User
-
-    The underlying database roles are mapped to these effective roles in the auth payload.
-    """
-    return has_effective_admin_access(user)
 
 
 def is_platform_admin_level(hierarchy_level) -> bool:

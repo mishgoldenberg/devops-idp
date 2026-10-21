@@ -1,5 +1,4 @@
 import logging
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, status
@@ -8,6 +7,7 @@ from fastapi.encoders import jsonable_encoder
 import db
 from db import observability_schema_unavailable, query_all, query_all_obs
 from security import AuthUser, get_current_user, has_effective_admin_access_live
+from common import now_iso
 
 _log = logging.getLogger(__name__)
 
@@ -28,17 +28,9 @@ _SELF_SERVICE_LABELS: Dict[str, str] = {
 def _catalogue_requests() -> List[Dict[str, str]]:
     """Every request the portal offers, named as the form names it.
 
-    READ FROM THE CATALOGUE, NOT COUNTED FROM THE TABLE. This page used to list
-    whatever `approval_requests` happened to be grouped by, which meant a request
-    type nobody had submitted yet was simply absent -- indistinguishable from one
-    that does not exist. Pipeline Characterization was invisible for a further
-    reason: it is ordered from ServiceNow rather than approved here, so it is not
-    in `approval_requests` at all and never would have appeared however many
-    people submitted one.
-
-    So the rows come from catalog_forms, which is where a request is defined, and
-    the counts are joined onto them. A form added tomorrow shows up here on the
-    same deploy, at zero.
+    The rows come from catalog_forms, where requests are defined, and the counts are
+    joined onto them: a request nobody has submitted yet still shows, at zero, and one
+    ordered from ServiceNow rather than approved here is listed too.
     """
     out: List[Dict[str, str]] = [
         {"key": "ADO_PROJECT_CREATE", "name": _SELF_SERVICE_LABELS["ADO_PROJECT_CREATE"],
@@ -99,12 +91,8 @@ _OBS_SCHEMA_NOTICE = (
 )
 
 
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
 def _obs_ok(**fields: Any) -> Dict[str, Any]:
-    body: Dict[str, Any] = {"success": True, "timestamp": _now_iso(), **fields}
+    body: Dict[str, Any] = {"success": True, "timestamp": now_iso(), **fields}
     if observability_schema_unavailable():
         body["notice"] = _OBS_SCHEMA_NOTICE
     return body
@@ -184,11 +172,17 @@ def record_widget_event(
     One row per render event; aggregation happens at read time.
     Errors are swallowed so a tracking failure never breaks the dashboard.
     """
-    widget_key = str((payload or {}).get("widget_key") or "").strip()
+    # One key, or every widget the dashboard just drew in one request (widget_keys):
+    # sixteen separate posts per dashboard visit was sixteen requests and commits.
+    raw_keys = (payload or {}).get("widget_keys")
+    if not isinstance(raw_keys, list):
+        raw_keys = [(payload or {}).get("widget_key")]
+    keys = list(dict.fromkeys(str(k or "").strip() for k in raw_keys[:50]))
     session_id = (payload or {}).get("session_id")
     session_id = str(session_id).strip()[:128] if session_id else None
 
-    if not widget_key or widget_key not in _ALLOWED_WIDGET_KEYS:
+    keys = [k for k in keys if k in _ALLOWED_WIDGET_KEYS]
+    if not keys:
         raise HTTPException(status_code=400, detail="Invalid widget_key")
 
     user_id = str(
@@ -202,9 +196,9 @@ def record_widget_event(
         db.execute(
             """
             INSERT INTO widget_usage (user_id, widget_key, event_type, session_id, created_at)
-            VALUES (%s, %s, %s, %s, NOW())
+            SELECT %s, k, %s, %s, NOW() FROM unnest(%s::text[]) AS k
             """,
-            [user_id[:255], widget_key[:255], "widget_view", session_id],
+            [user_id[:255], "widget_view", session_id, [k[:255] for k in keys]],
         )
     except Exception:
         # Silent-fail per spec: tracking must never break widget rendering.
@@ -392,18 +386,10 @@ def list_suggested_widgets_for_me(
 @router.get("/self_services", include_in_schema=False)
 def list_self_service_usage(current_user: AuthUser = Depends(get_observability_user)) -> Dict[str, Any]:
     """
-    Break down every approval-driven self-service by lifecycle status so the
-    admin dashboard answers "what was opened / approved / rejected / completed
-    / failed per automation".
+    Every approval-driven self-service by lifecycle status, from ``approval_requests``.
 
-    Source of truth is ``approval_requests`` (created by ``POST /api/approvals
-    /requests``). The legacy ``self_service_usage`` counter table is no longer
-    written to by the approval flow, so reading it would always show zeros.
-
-    "Approved" here counts any request that made it past admin approval —
-    i.e. APPROVED + IN_PROGRESS + COMPLETED + EXECUTED + FAILED — which
-    matches the user's mental model ("approved = not rejected and not still
-    pending").
+    "Approved" counts every request past admin approval -- APPROVED, IN_PROGRESS,
+    COMPLETED, EXECUTED and FAILED -- that is, not rejected and not still pending.
     """
     rows = _safe_query_all(
         """
@@ -654,7 +640,6 @@ def get_observability_summary(
     Intentionally best-effort: every sub-query is wrapped so that a missing
     observability schema or a cold DB never turns the admin page into a 500.
     """
-    from observability_tracking import WIDGET_LABELS
 
     def _scalar(sql: str, default: int = 0) -> int:
         try:

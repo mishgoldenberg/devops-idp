@@ -15,6 +15,7 @@ rows where user_email = the caller's email):
 
   GET  /api/notifications            -> latest 50 notifications (grouped)
   GET  /api/notifications/unread-count
+  GET  /api/notifications/sections   -> per sidebar page: changes since the last visit
   POST /api/notifications/{id}/read  -> mark single notification read
   POST /api/notifications/read-all   -> mark everything read
 """
@@ -22,13 +23,16 @@ rows where user_email = the caller's email):
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from collections import OrderedDict
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Depends, HTTPException, Path
 
 from db import execute, query_all, query_one
 from security import AuthUser, get_current_user
+from common import caller_email
 
 
 log = logging.getLogger(__name__)
@@ -39,18 +43,17 @@ router = APIRouter()
 _RETENTION_DAYS = 60
 
 
-def _caller_email(user: AuthUser) -> str:
-    email = (user.get("email") or "").strip().lower()
-    if not email:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User email missing from auth context",
-        )
-    return email
+_last_cleanup = 0.0
 
 
 def _cleanup_old_notifications() -> None:
-    """Best-effort retention: drop notifications older than _RETENTION_DAYS."""
+    """Best-effort retention: drop notifications older than _RETENTION_DAYS. At most
+    every ten minutes per process: it ran a DELETE on every page anybody opened."""
+    global _last_cleanup
+    now = time.monotonic()
+    if now - _last_cleanup < 600:
+        return
+    _last_cleanup = now
     try:
         execute(
             "DELETE FROM notifications "
@@ -210,7 +213,7 @@ def _group_rows(rows: list) -> list:
 
 @router.get("")
 def list_notifications(current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]:
-    email = _caller_email(current_user)
+    email = caller_email(current_user)
     _cleanup_old_notifications()
     rows = _load_user_rows(email, limit=50)
     return {"success": True, "data": _group_rows(rows)}
@@ -225,7 +228,7 @@ def unread_count(current_user: AuthUser = Depends(get_current_user)) -> Dict[str
     over a dropdown containing three items — twelve votes on one suggestion are one
     thing to look at, not twelve. The badge and the panel now count the same way.
     """
-    email = _caller_email(current_user)
+    email = caller_email(current_user)
     row = None
     try:
         row = query_one(
@@ -246,12 +249,125 @@ def unread_count(current_user: AuthUser = Depends(get_current_user)) -> Dict[str
     return {"success": True, "data": {"count": int((row or {}).get("n") or 0)}}
 
 
+# The sidebar pages that carry a "something changed" dot, and where their
+# notifications point. A notification belongs to a page by its LINK, not its type:
+# a ticket request's approval links to Support, every other request's to My
+# Requests, and the link is what the person lands on when they click the bell.
+SECTIONS: Dict[str, str] = {
+    "my-requests": "/ui/my-requests",
+    "support": "/ui/support",
+    "suggestions": "/ui/suggestions",
+}
+# Events the person caused themselves. "Your request was submitted" is a receipt,
+# not news -- a dot for something you did a second ago is noise.
+_SELF_CAUSED = ("REQUEST_SUBMITTED",)
+# Somebody who has never opened a page gets a dot for the last week, not for every
+# notification since the account was created.
+_FIRST_VISIT_WINDOW_DAYS = 7
+
+
+def mark_section_seen(email: str, section: str) -> None:
+    """Stamp a visit to one of the dotted pages. Best-effort: never raises."""
+    e = (email or "").strip().lower()
+    if not e or section not in SECTIONS:
+        return
+    try:
+        execute(
+            """
+            INSERT INTO user_section_seen (user_email, section, seen_at)
+            VALUES (%s, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (user_email, section) DO UPDATE SET seen_at = EXCLUDED.seen_at
+            """,
+            [e, section],
+        )
+    except Exception as exc:
+        # WARNING: a dot that cannot clear is visible and annoying, and the reason
+        # has to be somewhere an admin can read it.
+        log.warning("could not stamp %s visit for %s: %s", section, e, exc)
+
+
+_scanning: set = set()
+_scan_lock = threading.Lock()
+
+
+def _observe_ticket_updates(current_user: AuthUser, email: str) -> None:
+    """Run the ticket check that raises "has a new update" notifications -- from every
+    page, not only the ticket widget. At most once every five minutes per person,
+    because it reads ServiceNow."""
+    # In the background: when the five minutes were up, the page waited for ServiceNow
+    # before its sidebar dots could be drawn. A ticket answered a moment ago gets its dot
+    # on the next page instead.
+    with _scan_lock:
+        if email in _scanning:
+            return
+        _scanning.add(email)
+
+    def scan() -> None:
+        try:
+            from integrations_cache import cached_external
+            from api.dashboards import get_snow_items
+
+            cached_external(
+                "nav", email, "ticket-scan",
+                lambda: {"checked": bool(get_snow_items(current_user=current_user))},
+                ttl=300,
+            )
+        except Exception as exc:
+            log.info("sections: ticket check skipped: %s: %s", type(exc).__name__, exc)
+        finally:
+            with _scan_lock:
+                _scanning.discard(email)
+
+    threading.Thread(target=scan, name="ticket-scan", daemon=True).start()
+
+
+@router.get("/sections")
+def section_news(current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]:
+    """How many things changed on each dotted page since this person last opened it."""
+    email = caller_email(current_user)
+    _observe_ticket_updates(current_user, email)
+    data: Dict[str, Dict[str, Any]] = {name: {"count": 0, "latest": None} for name in SECTIONS}
+    try:
+        rows = query_all(
+            """
+            SELECT s.section,
+                   COUNT(DISTINCT COALESCE(n.group_key, n.id::text)) AS n,
+                   MAX(n.created_at) AS latest
+              FROM UNNEST(%s::text[], %s::text[]) AS s(section, prefix)
+              LEFT JOIN user_section_seen v
+                     ON v.user_email = %s AND v.section = s.section
+              JOIN notifications n
+                ON n.user_email = %s
+               AND n.link LIKE s.prefix || '%%'
+               AND n.created_at > COALESCE(
+                       v.seen_at, CURRENT_TIMESTAMP - make_interval(days => %s))
+               AND COALESCE(n.notif_type, '') <> ALL(%s::text[])
+             GROUP BY s.section
+            """,
+            [list(SECTIONS.keys()), list(SECTIONS.values()), email, email,
+             _FIRST_VISIT_WINDOW_DAYS, list(_SELF_CAUSED)],
+        )
+    except Exception as exc:
+        log.warning("sections: could not count page news for %s: %s", email, exc)
+        rows = []
+    for row in rows or []:
+        name = str(row.get("section") or "")
+        if name in data:
+            latest = row.get("latest")
+            data[name] = {
+                # Grouped like the bell: ten votes on one suggestion are one change.
+                "count": int(row.get("n") or 0),
+                "latest": latest.isoformat() if hasattr(latest, "isoformat") else latest,
+            }
+    return {"success": True, "data": data}
+
+
 @router.post("/{notification_id}/read")
 def mark_read(
     notification_id: str = Path(...),
     current_user: AuthUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    email = _caller_email(current_user)
+    email = caller_email(current_user)
     try:
         # Mark the whole GROUP read, not just the row that was clicked. The bell shows
         # one entry per group_key, so reading "3 people voted on your suggestion" and
@@ -284,9 +400,19 @@ def mark_read(
     return {"success": True}
 
 
+@router.post("/sections/{section}/seen", status_code=204)
+def section_seen(section: str, current_user: AuthUser = Depends(get_current_user)) -> None:
+    """A dotted page was opened from a copy the browser fetched ahead of the click
+    (banner.html's prefetch): the server never saw that visit, so the page says so."""
+    if section not in SECTIONS:
+        raise HTTPException(status_code=404, detail="No such section.")
+    mark_section_seen(str(current_user.get("email") or ""), section)
+    return None
+
+
 @router.post("/read-all")
 def mark_all_read(current_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]:
-    email = _caller_email(current_user)
+    email = caller_email(current_user)
     try:
         execute(
             "UPDATE notifications SET is_read = TRUE "

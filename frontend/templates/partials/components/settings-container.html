@@ -89,6 +89,38 @@
 					</div>
 					<div class="flex items-center justify-between gap-4">
 						<div class="min-w-0">
+							<p class="font-medium">Streak flame</p>
+							<p class="text-xs text-base-content/60 mt-0.5">
+								The small flame beside the bell: how many workdays in a row you
+								have done something in the Hub. Only you and the admins see it.
+							</p>
+						</div>
+						<input
+							type="checkbox"
+							class="toggle toggle-primary shrink-0"
+							id="settings-streak-toggle"
+							aria-label="Show the streak flame"
+						/>
+					</div>
+					{% if devbot_enabled %}
+					<div class="flex items-center justify-between gap-4">
+						<div class="min-w-0">
+							<p class="font-medium">Ask DevBot on hover</p>
+							<p class="text-xs text-base-content/60 mt-0.5">
+								Rest the pointer on a row of a dashboard widget for a moment, and an
+								Ask DevBot button appears on it.
+							</p>
+						</div>
+						<input
+							type="checkbox"
+							class="toggle toggle-primary shrink-0"
+							id="settings-devbot-hover-toggle"
+							aria-label="Offer Ask DevBot on hover"
+						/>
+					</div>
+					{% endif %}
+					<div class="flex items-center justify-between gap-4">
+						<div class="min-w-0">
 							<p class="font-medium">Auto-refresh</p>
 							<p class="text-xs text-base-content/60 mt-0.5">
 								How often widgets quietly re-fetch in the background. They
@@ -246,6 +278,34 @@
 			current = toggle.checked ? "reduced" : "full";
 			root.setAttribute("data-motion", current);
 			try { localStorage.setItem(key, current); } catch (_) {}
+		});
+	})();
+
+	// --- Streak flame -----------------------------------------------------------
+	// Per browser, like the other display preferences here; the flame listens for the
+	// event and appears or goes without a reload.
+	(function () {
+		const toggle = document.getElementById("settings-streak-toggle");
+		if (!toggle) return;
+		const key = "portal-streak";
+		let shown = true;
+		try { shown = localStorage.getItem(key) !== "hidden"; } catch (_) {}
+		toggle.checked = shown;
+		toggle.addEventListener("change", () => {
+			try { localStorage.setItem(key, toggle.checked ? "shown" : "hidden"); } catch (_) {}
+			window.dispatchEvent(new CustomEvent("portal:streak-visibility"));
+		});
+	})();
+
+	// --- Ask DevBot on hover (devbot-hover.html) --------------------------------
+	// Read by the chip each time it would appear, so no event is needed.
+	(function () {
+		const toggle = document.getElementById("settings-devbot-hover-toggle");
+		if (!toggle) return;
+		const key = "portal-devbot-hover";
+		try { toggle.checked = localStorage.getItem(key) !== "off"; } catch (_) { toggle.checked = true; }
+		toggle.addEventListener("change", () => {
+			try { localStorage.setItem(key, toggle.checked ? "on" : "off"); } catch (_) {}
 		});
 	})();
 

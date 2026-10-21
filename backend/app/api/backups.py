@@ -26,10 +26,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query
 
 import db
-from security import AuthUser, get_current_user, has_effective_admin_access_live
+from security import AuthUser
+from common import admin_user, failure_text
 
 
 log = logging.getLogger(__name__)
@@ -82,15 +83,6 @@ def _restore_context() -> Dict[str, Any]:
         # one-liner that recomputes it rather than describing the algorithm.
         "fingerprint_label": "devops-hub-backup-fingerprint-v1:",
     }
-
-
-def _require_admin(user: AuthUser = Depends(get_current_user)) -> AuthUser:
-    if not has_effective_admin_access_live(user):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required to view backup status.",
-        )
-    return user
 
 
 def _age(ts: Optional[datetime]) -> Optional[timedelta]:
@@ -322,7 +314,7 @@ def _restore_points(rows: List[Dict[str, Any]], keep_last: int) -> List[Dict[str
 @router.get("")
 def backup_status(
     limit: int = Query(20, ge=1, le=100),
-    _admin: AuthUser = Depends(_require_admin),
+    _admin: AuthUser = Depends(admin_user),
 ) -> Dict[str, Any]:
     """Recent backup and restore-verification runs, plus a derived verdict."""
     table_missing = False
@@ -350,7 +342,7 @@ def backup_status(
                 "health": {
                     "level": "unknown",
                     "headline": "Backup status could not be read",
-                    "detail": f"The query against backup_runs failed: {exc}",
+                    "detail": failure_text("The backup history", exc),
                 },
                 "runs": [],
                 "last_backup": None,

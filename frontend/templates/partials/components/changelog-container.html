@@ -47,17 +47,23 @@
 
 	/* "You are looking at this one." The single most-asked question on a changelog. */
 	.cl-current {
-		display: inline-block;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
 		margin-top: 0.6rem;
-		padding: 0.12rem 0.5rem;
-		border-radius: 9999px;
-		border: 1px solid hsl(var(--su) / 0.6);
-		background: hsl(var(--su) / 0.14);
 		color: hsl(var(--su));
-		font-size: 0.62rem;
+		font-size: 0.66rem;
 		font-weight: 700;
 		text-transform: uppercase;
 		letter-spacing: 0.06em;
+	}
+	.cl-current::before {
+		content: "";
+		width: 0.45rem;
+		height: 0.45rem;
+		border-radius: 9999px;
+		background-color: currentColor;
+		flex: none;
 	}
 
 	.cl-headline {
@@ -71,20 +77,30 @@
 	.cl-group { margin-bottom: 1.1rem; }
 	.cl-group:last-child { margin-bottom: 0; }
 
+	/* Section heading, not a sticker: coloured text with a short rule in front,
+	   rather than a filled oval that competes with the headline above it. */
 	.cl-tag {
-		display: inline-block;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.45rem;
 		margin-bottom: 0.5rem;
-		padding: 0.12rem 0.55rem;
-		border-radius: 9999px;
-		font-size: 0.62rem;
+		font-size: 0.66rem;
 		font-weight: 700;
 		text-transform: uppercase;
 		letter-spacing: 0.06em;
 	}
+	.cl-tag::before {
+		content: "";
+		width: 0.9rem;
+		height: 2px;
+		border-radius: 2px;
+		background-color: currentColor;
+		flex: none;
+	}
 
-	.cl-tag[data-kind="features"]     { background: hsl(var(--p) / 0.16);  color: hsl(var(--p)); }
-	.cl-tag[data-kind="improvements"] { background: hsl(var(--in) / 0.18); color: hsl(var(--in)); }
-	.cl-tag[data-kind="fixes"]        { background: hsl(var(--su) / 0.18); color: hsl(var(--su)); }
+	.cl-tag[data-kind="features"]     { color: hsl(var(--p)); }
+	.cl-tag[data-kind="improvements"] { color: hsl(var(--in)); }
+	.cl-tag[data-kind="fixes"]        { color: hsl(var(--su)); }
 
 	.cl-list { list-style: none; margin: 0; padding: 0; }
 

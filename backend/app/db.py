@@ -22,14 +22,16 @@ Anything that reads/writes the DB goes through here; don't open raw
 connections from API routers.
 """
 
+import logging
 import os
 import threading
 import time
 from contextlib import contextmanager
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import psycopg2
-from psycopg2 import errorcodes, pool
+import psycopg2.pool
+from psycopg2 import errorcodes
 from psycopg2.extensions import register_adapter
 from psycopg2.extras import Json, RealDictCursor
 from config import get_settings
@@ -38,6 +40,8 @@ from config import get_settings
 # function bodies, so there is no cycle — and a lazy import here would turn a
 # packaging mistake into a silently skipped migration instead of a startup error.
 from security import PLATFORM_ADMIN_LEVEL, REGULAR_USER_LEVEL
+
+log = logging.getLogger(__name__)
 
 # Globally teach psycopg2 how to serialize Python dicts into Postgres JSON /
 # JSONB columns. Without this, any `execute(sql, [some_dict])` raises
@@ -78,6 +82,19 @@ _POOL_MAX = int(os.getenv("DB_POOL_MAX", "20"))
 # arrive at once — otherwise the loser's pool is silently orphaned along with its
 # open connections, which leaks a handful of connections on every cold start.
 _pool_lock = threading.Lock()
+
+# A request WAITS for a free connection instead of failing. psycopg2's pool raises
+# "connection pool exhausted" the moment one more thread asks than it has connections:
+# with a pool of 8 and a hundred request threads, a busy minute turned into 500s on
+# whichever pages happened to ask ninth. Queries are milliseconds, so a short wait is
+# what a busy pod should do; DB_POOL_WAIT bounds it, after which the request fails
+# with the reason.
+_POOL_WAIT = float(os.getenv("DB_POOL_WAIT", "10"))
+_pool_slots = threading.BoundedSemaphore(_POOL_MAX)
+
+
+class DatabaseBusy(psycopg2.OperationalError):
+    """Every connection of this pod's pool stayed in use for DB_POOL_WAIT seconds."""
 
 
 # How long a single connection attempt may take. Without this, libpq waits for the
@@ -129,6 +146,27 @@ _pool_failed_at = 0.0
 _POOL_RETRY_COOLDOWN = float(os.getenv("DB_POOL_RETRY_COOLDOWN", "5"))
 
 
+class _KeepingPool(psycopg2.pool.ThreadedConnectionPool):
+    """A ThreadedConnectionPool that KEEPS the connections it is handed back.
+
+    psycopg2's pool keeps only ``minconn`` idle connections and closes every other one
+    as it is returned -- so with DB_POOL_MIN=2, any third request at the same moment
+    opened a brand-new connection to Postgres (TCP, authentication, session setup) and
+    closed it again a few milliseconds later. Under load that was a third of the
+    backend's time. Here a returned connection is kept as long as fewer than
+    ``maxconn`` are idle; ``minconn`` still decides how many are opened at start.
+    Runs under the pool's own lock (putconn), so the swap below is not visible to
+    another thread."""
+
+    def _putconn(self, conn, key=None, close=False):
+        keep = self.minconn
+        self.minconn = self.maxconn
+        try:
+            super()._putconn(conn, key, close)
+        finally:
+            self.minconn = keep
+
+
 class DatabaseUnavailable(psycopg2.OperationalError):
     """Raised instead of queueing behind a connection attempt that is failing."""
 
@@ -147,7 +185,7 @@ def _get_pool() -> "psycopg2.pool.ThreadedConnectionPool":
         if _db_pool is None:
             settings = get_settings()
             try:
-                _db_pool = psycopg2.pool.ThreadedConnectionPool(
+                _db_pool = _KeepingPool(
                     _POOL_MIN, _POOL_MAX, _dsn_with_timeouts(settings.database_url)
                 )
                 _pool_failed_at = 0.0
@@ -160,17 +198,23 @@ def _get_pool() -> "psycopg2.pool.ThreadedConnectionPool":
 
 @contextmanager
 def get_connection():
-    """Context manager yielding a PostgreSQL connection from the pool."""
+    """Context manager yielding a PostgreSQL connection from the pool, waiting up to
+    DB_POOL_WAIT seconds for one to be free."""
     pool = _get_pool()
-    conn = pool.getconn()
+    if not _pool_slots.acquire(timeout=_POOL_WAIT):
+        raise DatabaseBusy(f"all {_POOL_MAX} database connections stayed busy for {_POOL_WAIT:g} s")
     try:
-        yield conn
-        conn.commit()
-    except Exception as e:
-        conn.rollback()
-        raise e
+        conn = pool.getconn()
+        try:
+            yield conn
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            pool.putconn(conn)
     finally:
-        pool.putconn(conn)
+        _pool_slots.release()
 
 def query_all(sql: str, params: Optional[Sequence[Any]] = None) -> List[Dict[str, Any]]:
     """Run a SELECT query and return all rows as dictionaries."""
@@ -331,18 +375,8 @@ def ensure_observability_tables() -> None:
             "drop_legacy_home_widget_prefs",
             "DROP TABLE IF EXISTS home_widget_prefs",
         ),
-        # widget_usage is NOT dropped. It used to be, immediately above the
-        # CREATE TABLE IF NOT EXISTS below — which made that guard meaningless and
-        # emptied the table every time this function ran.
-        #
-        # This function runs at BACKEND STARTUP, so it fired on every pod start. With
-        # two replicas and autoscaling that is several times a day, and every one of
-        # them silently reset "Suggested for you", "Recently used" and every count on
-        # the Observability page for all users. The same statement existed in the
-        # deploy-time SQL job and has been removed there too.
-        #
-        # It is the current schema, not legacy. Replacing it one day is a migration
-        # written for that change, not a drop that runs forever.
+        # widget_usage is never dropped: this runs at every pod start, and a drop would
+        # reset every usage count. Replacing it one day is a migration.
         # Event-based widget usage: one row per widget view.
         (
             "widget_usage",
@@ -528,12 +562,22 @@ def ensure_tables() -> None:
     ensure_user_quick_links_table()
     ensure_catalog_submissions_table()
     ensure_artifactory_cleaners_table()
-    # Imported here, not at module scope: release_notes reads through this module, so
-    # importing it back at the top is a cycle. The table's DDL lives with the code
+    # Imported here, not at module scope: release_notes and usage_tracking read
+    # through this module, so importing them back at the top is a cycle. The table's DDL lives with the code
     # that owns it rather than being a second copy here.
     from release_notes import ensure_release_notes_table
+    from streaks import ensure_tables as ensure_streak_tables
+    from usage_tracking import ensure_usage_tables
+    from devbot.store import ensure_tables as ensure_devbot_tables
+    from devbot.knowledge import ensure_tables as ensure_devbot_index_tables
+    from devbot.monitor import ensure_tables as ensure_devbot_monitor_tables
 
     ensure_release_notes_table()
+    ensure_usage_tables()
+    ensure_streak_tables()
+    ensure_devbot_tables()
+    ensure_devbot_index_tables()
+    ensure_devbot_monitor_tables()
 
 
 def ensure_approval_request_types() -> None:
@@ -693,17 +737,12 @@ def ensure_artifactory_cleaners_table() -> None:
         )
         """
     )
-    # The pull request's own lifecycle, added after the table shipped.
-    #
-    # A cleaner does nothing until somebody merges its pull request, and it does
-    # nothing ever if they abandon it -- which is exactly what happened the first time
-    # one was reviewed. Without these columns the portal said "completed" for both
-    # outcomes, because opening the pull request was all it had ever recorded.
+    # The pull request's own lifecycle: a cleaner does nothing until its pull request is
+    # merged, and nothing ever if it is abandoned.
     #
     # pull_request_id is what Azure DevOps is asked about; status is the portal's own
     # word for it (PR_OPEN / RUNNING / ABANDONED / FAILED); pr_checked_at is when that
-    # word was last confirmed, so a stale answer can say it is stale rather than
-    # passing itself off as current.
+    # word was last confirmed, so a stale answer can say it is stale.
     for ddl in (
         "ALTER TABLE artifactory_cleaners ADD COLUMN IF NOT EXISTS pull_request_id INTEGER",
         "ALTER TABLE artifactory_cleaners ADD COLUMN IF NOT EXISTS pr_state VARCHAR(32)",
@@ -742,12 +781,10 @@ def ensure_artifactory_cleaners_table() -> None:
         "ALTER TABLE artifactory_cleaners ADD COLUMN IF NOT EXISTS first_run_id INTEGER",
         "ALTER TABLE artifactory_cleaners ADD COLUMN IF NOT EXISTS first_run_url TEXT",
         "ALTER TABLE artifactory_cleaners ADD COLUMN IF NOT EXISTS first_run_state VARCHAR(16) NOT NULL DEFAULT ''",
-        # Whether anything of this cleaner is on the cluster. DEFAULT TRUE, and the
-        # direction is the whole point: every cleaner that existed before this column
-        # did was applied by a build somebody ran by hand, so assuming FALSE would
-        # have the portal declare "nothing left on the cluster" over a live CronJob
-        # still deleting artifacts every night. New rows are written FALSE explicitly
-        # by cleaner_store.record and become TRUE when a build succeeds.
+        # Whether anything of this cleaner is on the cluster. DEFAULT TRUE: cleaners from
+        # before the column were applied by hand, and FALSE would declare a live CronJob
+        # gone. New rows are written FALSE (cleaner_store.record) and become TRUE when a
+        # build succeeds.
         "ALTER TABLE artifactory_cleaners ADD COLUMN IF NOT EXISTS cluster_applied BOOLEAN NOT NULL DEFAULT TRUE",
         "ALTER TABLE artifactory_cleaners ADD COLUMN IF NOT EXISTS cluster_state VARCHAR(16) NOT NULL DEFAULT ''",
         "ALTER TABLE artifactory_cleaners ADD COLUMN IF NOT EXISTS cluster_cleared_by VARCHAR(255)",
@@ -928,6 +965,11 @@ def ensure_user_preference_columns() -> None:
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_theme VARCHAR(32)",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_density VARCHAR(32)",
+        # The name the identity provider gives this person, refreshed at every SSO
+        # sign-in and never editable in the portal. `full_name` is the DISPLAY name,
+        # which the person may change to anything; a ticket raised in their name has
+        # to carry who they actually are (identity.trusted_name).
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS sso_name VARCHAR(255)",
     ):
         try:
             execute(sql)
@@ -1208,49 +1250,6 @@ def ensure_backup_runs_table() -> None:
     )
 
 
-def backup_runs_schema_unavailable() -> bool:
-    """True when ``backup_runs`` does not exist yet.
-
-    Distinguishes "the table was never created" from "the table is empty", which
-    the API has to tell apart: the first is a deploy that has not finished, the
-    second is a backup that has never run — and only the second is an alarm.
-    """
-    try:
-        query_one("SELECT 1 FROM backup_runs LIMIT 1")
-        return False
-    except Exception as exc:
-        if _is_undefined_table(exc):
-            return True
-        raise
-
-
-def cleanup_old_audit_logs(retention_days: int = 7) -> int:
-    """
-    Delete audit_logs rows older than ``retention_days`` days.
-
-    Audit logs grow unbounded as users exercise the portal. Keeping only the
-    last week is enough for the dashboards + recent-activity views that read
-    from this table, and it keeps the table small enough that admin queries
-    stay snappy without a dedicated archive job.
-
-    Returns the number of rows deleted (0 on failure — best-effort).
-    """
-    try:
-        row = query_one(
-            f"""
-            WITH deleted AS (
-                DELETE FROM audit_logs
-                WHERE created_at < NOW() - INTERVAL '{int(retention_days)} days'
-                RETURNING 1
-            )
-            SELECT COUNT(*) AS n FROM deleted
-            """
-        )
-        return int((row or {}).get("n") or 0)
-    except Exception:
-        return 0
-
-
 _item_tables_lock = threading.Lock()
 _item_tables_ensured = False
 
@@ -1348,6 +1347,25 @@ def ensure_approval_workflow_tables() -> None:
     except Exception:
         pass
 
+    # How the requester rated a completed request (1-5, optional comment). One per
+    # request; deleted with it.
+    try:
+        execute(
+            """
+            CREATE TABLE IF NOT EXISTS request_ratings (
+                request_id  UUID PRIMARY KEY REFERENCES approval_requests(id) ON DELETE CASCADE,
+                user_email  VARCHAR(255) NOT NULL,
+                rating      SMALLINT NOT NULL CHECK (rating BETWEEN 1 AND 5),
+                comment     TEXT,
+                created_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+    except Exception as exc:
+        # approval_requests may not exist yet on a minimal dev DB.
+        log.warning("request_ratings not created: %s: %s", type(exc).__name__, exc)
+
     # In-app notifications (bell + dropdown). Email-keyed so the UI can
     # resolve them directly from the SSO token without an extra users join.
     execute(
@@ -1377,6 +1395,21 @@ def ensure_approval_workflow_tables() -> None:
             execute(stmt)
         except Exception:
             pass
+
+    # When each person last OPENED My Requests, Support and Suggestions. The sidebar's
+    # "something changed" dot is every notification pointing into that page since this
+    # stamp -- separate from is_read, because clearing the bell is not the same as
+    # having looked at the page, and the dot must not vanish with it.
+    execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_section_seen (
+            user_email VARCHAR(255) NOT NULL,
+            section    VARCHAR(32)  NOT NULL,
+            seen_at    TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_email, section)
+        )
+        """
+    )
 
 
 # Env-provided bootstrap admin identity. Empty means "not configured".
@@ -1654,24 +1687,12 @@ def ensure_bootstrap_service_user() -> None:
         log.warning("ensure_bootstrap_service_user failed: %s", exc)
 
 
-
-
 def collapse_non_admin_roles() -> None:
     """Move every account that is not a Platform Admin onto the lowest role.
 
-    The roles table shipped seven levels, but only level 1 was ever a real
-    privilege boundary: the intermediate roles differed from one another solely
-    in a ``permissions`` array that no authorization decision read. Approval was
-    the single exception — it tested ``hierarchy_level <= 5`` — and that is now
-    Platform-Admin-only too, which leaves levels 2 to 6 granting exactly nothing.
-
-    Leaving accounts sitting on them would keep the misleading label without the
-    access, so this puts the data where the model already is. Idempotent: it
-    reports how many rows it touched and does nothing at all on the next start.
-
-    Deliberately NOT a DROP or a DELETE. The intermediate role rows stay in the
-    table, because deleting rows that ``users.role_id`` may still reference is
-    the kind of startup-path destruction this codebase has been bitten by before.
+    Level 1 is the only privilege boundary; levels 2 to 6 grant nothing, so an account
+    on one only carries a misleading label. Idempotent. Never a DROP or a DELETE: the
+    intermediate role rows stay, because users.role_id may still reference them.
     """
     try:
         target = query_one(

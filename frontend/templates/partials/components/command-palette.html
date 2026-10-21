@@ -171,7 +171,10 @@
 					(a) => a.getAttribute("href")
 				)
 			);
-			return COMMANDS.filter((c) => !c.href || hrefs.has(c.href) || c.href === "/ui/profile" || c.href === "/ui/settings");
+			// Profile, Settings and Search are for everyone but have no sidebar entry (Search
+			// is the box in the banner).
+			const ALWAYS = ["/ui/profile", "/ui/settings", "/ui/search"];
+			return COMMANDS.filter((c) => !c.href || hrefs.has(c.href) || ALWAYS.indexOf(c.href) >= 0);
 		}
 
 		function score(text, needle) {

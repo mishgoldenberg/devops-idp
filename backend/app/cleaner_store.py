@@ -212,13 +212,9 @@ def record_removal(slug: str, request_row: Dict[str, Any], result: Dict[str, Any
 
 
 def find_by_slug(slug: str) -> Optional[Dict[str, Any]]:
-    """The cleaner occupying this folder, if there is one.
-
-    The slug IS the identity: it names the folder in the repository, the ConfigMap and
-    the CronJob. Two cleaners with the same slug are not two cleaners -- they are two
-    pull requests fighting over one folder, which is what happened when the same name
-    was submitted twice before either was reviewed.
-    """
+    """The cleaner occupying this folder, if there is one. The slug IS the identity: it
+    names the folder, the ConfigMap and the CronJob, so a second cleaner with the same
+    slug would be a second pull request fighting over one folder."""
     rows = query_all(
         f"SELECT {_COLUMNS} FROM artifactory_cleaners WHERE slug = %s", [str(slug)]
     ) or []
@@ -301,17 +297,8 @@ def get(cleaner_id: Any) -> Optional[Dict[str, Any]]:
 
 
 def for_requests(request_ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
-    """The cleaner record belonging to each of these requests, keyed by request id.
-
-    Used to give a request its real outcome without every request list having to know
-    what a cleaner is.
-
-    Refreshed, like every other read. It was not, on the theory that the Requests page
-    had already done it -- but My Requests and Approvals are different pages, opened
-    by different people, and somebody who never visits Requests was shown "waiting for
-    review" next to a pull request that had been abandoned for three hours. A state
-    that is only correct if you took a particular route to it is not a state.
-    """
+    """The cleaner record belonging to each of these requests, keyed by request id --
+    refreshed like every other read, so the state is current whichever page asks."""
     wanted = [str(r) for r in request_ids if str(r or "").strip()]
     if not wanted:
         return {}
@@ -343,12 +330,9 @@ def refresh(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     for row in pending:
         state = batch["states"].get(str(row["pull_request_id"])) if batch.get("ok") else None
         if not state:
-            # Either the listing could not be read at all, or it answered without this
-            # pull request in it -- older than the last 500, or simply absent. Both
-            # left the row frozen on whatever it was last written with, which is how a
-            # cleaner went on reading "waiting for review" over a pull request that had
-            # been abandoned. One direct read per unanswered row, and only for rows the
-            # batch did not cover, so the common case is still a single call.
+            # The listing could not be read, or did not include this pull request (older
+            # than the last 500, or absent): one direct read per such row, so the common
+            # case stays a single call and no row is left frozen.
             direct = ado_repo.pull_request_one(row["pull_request_id"])
             if not direct.get("ok"):
                 row["pr_stale_reason"] = (
@@ -452,18 +436,12 @@ def _read_states() -> Dict[str, Any]:
 def _ensure_pipeline(row: Dict[str, Any]) -> None:
     """Create the Azure DevOps pipeline for a cleaner whose files just landed on main.
 
-    This is the step that makes a merged cleaner actually run. Merging puts
-    pipeline.yaml in the repository; a YAML file with no build definition pointing at
-    it is never executed, so before this existed every merged cleaner still needed an
-    admin to make one by hand -- and nothing told them.
+    A YAML file with no build definition pointing at it never runs, so this is what
+    makes a merged cleaner run. Called at the merge only: Azure DevOps requires the file
+    on the default branch when the definition is saved.
 
-    Called at the merge and nowhere else, because that is the only moment when the
-    file is on the default branch (Azure DevOps validates that when the definition is
-    saved) and no definition exists yet.
-
-    Never raises. The pull request is merged whatever happens here, so a failure is
-    recorded on the row and shown -- including to the requester, whose cleaner is not
-    running if this did not work.
+    Never raises. A failure is recorded on the row and shown, including to the
+    requester, whose cleaner is not running.
     """
     import ado_pipeline
     import artifactory_cleaner
@@ -696,10 +674,7 @@ def _store_state(row: Dict[str, Any], mapped: str, state: Dict[str, Any]) -> Non
     with what is stored -- so refreshing the page ten times does not send ten
     notifications, and a state that was already known sends none.
     """
-    # Merging a REMOVAL is the opposite of merging a change, and abandoning one is
-    # too. Without this, deleting a cleaner and having the removal approved left a
-    # record reading "Running" for a folder that is no longer in the repository, and
-    # a rejected removal would have read the same.
+    # Merging a REMOVAL is the opposite of merging a change, and so is abandoning one.
     if row.get("pending_delete"):
         if mapped == RUNNING:
             # The pipeline goes BEFORE the record, because the record is where its id
@@ -710,24 +685,14 @@ def _store_state(row: Dict[str, Any], mapped: str, state: Dict[str, Any]) -> Non
             except Exception as exc:
                 log.warning("cleaner %s pipeline delete raised: %s: %s",
                             row.get("slug"), type(exc).__name__, exc)
-            # The record does NOT get deleted here, and that is the whole point of it.
+            # The record is NOT deleted here: it is the only thing that knows a CronJob
+            # named after this cleaner may still be on the cluster. It stays REMOVED with
+            # its cluster side PENDING, holding the links an operator needs, until a
+            # person confirms the objects are gone (confirm_cluster_clear deletes it).
             #
-            # It used to. Merging the removal dropped the row, and with it went the
-            # only thing that knew a CronJob named after this cleaner was still on the
-            # cluster deleting artifacts every night. The portal forgot; the schedule
-            # did not. Nobody was ever going to be told, because the only record that
-            # could have told them had just been deleted for looking finished.
-            #
-            # So the row survives as REMOVED with its cluster side PENDING, holding
-            # the two links somebody needs, until a person confirms the objects are
-            # gone -- see confirm_cluster_clear, which is what finally deletes it.
-            #
-            # UNLESS nothing was ever applied. A cleaner whose pipeline never ran has
-            # no CronJob and no ConfigMap -- the files described two objects that were
-            # never created. Handing an operator links to them would send them to two
-            # "not found" pages and then ask them to confirm they had deleted a
-            # fiction, which teaches people to click the confirmation without looking.
-            # That is a worse outcome than the one this whole mechanism prevents.
+            # Unless nothing was ever applied: a cleaner whose pipeline never ran has no
+            # CronJob and no ConfigMap, and links to objects that do not exist teach
+            # people to confirm without looking.
             if not row.get("cluster_applied"):
                 try:
                     delete_record(row.get("id"))
@@ -870,12 +835,9 @@ def describe(row: Optional[Dict[str, Any]]) -> Dict[str, str]:
         label, tone = "Removal waiting for review", "pending"
         detail = ("A pull request removing this cleaner is open. It keeps running "
                   "until that is merged.")
-    # "Waiting for review" is a claim about a pull request, and a row with no pull
-    # request id is not making that claim -- it is a row nothing can ever ask about,
-    # frozen at the state it was written with. Saying so matters because every action
-    # on a cleaner is decided by this status: called "waiting", it could not be
-    # changed, could not be removed and could not be withdrawn, which is how one ended
-    # up with no available action at all.
+    # "Waiting for review" is a claim about a pull request. A row with no pull request
+    # id cannot make it, and every action on a cleaner is decided by this status, so
+    # calling it waiting would leave the row with no available action.
     if status == PR_OPEN and not row.get("pull_request_id"):
         # Worded for whichever of the two this is. Written as one branch it overwrote
         # the removal sentence above it, so a cleaner with an outstanding removal
@@ -1021,7 +983,7 @@ def reconcile(row: Dict[str, Any], state: Dict[str, Any]) -> str:
         f"That pull request was already merged, so '{row.get('cleaner_name')}' is applied. "
         "The portal has caught up."
         if mapped == RUNNING else
-        f"That pull request was already abandoned, so nothing from it was applied. "
+        "That pull request was already abandoned, so nothing from it was applied. "
         "The portal has caught up — change it and submit it again, or remove it."
     )
 

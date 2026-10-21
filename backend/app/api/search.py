@@ -26,8 +26,7 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Query
@@ -35,7 +34,11 @@ from fastapi import APIRouter, Depends, Query
 import cache
 from security import AuthUser, get_current_user
 
+import gitlab_client
+
 from . import approvals, azure_devops, integrations, servicenow
+from . import gitlab as gl_api
+from common import now_iso
 
 # No prefix here: api/__init__.py mounts this under /api/search, the same way every
 # other router is mounted.
@@ -45,10 +48,6 @@ log = logging.getLogger(__name__)
 # Per-group cap in the header dropdown. The search PAGE asks for more.
 PREVIEW_PER_GROUP = 3
 PAGE_PER_GROUP = 25
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _matches(needle: str, *haystacks: Any) -> bool:
@@ -66,14 +65,9 @@ def _rows(payload: Any) -> List[Dict[str, Any]]:
 
 
 # ── deep links ──────────────────────────────────────────────────────────────
-# A search hit should open THE THING, not the portal page that lists things like it.
-# Several collectors used to return "/ui/artifactory" or "/ui/sonarqube" for every row,
-# so clicking any repository dropped you on the Artifactory tab and left you to find it
-# again by hand — the search had told you where it was and then refused to take you.
-#
-# Work items and Confluence pages already carry a real url from their API. The rest have
-# to be built from the system's base URL, and if that is not configured we fall back to
-# the portal page rather than emitting a broken link.
+# A search hit opens THE THING, not the page that lists things like it. Work items and
+# Confluence pages carry a url from their API; the rest are built from the system's base
+# URL, falling back to the portal page rather than emitting a broken link.
 
 
 def _system_base(system: str) -> str:
@@ -139,6 +133,43 @@ def _ado_projects(q: str, user: AuthUser) -> List[Dict[str, Any]]:
         }
         for p in _rows(payload)
         if _matches(q, p.get("name"), p.get("description"))
+    ]
+
+
+def _gitlab_ready(user: AuthUser) -> bool:
+    return gitlab_client.configured() and bool(gitlab_client.user_token(user))
+
+
+def _gitlab_merge_requests(q: str, user: AuthUser) -> List[Dict[str, Any]]:
+    """Open merge requests I opened or review -- the widgets' cached read."""
+    if not _gitlab_ready(user):
+        return []
+    return [
+        {
+            "title": mr.get("title") or f"!{mr.get('iid')}",
+            "subtitle": f"!{mr.get('iid')} · {mr.get('project_path') or ''}",
+            "meta": "Draft" if mr.get("draft") else ("Waiting for you" if mr.get("is_reviewer") and not mr.get("approved_by_me") else "Open"),
+            "href": mr.get("url") or "/ui/gitlab",
+        }
+        for mr in _rows(gl_api.merge_requests_for(user))
+        if _matches(q, mr.get("title"), mr.get("iid"), mr.get("project_path"), mr.get("source_branch"))
+    ]
+
+
+def _gitlab_projects(q: str, user: AuthUser) -> List[Dict[str, Any]]:
+    """GitLab's own search: every project the person can see, not only theirs."""
+    if not _gitlab_ready(user):
+        return []
+    with gitlab_client.client(gitlab_client.require_token(user), read=8.0) as cl:
+        rows = gitlab_client.get(cl, "/projects", {"search": q, "simple": "true", "per_page": 20, "order_by": "last_activity_at"})
+    return [
+        {
+            "title": p.get("name") or "",
+            "subtitle": p.get("path_with_namespace") or "GitLab project",
+            "meta": "",
+            "href": p.get("web_url") or "/ui/gitlab",
+        }
+        for p in rows or []
     ]
 
 
@@ -217,6 +248,8 @@ def _requests(q: str, user: AuthUser) -> List[Dict[str, Any]]:
 SOURCES: List[tuple] = [
     ("work_items", "Azure DevOps — Work Items", _ado_work_items),
     ("ado_projects", "Azure DevOps — Projects", _ado_projects),
+    ("gitlab_merge_requests", "GitLab — Merge Requests", _gitlab_merge_requests),
+    ("gitlab_projects", "GitLab — Projects", _gitlab_projects),
     ("tickets", "ServiceNow — Tickets", _snow_tickets),
     ("confluence", "Confluence — Pages", _confluence),
     ("sonarqube", "SonarQube — Projects", _sonarqube),
@@ -251,7 +284,7 @@ def search(
     """
     needle = str(q or "").strip().lower()
     if len(needle) < 2:
-        return {"success": True, "data": {"query": q, "groups": []}, "timestamp": _now_iso()}
+        return {"success": True, "data": {"query": q, "groups": []}, "timestamp": now_iso()}
 
     cap = max(1, min(int(limit or PREVIEW_PER_GROUP), PAGE_PER_GROUP))
     uid = str(current_user.get("email") or current_user.get("username") or "anon").lower()
@@ -288,5 +321,5 @@ def search(
             "groups": [g for g in sliced if g["total"] or g["unavailable"]],
             "total": sum(g["total"] for g in sliced),
         },
-        "timestamp": _now_iso(),
+        "timestamp": now_iso(),
     }
