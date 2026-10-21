@@ -83,6 +83,27 @@ def test_asking_for_a_change_offers_the_drafts():
     assert not [n for n in _names(tools.specs_for("what is the status of my support tickets?", ALL))
                 if n.startswith("propose_")]
 
+    for ask in ("can you run pipeline 12?", "kick off the web-ci build", "run my deploy pipeline with env=test"):
+        assert "propose_pipeline_run" in _names(tools.specs_for(ask, ALL)), ask
+
+
+def test_devbot_is_never_told_it_cannot_change_anything_while_it_holds_a_draft_tool():
+    from datetime import date
+    from devbot import prompts
+
+    # The pipeline tools come without the ticket tool; the prompt once told the model
+    # both "call a propose_* tool" and "you cannot change anything", and it refused.
+    for ask in ("run the build pipeline on branch dev", "cancel run 412 of pipeline web",
+                "I need more artifactory quota for orders", "rerun the failed pipeline"):
+        offered = _names(tools.specs_for(ask, ALL))
+        assert any(n.startswith("propose_") for n in offered), ask
+        text = prompts.system_prompt("Dana", ALL, offered, date.today())
+        assert "call a propose_* tool" in text and "cannot change anything;" not in text, ask
+        assert "No change can be drafted" not in text, ask
+    # Without a draft tool it asks what to change instead of refusing outright.
+    text = prompts.system_prompt("Dana", ALL, ["ado_work_items"], date.today())
+    assert "No change can be drafted" in text and "cannot change anything;" not in text
+
 
 # ── the caps ─────────────────────────────────────────────────────────────────
 

@@ -166,7 +166,9 @@ register(
          {"project": {"type": "string"}, "pipeline": {"type": "string"}, "branch": {"type": "string"},
           "parameters": {"type": "object"}, "collection": COLLECTION},
          propose_pipeline_run, required=["project", "pipeline"],
-         words=["run the", "start the", "queue", "trigger", "parameter", "on branch", "הרץ", "תריץ"]),
+         words=["run the", "start the", "queue", "trigger", "parameter", "on branch", "run pipeline",
+                "run a pipeline", "run my", "run build", "run a build", "run this", "kick off", "start pipeline",
+                "start a build", "start a run", "הרץ", "תריץ"]),
     Tool("propose_pipeline_cancel", "azure", "write", "Preparing to cancel the run",
          "Propose cancelling a pipeline run that has not finished (by run id, or the latest of a pipeline). The user "
          "confirms it.",

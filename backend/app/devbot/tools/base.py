@@ -357,7 +357,9 @@ _INVESTIGATE = (
 _WRITE = (
     "create", "open a", "open new", "add ", "comment", "assign", "move ", "rerun", "re-run", "run again", "retry",
     "trigger", "approve", "reject", "vote", "update", "write", "document ", "log a bug", "file a bug",
-    "cancel", "stop the", "abort", "queue", "run the", "run it", "start the", "reply", "respond", "request",
+    "cancel", "stop the", "abort", "queue", "run the", "run it", "start the", "run pipeline", "run a pipeline",
+    "run my", "run build", "run a build", "run this", "kick off", "start pipeline", "start a build", "start a run",
+    "reply", "respond", "request",
     "i need", "we need", "enlarge", "increase", "schedule", "raise a", "escalate",
     "צור", "פתח", "הוסף", "תגובה", "הגב", "שייך", "העבר", "הרץ", "אשר", "דחה", "עדכן", "כתוב", "תעד",
     "בטל", "עצור", "השב", "תענה", "בקש", "צריך", "הגדל",

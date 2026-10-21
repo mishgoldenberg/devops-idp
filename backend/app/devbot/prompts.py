@@ -53,12 +53,17 @@ def system_prompt(name: str, systems: Dict[str, bool], offered: Iterable[str], t
                          "person sees exactly what will happen and confirms it themselves. Never say it is done. "
                          "Propose only what the person asked for or what clearly solves their problem, one card per "
                          "change.")
+        else:
+            # No drafting tool came with THIS question, but the next one may bring it: asking
+            # for a change by name (which pipeline, which branch) is what offers it. "You
+            # cannot change anything" here was read as a rule for the whole conversation.
+            lines.append("No change can be drafted with the tools of this question. If the person asks for a "
+                         "change, ask them to say exactly what to change and where (for example which pipeline and "
+                         "branch, or which ticket), and you will prepare it for them to confirm.")
         if "propose_support_ticket" in offered:
             lines.append("When the fix needs the support team (their rights on servers or infrastructure), or nothing "
                          "you found helps, offer to draft a support ticket (propose_support_ticket) with what was "
                          "found, instead of steps the person cannot take.")
-        else:
-            lines.append("You cannot change anything; say so if asked to.")
     elif not model_can_call_tools:
         lines += [
             "You have NO access to live data with this model. If asked about projects, runs, work items, pages or "
